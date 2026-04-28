@@ -1279,3 +1279,65 @@ select.settings-input {
   border-top: 1px solid var(--bd);
   margin-top: 8px;
 }
+
+.scan-feed {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+
+.scan-feed-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 2px;
+  background: var(--su1);
+}
+
+.scan-feed-thumb {
+  width: 24px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 1px;
+  flex-shrink: 0;
+  background: var(--su3);
+}
+
+.scan-feed-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--tm);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-feed-arrow {
+  font-size: 9px;
+  color: var(--tq);
+  flex-shrink: 0;
+}
+
+.scan-feed-match {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--tp);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-feed-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
