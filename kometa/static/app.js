@@ -53,7 +53,6 @@ function renderView() {
     case 'series-detail': return renderSeriesDetail(currentParams.id);
     case 'pull-list':     return renderPullList();
     case 'activity':      return renderActivity();
-    case 'wanted':        return renderWanted();
     case 'settings':      return renderSettings();
     default:              setApp('<div class="state-msg">Not found</div>');
   }
@@ -194,47 +193,97 @@ async function syncSeries(id, btn) {
 
 // --- Library Browse ---
 
-let browseState = { page: 0, search: '', searchTimer: null };
+let browseState = { page: 0, search: '', searchTimer: null, filter: 'all' };
 
 async function renderLibraryBrowse() {
   setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>`);
   setApp('<div class="state-msg">Loading...</div>');
   browseState.page = 0;
   browseState.search = '';
+  browseState.filter = 'all';
   await _loadBrowsePage();
 }
 
+const BROWSE_FILTERS = [
+  { key: 'all',      label: 'All' },
+  { key: 'complete', label: 'Complete' },
+  { key: 'partial',  label: 'Partial' },
+  { key: 'missing',  label: 'Missing' },
+];
+
+function _browseFilterTabs() {
+  return `<div class="browse-filters">
+    ${BROWSE_FILTERS.map(f => `
+      <button class="browse-filter-tab${browseState.filter === f.key ? ' active' : ''}"
+        onclick="browseFilter('${f.key}')">${f.label}</button>
+    `).join('')}
+  </div>`;
+}
+
+function browseFilter(key) {
+  browseState.filter = key;
+  browseState.page = 0;
+  browseState.search = '';
+  const input = document.getElementById('browse-search');
+  if (input) input.value = '';
+  document.querySelectorAll('.browse-filter-tab').forEach(b =>
+    b.classList.toggle('active', b.textContent.toLowerCase() === key)
+  );
+  _loadBrowsePage();
+}
+
 async function _loadBrowsePage() {
-  const { page, search } = browseState;
-  const qs = `page=${page}&size=48${search ? '&search=' + encodeURIComponent(search) : ''}`;
+  const { page, search, filter } = browseState;
 
   const firstRender = !document.getElementById('browse-search');
   if (firstRender) {
     setApp(`
       <div class="browse-header">
-        <div class="page-title" style="margin:0;border:none;padding:0">Browse Library</div>
-        <input class="browse-search" id="browse-search" placeholder="Filter series…"
+        <div class="page-title" style="margin:0;border:none;padding:0">Library</div>
+        <input class="browse-search" id="browse-search" placeholder="Search…"
           value="${esc(search)}"
           oninput="browseSearch(this.value)">
       </div>
+      ${_browseFilterTabs()}
       <div id="browse-results"><div class="state-msg">Loading...</div></div>
     `);
-    document.getElementById('browse-search')?.focus();
+    if (filter === 'all') document.getElementById('browse-search')?.focus();
   }
 
-  const data = await api.get(`/api/library/komga?${qs}`);
+  let cards, pagination;
 
-  const cards = data.items.map(s => {
-    const pub = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
-    if (s.tracked) {
+  if (filter === 'all') {
+    const qs = `page=${page}&size=48${search ? '&search=' + encodeURIComponent(search) : ''}`;
+    const data = await api.get(`/api/library/komga?${qs}`);
+
+    cards = data.items.map(s => {
+      const pub = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
+      if (s.tracked) {
+        return `
+          <div class="series-card browse-tracked" tabindex="0" role="button"
+            onclick="navigate('series-detail', {id: ${s.tracked_id}})"
+            onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.tracked_id}})">
+            <div class="series-card-img-wrap">
+              <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+                onerror="this.style.opacity='0.15'">
+              <div class="browse-tracked-badge">Tracked</div>
+            </div>
+            <div class="series-card-footer">
+              <div class="series-card-title">${esc(s.name)}</div>
+            </div>
+            ${pub}
+          </div>
+        `;
+      }
       return `
-        <div class="series-card browse-tracked" tabindex="0" role="button"
-          onclick="navigate('series-detail', {id: ${s.tracked_id}})"
-          onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.tracked_id}})">
+        <div class="series-card browse-card" tabindex="0" role="button"
+          data-series="${esc(JSON.stringify(s))}"
+          onclick="navigateKomgaSeries(this.dataset.series)"
+          onkeydown="if(event.key==='Enter'||event.key===' ')navigateKomgaSeries(this.dataset.series)">
           <div class="series-card-img-wrap">
             <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
               onerror="this.style.opacity='0.15'">
-            <div class="browse-tracked-badge">Tracked</div>
+            <div class="browse-add-overlay"><span>View</span></div>
           </div>
           <div class="series-card-footer">
             <div class="series-card-title">${esc(s.name)}</div>
@@ -242,42 +291,60 @@ async function _loadBrowsePage() {
           ${pub}
         </div>
       `;
-    }
-    return `
-      <div class="series-card browse-card" tabindex="0" role="button"
-        data-series="${esc(JSON.stringify(s))}"
-        onclick="navigateKomgaSeries(this.dataset.series)"
-        onkeydown="if(event.key==='Enter'||event.key===' ')navigateKomgaSeries(this.dataset.series)">
-        <div class="series-card-img-wrap">
-          <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
-            onerror="this.style.opacity='0.15'">
-          <div class="browse-add-overlay"><span>View</span></div>
-        </div>
-        <div class="series-card-footer">
-          <div class="series-card-title">${esc(s.name)}</div>
-        </div>
-        ${pub}
-      </div>
-    `;
-  }).join('');
+    }).join('');
 
-  const prevBtn = page > 0
-    ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page - 1})">← Prev</button>`
-    : `<button class="btn btn-ghost btn-sm" disabled>← Prev</button>`;
-  const nextBtn = !data.last
-    ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page + 1})">Next →</button>`
-    : `<button class="btn btn-ghost btn-sm" disabled>Next →</button>`;
+    const prevBtn = page > 0
+      ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page - 1})">← Prev</button>`
+      : `<button class="btn btn-ghost btn-sm" disabled>← Prev</button>`;
+    const nextBtn = !data.last
+      ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page + 1})">Next →</button>`
+      : `<button class="btn btn-ghost btn-sm" disabled>Next →</button>`;
+    const showing = `${page * 48 + 1}–${Math.min((page + 1) * 48, data.total)} of ${data.total}`;
+    pagination = `<div class="browse-pagination">${prevBtn}<span class="browse-page-info">${showing}</span>${nextBtn}</div>`;
 
-  const total = data.total;
-  const showing = `${page * 48 + 1}–${Math.min((page + 1) * 48, total)} of ${total}`;
+  } else {
+    const all = await api.get('/api/series');
+    const today = new Date().toISOString().slice(0, 10);
+    const filtered = all.filter(s => {
+      const missing = s.missing ?? 0;
+      const owned   = s.owned   ?? 0;
+      const total   = owned + missing;
+      if (filter === 'complete') return total > 0 && missing === 0;
+      if (filter === 'partial')  return owned > 0 && missing > 0;
+      if (filter === 'missing')  return missing > 0;
+      return true;
+    });
+
+    cards = filtered.map(s => {
+      const pub = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
+      const total = (s.owned ?? 0) + (s.missing ?? 0);
+      const pct = total ? Math.round((s.owned / total) * 100) : 0;
+      const color = s.missing > 0 ? 'var(--amb)' : 'var(--grn)';
+      return `
+        <div class="series-card" tabindex="0" role="button"
+          onclick="navigate('series-detail', {id: ${s.id}})"
+          onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
+          <div class="series-card-img-wrap">
+            <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
+              onerror="this.style.opacity='0.15'">
+          </div>
+          <div class="series-card-bar-track">
+            <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
+          </div>
+          <div class="series-card-footer">
+            <div class="series-card-title">${esc(s.title)}</div>
+            <div class="series-card-count" style="color:${color}">${s.owned}/${total}</div>
+          </div>
+          ${pub}
+        </div>
+      `;
+    }).join('');
+    pagination = '';
+  }
 
   document.getElementById('browse-results').innerHTML = `
-    ${data.items.length ? `<div class="series-grid">${cards}</div>` : '<div class="state-msg">No series found.</div>'}
-    <div class="browse-pagination">
-      ${prevBtn}
-      <span class="browse-page-info">${showing}</span>
-      ${nextBtn}
-    </div>
+    ${cards ? `<div class="series-grid">${cards}</div>` : '<div class="state-msg">No series found.</div>'}
+    ${pagination}
   `;
 }
 
@@ -287,8 +354,8 @@ function navigateKomgaSeries(jsonStr) {
 }
 
 function browsePage(page) {
+  if (browseState.filter !== 'all') return;
   browseState.page = page;
-  setApp('<div class="state-msg">Loading...</div>');
   _loadBrowsePage();
 }
 
@@ -636,41 +703,6 @@ async function renderActivity() {
     </div>
     ${rows}
   `);
-}
-
-// --- Wanted ---
-
-async function renderWanted() {
-  setTopbar();
-  setApp('<div class="state-msg">Loading...</div>');
-
-  const series = await api.get('/api/series');
-  const today = new Date().toISOString().slice(0, 10);
-  const rows = [];
-
-  for (const s of series.filter(s => s.missing > 0)) {
-    const detail = await api.get(`/api/series/${s.id}`);
-    const missing = detail.issues.filter(i => !i.in_komga && i.store_date && i.store_date <= today);
-    for (const iss of missing) rows.push({ s, iss });
-  }
-
-  if (!rows.length) {
-    setApp('<div class="page-title">Wanted</div><div class="state-msg">Collection complete — nothing missing.</div>');
-    return;
-  }
-
-  const html = rows.map(({ s, iss }) => `
-    <div class="pull-row" tabindex="0" role="button"
-      onclick="navigate('series-detail', {id: ${s.id}})"
-      onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
-      <img class="pull-thumb" src="/api/series/${s.id}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
-      <div class="pull-series">${esc(s.title)}</div>
-      <div class="pull-issue">Issue #${fmtNum(iss.number)}</div>
-      <div class="pull-date" style="color:var(--amb)">${iss.store_date || ''}</div>
-    </div>
-  `).join('');
-
-  setApp(`<div class="page-title">Wanted</div>${html}`);
 }
 
 // --- Settings ---

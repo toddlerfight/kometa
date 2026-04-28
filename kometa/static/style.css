@@ -345,6 +345,33 @@ select.settings-input {
 
 .browse-search:focus { border-color: var(--pri); }
 
+.browse-filters {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+
+.browse-filter-tab {
+  background: none;
+  border: 1px solid var(--bd);
+  border-radius: 2px;
+  color: var(--tq);
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.browse-filter-tab:hover { color: var(--tp); border-color: var(--tp); }
+
+.browse-filter-tab.active {
+  color: var(--pri);
+  border-color: var(--pri);
+}
+
 .browse-pagination {
   display: flex;
   align-items: center;
