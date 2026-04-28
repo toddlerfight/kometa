@@ -649,7 +649,10 @@ select.settings-input {
   width: 100%; height: 100%;
   object-fit: cover;
   display: block;
+  transition: transform 0.3s ease;
 }
+
+.issue-tile:hover .issue-tile-img img { transform: scale(1.08); }
 
 .issue-tile-img.missing  { background: var(--su2); border: 1px solid var(--amb); }
 .issue-tile-img.upcoming { background: var(--su2); border: 1px solid var(--blu); }
