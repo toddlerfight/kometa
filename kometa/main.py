@@ -229,7 +229,7 @@ def browse_komga(page: int = 0, size: int = 48, search: str = ""):
         params["search"] = search
     data = komga._get("/api/v1/series", params=params)
 
-    tracked_ids = {s["komga_series_id"] for s in db.get_all_series(DB_PATH)}
+    tracked_map = {s["komga_series_id"]: s["id"] for s in db.get_all_series(DB_PATH)}
 
     items = [
         {
@@ -237,7 +237,8 @@ def browse_komga(page: int = 0, size: int = 48, search: str = ""):
             "name": s["name"],
             "publisher": s.get("metadata", {}).get("publisher"),
             "year": s.get("metadata", {}).get("startYear"),
-            "tracked": s["id"] in tracked_ids,
+            "tracked": s["id"] in tracked_map,
+            "tracked_id": tracked_map.get(s["id"]),
         }
         for s in data["content"]
     ]

@@ -32,7 +32,7 @@ function navigate(view, params = {}) {
 }
 
 function updateNav() {
-  const navView = currentView === 'series-detail' || currentView === 'library-browse' ? 'series' : currentView;
+  const navView = currentView === 'series-detail' ? 'library' : currentView;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === navView);
   });
@@ -49,14 +49,13 @@ function setApp(html) {
 
 function renderView() {
   switch (currentView) {
-    case 'series':          return renderSeries();
-    case 'series-detail':   return renderSeriesDetail(currentParams.id);
-    case 'library-browse':  return renderLibraryBrowse();
-    case 'pull-list':       return renderPullList();
-    case 'activity':        return renderActivity();
-    case 'wanted':          return renderWanted();
-    case 'settings':        return renderSettings();
-    default:                setApp('<div class="state-msg">Not found</div>');
+    case 'library':       return renderLibraryBrowse();
+    case 'series-detail': return renderSeriesDetail(currentParams.id);
+    case 'pull-list':     return renderPullList();
+    case 'activity':      return renderActivity();
+    case 'wanted':        return renderWanted();
+    case 'settings':      return renderSettings();
+    default:              setApp('<div class="state-msg">Not found</div>');
   }
 }
 
@@ -171,7 +170,7 @@ async function syncAll(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
   try {
     await api.post('/api/sync', {});
-    await renderSeries();
+    await _loadBrowsePage();
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Sync All'; }
   }
@@ -196,7 +195,7 @@ async function syncSeries(id, btn) {
 let browseState = { page: 0, search: '', searchTimer: null };
 
 async function renderLibraryBrowse() {
-  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('series')">← Back</button>`);
+  setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>`);
   setApp('<div class="state-msg">Loading...</div>');
   browseState.page = 0;
   browseState.search = '';
@@ -212,7 +211,9 @@ async function _loadBrowsePage() {
     const pub = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
     if (s.tracked) {
       return `
-        <div class="series-card browse-tracked">
+        <div class="series-card browse-tracked" tabindex="0" role="button"
+          onclick="navigate('series-detail', {id: ${s.tracked_id}})"
+          onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.tracked_id}})">
           <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
             onerror="this.style.opacity='0.15'">
           <div class="browse-tracked-badge">Tracked</div>
@@ -225,8 +226,9 @@ async function _loadBrowsePage() {
     }
     return `
       <div class="series-card browse-card" tabindex="0" role="button"
-        onclick="showMetronMatch(${JSON.stringify(JSON.stringify(s))})"
-        onkeydown="if(event.key==='Enter'||event.key===' ')showMetronMatch(${JSON.stringify(JSON.stringify(s))})">
+        data-series="${esc(JSON.stringify(s))}"
+        onclick="showMetronMatch(this.dataset.series)"
+        onkeydown="if(event.key==='Enter'||event.key===' ')showMetronMatch(this.dataset.series)">
         <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
           onerror="this.style.opacity='0.15'">
         <div class="browse-add-overlay"><span>+ Track</span></div>
@@ -361,7 +363,7 @@ async function submitMetronMatch() {
 // --- Series Detail ---
 
 async function renderSeriesDetail(id) {
-  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('series')">← Back</button>`);
+  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
@@ -462,7 +464,7 @@ function confirmDelete(id, title) {
 async function doDelete(id) {
   closeModal();
   await api.del(`/api/series/${id}`);
-  navigate('series');
+  navigate('library');
 }
 
 // --- Pull List ---
@@ -858,7 +860,7 @@ async function finishOnboarding(btn) {
   await api.patch('/api/config', updates);
   document.getElementById('sidebar').style.opacity = '';
   document.getElementById('sidebar').style.pointerEvents = '';
-  navigate('library-browse');
+  navigate('library');
 }
 
 // --- Boot ---
@@ -872,7 +874,7 @@ async function boot() {
   if (!cfg.komga_url) {
     renderOnboarding();
   } else {
-    navigate('series');
+    navigate('library');
   }
 }
 

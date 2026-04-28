@@ -361,9 +361,8 @@ select.settings-input {
 }
 
 .browse-tracked {
-  opacity: 0.45;
-  cursor: default;
   position: relative;
+  cursor: pointer;
 }
 
 .browse-tracked-badge {
