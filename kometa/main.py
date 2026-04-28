@@ -1,4 +1,6 @@
 import os
+import json
+import threading
 from datetime import date
 from contextlib import asynccontextmanager
 
@@ -12,6 +14,7 @@ from kometa.metron_client import MetronClient
 from kometa.diff import compute_diff
 from kometa.scheduler import start_scheduler
 import kometa.db as db
+import kometa.matcher as matcher
 
 DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
 
@@ -332,6 +335,123 @@ def komga_series_thumbnail(komga_series_id: str):
     r = komga.session.get(f"{komga.base_url}/api/v1/series/{komga_series_id}/thumbnail")
     r.raise_for_status()
     return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+
+
+# --- match / scan ---
+
+@app.post("/api/match/scan")
+def start_scan():
+    state = matcher.get_state()
+    if state["running"]:
+        return {"ok": False, "message": "Scan already running", "state": state}
+    t = threading.Thread(target=matcher.run_scan, args=(_komga, _metron, DB_PATH), daemon=True)
+    t.start()
+    return {"ok": True, "state": matcher.get_state()}
+
+
+@app.get("/api/match/status")
+def scan_status():
+    state = matcher.get_state()
+    summary = db.get_candidates_summary(DB_PATH)
+    counts = {"high": 0, "medium": 0, "low": 0, "none": 0}
+    for row in summary:
+        if row["status"] == "pending":
+            counts[row["confidence"]] = row["cnt"]
+    return {**state, "counts": counts}
+
+
+@app.get("/api/match/candidates")
+def get_candidates():
+    rows = db.get_pending_candidates(DB_PATH)
+    groups = {"high": [], "medium": [], "low": [], "none": []}
+    for r in rows:
+        c = dict(r)
+        c["candidates"] = json.loads(c["candidates_json"]) if c["candidates_json"] else []
+        del c["candidates_json"]
+        groups[c["confidence"]].append(c)
+    return groups
+
+
+class ConfirmRequest(BaseModel):
+    komga_series_id: str
+    metron_id: int
+
+
+@app.post("/api/match/confirm")
+def confirm_match(req: ConfirmRequest):
+    existing = {s["komga_series_id"] for s in db.get_all_series(DB_PATH)}
+    if req.komga_series_id not in existing:
+        komga  = _komga()
+        metron = _metron()
+        ks = komga.get_series(req.komga_series_id)
+        ms = metron.get_series(req.metron_id)
+        db.add_series(
+            req.komga_series_id, req.metron_id,
+            title      = ks["name"],
+            publisher  = ks.get("metadata", {}).get("publisher"),
+            year_began = ms.get("year_began"),
+            path       = DB_PATH,
+        )
+        added = next(s for s in db.get_all_series(DB_PATH) if s["komga_series_id"] == req.komga_series_id)
+        _sync_one(added)
+    db.confirm_candidate(req.komga_series_id, req.metron_id, DB_PATH)
+    return {"ok": True}
+
+
+class BulkItem(BaseModel):
+    komga_series_id: str
+    metron_id: int
+
+class BulkConfirmRequest(BaseModel):
+    items: list[BulkItem]
+
+
+@app.post("/api/match/confirm-bulk")
+def confirm_bulk(req: BulkConfirmRequest):
+    komga  = _komga()
+    metron = _metron()
+    existing = {s["komga_series_id"] for s in db.get_all_series(DB_PATH)}
+    confirmed, errors = 0, []
+
+    for item in req.items:
+        if item.komga_series_id in existing:
+            db.confirm_candidate(item.komga_series_id, item.metron_id, DB_PATH)
+            confirmed += 1
+            continue
+        try:
+            ks = komga.get_series(item.komga_series_id)
+            ms = metron.get_series(item.metron_id)
+            db.add_series(
+                item.komga_series_id, item.metron_id,
+                title      = ks["name"],
+                publisher  = ks.get("metadata", {}).get("publisher"),
+                year_began = ms.get("year_began"),
+                path       = DB_PATH,
+            )
+            db.confirm_candidate(item.komga_series_id, item.metron_id, DB_PATH)
+            confirmed += 1
+        except Exception as e:
+            errors.append({"id": item.komga_series_id, "error": str(e)})
+
+    def _bg_sync():
+        for s in db.get_all_series(DB_PATH):
+            try:
+                _sync_one(s)
+            except Exception:
+                pass
+
+    threading.Thread(target=_bg_sync, daemon=True).start()
+    return {"confirmed": confirmed, "errors": errors}
+
+
+class RejectRequest(BaseModel):
+    komga_series_id: str
+
+
+@app.post("/api/match/reject")
+def reject_match(req: RejectRequest):
+    db.reject_candidate(req.komga_series_id, DB_PATH)
+    return {"ok": True}
 
 
 app.mount("/", StaticFiles(directory="kometa/static", html=True), name="static")

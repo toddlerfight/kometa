@@ -54,6 +54,7 @@ function renderView() {
     case 'pull-list':     return renderPullList();
     case 'activity':      return renderActivity();
     case 'settings':      return renderSettings();
+    case 'match-review':  return renderMatchReview();
     default:              setApp('<div class="state-msg">Not found</div>');
   }
 }
@@ -196,7 +197,10 @@ async function syncSeries(id, btn) {
 let browseState = { page: 0, search: '', searchTimer: null, filter: 'all' };
 
 async function renderLibraryBrowse() {
-  setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>`);
+  setTopbar(`
+    <button class="btn btn-ghost" onclick="navigate('match-review')">Match Library</button>
+    <button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>
+  `);
   setApp('<div class="state-msg">Loading...</div>');
   browseState.page = 0;
   browseState.search = '';
@@ -375,7 +379,8 @@ let metronMatchTimer = null;
 
 function showMetronMatch(jsonStr) {
   const s = JSON.parse(jsonStr);
-  metronMatchState = { komgaSeries: s, metronId: null };
+  const fromMatchReview = metronMatchState.fromMatchReview || false;
+  metronMatchState = { komgaSeries: s, metronId: null, fromMatchReview };
 
   showModal(`
     <div class="modal-title">Track Series</div>
@@ -430,17 +435,22 @@ function selectMetronMatch(el, id) {
 }
 
 async function submitMetronMatch() {
-  const { komgaSeries, metronId } = metronMatchState;
+  const { komgaSeries, metronId, fromMatchReview } = metronMatchState;
   if (!komgaSeries || !metronId) return;
   const btn = document.getElementById('match-add-btn');
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
-    const added = await api.post('/api/series', { komga_id: komgaSeries.id, metron_id: metronId });
-    closeModal();
-    navigate('series-detail', { id: added.id });
+    if (fromMatchReview) {
+      await api.post('/api/match/confirm', { komga_series_id: komgaSeries.id, metron_id: metronId });
+      closeModal();
+      await _refreshMatchReview();
+    } else {
+      const added = await api.post('/api/series', { komga_id: komgaSeries.id, metron_id: metronId });
+      closeModal();
+      navigate('series-detail', { id: added.id });
+    }
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Track Series';
-    alert('Failed to add series — check console.');
     console.error(e);
   }
 }
@@ -703,6 +713,261 @@ async function renderActivity() {
     </div>
     ${rows}
   `);
+}
+
+// --- Match Review ---
+
+let _matchPollTimer = null;
+
+async function renderMatchReview() {
+  setTopbar(`<button class="btn btn-ghost" onclick="navigate('library')">← Library</button>`);
+  setApp('<div class="state-msg">Loading...</div>');
+  clearInterval(_matchPollTimer);
+  await _refreshMatchReview();
+}
+
+async function _refreshMatchReview() {
+  const status = await api.get('/api/match/status');
+
+  if (status.running) {
+    const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
+    const bar = `
+      <div class="match-progress-wrap">
+        <div class="match-progress-bar" style="width:${pct}%"></div>
+      </div>
+      <div class="match-progress-label">Scanning ${status.done} / ${status.total} series…</div>
+    `;
+    const existing = document.getElementById('match-progress');
+    if (existing) {
+      existing.innerHTML = bar;
+    } else {
+      setApp(`
+        <div class="page-title">Match Library</div>
+        <div id="match-progress">${bar}</div>
+        <div class="state-msg" style="margin-top:32px">Results will appear here as matching completes.</div>
+      `);
+    }
+    _matchPollTimer = setTimeout(_refreshMatchReview, 1500);
+    return;
+  }
+
+  clearInterval(_matchPollTimer);
+
+  const { counts } = status;
+  const total = counts.high + counts.medium + counts.low + counts.none;
+
+  if (total === 0) {
+    setApp(`
+      <div class="page-title">Match Library</div>
+      <div class="match-summary-bar">
+        <div class="match-summary-stat"><span class="match-count">0</span><span class="match-label">Pending</span></div>
+      </div>
+      <div class="empty-state">
+        <div class="empty-state-title">Nothing to match</div>
+        <div style="margin-top:8px;color:var(--tq);font-size:13px">Run a scan to compare your library against Metron.</div>
+        <button class="btn btn-primary" style="margin-top:20px" onclick="startScan(this)">Scan Library</button>
+      </div>
+    `);
+    return;
+  }
+
+  const groups = await api.get('/api/match/candidates');
+
+  const summaryBar = `
+    <div class="match-summary-bar">
+      <div class="match-summary-stat">
+        <span class="match-count match-high">${counts.high}</span>
+        <span class="match-label">Auto-matched</span>
+      </div>
+      <div class="match-summary-stat">
+        <span class="match-count match-medium">${counts.medium + counts.low}</span>
+        <span class="match-label">Needs review</span>
+      </div>
+      <div class="match-summary-stat">
+        <span class="match-count match-none">${counts.none}</span>
+        <span class="match-label">No match</span>
+      </div>
+    </div>
+  `;
+
+  let html = `<div class="page-title">Match Library</div>${summaryBar}`;
+
+  // High confidence
+  if (groups.high.length) {
+    const cards = groups.high.map(c => _matchCard(c, true)).join('');
+    html += `
+      <div class="match-section">
+        <div class="match-section-header">
+          <span class="match-section-title">Auto-matched <span class="match-section-count">${groups.high.length}</span></span>
+          <button class="btn btn-primary btn-sm" onclick="confirmAllHigh()">Confirm All</button>
+        </div>
+        <div class="match-grid" id="match-grid-high">${cards}</div>
+      </div>
+    `;
+  }
+
+  // Medium + low (needs review)
+  const review = [...groups.medium, ...groups.low];
+  if (review.length) {
+    const cards = review.map(c => _matchCard(c, false)).join('');
+    html += `
+      <div class="match-section">
+        <div class="match-section-header">
+          <span class="match-section-title">Needs review <span class="match-section-count">${review.length}</span></span>
+        </div>
+        <div class="match-grid">${cards}</div>
+      </div>
+    `;
+  }
+
+  // No match
+  if (groups.none.length) {
+    const rows = groups.none.map(c => `
+      <div class="match-none-row">
+        <img class="match-none-thumb" src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt=""
+          onerror="this.style.opacity='0.2'">
+        <div class="match-none-title">${esc(c.komga_title)}</div>
+        <div class="match-none-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
+        <div class="match-none-actions">
+          <button class="btn btn-ghost btn-sm" onclick="openManualMatch('${esc(c.komga_series_id)}', '${esc(c.komga_title)}')">Search Metron</button>
+          <button class="btn btn-ghost btn-sm" onclick="rejectCandidate('${esc(c.komga_series_id)}', this)">Skip</button>
+        </div>
+      </div>
+    `).join('');
+    html += `
+      <div class="match-section">
+        <div class="match-section-header">
+          <span class="match-section-title">No match found <span class="match-section-count">${groups.none.length}</span></span>
+        </div>
+        <div class="match-none-list">${rows}</div>
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="match-rescan">
+      <button class="btn btn-ghost btn-sm" onclick="startScan(this)">Scan for new series</button>
+    </div>
+  `;
+
+  setApp(html);
+}
+
+function _matchCard(c, autoChecked) {
+  const candidates = c.candidates || [];
+  const pct = Math.round(c.score * 100);
+
+  let picker = '';
+  if (!autoChecked && candidates.length) {
+    picker = `<div class="match-candidates">
+      ${candidates.map((r, i) => `
+        <label class="match-candidate-row">
+          <input type="radio" name="mc_${esc(c.komga_series_id)}" value="${r.id}"
+            ${i === 0 ? 'checked' : ''}>
+          <span class="match-candidate-name">${esc(r.name)}</span>
+          <span class="match-candidate-meta">${esc(r.publisher || '')}${r.year ? ' · ' + r.year : ''}</span>
+          <span class="match-candidate-score">${Math.round(r.score * 100)}%</span>
+        </label>
+      `).join('')}
+    </div>`;
+  } else if (autoChecked) {
+    picker = `<div class="match-auto-label">
+      ${esc(c.metron_title)}
+      ${c.metron_year ? `<span class="match-year">${c.metron_year}</span>` : ''}
+    </div>`;
+  }
+
+  return `
+    <div class="match-card" id="mc_${esc(c.komga_series_id)}">
+      <div class="match-card-img-wrap">
+        <img src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt="${esc(c.komga_title)}"
+          onerror="this.style.opacity='0.2'">
+      </div>
+      <div class="match-card-body">
+        <div class="match-card-title">${esc(c.komga_title)}</div>
+        <div class="match-card-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
+        <div class="match-score-bar-wrap">
+          <div class="match-score-bar" style="width:${pct}%"></div>
+          <span class="match-score-pct">${pct}%</span>
+        </div>
+        ${picker}
+        <div class="match-card-actions">
+          <button class="btn btn-primary btn-sm"
+            onclick="confirmCard('${esc(c.komga_series_id)}', this, ${autoChecked ? c.metron_id : 0})">
+            Confirm
+          </button>
+          <button class="btn btn-ghost btn-sm"
+            onclick="openManualMatch('${esc(c.komga_series_id)}', '${esc(c.komga_title)}')">
+            Change
+          </button>
+          <button class="btn btn-ghost btn-sm"
+            onclick="rejectCandidate('${esc(c.komga_series_id)}', this)">
+            Skip
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function startScan(btn) {
+  if (btn) btn.disabled = true;
+  await api.post('/api/match/scan', {});
+  await renderMatchReview();
+}
+
+async function confirmCard(komgaId, btn, metronId) {
+  // If metronId not provided (review card), read from radio selection
+  if (!metronId) {
+    const radio = document.querySelector(`input[name="mc_${CSS.escape(komgaId)}"]:checked`);
+    if (!radio) return;
+    metronId = parseInt(radio.value);
+  }
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    await api.post('/api/match/confirm', { komga_series_id: komgaId, metron_id: metronId });
+    document.getElementById(`mc_${komgaId}`)?.remove();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Confirm';
+  }
+}
+
+async function confirmAllHigh() {
+  const grid = document.getElementById('match-grid-high');
+  if (!grid) return;
+  const cards = grid.querySelectorAll('.match-card');
+  const items = [];
+  cards.forEach(card => {
+    const id = card.id.replace('mc_', '');
+    const metronInput = card.querySelector('input[type=hidden]');
+    // metron_id is baked into the confirm button's onclick for high-confidence cards
+    const btn = card.querySelector('.btn-primary');
+    const match = btn?.getAttribute('onclick')?.match(/confirmCard\('[^']+',\s*this,\s*(\d+)/);
+    if (match) items.push({ komga_series_id: id, metron_id: parseInt(match[1]) });
+  });
+  if (!items.length) return;
+
+  const confirmBtn = document.querySelector('#match-grid-high')?.closest('.match-section')?.querySelector('.btn-primary');
+  if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = `Confirming ${items.length}…`; }
+
+  const result = await api.post('/api/match/confirm-bulk', { items });
+  await _refreshMatchReview();
+}
+
+async function rejectCandidate(komgaId, btn) {
+  btn.disabled = true;
+  await api.post('/api/match/reject', { komga_series_id: komgaId });
+  document.getElementById(`mc_${komgaId}`)?.remove();
+  // also handles none-row which doesn't have mc_ id
+  btn.closest('.match-card, .match-none-row')?.remove();
+}
+
+function openManualMatch(komgaId, komgaTitle) {
+  const fakeKomgaSeries = { id: komgaId, name: komgaTitle };
+  metronMatchState = { komgaSeries: fakeKomgaSeries, metronId: null, fromMatchReview: true };
+  showMetronMatch(JSON.stringify(fakeKomgaSeries));
 }
 
 // --- Settings ---
