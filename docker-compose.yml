@@ -1,0 +1,18 @@
+services:
+  kometa:
+    build: .
+    container_name: kometa
+    restart: unless-stopped
+    ports:
+      - "6969:6969"
+    volumes:
+      - /volume1/docker/kometa/data:/data
+    environment:
+      KOMETA_DB: /data/kometa.db
+      KOMGA_URL: ${KOMGA_URL:-http://$NAS_HOST:8585}
+      KOMGA_USER: ${KOMGA_USER}
+      KOMGA_PASS: ${KOMGA_PASS}
+      KOMGA_LIBRARY_ID: ${KOMGA_LIBRARY_ID:-<your-komga-library-id>}
+      METRON_USER: ${METRON_USER}
+      METRON_PASS: ${METRON_PASS}
+      KOMETA_SYNC_HOURS: ${KOMETA_SYNC_HOURS:-5,12,17}

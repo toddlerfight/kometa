@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kometa</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Space+Grotesk:wght@700&family=Space+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="layout">
+    <nav id="sidebar">
+      <div class="logo">
+        <div class="logo-mark"></div>
+        <span class="logo-text">kometa</span>
+      </div>
+      <div class="nav-items">
+        <a class="nav-item" data-view="series">Series</a>
+        <a class="nav-item" data-view="pull-list">Pull List</a>
+        <a class="nav-item" data-view="activity">Activity</a>
+        <a class="nav-item" data-view="wanted">Wanted</a>
+        <a class="nav-item" data-view="settings">Settings</a>
+      </div>
+    </nav>
+    <div id="content">
+      <header id="topbar">
+        <span id="topbar-title"></span>
+        <div id="topbar-actions"></div>
+      </header>
+      <main id="app"></main>
+    </div>
+  </div>
+
+  <div id="modal-backdrop" class="hidden" onclick="closeModal()"></div>
+  <div id="modal" class="hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
