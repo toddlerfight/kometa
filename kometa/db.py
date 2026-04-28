@@ -34,6 +34,23 @@ def init_db(path=DB_PATH):
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS match_candidates (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                komga_series_id   TEXT NOT NULL UNIQUE,
+                komga_title       TEXT NOT NULL,
+                komga_publisher   TEXT,
+                komga_year        INTEGER,
+                metron_id         INTEGER,
+                metron_title      TEXT,
+                metron_publisher  TEXT,
+                metron_year       INTEGER,
+                score             REAL NOT NULL DEFAULT 0,
+                confidence        TEXT NOT NULL DEFAULT 'none',
+                candidates_json   TEXT,
+                status            TEXT NOT NULL DEFAULT 'pending',
+                created_at        TEXT DEFAULT (datetime('now'))
+            );
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -152,6 +169,71 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH):
         return [dict(r) for r in conn.execute("""
             SELECT * FROM issue_status WHERE tracked_series_id = ? ORDER BY number
         """, (tracked_series_id,))]
+
+
+# --- Match candidates ---
+
+def upsert_candidate(komga_series_id, komga_title, komga_publisher, komga_year,
+                     metron_id=None, metron_title=None, metron_publisher=None,
+                     metron_year=None, score=0, confidence='none',
+                     candidates_json=None, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO match_candidates
+              (komga_series_id, komga_title, komga_publisher, komga_year,
+               metron_id, metron_title, metron_publisher, metron_year,
+               score, confidence, candidates_json, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            ON CONFLICT(komga_series_id) DO UPDATE SET
+              metron_id        = excluded.metron_id,
+              metron_title     = excluded.metron_title,
+              metron_publisher = excluded.metron_publisher,
+              metron_year      = excluded.metron_year,
+              score            = excluded.score,
+              confidence       = excluded.confidence,
+              candidates_json  = excluded.candidates_json,
+              status           = 'pending'
+        """, (komga_series_id, komga_title, komga_publisher, komga_year,
+              metron_id, metron_title, metron_publisher, metron_year,
+              score, confidence, candidates_json))
+
+
+def get_pending_candidates(path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT * FROM match_candidates WHERE status = 'pending' ORDER BY score DESC, komga_title
+        """)]
+
+
+def get_candidate_komga_ids(path=DB_PATH):
+    with _connect(path) as conn:
+        rows = conn.execute("SELECT komga_series_id FROM match_candidates").fetchall()
+        return {r[0] for r in rows}
+
+
+def confirm_candidate(komga_series_id, metron_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            UPDATE match_candidates SET status = 'confirmed', metron_id = ?
+            WHERE komga_series_id = ?
+        """, (metron_id, komga_series_id))
+
+
+def reject_candidate(komga_series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE match_candidates SET status = 'rejected' WHERE komga_series_id = ?",
+            (komga_series_id,)
+        )
+
+
+def get_candidates_summary(path=DB_PATH):
+    with _connect(path) as conn:
+        rows = conn.execute("""
+            SELECT confidence, status, COUNT(*) as cnt
+            FROM match_candidates GROUP BY confidence, status
+        """).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_upcoming_issues(days=90, path=DB_PATH):
