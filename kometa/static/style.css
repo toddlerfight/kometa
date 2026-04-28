@@ -656,6 +656,15 @@ select.settings-input {
   margin-top: 4px;
 }
 
+.issue-tile-date {
+  font-family: 'Space Mono', monospace;
+  font-size: 8px;
+  color: var(--blu);
+  text-align: center;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
 /* ---- Pull List ---- */
 
 .pull-group { margin-bottom: 0; }

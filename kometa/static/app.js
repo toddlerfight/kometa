@@ -417,12 +417,21 @@ async function renderSeriesDetail(id) {
         <img src="/api/book/${issue.komga_book_id}/thumbnail" alt="${num}" loading="lazy"
           onerror="this.parentElement.classList.add('unknown');this.remove()">
       </div>`;
+    } else if (issue.metron_image) {
+      inner = `<div class="issue-tile-img ${st}">
+        <img src="${esc(issue.metron_image)}" alt="${num}" loading="lazy"
+          onerror="this.parentElement.innerHTML=''">
+      </div>`;
     } else {
       inner = `<div class="issue-tile-img ${st}"></div>`;
     }
+    const dateLabel = (st === 'upcoming' || st === 'missing') && issue.store_date
+      ? `<div class="issue-tile-date">${issue.store_date}</div>`
+      : '';
     return `<div class="issue-tile" title="${esc(s.title)} ${num}">
       ${inner}
       <div class="issue-tile-num">${num}</div>
+      ${dateLabel}
     </div>`;
   }).join('');
 
