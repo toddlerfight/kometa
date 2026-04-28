@@ -447,9 +447,10 @@ async function renderSeriesDetail(id) {
   `);
 }
 
-function renderKomgaPreview(s) {
+async function renderKomgaPreview(s) {
   setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
   const meta = [s.publisher ? s.publisher.toUpperCase() : '', s.year].filter(Boolean).join('  •  ');
+
   setApp(`
     <div class="detail-band">
       <img class="detail-thumb" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
@@ -457,7 +458,7 @@ function renderKomgaPreview(s) {
       <div class="detail-info">
         <div class="detail-title">${esc(s.name)}</div>
         ${meta ? `<div class="detail-meta">${esc(meta)}</div>` : ''}
-        <div class="detail-stats-line" style="color:var(--tq)">Not tracked</div>
+        <div class="detail-stats-line" style="color:var(--tq)">Loading…</div>
       </div>
     </div>
     <div class="detail-actions-row">
@@ -465,10 +466,35 @@ function renderKomgaPreview(s) {
         data-series="${esc(JSON.stringify(s))}"
         onclick="showMetronMatch(this.dataset.series)">+ Track on Metron</button>
     </div>
-    <div class="untracked-placeholder">
-      <div class="untracked-placeholder-text">Track this series to see owned, missing, and upcoming issues.</div>
+    <div class="issue-tabs">
+      <div class="issue-tab active">In Library</div>
     </div>
+    <div class="issue-grid" id="komga-preview-grid"><div class="state-msg" style="grid-column:1/-1">Loading…</div></div>
   `);
+
+  const books = await api.get(`/api/komga/series/${s.id}/books`);
+
+  const statsLine = `${books.length} book${books.length !== 1 ? 's' : ''} in your library`;
+  document.querySelector('.detail-stats-line').textContent = statsLine;
+
+  const grid = document.getElementById('komga-preview-grid');
+  if (!grid) return;
+
+  if (!books.length) {
+    grid.innerHTML = '<div class="state-msg" style="grid-column:1/-1">No books found in Komga.</div>';
+    return;
+  }
+
+  grid.innerHTML = books.map(b => {
+    const num = b.number_display != null ? `#${fmtNum(b.number_display)}` : '?';
+    return `<div class="issue-tile">
+      <div class="issue-tile-img">
+        <img src="/api/book/${esc(b.id)}/thumbnail" alt="${num}" loading="lazy"
+          onerror="this.parentElement.classList.add('unknown');this.remove()">
+      </div>
+      <div class="issue-tile-num">${num}</div>
+    </div>`;
+  }).join('');
 }
 
 function setDetailTab(tab, id) {

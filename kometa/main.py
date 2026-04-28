@@ -310,6 +310,20 @@ def book_thumbnail(book_id: str):
     return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
 
 
+@app.get("/api/komga/series/{komga_series_id}/books")
+def komga_series_books(komga_series_id: str):
+    komga = _komga()
+    books = komga.get_books(komga_series_id)
+    return [
+        {
+            "id": b["id"],
+            "number": b["metadata"].get("numberSort"),
+            "number_display": b["metadata"].get("number") or b["metadata"].get("numberSort"),
+        }
+        for b in books
+    ]
+
+
 @app.get("/api/komga/series/{komga_series_id}/thumbnail")
 def komga_series_thumbnail(komga_series_id: str):
     komga = _komga()
