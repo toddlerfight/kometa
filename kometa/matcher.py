@@ -2,15 +2,29 @@ import re
 import json
 import time
 import threading
+from collections import deque
 
 import kometa.db as db
 
-_lock = threading.Lock()
+_lock  = threading.Lock()
 _state = {'running': False, 'done': 0, 'total': 0, 'error': None}
+_recent: deque = deque(maxlen=50)   # last N results for live feed
 
 
 def get_state():
-    return dict(_state)
+    return {**_state, 'recent': list(_recent)}
+
+
+def start(komga_factory, metron_factory, db_path) -> bool:
+    """Acquire lock + set running=True in the calling thread, then spawn worker.
+    Returns False if already running."""
+    if not _lock.acquire(blocking=False):
+        return False
+    _state.update({'running': True, 'done': 0, 'total': 0, 'error': None})
+    _recent.clear()
+    t = threading.Thread(target=_run, args=(komga_factory, metron_factory, db_path), daemon=True)
+    t.start()
+    return True
 
 
 def _normalize(title: str) -> str:
@@ -61,20 +75,14 @@ def _confidence(score: float) -> str:
     return "none"
 
 
-def run_scan(komga_factory, metron_factory, db_path):
-    global _state
-    if not _lock.acquire(blocking=False):
-        return
+def _run(komga_factory, metron_factory, db_path):
     try:
-        _state.update({"running": True, "done": 0, "total": 0, "error": None})
-
         komga  = komga_factory()
         metron = metron_factory()
 
-        tracked_ids   = {s["komga_series_id"] for s in db.get_all_series(db_path)}
+        tracked_ids    = {s["komga_series_id"] for s in db.get_all_series(db_path)}
         candidated_ids = db.get_candidate_komga_ids(db_path)
 
-        # Paginate through entire Komga library
         all_series, page = [], 0
         while True:
             data = komga._get("/api/v1/series", params={"page": page, "size": 100, "sort": "metadata.titleSort,asc"})
@@ -89,10 +97,10 @@ def run_scan(komga_factory, metron_factory, db_path):
         _state["total"] = len(to_scan)
 
         for s in to_scan:
-            kid        = s["id"]
-            k_title    = s["name"]
-            k_pub      = s.get("metadata", {}).get("publisher")
-            k_year     = s.get("metadata", {}).get("startYear")
+            kid    = s["id"]
+            k_title = s["name"]
+            k_pub   = s.get("metadata", {}).get("publisher")
+            k_year  = s.get("metadata", {}).get("startYear")
 
             try:
                 results = metron.search_series(k_title)
@@ -102,17 +110,18 @@ def run_scan(komga_factory, metron_factory, db_path):
             if results:
                 scored = sorted(
                     [(r, _score(k_title, k_year, k_pub, r)) for r in results[:10]],
-                    key=lambda x: -x[1]
+                    key=lambda x: -x[1],
                 )
                 best, best_score = scored[0]
-                conf    = _confidence(best_score)
-                m_pub   = best.get("publisher") or {}
-                m_pub   = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
+                conf  = _confidence(best_score)
+                m_pub = best.get("publisher") or {}
+                m_pub = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
+                m_title = best.get("name") or best.get("series_name") or ""
 
                 db.upsert_candidate(
                     kid, k_title, k_pub, k_year,
                     metron_id        = best.get("id"),
-                    metron_title     = best.get("name") or best.get("series_name") or "",
+                    metron_title     = m_title,
                     metron_publisher = m_pub,
                     metron_year      = best.get("year_began"),
                     score            = best_score,
@@ -129,8 +138,22 @@ def run_scan(komga_factory, metron_factory, db_path):
                     ]),
                     path=db_path,
                 )
+                _recent.appendleft({
+                    "komga_id":    kid,
+                    "title":       k_title,
+                    "match":       m_title,
+                    "confidence":  conf,
+                    "score":       best_score,
+                })
             else:
                 db.upsert_candidate(kid, k_title, k_pub, k_year, confidence="none", path=db_path)
+                _recent.appendleft({
+                    "komga_id":   kid,
+                    "title":      k_title,
+                    "match":      None,
+                    "confidence": "none",
+                    "score":      0,
+                })
 
             _state["done"] += 1
             time.sleep(0.2)

@@ -341,12 +341,10 @@ def komga_series_thumbnail(komga_series_id: str):
 
 @app.post("/api/match/scan")
 def start_scan():
-    state = matcher.get_state()
-    if state["running"]:
-        return {"ok": False, "message": "Scan already running", "state": state}
-    t = threading.Thread(target=matcher.run_scan, args=(_komga, _metron, DB_PATH), daemon=True)
-    t.start()
-    return {"ok": True, "state": matcher.get_state()}
+    if matcher.get_state()["running"]:
+        return {"ok": False, "message": "Scan already running"}
+    started = matcher.start(_komga, _metron, DB_PATH)
+    return {"ok": started, "state": matcher.get_state()}
 
 
 @app.get("/api/match/status")

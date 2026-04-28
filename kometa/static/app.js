@@ -722,32 +722,50 @@ let _matchPollTimer = null;
 async function renderMatchReview() {
   setTopbar(`<button class="btn btn-ghost" onclick="navigate('library')">← Library</button>`);
   setApp('<div class="state-msg">Loading...</div>');
-  clearInterval(_matchPollTimer);
+  clearTimeout(_matchPollTimer);
   await _refreshMatchReview();
+}
+
+function _scanProgressHtml(status) {
+  const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
+  const feed = (status.recent || []).map(r => {
+    const conf = r.confidence;
+    const dot = conf === 'high' ? 'var(--grn)' : conf === 'medium' ? 'var(--amb)' : conf === 'low' ? 'var(--blu)' : 'var(--tq)';
+    const matchText = r.match ? esc(r.match) : '<span style="color:var(--tq)">No match</span>';
+    return `
+      <div class="scan-feed-row">
+        <img class="scan-feed-thumb" src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
+          onerror="this.style.opacity='0.15'">
+        <div class="scan-feed-title">${esc(r.title)}</div>
+        <div class="scan-feed-arrow">→</div>
+        <div class="scan-feed-match">${matchText}</div>
+        <div class="scan-feed-dot" style="background:${dot}"></div>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="match-progress-wrap">
+      <div class="match-progress-bar" style="width:${pct}%"></div>
+    </div>
+    <div class="match-progress-label">Scanning ${status.done} / ${status.total || '?'} series…</div>
+    <div class="scan-feed" id="scan-feed">${feed}</div>
+  `;
 }
 
 async function _refreshMatchReview() {
   const status = await api.get('/api/match/status');
 
   if (status.running) {
-    const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
-    const bar = `
-      <div class="match-progress-wrap">
-        <div class="match-progress-bar" style="width:${pct}%"></div>
-      </div>
-      <div class="match-progress-label">Scanning ${status.done} / ${status.total} series…</div>
-    `;
-    const existing = document.getElementById('match-progress');
-    if (existing) {
-      existing.innerHTML = bar;
+    const el = document.getElementById('match-progress');
+    if (el) {
+      el.innerHTML = _scanProgressHtml(status);
     } else {
       setApp(`
         <div class="page-title">Match Library</div>
-        <div id="match-progress">${bar}</div>
-        <div class="state-msg" style="margin-top:32px">Results will appear here as matching completes.</div>
+        <div id="match-progress">${_scanProgressHtml(status)}</div>
       `);
     }
-    _matchPollTimer = setTimeout(_refreshMatchReview, 1500);
+    _matchPollTimer = setTimeout(_refreshMatchReview, 1200);
     return;
   }
 
@@ -913,7 +931,13 @@ function _matchCard(c, autoChecked) {
 async function startScan(btn) {
   if (btn) btn.disabled = true;
   await api.post('/api/match/scan', {});
-  await renderMatchReview();
+  // Paint progress shell immediately — don't wait for first poll to avoid blank flash
+  setApp(`
+    <div class="page-title">Match Library</div>
+    <div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>
+  `);
+  clearTimeout(_matchPollTimer);
+  _matchPollTimer = setTimeout(_refreshMatchReview, 800);
 }
 
 async function confirmCard(komgaId, btn, metronId) {
