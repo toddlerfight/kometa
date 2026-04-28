@@ -35,7 +35,7 @@ def _normalize(title: str) -> str:
 
 
 def _score(komga_title, komga_year, komga_publisher, result) -> float:
-    m_title = result.get("name") or result.get("series_name") or ""
+    m_title = result.get("series") or result.get("name") or result.get("series_name") or ""
     m_year  = result.get("year_began")
     m_pub   = result.get("publisher") or {}
     m_pub   = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
@@ -116,7 +116,7 @@ def _run(komga_factory, metron_factory, db_path):
                 conf  = _confidence(best_score)
                 m_pub = best.get("publisher") or {}
                 m_pub = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
-                m_title = best.get("name") or best.get("series_name") or ""
+                m_title = best.get("series") or best.get("name") or best.get("series_name") or ""
 
                 db.upsert_candidate(
                     kid, k_title, k_pub, k_year,
@@ -128,22 +128,22 @@ def _run(komga_factory, metron_factory, db_path):
                     confidence       = conf,
                     candidates_json  = json.dumps([
                         {
-                            "id":        r.get("id"),
-                            "name":      r.get("name") or r.get("series_name") or "",
+                            "id":    r.get("id"),
+                            "name":  r.get("series") or r.get("name") or r.get("series_name") or "",
                             "publisher": (r.get("publisher") or {}).get("name", "") if isinstance(r.get("publisher"), dict) else "",
-                            "year":      r.get("year_began"),
-                            "score":     sc,
+                            "year":  r.get("year_began"),
+                            "score": sc,
                         }
                         for r, sc in scored[:5]
                     ]),
                     path=db_path,
                 )
                 _recent.appendleft({
-                    "komga_id":    kid,
-                    "title":       k_title,
-                    "match":       m_title,
-                    "confidence":  conf,
-                    "score":       best_score,
+                    "komga_id":   kid,
+                    "title":      k_title,
+                    "match":      m_title or None,
+                    "confidence": conf,
+                    "score":      best_score,
                 })
             else:
                 db.upsert_candidate(kid, k_title, k_pub, k_year, confidence="none", path=db_path)

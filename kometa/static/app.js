@@ -197,10 +197,7 @@ async function syncSeries(id, btn) {
 let browseState = { page: 0, search: '', searchTimer: null, filter: 'all' };
 
 async function renderLibraryBrowse() {
-  setTopbar(`
-    <button class="btn btn-ghost" onclick="navigate('match-review')">Match Library</button>
-    <button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>
-  `);
+  setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>`);
   setApp('<div class="state-msg">Loading...</div>');
   browseState.page = 0;
   browseState.search = '';
