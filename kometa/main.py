@@ -88,10 +88,17 @@ class TestKomgaRequest(BaseModel):
     password: str
 
 
+def _normalize_url(url: str) -> str:
+    url = url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    return url
+
+
 @app.post("/api/test/komga")
 def test_komga(req: TestKomgaRequest):
     try:
-        client = KomgaClient(base_url=req.url, auth=(req.user, req.password))
+        client = KomgaClient(base_url=_normalize_url(req.url), auth=(req.user, req.password))
         r = client.session.get(f"{client.base_url}/api/v1/libraries", timeout=8)
         r.raise_for_status()
         raw = r.json()
@@ -146,6 +153,8 @@ class ConfigRequest(BaseModel):
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
+    if "komga_url" in updates:
+        updates["komga_url"] = _normalize_url(updates["komga_url"])
     db.set_config(updates, DB_PATH)
     return get_config()
 
