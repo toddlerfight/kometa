@@ -149,8 +149,10 @@ async function renderSeries() {
       <div class="series-card" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
-        <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
-          onerror="this.style.opacity='0.15'">
+        <div class="series-card-img-wrap">
+          <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
+            onerror="this.style.opacity='0.15'">
+        </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
         </div>
@@ -229,9 +231,11 @@ async function _loadBrowsePage() {
         <div class="series-card browse-tracked" tabindex="0" role="button"
           onclick="navigate('series-detail', {id: ${s.tracked_id}})"
           onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.tracked_id}})">
-          <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
-            onerror="this.style.opacity='0.15'">
-          <div class="browse-tracked-badge">Tracked</div>
+          <div class="series-card-img-wrap">
+            <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+              onerror="this.style.opacity='0.15'">
+            <div class="browse-tracked-badge">Tracked</div>
+          </div>
           <div class="series-card-footer">
             <div class="series-card-title">${esc(s.name)}</div>
           </div>
@@ -244,9 +248,11 @@ async function _loadBrowsePage() {
         data-series="${esc(JSON.stringify(s))}"
         onclick="navigateKomgaSeries(this.dataset.series)"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigateKomgaSeries(this.dataset.series)">
-        <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
-          onerror="this.style.opacity='0.15'">
-        <div class="browse-add-overlay"><span>View</span></div>
+        <div class="series-card-img-wrap">
+          <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+            onerror="this.style.opacity='0.15'">
+          <div class="browse-add-overlay"><span>View</span></div>
+        </div>
         <div class="series-card-footer">
           <div class="series-card-title">${esc(s.name)}</div>
         </div>
