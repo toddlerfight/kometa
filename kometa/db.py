@@ -1,0 +1,128 @@
+import sqlite3
+from contextlib import contextmanager
+
+DB_PATH = "/data/kometa.db"
+
+
+def init_db(path=DB_PATH):
+    with _connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS tracked_series (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                komga_series_id   TEXT NOT NULL UNIQUE,
+                metron_series_id  INTEGER NOT NULL,
+                title             TEXT NOT NULL,
+                publisher         TEXT,
+                year_began        INTEGER,
+                added_at          TEXT DEFAULT (datetime('now')),
+                last_synced       TEXT,
+                on_pull_list      INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS issue_status (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
+                number            REAL NOT NULL,
+                store_date        TEXT,
+                in_komga          INTEGER NOT NULL DEFAULT 0,
+                komga_book_id     TEXT,
+                UNIQUE(tracked_series_id, number)
+            );
+        """)
+    _migrate(path)
+
+
+@contextmanager
+def _connect(path=DB_PATH):
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_connection(path=DB_PATH):
+    return _connect(path)
+
+
+def _migrate(path=DB_PATH):
+    with _connect(path) as conn:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
+        if "on_pull_list" not in cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN on_pull_list INTEGER NOT NULL DEFAULT 1")
+
+
+def add_series(komga_series_id, metron_series_id, title, publisher=None, year_began=None, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher, year_began)
+            VALUES (?, ?, ?, ?, ?)
+        """, (komga_series_id, metron_series_id, title, publisher, year_began))
+
+
+def remove_series(series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("DELETE FROM issue_status WHERE tracked_series_id = ?", (series_id,))
+        conn.execute("DELETE FROM tracked_series WHERE id = ?", (series_id,))
+
+
+def get_all_series(path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM tracked_series ORDER BY title")]
+
+
+def get_series_by_id(series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        row = conn.execute("SELECT * FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(tracked_series_id, number) DO UPDATE SET
+                store_date = excluded.store_date,
+                in_komga = excluded.in_komga,
+                komga_book_id = excluded.komga_book_id
+        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id))
+
+
+def set_pull_list(series_id, on_pull_list, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET on_pull_list = ? WHERE id = ?",
+            (int(on_pull_list), series_id),
+        )
+
+
+def mark_synced(series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            UPDATE tracked_series SET last_synced = datetime('now') WHERE id = ?
+        """, (series_id,))
+
+
+def get_issues_for_series(tracked_series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT * FROM issue_status WHERE tracked_series_id = ? ORDER BY number
+        """, (tracked_series_id,))]
+
+
+def get_upcoming_issues(days=90, path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT s.title, i.number, i.store_date
+            FROM issue_status i
+            JOIN tracked_series s ON s.id = i.tracked_series_id
+            WHERE i.in_komga = 0
+              AND i.store_date IS NOT NULL
+              AND i.store_date > date('now')
+              AND i.store_date <= date('now', ? || ' days')
+              AND s.on_pull_list = 1
+            ORDER BY i.store_date, s.title
+        """, (str(days),))]
