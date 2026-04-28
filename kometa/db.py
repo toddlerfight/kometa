@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 
@@ -28,8 +29,14 @@ def init_db(path=DB_PATH):
                 komga_book_id     TEXT,
                 UNIQUE(tracked_series_id, number)
             );
+
+            CREATE TABLE IF NOT EXISTS config (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
     _migrate(path)
+    _seed_defaults(path)
 
 
 @contextmanager
@@ -53,6 +60,36 @@ def _migrate(path=DB_PATH):
         if "on_pull_list" not in cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN on_pull_list INTEGER NOT NULL DEFAULT 1")
 
+
+def _seed_defaults(path=DB_PATH):
+    # Only seed non-secret defaults — credentials come from onboarding
+    defaults = {
+        "sync_hours": os.environ.get("KOMETA_SYNC_HOURS", "5,12,17"),
+    }
+    with _connect(path) as conn:
+        for key, value in defaults.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+
+def get_config(path=DB_PATH) -> dict:
+    with _connect(path) as conn:
+        rows = conn.execute("SELECT key, value FROM config").fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
+
+def set_config(updates: dict, path=DB_PATH):
+    with _connect(path) as conn:
+        for key, value in updates.items():
+            conn.execute(
+                "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+
+# --- Series ---
 
 def add_series(komga_series_id, metron_series_id, title, publisher=None, year_began=None, path=DB_PATH):
     with _connect(path) as conn:

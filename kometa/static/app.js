@@ -32,8 +32,9 @@ function navigate(view, params = {}) {
 }
 
 function updateNav() {
+  const navView = currentView === 'series-detail' || currentView === 'library-browse' ? 'series' : currentView;
   document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.view === currentView);
+    el.classList.toggle('active', el.dataset.view === navView);
   });
 }
 
@@ -48,13 +49,14 @@ function setApp(html) {
 
 function renderView() {
   switch (currentView) {
-    case 'series':        return renderSeries();
-    case 'series-detail': return renderSeriesDetail(currentParams.id);
-    case 'pull-list':     return renderPullList();
-    case 'activity':      return renderActivity();
-    case 'wanted':        return renderWanted();
-    case 'settings':      return renderSettings();
-    default:              setApp('<div class="state-msg">Not found</div>');
+    case 'series':          return renderSeries();
+    case 'series-detail':   return renderSeriesDetail(currentParams.id);
+    case 'library-browse':  return renderLibraryBrowse();
+    case 'pull-list':       return renderPullList();
+    case 'activity':        return renderActivity();
+    case 'wanted':          return renderWanted();
+    case 'settings':        return renderSettings();
+    default:                setApp('<div class="state-msg">Not found</div>');
   }
 }
 
@@ -105,7 +107,6 @@ function pullGroup(isoDate) {
   return 'Later';
 }
 
-// progress bar color: green=100%, lime≥90%, amber otherwise
 function barColor(owned, total) {
   if (!total) return 'var(--su3)';
   const pct = owned / total;
@@ -119,17 +120,23 @@ function countColor(owned, total) {
   return owned >= total ? 'var(--grn)' : 'var(--tm)';
 }
 
-// --- Series List (poster grid) ---
+// --- Series List ---
 
 async function renderSeries() {
   setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>
-    <button class="btn btn-primary" onclick="showAddSeries()">+ Add Series</button>`);
+    <button class="btn btn-primary" onclick="navigate('library-browse')">+ Add Series</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
   const series = await api.get('/api/series');
 
   if (!series.length) {
-    setApp('<div class="state-msg">No series tracked yet.</div>');
+    setApp(`
+      <div class="empty-state">
+        <div class="empty-state-title">No series tracked yet</div>
+        <div class="empty-state-body">Browse your Komga library to start tracking series.</div>
+        <button class="btn btn-primary" onclick="navigate('library-browse')">Browse Library</button>
+      </div>
+    `);
     return;
   }
 
@@ -140,7 +147,9 @@ async function renderSeries() {
     const cc = countColor(s.owned, total);
     const pub = s.publisher ? s.publisher.toUpperCase() : '';
     return `
-      <div class="series-card" tabindex="0" role="button" onclick="navigate('series-detail', {id: ${s.id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
+      <div class="series-card" tabindex="0" role="button"
+        onclick="navigate('series-detail', {id: ${s.id}})"
+        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
           onerror="this.style.opacity='0.15'">
         <div class="series-card-bar-track">
@@ -179,6 +188,173 @@ async function syncSeries(id, btn) {
     }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
+  }
+}
+
+// --- Library Browse ---
+
+let browseState = { page: 0, search: '', searchTimer: null };
+
+async function renderLibraryBrowse() {
+  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('series')">← Back</button>`);
+  setApp('<div class="state-msg">Loading...</div>');
+  browseState.page = 0;
+  browseState.search = '';
+  await _loadBrowsePage();
+}
+
+async function _loadBrowsePage() {
+  const { page, search } = browseState;
+  const qs = `page=${page}&size=48${search ? '&search=' + encodeURIComponent(search) : ''}`;
+  const data = await api.get(`/api/library/komga?${qs}`);
+
+  const cards = data.items.map(s => {
+    const pub = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
+    if (s.tracked) {
+      return `
+        <div class="series-card browse-tracked">
+          <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+            onerror="this.style.opacity='0.15'">
+          <div class="browse-tracked-badge">Tracked</div>
+          <div class="series-card-footer">
+            <div class="series-card-title">${esc(s.name)}</div>
+          </div>
+          ${pub}
+        </div>
+      `;
+    }
+    return `
+      <div class="series-card browse-card" tabindex="0" role="button"
+        onclick="showMetronMatch(${JSON.stringify(JSON.stringify(s))})"
+        onkeydown="if(event.key==='Enter'||event.key===' ')showMetronMatch(${JSON.stringify(JSON.stringify(s))})">
+        <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+          onerror="this.style.opacity='0.15'">
+        <div class="browse-add-overlay"><span>+ Track</span></div>
+        <div class="series-card-footer">
+          <div class="series-card-title">${esc(s.name)}</div>
+        </div>
+        ${pub}
+      </div>
+    `;
+  }).join('');
+
+  const prevBtn = page > 0
+    ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page - 1})">← Prev</button>`
+    : `<button class="btn btn-ghost btn-sm" disabled>← Prev</button>`;
+  const nextBtn = !data.last
+    ? `<button class="btn btn-ghost btn-sm" onclick="browsePage(${page + 1})">Next →</button>`
+    : `<button class="btn btn-ghost btn-sm" disabled>Next →</button>`;
+
+  const total = data.total;
+  const showing = `${page * 48 + 1}–${Math.min((page + 1) * 48, total)} of ${total}`;
+
+  setApp(`
+    <div class="browse-header">
+      <div class="page-title" style="margin:0;border:none;padding:0">Browse Library</div>
+      <input class="browse-search" id="browse-search" placeholder="Filter series…"
+        value="${esc(browseState.search)}"
+        oninput="browseSearch(this.value)">
+    </div>
+    ${data.items.length ? `<div class="series-grid">${cards}</div>` : '<div class="state-msg">No series found.</div>'}
+    <div class="browse-pagination">
+      ${prevBtn}
+      <span class="browse-page-info">${showing}</span>
+      ${nextBtn}
+    </div>
+  `);
+
+  document.getElementById('browse-search')?.focus();
+}
+
+function browsePage(page) {
+  browseState.page = page;
+  setApp('<div class="state-msg">Loading...</div>');
+  _loadBrowsePage();
+}
+
+function browseSearch(val) {
+  clearTimeout(browseState.searchTimer);
+  browseState.searchTimer = setTimeout(() => {
+    browseState.search = val;
+    browseState.page = 0;
+    _loadBrowsePage();
+  }, 300);
+}
+
+// --- Metron Match Modal ---
+
+let metronMatchState = { komgaSeries: null, metronId: null };
+let metronMatchTimer = null;
+
+function showMetronMatch(jsonStr) {
+  const s = JSON.parse(jsonStr);
+  metronMatchState = { komgaSeries: s, metronId: null };
+
+  showModal(`
+    <div class="modal-title">Track Series</div>
+    <div class="match-komga-row">
+      <img class="match-thumb" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
+      <div>
+        <div class="match-komga-title">${esc(s.name)}</div>
+        ${s.publisher ? `<div class="match-komga-meta">${esc(s.publisher.toUpperCase())}${s.year ? ' · ' + s.year : ''}</div>` : ''}
+      </div>
+    </div>
+    <div class="step-label" style="margin-top:20px">Match on Metron</div>
+    <input class="search-input" id="metron-match-q" placeholder="Search Metron…"
+      value="${esc(s.name)}" oninput="metronMatchSearch(this.value)">
+    <div class="search-results" id="metron-match-results"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="match-add-btn" disabled onclick="submitMetronMatch()">Track Series</button>
+    </div>
+  `);
+
+  metronMatchSearch(s.name);
+}
+
+function metronMatchSearch(q) {
+  clearTimeout(metronMatchTimer);
+  const el = document.getElementById('metron-match-results');
+  if (!el || q.length < 2) { if (el) el.innerHTML = ''; return; }
+  metronMatchTimer = setTimeout(async () => {
+    el.innerHTML = '<div class="state-msg" style="padding:16px 0;font-size:10px">Searching…</div>';
+    try {
+      const results = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
+      if (!document.getElementById('metron-match-results')) return;
+      document.getElementById('metron-match-results').innerHTML = results.slice(0, 8).map(r => `
+        <div class="search-result" onclick="selectMetronMatch(this, ${r.id})">
+          <div>
+            <div class="search-result-title">${esc(r.name || r.series_name || '')}</div>
+            <div class="search-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}</div>
+          </div>
+        </div>
+      `).join('') || '<div class="state-msg" style="padding:16px 0;font-size:10px">No results.</div>';
+    } catch {
+      document.getElementById('metron-match-results').innerHTML = '<div class="state-msg" style="padding:16px 0;font-size:10px;color:var(--amb)">Search failed.</div>';
+    }
+  }, 280);
+}
+
+function selectMetronMatch(el, id) {
+  metronMatchState.metronId = id;
+  document.querySelectorAll('#metron-match-results .search-result').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('match-add-btn').disabled = false;
+}
+
+async function submitMetronMatch() {
+  const { komgaSeries, metronId } = metronMatchState;
+  if (!komgaSeries || !metronId) return;
+  const btn = document.getElementById('match-add-btn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    await api.post('/api/series', { komga_id: komgaSeries.id, metron_id: metronId });
+    closeModal();
+    await _loadBrowsePage();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Track Series';
+    alert('Failed to add series — check console.');
+    console.error(e);
   }
 }
 
@@ -359,7 +535,9 @@ async function renderActivity() {
       ? `${s.title} — ${s.owned} owned`
       : `${s.title} — no new issues`;
     return `
-      <div class="activity-row ${evClass}" tabindex="0" role="button" onclick="navigate('series-detail', {id: ${s.id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
+      <div class="activity-row ${evClass}" tabindex="0" role="button"
+        onclick="navigate('series-detail', {id: ${s.id}})"
+        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="activity-event">Sync complete</div>
         <div class="activity-detail">${esc(detail)}</div>
         <div class="activity-time">${relativeTime(s.last_synced)}</div>
@@ -398,7 +576,9 @@ async function renderWanted() {
   }
 
   const html = rows.map(({ s, iss }) => `
-    <div class="pull-row" tabindex="0" role="button" onclick="navigate('series-detail', {id: ${s.id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
+    <div class="pull-row" tabindex="0" role="button"
+      onclick="navigate('series-detail', {id: ${s.id}})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
       <img class="pull-thumb" src="/api/series/${s.id}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
       <div class="pull-series">${esc(s.title)}</div>
       <div class="pull-issue">Issue #${fmtNum(iss.number)}</div>
@@ -411,8 +591,12 @@ async function renderWanted() {
 
 // --- Settings ---
 
-function renderSettings() {
+async function renderSettings() {
   setTopbar();
+  setApp('<div class="state-msg">Loading...</div>');
+
+  const cfg = await api.get('/api/config');
+
   setApp(`
     <div class="page-title">Settings</div>
     <div class="settings-grid">
@@ -420,15 +604,19 @@ function renderSettings() {
         <div class="settings-card-header">Komga</div>
         <div class="settings-field">
           <div class="settings-field-label">Server URL</div>
-          <input class="settings-input" id="s-komga-url" value="http://192.168.1.166:8585">
+          <input class="settings-input" id="s-komga-url" value="${esc(cfg.komga_url)}">
         </div>
         <div class="settings-field">
           <div class="settings-field-label">Username</div>
-          <input class="settings-input" id="s-komga-user" value="admin">
+          <input class="settings-input" id="s-komga-user" value="${esc(cfg.komga_user)}">
         </div>
         <div class="settings-field">
           <div class="settings-field-label">Password</div>
-          <input class="settings-input" id="s-komga-pass" type="password" value="••••••••••">
+          <input class="settings-input" id="s-komga-pass" type="password" placeholder="Leave blank to keep current">
+        </div>
+        <div class="settings-field">
+          <div class="settings-field-label">Library ID</div>
+          <input class="settings-input" id="s-komga-lib" value="${esc(cfg.komga_library_id)}">
         </div>
       </div>
       <div>
@@ -436,22 +624,18 @@ function renderSettings() {
           <div class="settings-card-header">Metron</div>
           <div class="settings-field">
             <div class="settings-field-label">Username</div>
-            <input class="settings-input" id="s-metron-user" value="beakers">
+            <input class="settings-input" id="s-metron-user" value="${esc(cfg.metron_user)}">
           </div>
           <div class="settings-field">
             <div class="settings-field-label">Password</div>
-            <input class="settings-input" id="s-metron-pass" type="password" value="••••••••••">
+            <input class="settings-input" id="s-metron-pass" type="password" placeholder="Leave blank to keep current">
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
           <div class="settings-card-header">Sync Schedule</div>
           <div class="settings-field">
-            <div class="settings-field-label">Hours (24h)</div>
-            <input class="settings-input" id="s-sync-hours" value="5, 12, 17">
-          </div>
-          <div class="settings-field">
-            <div class="settings-field-label">Timezone</div>
-            <input class="settings-input" id="s-timezone" value="Australia/Sydney">
+            <div class="settings-field-label">Hours (24h, comma-separated)</div>
+            <input class="settings-input" id="s-sync-hours" value="${esc(cfg.sync_hours)}">
           </div>
         </div>
       </div>
@@ -462,103 +646,27 @@ function renderSettings() {
   `);
 }
 
-function saveSettings(btn) {
-  btn.disabled = true; btn.textContent = 'Saved';
-  setTimeout(() => { btn.disabled = false; btn.textContent = 'Save Settings'; }, 1500);
-}
+async function saveSettings(btn) {
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const updates = {
+    komga_url:        document.getElementById('s-komga-url').value.trim(),
+    komga_user:       document.getElementById('s-komga-user').value.trim(),
+    komga_library_id: document.getElementById('s-komga-lib').value.trim(),
+    metron_user:      document.getElementById('s-metron-user').value.trim(),
+    sync_hours:       document.getElementById('s-sync-hours').value.trim(),
+  };
+  const pass = document.getElementById('s-komga-pass').value;
+  const mpass = document.getElementById('s-metron-pass').value;
+  if (pass)  updates.komga_pass  = pass;
+  if (mpass) updates.metron_pass = mpass;
 
-// --- Add Series Modal ---
-
-let addState = { komga: null, metron: null };
-
-function showAddSeries() {
-  addState = { komga: null, metron: null };
-  showModal(`
-    <div class="modal-title">Add Series</div>
-    <div class="step-label">Step 1 — Select from Komga</div>
-    <input class="search-input" id="komga-q" placeholder="Search your Komga library..." oninput="searchKomga(this.value)">
-    <div class="search-results" id="komga-results"></div>
-    <div id="step2" class="hidden" style="margin-top:20px">
-      <div class="step-label">Step 2 — Match on Metron</div>
-      <input class="search-input" id="metron-q" placeholder="Search Metron..." oninput="searchMetron(this.value)">
-      <div class="search-results" id="metron-results"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" id="add-btn" disabled onclick="submitAdd()">Add Series</button>
-    </div>
-  `);
-  setTimeout(() => document.getElementById('komga-q')?.focus(), 50);
-}
-
-let komgaTimer, metronTimer;
-
-function searchKomga(q) {
-  clearTimeout(komgaTimer);
-  const el = document.getElementById('komga-results');
-  if (!el || q.length < 2) { if (el) el.innerHTML = ''; return; }
-  komgaTimer = setTimeout(async () => {
-    const results = await api.get(`/api/search/komga?q=${encodeURIComponent(q)}`);
-    if (!document.getElementById('komga-results')) return;
-    document.getElementById('komga-results').innerHTML = results.slice(0, 10).map(r => `
-      <div class="search-result" onclick="selectKomga(this, ${JSON.stringify(JSON.stringify(r))})">
-        <div>
-          <div class="search-result-title">${esc(r.name || r.metadata?.title || '')}</div>
-          <div class="search-result-meta">${esc(r.metadata?.publisher || '')}${r.metadata?.startYear ? ' · ' + r.metadata.startYear : ''}</div>
-        </div>
-      </div>
-    `).join('');
-  }, 280);
-}
-
-function selectKomga(el, jsonStr) {
-  const r = JSON.parse(jsonStr);
-  addState.komga = r; addState.metron = null;
-  document.querySelectorAll('#komga-results .search-result').forEach(e => e.classList.remove('selected'));
-  el.classList.add('selected');
-  document.getElementById('step2').classList.remove('hidden');
-  const mq = document.getElementById('metron-q');
-  mq.value = r.name || r.metadata?.title || '';
-  document.getElementById('add-btn').disabled = true;
-  searchMetron(mq.value);
-}
-
-function searchMetron(q) {
-  clearTimeout(metronTimer);
-  const el = document.getElementById('metron-results');
-  if (!el || q.length < 2) { if (el) el.innerHTML = ''; return; }
-  metronTimer = setTimeout(async () => {
-    const results = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
-    if (!document.getElementById('metron-results')) return;
-    document.getElementById('metron-results').innerHTML = results.slice(0, 10).map(r => `
-      <div class="search-result" onclick="selectMetron(this, ${r.id})">
-        <div>
-          <div class="search-result-title">${esc(r.name || r.series_name || '')}</div>
-          <div class="search-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}</div>
-        </div>
-      </div>
-    `).join('');
-  }, 280);
-}
-
-function selectMetron(el, id) {
-  addState.metron = { id };
-  document.querySelectorAll('#metron-results .search-result').forEach(e => e.classList.remove('selected'));
-  el.classList.add('selected');
-  document.getElementById('add-btn').disabled = false;
-}
-
-async function submitAdd() {
-  if (!addState.komga || !addState.metron) return;
-  const btn = document.getElementById('add-btn');
-  btn.disabled = true; btn.textContent = 'Adding...';
   try {
-    await api.post('/api/series', { komga_id: addState.komga.id, metron_id: addState.metron.id });
-    closeModal();
-    navigate('series');
-  } catch(e) {
-    btn.disabled = false; btn.textContent = 'Add Series';
-    alert('Failed to add series — check console.');
+    await api.patch('/api/config', updates);
+    btn.textContent = 'Saved ✓';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Save Settings'; }, 1500);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Save Settings';
+    alert('Save failed — check console.');
     console.error(e);
   }
 }
@@ -570,7 +678,6 @@ function showModal(html) {
   modal.innerHTML = html;
   modal.classList.remove('hidden');
   document.getElementById('modal-backdrop').classList.remove('hidden');
-  // focus first focusable element
   const first = modal.querySelector('button, input, [tabindex]');
   if (first) setTimeout(() => first.focus(), 30);
 }
@@ -586,10 +693,187 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// --- Onboarding ---
+
+let onboardState = {
+  komgaOk: false,
+  metronOk: false,
+  libraries: [],
+};
+
+async function renderOnboarding() {
+  document.getElementById('sidebar').style.opacity = '0.35';
+  document.getElementById('sidebar').style.pointerEvents = 'none';
+  setTopbar();
+  setApp(`
+    <div class="onboard-wrap">
+      <div class="onboard-title">Welcome to kometa</div>
+      <div class="onboard-subtitle">Connect your Komga library and Metron account to get started.</div>
+
+      <div class="onboard-card" id="onboard-komga">
+        <div class="onboard-card-header">Komga</div>
+        <div class="settings-field">
+          <div class="settings-field-label">Server URL</div>
+          <input class="settings-input" id="ob-komga-url" placeholder="http://192.168.1.x:8585"
+            oninput="onboardReset('komga')">
+        </div>
+        <div class="settings-field">
+          <div class="settings-field-label">Username</div>
+          <input class="settings-input" id="ob-komga-user" placeholder="your@email.com"
+            oninput="onboardReset('komga')">
+        </div>
+        <div class="settings-field">
+          <div class="settings-field-label">Password</div>
+          <input class="settings-input" id="ob-komga-pass" type="password"
+            oninput="onboardReset('komga')">
+        </div>
+        <div class="onboard-card-footer">
+          <span class="onboard-status" id="ob-komga-status"></span>
+          <button class="btn btn-ghost btn-sm" onclick="testKomga(this)">Test Connection</button>
+        </div>
+        <div id="ob-library-wrap" class="hidden">
+          <div class="settings-field" style="margin-top:14px">
+            <div class="settings-field-label">Library</div>
+            <select class="settings-input" id="ob-library-id">
+              <option value="">— select library —</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="onboard-card" id="onboard-metron">
+        <div class="onboard-card-header">Metron</div>
+        <div class="settings-field">
+          <div class="settings-field-label">Username</div>
+          <input class="settings-input" id="ob-metron-user" placeholder="your username"
+            oninput="onboardReset('metron')">
+        </div>
+        <div class="settings-field">
+          <div class="settings-field-label">Password</div>
+          <input class="settings-input" id="ob-metron-pass" type="password"
+            oninput="onboardReset('metron')">
+        </div>
+        <div class="onboard-card-footer">
+          <span class="onboard-status" id="ob-metron-status"></span>
+          <button class="btn btn-ghost btn-sm" onclick="testMetron(this)">Test Connection</button>
+        </div>
+      </div>
+
+      <div class="onboard-footer">
+        <button class="btn btn-primary" id="ob-finish-btn" disabled onclick="finishOnboarding(this)">
+          Save &amp; Browse Library →
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function onboardReset(which) {
+  if (which === 'komga') {
+    onboardState.komgaOk = false;
+    document.getElementById('ob-komga-status').textContent = '';
+    document.getElementById('ob-komga-status').className = 'onboard-status';
+    document.getElementById('ob-library-wrap')?.classList.add('hidden');
+  } else {
+    onboardState.metronOk = false;
+    document.getElementById('ob-metron-status').textContent = '';
+    document.getElementById('ob-metron-status').className = 'onboard-status';
+  }
+  document.getElementById('ob-finish-btn').disabled = true;
+}
+
+function _onboardCheck() {
+  const libId = document.getElementById('ob-library-id')?.value;
+  const ready = onboardState.komgaOk && onboardState.metronOk && libId;
+  document.getElementById('ob-finish-btn').disabled = !ready;
+}
+
+async function testKomga(btn) {
+  btn.disabled = true; btn.textContent = 'Testing…';
+  const status = document.getElementById('ob-komga-status');
+  const url  = document.getElementById('ob-komga-url').value.trim();
+  const user = document.getElementById('ob-komga-user').value.trim();
+  const pass = document.getElementById('ob-komga-pass').value;
+  try {
+    const res = await api.post('/api/test/komga', { url, user, password: pass });
+    if (res.ok) {
+      onboardState.komgaOk = true;
+      onboardState.libraries = res.libraries;
+      status.textContent = '✓ Connected';
+      status.className = 'onboard-status ok';
+      const wrap = document.getElementById('ob-library-wrap');
+      const sel = document.getElementById('ob-library-id');
+      sel.innerHTML = '<option value="">— select library —</option>' +
+        res.libraries.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+      if (res.libraries.length === 1) sel.value = res.libraries[0].id;
+      wrap.classList.remove('hidden');
+      sel.onchange = _onboardCheck;
+      _onboardCheck();
+    } else {
+      status.textContent = '✗ ' + (res.error || 'Failed');
+      status.className = 'onboard-status err';
+    }
+  } catch (e) {
+    status.textContent = '✗ Request failed';
+    status.className = 'onboard-status err';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Test Connection';
+  }
+}
+
+async function testMetron(btn) {
+  btn.disabled = true; btn.textContent = 'Testing…';
+  const status = document.getElementById('ob-metron-status');
+  const user = document.getElementById('ob-metron-user').value.trim();
+  const pass = document.getElementById('ob-metron-pass').value;
+  try {
+    const res = await api.post('/api/test/metron', { user, password: pass });
+    if (res.ok) {
+      onboardState.metronOk = true;
+      status.textContent = '✓ Connected';
+      status.className = 'onboard-status ok';
+      _onboardCheck();
+    } else {
+      status.textContent = '✗ ' + (res.error || 'Failed');
+      status.className = 'onboard-status err';
+    }
+  } catch (e) {
+    status.textContent = '✗ Request failed';
+    status.className = 'onboard-status err';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Test Connection';
+  }
+}
+
+async function finishOnboarding(btn) {
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const updates = {
+    komga_url:        document.getElementById('ob-komga-url').value.trim(),
+    komga_user:       document.getElementById('ob-komga-user').value.trim(),
+    komga_pass:       document.getElementById('ob-komga-pass').value,
+    komga_library_id: document.getElementById('ob-library-id').value,
+    metron_user:      document.getElementById('ob-metron-user').value.trim(),
+    metron_pass:      document.getElementById('ob-metron-pass').value,
+  };
+  await api.patch('/api/config', updates);
+  document.getElementById('sidebar').style.opacity = '';
+  document.getElementById('sidebar').style.pointerEvents = '';
+  navigate('library-browse');
+}
+
 // --- Boot ---
 
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => navigate(el.dataset.view));
 });
 
-navigate('series');
+async function boot() {
+  const cfg = await api.get('/api/config');
+  if (!cfg.komga_url) {
+    renderOnboarding();
+  } else {
+    navigate('series');
+  }
+}
+
+boot();

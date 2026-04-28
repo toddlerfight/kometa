@@ -226,6 +226,230 @@ body {
   border-bottom: 1px solid var(--bd);
 }
 
+/* ---- Onboarding ---- */
+
+.onboard-wrap {
+  max-width: 560px;
+  margin: 32px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.onboard-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--tp);
+}
+
+.onboard-subtitle {
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  color: var(--tq);
+  margin-top: -12px;
+}
+
+.onboard-card {
+  background: var(--su1);
+  border: 1px solid var(--bd);
+  border-radius: 4px;
+  padding: 20px;
+}
+
+.onboard-card-header {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--tq);
+  margin-bottom: 16px;
+}
+
+.onboard-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.onboard-status {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.onboard-status.ok  { color: var(--grn); }
+.onboard-status.err { color: var(--amb); }
+
+.onboard-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+select.settings-input {
+  cursor: pointer;
+}
+
+/* ---- Empty state ---- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 80px 0;
+  text-align: center;
+}
+
+.empty-state-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--tp);
+}
+
+.empty-state-body {
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  color: var(--tq);
+  margin-bottom: 8px;
+}
+
+/* ---- Library Browse ---- */
+
+.browse-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--bd);
+}
+
+.browse-search {
+  flex: 1;
+  max-width: 320px;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  border-radius: 2px;
+  color: var(--tp);
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  padding: 7px 12px;
+  outline: none;
+}
+
+.browse-search:focus { border-color: var(--pri); }
+
+.browse-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0 8px;
+}
+
+.browse-page-info {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--tq);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.browse-tracked {
+  opacity: 0.45;
+  cursor: default;
+  position: relative;
+}
+
+.browse-tracked-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--grn);
+  color: #000;
+  font-family: 'Space Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  border-radius: 2px;
+}
+
+.browse-card {
+  position: relative;
+}
+
+.browse-add-overlay {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 268px;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s;
+  border-radius: 3px;
+}
+
+.browse-card:hover .browse-add-overlay,
+.browse-card:focus .browse-add-overlay { opacity: 1; }
+
+.browse-add-overlay span {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--pri);
+  background: rgba(0,0,0,0.7);
+  padding: 6px 12px;
+  border: 1px solid var(--pri);
+  border-radius: 2px;
+}
+
+/* ---- Metron Match Modal ---- */
+
+.match-komga-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+}
+
+.match-thumb {
+  width: 36px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--su3);
+  flex-shrink: 0;
+}
+
+.match-komga-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--tp);
+}
+
+.match-komga-meta {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--tq);
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
 /* ---- Series Poster Grid ---- */
 
 .series-grid {
