@@ -205,6 +205,21 @@ async function renderLibraryBrowse() {
 async function _loadBrowsePage() {
   const { page, search } = browseState;
   const qs = `page=${page}&size=48${search ? '&search=' + encodeURIComponent(search) : ''}`;
+
+  const firstRender = !document.getElementById('browse-search');
+  if (firstRender) {
+    setApp(`
+      <div class="browse-header">
+        <div class="page-title" style="margin:0;border:none;padding:0">Browse Library</div>
+        <input class="browse-search" id="browse-search" placeholder="Filter series…"
+          value="${esc(search)}"
+          oninput="browseSearch(this.value)">
+      </div>
+      <div id="browse-results"><div class="state-msg">Loading...</div></div>
+    `);
+    document.getElementById('browse-search')?.focus();
+  }
+
   const data = await api.get(`/api/library/komga?${qs}`);
 
   const cards = data.items.map(s => {
@@ -250,22 +265,14 @@ async function _loadBrowsePage() {
   const total = data.total;
   const showing = `${page * 48 + 1}–${Math.min((page + 1) * 48, total)} of ${total}`;
 
-  setApp(`
-    <div class="browse-header">
-      <div class="page-title" style="margin:0;border:none;padding:0">Browse Library</div>
-      <input class="browse-search" id="browse-search" placeholder="Filter series…"
-        value="${esc(browseState.search)}"
-        oninput="browseSearch(this.value)">
-    </div>
+  document.getElementById('browse-results').innerHTML = `
     ${data.items.length ? `<div class="series-grid">${cards}</div>` : '<div class="state-msg">No series found.</div>'}
     <div class="browse-pagination">
       ${prevBtn}
       <span class="browse-page-info">${showing}</span>
       ${nextBtn}
     </div>
-  `);
-
-  document.getElementById('browse-search')?.focus();
+  `;
 }
 
 function navigateKomgaSeries(jsonStr) {
