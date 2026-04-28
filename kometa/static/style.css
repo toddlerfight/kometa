@@ -412,6 +412,27 @@ select.settings-input {
   border-radius: 2px;
 }
 
+/* ---- Untracked placeholder ---- */
+
+.untracked-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 24px;
+  border: 1px dashed var(--bd);
+  border-radius: 3px;
+  margin-top: 24px;
+}
+
+.untracked-placeholder-text {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tq);
+  text-align: center;
+}
+
 /* ---- Metron Match Modal ---- */
 
 .match-komga-row {

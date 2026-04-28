@@ -227,11 +227,11 @@ async function _loadBrowsePage() {
     return `
       <div class="series-card browse-card" tabindex="0" role="button"
         data-series="${esc(JSON.stringify(s))}"
-        onclick="showMetronMatch(this.dataset.series)"
-        onkeydown="if(event.key==='Enter'||event.key===' ')showMetronMatch(this.dataset.series)">
+        onclick="navigateKomgaSeries(this.dataset.series)"
+        onkeydown="if(event.key==='Enter'||event.key===' ')navigateKomgaSeries(this.dataset.series)">
         <img class="series-card-cover" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
           onerror="this.style.opacity='0.15'">
-        <div class="browse-add-overlay"><span>+ Track</span></div>
+        <div class="browse-add-overlay"><span>View</span></div>
         <div class="series-card-footer">
           <div class="series-card-title">${esc(s.name)}</div>
         </div>
@@ -266,6 +266,11 @@ async function _loadBrowsePage() {
   `);
 
   document.getElementById('browse-search')?.focus();
+}
+
+function navigateKomgaSeries(jsonStr) {
+  const s = JSON.parse(jsonStr);
+  navigate('series-detail', { komgaId: s.id, komgaData: s });
 }
 
 function browsePage(page) {
@@ -350,9 +355,9 @@ async function submitMetronMatch() {
   const btn = document.getElementById('match-add-btn');
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
-    await api.post('/api/series', { komga_id: komgaSeries.id, metron_id: metronId });
+    const added = await api.post('/api/series', { komga_id: komgaSeries.id, metron_id: metronId });
     closeModal();
-    await _loadBrowsePage();
+    navigate('series-detail', { id: added.id });
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Track Series';
     alert('Failed to add series — check console.');
@@ -363,6 +368,11 @@ async function submitMetronMatch() {
 // --- Series Detail ---
 
 async function renderSeriesDetail(id) {
+  // Untracked series — show preview with Track CTA
+  if (!id && currentParams.komgaId) {
+    return renderKomgaPreview(currentParams.komgaData);
+  }
+
   setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
@@ -434,6 +444,30 @@ async function renderSeriesDetail(id) {
     </div>
     <div class="issue-tabs">${tabs}</div>
     <div class="issue-grid">${tiles || '<div class="state-msg" style="grid-column:1/-1">Nothing here.</div>'}</div>
+  `);
+}
+
+function renderKomgaPreview(s) {
+  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
+  const meta = [s.publisher ? s.publisher.toUpperCase() : '', s.year].filter(Boolean).join('  •  ');
+  setApp(`
+    <div class="detail-band">
+      <img class="detail-thumb" src="/api/komga/series/${esc(s.id)}/thumbnail" alt="${esc(s.name)}"
+        onerror="this.style.opacity='0.2'">
+      <div class="detail-info">
+        <div class="detail-title">${esc(s.name)}</div>
+        ${meta ? `<div class="detail-meta">${esc(meta)}</div>` : ''}
+        <div class="detail-stats-line" style="color:var(--tq)">Not tracked</div>
+      </div>
+    </div>
+    <div class="detail-actions-row">
+      <button class="btn btn-primary btn-sm"
+        data-series="${esc(JSON.stringify(s))}"
+        onclick="showMetronMatch(this.dataset.series)">+ Track on Metron</button>
+    </div>
+    <div class="untracked-placeholder">
+      <div class="untracked-placeholder-text">Track this series to see owned, missing, and upcoming issues.</div>
+    </div>
   `);
 }
 
