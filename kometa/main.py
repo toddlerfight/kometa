@@ -65,7 +65,9 @@ def _sync_one(series: dict):
         num = float(issue["number"])
         db.upsert_issue_status(
             series["id"], num, issue["store_date"],
-            num in owned_set, book_map.get(num), path=DB_PATH,
+            num in owned_set, book_map.get(num),
+            metron_image=issue.get("image"),
+            path=DB_PATH,
         )
     db.mark_synced(series["id"], DB_PATH)
     return result

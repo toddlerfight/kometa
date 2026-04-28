@@ -56,9 +56,12 @@ def get_connection(path=DB_PATH):
 
 def _migrate(path=DB_PATH):
     with _connect(path) as conn:
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
-        if "on_pull_list" not in cols:
+        series_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
+        if "on_pull_list" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN on_pull_list INTEGER NOT NULL DEFAULT 1")
+        issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
+        if "metron_image" not in issue_cols:
+            conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
 
 
 def _seed_defaults(path=DB_PATH):
@@ -116,16 +119,17 @@ def get_series_by_id(series_id, path=DB_PATH):
         return dict(row) if row else None
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, path=DB_PATH):
+def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, metron_image=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id, metron_image)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date = excluded.store_date,
                 in_komga = excluded.in_komga,
-                komga_book_id = excluded.komga_book_id
-        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id))
+                komga_book_id = excluded.komga_book_id,
+                metron_image = excluded.metron_image
+        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id, metron_image))
 
 
 def set_pull_list(series_id, on_pull_list, path=DB_PATH):
