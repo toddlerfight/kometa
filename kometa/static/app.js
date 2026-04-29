@@ -1324,6 +1324,16 @@ async function renderSettings() {
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
+          <div class="settings-card-header">Comic Vine</div>
+          <div class="settings-field">
+            <div class="settings-field-label">API Key ${cfg.cv_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
+            <input class="settings-input" id="s-cv-key" type="password" placeholder="${cfg.cv_configured ? 'Leave blank to keep current' : 'Enter API key'}">
+          </div>
+          <div style="margin-top:8px">
+            <button class="btn btn-ghost" onclick="testCV(this)">Test Connection</button>
+          </div>
+        </div>
+        <div class="settings-card" style="margin-top:24px">
           <div class="settings-card-header">Sync Schedule</div>
           <div class="settings-field">
             <div class="settings-field-label">Hours (24h, comma-separated)</div>
@@ -1347,10 +1357,12 @@ async function saveSettings(btn) {
     metron_user:      document.getElementById('s-metron-user').value.trim(),
     sync_hours:       document.getElementById('s-sync-hours').value.trim(),
   };
-  const pass = document.getElementById('s-komga-pass').value;
+  const pass  = document.getElementById('s-komga-pass').value;
   const mpass = document.getElementById('s-metron-pass').value;
+  const cvkey = document.getElementById('s-cv-key').value;
   if (pass)  updates.komga_pass  = pass;
   if (mpass) updates.metron_pass = mpass;
+  if (cvkey) updates.cv_api_key  = cvkey;
 
   try {
     await api.patch('/api/config', updates);
@@ -1360,6 +1372,20 @@ async function saveSettings(btn) {
     btn.disabled = false; btn.textContent = 'Save Settings';
     alert('Save failed — check console.');
     console.error(e);
+  }
+}
+
+async function testCV(btn) {
+  const key = document.getElementById('s-cv-key').value.trim();
+  if (!key) { alert('Enter an API key first.'); return; }
+  btn.disabled = true; btn.textContent = 'Testing…';
+  try {
+    const res = await api.post('/api/test/comicvine', { api_key: key });
+    btn.textContent = res.ok ? 'Connected ✓' : `Failed: ${res.error}`;
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Test Connection'; }, 2000);
+  } catch {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Test Connection'; }, 2000);
   }
 }
 

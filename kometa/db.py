@@ -86,6 +86,8 @@ def _seed_defaults(path=DB_PATH):
     defaults = {
         "sync_hours": os.environ.get("KOMETA_SYNC_HOURS", "5,12,17"),
     }
+    if os.environ.get("CV_API_KEY"):
+        defaults["cv_api_key"] = os.environ["CV_API_KEY"]
     with _connect(path) as conn:
         for key, value in defaults.items():
             conn.execute(

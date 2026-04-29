@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
+from kometa.comicvine_client import ComicVineClient
 from kometa.diff import compute_diff
 from kometa.scheduler import start_scheduler
 import kometa.db as db
@@ -31,6 +32,11 @@ def _komga() -> KomgaClient:
 def _metron() -> MetronClient:
     cfg = db.get_config(DB_PATH)
     return MetronClient(auth=(cfg.get("metron_user", ""), cfg.get("metron_pass", "")))
+
+
+def _comicvine() -> ComicVineClient | None:
+    key = db.get_config(DB_PATH).get("cv_api_key", "")
+    return ComicVineClient(key) if key else None
 
 
 def _sync_all_job():
@@ -129,6 +135,28 @@ def test_metron(req: TestMetronRequest):
         return {"ok": False, "error": str(e)}
 
 
+class TestCVRequest(BaseModel):
+    api_key: str
+
+
+@app.post("/api/test/comicvine")
+def test_comicvine(req: TestCVRequest):
+    try:
+        client = ComicVineClient(req.api_key)
+        r = client.session.get(
+            f"{client.base_url}/search/",
+            params=client._params({"resources": "volume", "query": "batman", "limit": 1, "field_list": "id,name"}),
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status_code") != 1:
+            return {"ok": False, "error": data.get("error", "Unknown error")}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # --- config ---
 
 @app.get("/api/config")
@@ -141,6 +169,8 @@ def get_config():
         "komga_library_id": cfg.get("komga_library_id", ""),
         "metron_user":      cfg.get("metron_user", ""),
         "metron_pass":      "",  # never expose password
+        "cv_api_key":       "",  # never expose key
+        "cv_configured":    bool(cfg.get("cv_api_key", "")),
         "sync_hours":       cfg.get("sync_hours", "5,12,17"),
     }
 
@@ -152,6 +182,7 @@ class ConfigRequest(BaseModel):
     komga_library_id: str | None = None
     metron_user:      str | None = None
     metron_pass:      str | None = None
+    cv_api_key:       str | None = None
     sync_hours:       str | None = None
 
 
@@ -345,8 +376,18 @@ def metron_series_thumbnail(metron_id: int):
     try:
         detail = metron.get_series(metron_id)
         img_url = detail.get("image")
+
+        if not img_url:
+            cv = _comicvine()
+            if cv:
+                img_url = cv.find_series_image(
+                    detail.get("name", ""),
+                    detail.get("year_began"),
+                )
+
         if not img_url:
             raise HTTPException(404)
+
         r = metron.session.get(img_url, timeout=10)
         r.raise_for_status()
         return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))

@@ -15,4 +15,5 @@ services:
       KOMGA_LIBRARY_ID: ${KOMGA_LIBRARY_ID:-<your-komga-library-id>}
       METRON_USER: ${METRON_USER}
       METRON_PASS: ${METRON_PASS}
+      CV_API_KEY: ${CV_API_KEY:-}
       KOMETA_SYNC_HOURS: ${KOMETA_SYNC_HOURS:-5,12,17}
