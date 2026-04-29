@@ -1,8 +1,11 @@
 import re
 import json
 import time
+import logging
 import threading
 from collections import deque
+
+logger = logging.getLogger(__name__)
 
 import kometa.db as db
 
@@ -16,18 +19,32 @@ def get_state():
     return {**_state, 'recent': list(_recent)}
 
 
-def start(komga_factory, metron_factory, db_path, sync_callback=None) -> bool:
+def start(komga_factory, metron_factory, db_path, sync_callback=None, retry_empty=False) -> bool:
     """Acquire lock + set running=True in the calling thread, then spawn worker.
+    retry_empty=True resets none-confidence empty candidates so they get re-scanned.
     Returns False if already running."""
     global _sync_callback
     if not _lock.acquire(blocking=False):
         return False
     _sync_callback = sync_callback
+    if retry_empty:
+        _reset_empty_candidates(db_path)
     _state.update({'running': True, 'done': 0, 'total': 0, 'auto_confirmed': 0, 'error': None})
     _recent.clear()
     t = threading.Thread(target=_run, args=(komga_factory, metron_factory, db_path), daemon=True)
     t.start()
     return True
+
+
+def _reset_empty_candidates(db_path):
+    """Delete none-confidence candidates that got no API results (rate-limit victims)."""
+    import kometa.db as _db
+    with _db._connect(db_path) as conn:
+        conn.execute("""
+            DELETE FROM match_candidates
+            WHERE confidence = 'none'
+              AND (candidates_json IS NULL OR candidates_json = '[]' OR candidates_json = '')
+        """)
 
 
 def _normalize(title: str) -> str:
@@ -87,6 +104,24 @@ def _confidence(score: float, gap: float) -> str:
     return "none"
 
 
+def _metron_search(metron, query: str, max_attempts: int = 3) -> list:
+    """Search Metron with rate-limit sleep and retry backoff."""
+    for attempt in range(max_attempts):
+        if attempt:
+            wait = 2 ** attempt  # 2s, 4s
+            logger.warning(f"Metron search retry {attempt}/{max_attempts-1} for {query!r} (waiting {wait}s)")
+            time.sleep(wait)
+        try:
+            results = metron.search_series(query)
+            time.sleep(0.4)  # respect Metron's rate limit between every search
+            if results is not None:
+                return results
+        except Exception as e:
+            logger.warning(f"Metron search failed for {query!r}: {e}")
+    logger.warning(f"Metron search gave up for {query!r}")
+    return []
+
+
 def _run(komga_factory, metron_factory, db_path):
     try:
         komga  = komga_factory()
@@ -117,17 +152,15 @@ def _run(komga_factory, metron_factory, db_path):
             # Clean search query for Metron: strip prefixes, replace separators
             search_title = re.sub(r"^\[.*?\]\s*", "", k_title).strip()
             search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip()
-            search_title = re.sub(r"\s+-\s+", " ", search_title)   # "Batman - Aliens" → "Batman Aliens"
+            search_title = re.sub(r"^[-–]\s*", "", search_title).strip()   # strip leading dash (folder artefact)
+            search_title = re.sub(r"\s+-\s+", ": ", search_title)           # "Batman - Lost" → "Batman: Lost"
             search_title = re.sub(r"[/:&]", " ", search_title).strip() or k_title
 
-            try:
-                results = metron.search_series(search_title)
-            except Exception:
-                results = []
+            results = _metron_search(metron, search_title)
 
             if results:
                 scored = sorted(
-                    [(r, _score(k_title, k_year, k_pub, r)) for r in results[:10]],
+                    [(r, _score(k_title, k_year, k_pub, r)) for r in results],
                     key=lambda x: -x[1],
                 )
                 best, best_score = scored[0]
