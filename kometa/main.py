@@ -474,6 +474,15 @@ def start_scan():
     return {"ok": started, "state": matcher.get_state()}
 
 
+@app.post("/api/match/retry-empty")
+def retry_empty_scan():
+    """Re-scan the none-confidence candidates that got no API results (rate-limit victims)."""
+    if matcher.get_state()["running"]:
+        return {"ok": False, "message": "Scan already running"}
+    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job, retry_empty=True)
+    return {"ok": started, "state": matcher.get_state()}
+
+
 @app.get("/api/match/status")
 def scan_status():
     state = matcher.get_state()

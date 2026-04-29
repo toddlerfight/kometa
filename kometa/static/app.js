@@ -791,7 +791,8 @@ let _matchPollGen  = 0;   // incremented each time we (re)enter the page
 async function renderMatchReview() {
   document.getElementById('topbar-title').textContent = 'Match Library';
   document.getElementById('topbar-actions').innerHTML =
-    `<button class="btn btn-primary btn-sm" id="scan-new-btn" onclick="startScan(this)">Scan New Series</button>`;
+    `<button class="btn btn-ghost btn-sm" id="retry-empty-btn" onclick="retryEmptyScan(this)" title="Re-scan series that got no results (rate-limit failures)">Retry Failed</button>
+     <button class="btn btn-primary btn-sm" id="scan-new-btn" onclick="startScan(this)">Scan New Series</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   clearTimeout(_matchPollTimer);
   _matchPollGen++;
@@ -1341,6 +1342,17 @@ async function rejectFromModal(btn) {
 async function startScan(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   await api.post('/api/match/scan', {});
+  clearTimeout(_matchPollTimer);
+  _matchPollGen++;
+  const gen = _matchPollGen;
+  setApp(`<div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>`);
+  _matchPollTimer = setTimeout(() => _refreshMatchReview(gen), 800);
+}
+
+async function retryEmptyScan(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Retrying…'; }
+  const res = await api.post('/api/match/retry-empty', {});
+  if (!res.ok) { if (btn) { btn.disabled = false; btn.textContent = 'Retry Failed'; } return; }
   clearTimeout(_matchPollTimer);
   _matchPollGen++;
   const gen = _matchPollGen;
