@@ -440,11 +440,10 @@ async function renderSeriesDetail(id) {
     : `<button class="btn btn-primary btn-sm" onclick="togglePullList(${s.id}, true)">+ Pull List</button>`;
 
   const monStatus = s.monitor_status || 'monitored';
-  const monOpts = ['monitored','collected','ignored'].map(v =>
-    `<option value="${v}" ${monStatus === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`
-  ).join('');
-  const monSelect = `<select class="monitor-select" title="Monitor status"
-    onchange="setMonitorStatus(${s.id}, this.value)">${monOpts}</select>`;
+  const monLabels = { monitored: 'Monitored', collected: 'Collected', ignored: 'Ignored' };
+  const monNext   = { monitored: 'collected', collected: 'ignored', ignored: 'monitored' };
+  const monSelect = `<button class="btn btn-ghost btn-sm monitor-toggle" title="Click to change"
+    onclick="setMonitorStatus(${s.id}, '${monNext[monStatus]}', this)">${monLabels[monStatus]} ⇄</button>`;
 
   const searchAllBtn = s.missing > 0 && monStatus !== 'ignored'
     ? `<button class="btn btn-ghost btn-sm" onclick="searchAllMissing(${s.id}, this)">Search Missing</button>`
@@ -577,7 +576,8 @@ async function togglePullList(id, on) {
   renderSeriesDetail(id);
 }
 
-async function setMonitorStatus(id, status) {
+async function setMonitorStatus(id, status, btn) {
+  if (btn) { btn.disabled = true; }
   await api.patch(`/api/series/${id}/monitor`, { status });
   renderSeriesDetail(id);
 }
