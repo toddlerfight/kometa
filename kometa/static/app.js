@@ -735,7 +735,7 @@ function _scanFeedRow(r) {
   const safeId = CSS.escape(r.komga_id);
 
   const pickerRows = candidates.map((c, i) => `
-    <label class="scan-candidate-row">
+    <label class="scan-candidate-row" onclick="event.stopPropagation()">
       <input type="radio" name="smc_${safeId}" value="${c.id}" ${i === 0 ? 'checked' : ''}>
       <img class="scan-candidate-thumb" src="/api/metron/series/${c.id}/thumbnail" alt=""
         onerror="this.style.opacity='0.15'">
@@ -755,12 +755,12 @@ function _scanFeedRow(r) {
         </div>
         ${candidates.length ? `<div class="scan-candidates-wrap"><div class="scan-candidate-list">${pickerRows}</div></div>` : ''}
       </div>
-      <div class="scan-feed-actions">
-        ${candidates.length ? `<button class="btn btn-primary btn-sm" onclick="confirmScanRow('${esc(r.komga_id)}', this)">Confirm</button>` : ''}
+      <div class="scan-feed-actions" onclick="event.stopPropagation()">
+        ${candidates.length ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); confirmScanRow('${esc(r.komga_id)}', this)">Confirm</button>` : ''}
         <button class="btn btn-ghost btn-sm"
-          onclick="openManualMatch('${esc(r.komga_id)}','${esc(r.title)}')">Search Metron</button>
+          onclick="event.stopPropagation(); openManualMatch('${esc(r.komga_id)}','${esc(r.title)}')">Search Metron</button>
         <button class="btn btn-ghost btn-sm" style="margin-left:auto;opacity:0.5"
-          onclick="rejectScanRow('${esc(r.komga_id)}', this)">Skip</button>
+          onclick="event.stopPropagation(); rejectScanRow('${esc(r.komga_id)}', this)">Skip</button>
       </div>
     </div>
   `;
