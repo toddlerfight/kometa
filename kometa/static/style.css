@@ -1746,3 +1746,124 @@ select.settings-input {
   gap: 6px;
   margin-top: 10px;
 }
+
+/* --- Monitor select --- */
+
+.monitor-select {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  background: var(--su2);
+  color: var(--tm);
+  border: 1px solid var(--su3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  height: 30px;
+}
+
+.monitor-select:focus { outline: none; border-color: var(--pri); }
+
+/* --- Issue tile search button --- */
+
+.issue-tile { position: relative; }
+
+.issue-tile-search {
+  position: absolute;
+  bottom: 22px;
+  right: 2px;
+  background: var(--pri);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0;
+}
+
+.issue-tile:hover .issue-tile-search { opacity: 1; }
+.issue-tile-search:disabled { opacity: 0.5 !important; cursor: default; }
+
+/* --- Download Queue --- */
+
+.queue-section {
+  margin-bottom: 16px;
+}
+
+.queue-section-header {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--tq);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-count {
+  background: var(--su3);
+  color: var(--tm);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+}
+
+.queue-header-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 100px 120px;
+  gap: 8px;
+  padding: 6px 12px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  color: var(--tq);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--su3);
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 100px 120px;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--su2);
+  align-items: center;
+}
+
+.queue-row:last-child { border-bottom: none; }
+
+.queue-series {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--tp);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-issue {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--tq);
+}
+
+.queue-state {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
