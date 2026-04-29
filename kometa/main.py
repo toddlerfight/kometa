@@ -518,11 +518,21 @@ def get_candidates():
     rows = db.get_pending_candidates(DB_PATH)
     groups = {"high": [], "medium": [], "low": [], "none": []}
     for r in rows:
-        c = dict(r)
-        c["candidates"] = json.loads(c["candidates_json"]) if c["candidates_json"] else []
-        del c["candidates_json"]
-        groups[c["confidence"]].append(c)
+        conf = r.get("confidence", "none")
+        if conf in groups:
+            groups[conf].append(r)
     return groups
+
+
+@app.get("/api/match/candidates/{komga_series_id}")
+def get_candidate_detail(komga_series_id: str):
+    row = db.get_candidate_detail(komga_series_id, DB_PATH)
+    if not row:
+        raise HTTPException(404)
+    c = dict(row)
+    c["candidates"] = json.loads(c["candidates_json"]) if c.get("candidates_json") else []
+    del c["candidates_json"]
+    return c
 
 
 class ConfirmRequest(BaseModel):

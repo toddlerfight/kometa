@@ -81,6 +81,7 @@ def _migrate(path=DB_PATH):
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         if "metron_image" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mc_status ON match_candidates(status)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS download_queue (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,10 +218,24 @@ def upsert_candidate(komga_series_id, komga_title, komga_publisher, komga_year,
 
 
 def get_pending_candidates(path=DB_PATH):
+    """Returns all pending candidates without candidates_json — list view only."""
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT * FROM match_candidates WHERE status = 'pending' ORDER BY score DESC, komga_title
+            SELECT komga_series_id, komga_title, komga_publisher, komga_year,
+                   metron_id, metron_title, metron_publisher, metron_year,
+                   score, confidence, status
+            FROM match_candidates WHERE status = 'pending' ORDER BY score DESC, komga_title
         """)]
+
+
+def get_candidate_detail(komga_series_id, path=DB_PATH):
+    """Returns a single candidate with full candidates_json for the match modal."""
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM match_candidates WHERE komga_series_id = ?",
+            (komga_series_id,)
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def get_candidate_komga_ids(path=DB_PATH):
