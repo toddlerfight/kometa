@@ -11,18 +11,21 @@ import kometa.db as db
 
 _lock           = threading.Lock()
 _state          = {'running': False, 'done': 0, 'total': 0, 'auto_confirmed': 0, 'error': None}
-_recent: deque  = deque(maxlen=50)   # last N results for live feed
-_sync_callback  = None               # injected by start(); called after scan if series were auto-confirmed
+_recent: deque  = deque(maxlen=50)
+_sync_callback  = None
+
+# Parenthetical format tags — Metron tracks series, not compilation formats
+_FORMAT_RE = re.compile(r'\((TPB|HC|Hardcover|Omnibus|Compendium)\)', re.IGNORECASE)
 
 
 def get_state():
     return {**_state, 'recent': list(_recent)}
 
 
-def start(komga_factory, metron_factory, db_path, sync_callback=None, retry_empty=False) -> bool:
-    """Acquire lock + set running=True in the calling thread, then spawn worker.
-    retry_empty=True resets none-confidence empty candidates so they get re-scanned.
-    Returns False if already running."""
+def start(komga_factory, metron_factory, db_path, sync_callback=None,
+          retry_empty=False, locg_factory=None) -> bool:
+    """Acquire lock + set running=True, then spawn worker.
+    retry_empty=True resets none-confidence empty candidates so they get re-scanned."""
     global _sync_callback
     if not _lock.acquire(blocking=False):
         return False
@@ -31,7 +34,7 @@ def start(komga_factory, metron_factory, db_path, sync_callback=None, retry_empt
         _reset_empty_candidates(db_path)
     _state.update({'running': True, 'done': 0, 'total': 0, 'auto_confirmed': 0, 'error': None})
     _recent.clear()
-    t = threading.Thread(target=_run, args=(komga_factory, metron_factory, db_path), daemon=True)
+    t = threading.Thread(target=_run, args=(komga_factory, metron_factory, locg_factory, db_path), daemon=True)
     t.start()
     return True
 
@@ -49,20 +52,21 @@ def _reset_empty_candidates(db_path):
 
 def _normalize(title: str) -> str:
     t = title.lower().strip()
-    t = re.sub(r"^\[.*?\]\s*", "", t)       # strip leading [year] or [tag] prefixes
-    t = re.sub(r"^\(\d{4}\)\s*", "", t)     # strip leading (year) prefixes
-    t = re.sub(r"\s*\(\d{4}\)\s*$", "", t)  # strip trailing (year) — Metron's disambiguator
-    t = re.sub(r"[/\-:&]", " ", t)          # separators → space (preserves word gaps)
-    t = re.sub(r"[^\w\s]", "", t)           # strip remaining punctuation
+    t = re.sub(r"^\[.*?\]\s*", "", t)
+    t = re.sub(r"^\(\d{4}\)\s*", "", t)
+    t = re.sub(r"\s*\(\d{4}\)\s*$", "", t)
+    t = re.sub(r"[/\-:&]", " ", t)
+    t = re.sub(r"[^\w\s]", "", t)
     t = re.sub(r"\b(the|a|an)\b\s*", "", t)
     return re.sub(r"\s+", " ", t).strip()
 
 
-def _score(komga_title, komga_year, komga_publisher, result) -> float:
-    m_title = result.get("series") or result.get("name") or result.get("series_name") or ""
-    m_year  = result.get("year_began")
-    m_pub   = result.get("publisher") or {}
-    m_pub   = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
+def _score(komga_title, komga_year, komga_publisher, komga_issues, result) -> float:
+    m_title  = result.get("series") or result.get("name") or result.get("series_name") or ""
+    m_year   = result.get("year_began")
+    m_pub    = result.get("publisher") or {}
+    m_pub    = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
+    m_issues = result.get("issue_count")
 
     kn, mn = _normalize(komga_title), _normalize(m_title)
     if not kn or not mn:
@@ -89,31 +93,104 @@ def _score(komga_title, komga_year, komga_publisher, result) -> float:
         elif kp in mp or mp in kp:
             score += 0.08
 
+    # Issue count proximity — tiebreaker when multiple series share the same name
+    if komga_issues and m_issues and komga_issues > 0 and m_issues > 0:
+        ratio  = min(komga_issues, m_issues) / max(komga_issues, m_issues)
+        score += round(ratio * 0.10, 3)
+
     return round(score, 3)
 
 
-def _confidence(score: float, gap: float) -> str:
-    """gap = best_score - second_best_score (0 if only one result)."""
-    # Clear winner: good score and nothing close behind it
-    if score >= 0.55 and gap >= 0.20:  return "high"
-    # Single result with a solid score is also fine
-    if score >= 0.55 and gap == score: return "high"
-    # Ambiguous — multiple plausible candidates or borderline score
-    if score >= 0.35: return "medium"
-    if score >  0.15: return "low"
+def _confidence(score: float, gap: float, corroborated: bool = False) -> str:
+    """gap = best_score - second_best_score (0 if only one result).
+    corroborated = True when a second source (LOCG) independently agrees."""
+    effective_gap = gap + (0.20 if corroborated else 0)
+    if score >= 0.55 and effective_gap >= 0.20: return "high"
+    if score >= 0.55 and gap == score:          return "high"
+    if score >= 0.35:                           return "medium"
+    if score >  0.15:                           return "low"
     return "none"
+
+
+def _locg_corroborate(locg, search_title: str, metron_title: str, metron_year) -> bool:
+    """Return True if LOCG's top results agree with the Metron candidate (title + optional year)."""
+    try:
+        results = locg.search_series(search_title)
+    except Exception:
+        return False
+    if not results:
+        return False
+
+    mn = _normalize(metron_title)
+    if not mn:
+        return False
+
+    for r in results[:3]:
+        ln = _normalize(r.get("title", ""))
+        if not ln or len(ln) < 3:
+            continue
+        if ln == mn or (ln in mn and len(ln) > 4) or (mn in ln and len(mn) > 4):
+            # Title agrees — also verify year when both sources have it
+            locg_year = r.get("year_start")
+            if metron_year and locg_year:
+                if abs(int(metron_year) - int(locg_year)) <= 2:
+                    return True
+            else:
+                return True  # no year data to contradict, take the title match
+
+    return False
+
+
+def rescore_candidates(db_path) -> dict:
+    """Re-evaluate stored medium/low candidates with current confidence thresholds.
+    Auto-confirms any that cross into high. Returns {promoted, updated}."""
+    rows       = db.get_rescorable_candidates(db_path)
+    tracked_ids = {s["komga_series_id"] for s in db.get_all_series(db_path)}
+    promoted = updated = 0
+
+    for row in rows:
+        cands = json.loads(row["candidates_json"]) if row.get("candidates_json") else []
+        if not cands:
+            continue
+        best_score   = cands[0].get("score", 0)
+        second_score = cands[1].get("score", 0) if len(cands) > 1 else 0.0
+        gap          = round(best_score - second_score, 3)
+        new_conf     = _confidence(best_score, gap)
+
+        if new_conf == row["confidence"]:
+            continue
+
+        updated += 1
+        db.update_candidate_confidence(row["komga_series_id"], new_conf, db_path)
+
+        if new_conf == "high" and row["komga_series_id"] not in tracked_ids:
+            try:
+                db.add_series(
+                    row["komga_series_id"], row["metron_id"],
+                    title      = row["komga_title"],
+                    publisher  = row["komga_publisher"],
+                    year_began = row["metron_year"],
+                    path       = db_path,
+                )
+                db.confirm_candidate(row["komga_series_id"], row["metron_id"], db_path)
+                tracked_ids.add(row["komga_series_id"])
+                promoted += 1
+            except Exception:
+                pass
+
+    return {"promoted": promoted, "updated": updated}
 
 
 def _metron_search(metron, query: str, max_attempts: int = 3) -> list:
     """Search Metron with rate-limit sleep and retry backoff."""
     for attempt in range(max_attempts):
         if attempt:
-            wait = 2 ** attempt  # 2s, 4s
+            wait = 2 ** attempt
             logger.warning(f"Metron search retry {attempt}/{max_attempts-1} for {query!r} (waiting {wait}s)")
             time.sleep(wait)
         try:
             results = metron.search_series(query)
-            time.sleep(0.4)  # respect Metron's rate limit between every search
+            time.sleep(0.4)
             if results is not None:
                 return results
         except Exception as e:
@@ -122,12 +199,18 @@ def _metron_search(metron, query: str, max_attempts: int = 3) -> list:
     return []
 
 
-def _run(komga_factory, metron_factory, db_path):
+def _run(komga_factory, metron_factory, locg_factory, db_path):
     try:
         komga  = komga_factory()
         metron = metron_factory()
+        locg   = None
+        if locg_factory:
+            try:
+                locg = locg_factory()
+            except Exception as e:
+                logger.warning(f"LOCG client failed to init, corroboration disabled: {e}")
 
-        tracked_ids    = {s["komga_series_id"] for s in db.get_all_series(db_path)}  # mutable — updated on auto-confirm
+        tracked_ids    = {s["komga_series_id"] for s in db.get_all_series(db_path)}
         candidated_ids = db.get_candidate_komga_ids(db_path)
 
         all_series, page = [], 0
@@ -144,25 +227,34 @@ def _run(komga_factory, metron_factory, db_path):
         _state["total"] = len(to_scan)
 
         for s in to_scan:
-            kid     = s["id"]
-            k_title = s["name"]
-            k_pub   = s.get("metadata", {}).get("publisher")
-            k_year  = s.get("metadata", {}).get("startYear")
+            kid      = s["id"]
+            k_title  = s["name"]
+            k_pub    = s.get("metadata", {}).get("publisher")
+            k_year   = s.get("metadata", {}).get("startYear")
+            k_issues = s.get("booksCount", 0)
 
-            # Clean search query for Metron: strip prefixes, replace separators
+            # Skip compilation formats — Metron tracks series, not formats
+            if _FORMAT_RE.search(k_title):
+                db.upsert_candidate(kid, k_title, k_pub, k_year,
+                                    confidence="skipped", status="skipped", path=db_path)
+                _state["done"] += 1
+                continue
+
+            # Build a clean Metron search query
             search_title = re.sub(r"^\[.*?\]\s*", "", k_title).strip()
             search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip()
-            search_title = re.sub(r"^[-–]\s*", "", search_title).strip()    # strip leading dash (folder artefact)
-            search_title = re.sub(r"\s*[-–]\s*", " ", search_title)         # all dashes → space
-            search_title = re.sub(r"[/:&,]", " ", search_title)             # separators → space
-            search_title = re.sub(r"[!?%#@$\^*'\"()]", "", search_title)    # strip chars that break Metron search
+            search_title = re.sub(r"^[-–]\s*", "", search_title).strip()
+            search_title = re.sub(r"\s*\(\d{4}\)\s*$", "", search_title)  # trailing year e.g. "Head Lopper (2015)"
+            search_title = re.sub(r"\s*[-–]\s*", " ", search_title)
+            search_title = re.sub(r"[/:&,]", " ", search_title)
+            search_title = re.sub(r"[!?%#@$\^*'\"()]", "", search_title)
             search_title = re.sub(r"\s+", " ", search_title).strip() or k_title
 
             results = _metron_search(metron, search_title)
 
             if results:
                 scored = sorted(
-                    [(r, _score(k_title, k_year, k_pub, r)) for r in results],
+                    [(r, _score(k_title, k_year, k_pub, k_issues, r)) for r in results],
                     key=lambda x: -x[1],
                 )
                 best, best_score = scored[0]
@@ -170,11 +262,17 @@ def _run(komga_factory, metron_factory, db_path):
                 gap              = round(best_score - second_score, 3)
                 conf             = _confidence(best_score, gap)
 
-                m_pub = best.get("publisher") or {}
-                m_pub = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
+                m_pub   = best.get("publisher") or {}
+                m_pub   = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
                 m_title = best.get("series") or best.get("name") or best.get("series_name") or ""
                 m_id    = best.get("id")
                 m_year  = best.get("year_began")
+
+                # LOCG corroboration for ambiguous results
+                if conf != "high" and locg and m_title and best_score >= 0.35:
+                    if _locg_corroborate(locg, search_title, m_title, m_year):
+                        conf = _confidence(best_score, gap, corroborated=True)
+                        logger.info(f"LOCG corroborated {k_title!r} → {m_title!r} → {conf}")
 
                 db.upsert_candidate(
                     kid, k_title, k_pub, k_year,
@@ -199,7 +297,6 @@ def _run(komga_factory, metron_factory, db_path):
                     path=db_path,
                 )
 
-                # Auto-confirm high-confidence matches without waiting for user
                 if conf == "high" and kid not in tracked_ids:
                     try:
                         db.add_series(
@@ -213,7 +310,7 @@ def _run(komga_factory, metron_factory, db_path):
                         tracked_ids.add(kid)
                         _state["auto_confirmed"] += 1
                     except Exception:
-                        pass  # already tracked or DB error — leave as pending
+                        pass
 
                 _recent.appendleft({
                     "komga_id":   kid,
@@ -247,7 +344,6 @@ def _run(komga_factory, metron_factory, db_path):
             _state["done"] += 1
             time.sleep(0.2)
 
-        # Kick off issue sync for all auto-confirmed series in background
         if _state["auto_confirmed"] and _sync_callback:
             threading.Thread(target=_sync_callback, daemon=True).start()
 

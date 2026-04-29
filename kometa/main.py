@@ -41,6 +41,14 @@ def _comicvine() -> ComicVineClient | None:
     return ComicVineClient(key) if key else None
 
 
+def _locg():
+    try:
+        from kometa.locg_client import LOCGClient
+        return LOCGClient()
+    except Exception:
+        return None
+
+
 def _sync_all_job():
     for s in db.get_all_series(DB_PATH):
         _sync_one(s)
@@ -470,27 +478,38 @@ def metron_series_info(metron_id: int):
 def start_scan():
     if matcher.get_state()["running"]:
         return {"ok": False, "message": "Scan already running"}
-    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job)
+    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job, locg_factory=_locg)
     return {"ok": started, "state": matcher.get_state()}
 
 
 @app.post("/api/match/retry-empty")
 def retry_empty_scan():
-    """Re-scan the none-confidence candidates that got no API results (rate-limit victims)."""
+    """Re-scan none-confidence candidates that got no API results (rate-limit victims)."""
     if matcher.get_state()["running"]:
         return {"ok": False, "message": "Scan already running"}
-    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job, retry_empty=True)
+    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job,
+                            retry_empty=True, locg_factory=_locg)
     return {"ok": started, "state": matcher.get_state()}
+
+
+@app.post("/api/match/rescore")
+def rescore_candidates():
+    """Re-evaluate stored medium/low candidates with current thresholds. No API calls."""
+    result = matcher.rescore_candidates(DB_PATH)
+    if result["promoted"] and _sync_all_job:
+        threading.Thread(target=_sync_all_job, daemon=True).start()
+    return result
 
 
 @app.get("/api/match/status")
 def scan_status():
     state = matcher.get_state()
     summary = db.get_candidates_summary(DB_PATH)
-    counts = {"high": 0, "medium": 0, "low": 0, "none": 0}
+    counts = {"high": 0, "medium": 0, "low": 0, "none": 0, "skipped": 0}
     for row in summary:
-        if row["status"] == "pending":
-            counts[row["confidence"]] = row["cnt"]
+        conf = row["confidence"]
+        if conf in counts:
+            counts[conf] += row["cnt"]
     return {**state, "counts": counts}
 
 

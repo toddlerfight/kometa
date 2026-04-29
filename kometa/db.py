@@ -194,14 +194,14 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH):
 def upsert_candidate(komga_series_id, komga_title, komga_publisher, komga_year,
                      metron_id=None, metron_title=None, metron_publisher=None,
                      metron_year=None, score=0, confidence='none',
-                     candidates_json=None, path=DB_PATH):
+                     candidates_json=None, status='pending', path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
             INSERT INTO match_candidates
               (komga_series_id, komga_title, komga_publisher, komga_year,
                metron_id, metron_title, metron_publisher, metron_year,
                score, confidence, candidates_json, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(komga_series_id) DO UPDATE SET
               metron_id        = excluded.metron_id,
               metron_title     = excluded.metron_title,
@@ -210,10 +210,10 @@ def upsert_candidate(komga_series_id, komga_title, komga_publisher, komga_year,
               score            = excluded.score,
               confidence       = excluded.confidence,
               candidates_json  = excluded.candidates_json,
-              status           = 'pending'
+              status           = excluded.status
         """, (komga_series_id, komga_title, komga_publisher, komga_year,
               metron_id, metron_title, metron_publisher, metron_year,
-              score, confidence, candidates_json))
+              score, confidence, candidates_json, status))
 
 
 def get_pending_candidates(path=DB_PATH):
@@ -335,6 +335,32 @@ def get_missing_for_monitored(path=DB_PATH):
                     AND q.state NOT IN ('failed', 'not_found')
               )
         """)]
+
+
+def get_rescorable_candidates(path=DB_PATH):
+    """Return medium/low candidates with stored match data that aren't already tracked."""
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT mc.komga_series_id, mc.komga_title, mc.komga_publisher, mc.komga_year,
+                   mc.metron_id, mc.metron_title, mc.metron_publisher, mc.metron_year,
+                   mc.confidence, mc.candidates_json
+            FROM match_candidates mc
+            WHERE mc.confidence IN ('medium', 'low')
+              AND mc.candidates_json IS NOT NULL
+              AND mc.candidates_json NOT IN ('', '[]')
+              AND NOT EXISTS (
+                  SELECT 1 FROM tracked_series ts
+                  WHERE ts.komga_series_id = mc.komga_series_id
+              )
+        """)]
+
+
+def update_candidate_confidence(komga_series_id, confidence, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE match_candidates SET confidence = ? WHERE komga_series_id = ?",
+            (confidence, komga_series_id),
+        )
 
 
 def get_upcoming_issues(days=90, path=DB_PATH):

@@ -791,7 +791,8 @@ let _matchPollGen  = 0;   // incremented each time we (re)enter the page
 async function renderMatchReview() {
   document.getElementById('topbar-title').textContent = 'Match Library';
   document.getElementById('topbar-actions').innerHTML =
-    `<button class="btn btn-ghost btn-sm" id="retry-empty-btn" onclick="retryEmptyScan(this)" title="Re-scan series that got no results (rate-limit failures)">Retry Failed</button>
+    `<button class="btn btn-ghost btn-sm" onclick="rescoreCandidates(this)" title="Re-evaluate stored matches with current scoring (no API calls)">Rescore</button>
+     <button class="btn btn-ghost btn-sm" id="retry-empty-btn" onclick="retryEmptyScan(this)" title="Re-scan series that got no results (rate-limit failures)">Retry Failed</button>
      <button class="btn btn-primary btn-sm" id="scan-new-btn" onclick="startScan(this)">Scan New Series</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   clearTimeout(_matchPollTimer);
@@ -1347,6 +1348,16 @@ async function startScan(btn) {
   const gen = _matchPollGen;
   setApp(`<div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>`);
   _matchPollTimer = setTimeout(() => _refreshMatchReview(gen), 800);
+}
+
+async function rescoreCandidates(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Rescoring…'; }
+  const res = await api.post('/api/match/rescore', {});
+  if (btn) { btn.disabled = false; btn.textContent = 'Rescore'; }
+  if (!res.ok) return;
+  const { promoted, updated } = await res.json();
+  if (promoted || updated) await renderMatchReview();
+  else alert(`Nothing changed — all candidates are already scored correctly.`);
 }
 
 async function retryEmptyScan(btn) {

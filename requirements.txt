@@ -6,3 +6,4 @@ pydantic==2.13.3
 tzlocal==5.3.1
 beautifulsoup4==4.13.4
 lxml==5.4.0
+cloudscraper==1.2.71
