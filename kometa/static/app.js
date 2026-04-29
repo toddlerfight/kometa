@@ -950,6 +950,55 @@ async function _refreshMatchReview(gen) {
   }
 
   setApp(html);
+
+  // Build publisher pills from rendered data (populated by _matchCard calls above)
+  const pubs = [...new Set(
+    Object.values(_matchCardData).map(c => c.komga_publisher).filter(Boolean)
+  )].sort();
+  const pubPills = pubs.map(p => `
+    <button class="match-filter-pub" data-pub="${esc(p.toLowerCase())}"
+      onclick="setMatchPubFilter('${esc(p.toLowerCase())}', this)">${esc(p)}</button>
+  `).join('');
+  const filterBar = `
+    <div class="match-filter-bar">
+      <input id="match-filter-text" class="match-filter-input" placeholder="Filter by title…"
+        oninput="filterMatchCards()">
+      ${pubPills ? `<div class="match-filter-pubs">${pubPills}</div>` : ''}
+    </div>
+  `;
+  document.getElementById('app').insertAdjacentHTML('afterbegin', filterBar);
+}
+
+let _matchFilterPub = '';
+
+function filterMatchCards() {
+  const text = (document.getElementById('match-filter-text')?.value || '').toLowerCase();
+  const pub  = _matchFilterPub;
+
+  document.querySelectorAll('.match-card').forEach(card => {
+    const titleOk = !text || card.dataset.title?.includes(text);
+    const pubOk   = !pub  || card.dataset.pub === pub;
+    card.style.display = titleOk && pubOk ? '' : 'none';
+  });
+
+  document.querySelectorAll('.match-none-row').forEach(row => {
+    const titleOk = !text || (row.querySelector('.match-none-title')?.textContent || '').toLowerCase().includes(text);
+    const pubOk   = !pub  || (row.querySelector('.match-none-meta')?.textContent || '').toLowerCase().startsWith(pub);
+    row.style.display = titleOk && pubOk ? '' : 'none';
+  });
+
+  document.querySelectorAll('.match-section').forEach(section => {
+    const hasVisible = [...section.querySelectorAll('.match-card, .match-none-row')]
+      .some(el => el.style.display !== 'none');
+    section.style.display = hasVisible ? '' : 'none';
+  });
+}
+
+function setMatchPubFilter(pub, btn) {
+  _matchFilterPub = _matchFilterPub === pub ? '' : pub;
+  document.querySelectorAll('.match-filter-pub').forEach(el => el.classList.remove('active'));
+  if (_matchFilterPub) btn.classList.add('active');
+  filterMatchCards();
 }
 
 // Keyed store so we can pass rich data to the modal without escaping JSON in onclick attrs
@@ -957,13 +1006,15 @@ const _matchCardData = {};
 
 function _matchCard(c, autoChecked) {
   _matchCardData[c.komga_series_id] = c;
-  const pct = Math.round(c.score * 100);
+  const badge = _confBadge(c.score);
   const matchLine = c.metron_title
     ? `${esc(c.metron_title)}${c.metron_year ? ' · ' + c.metron_year : ''}`
     : 'No match';
 
   return `
     <div class="match-card" id="mc_${esc(c.komga_series_id)}"
+      data-pub="${esc((c.komga_publisher || '').toLowerCase())}"
+      data-title="${esc(c.komga_title.toLowerCase())}"
       onclick="openMatchModal('${esc(c.komga_series_id)}')" role="button" tabindex="0"
       onkeydown="if(event.key==='Enter')openMatchModal('${esc(c.komga_series_id)}')">
       <div class="match-card-img-wrap">
@@ -973,11 +1024,10 @@ function _matchCard(c, autoChecked) {
       <div class="match-card-body">
         <div class="match-card-title">${esc(c.komga_title)}</div>
         <div class="match-card-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
-        <div class="match-score-bar-wrap">
-          <div class="match-score-bar-track"><div class="match-score-bar" style="width:${pct}%"></div></div>
-          <span class="match-score-pct">${pct}%</span>
+        <div class="match-card-conf-row">
+          <span class="match-conf-dot ${badge.cls}"></span>
+          <span class="match-card-match-line">${matchLine}</span>
         </div>
-        <div class="match-card-match-line">${matchLine}</div>
         ${autoChecked ? `
           <div class="match-card-actions">
             <button class="btn btn-primary btn-sm"
