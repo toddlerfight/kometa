@@ -1287,6 +1287,14 @@ select.settings-input {
   letter-spacing: 0.08em;
   color: var(--tq);
 }
+.match-modal-cover-sublabel {
+  font-size: 9px;
+  color: var(--tp);
+  opacity: 0.4;
+  text-align: center;
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
 .match-modal-cover-title {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;

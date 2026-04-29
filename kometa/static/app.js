@@ -1089,6 +1089,7 @@ function openMatchModal(komgaId) {
             <div class="match-modal-cover-fallback">No cover</div>
           </div>
           <div class="match-modal-cover-label">Your library</div>
+          <div class="match-modal-cover-sublabel">Komga series thumbnail</div>
           <div class="match-modal-cover-title">${esc(c.komga_title)}</div>
           <div class="match-modal-cover-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
           <div id="match-owned-count" class="match-modal-cover-stats"></div>
@@ -1097,11 +1098,12 @@ function openMatchModal(komgaId) {
         <div class="match-modal-cover">
           ${_metronCoverHtml(first.id, 'match-preview-img')}
           <div class="match-modal-cover-label">Metron match</div>
+          <div class="match-modal-cover-sublabel">Cover from series database</div>
           <div id="match-preview-title" class="match-modal-cover-title">${esc(first.name || '')}</div>
           <div id="match-preview-meta" class="match-modal-cover-meta">${esc(first.publisher || '')}${first.year ? ' · ' + first.year : ''}</div>
           <div id="match-preview-stats" class="match-modal-cover-stats">
             ${_seriesTypeBadge(first.name) ? `<span class="match-cand-type">${_seriesTypeBadge(first.name)}</span>` : ''}
-            ${first.issue_count != null ? `<span class="match-preview-issues">${first.issue_count} issues</span>` : ''}
+            ${first.issue_count != null ? `<span class="match-preview-issues">${first.issue_count} in series</span>` : ''}
           </div>
         </div>
       </div>
@@ -1124,7 +1126,7 @@ function openMatchModal(komgaId) {
 
   api.get(`/api/komga/series/${encodeURIComponent(komgaId)}/books`).then(books => {
     const el = document.getElementById('match-owned-count');
-    if (el) el.innerHTML = `<span class="match-preview-issues">${books.length} in library</span>`;
+    if (el) el.innerHTML = `<span class="match-preview-issues">${books.length} books in Komga</span>`;
   }).catch(() => {});
 
   const needsInfo = candidates.filter(r => r.issue_count == null);
@@ -1153,7 +1155,7 @@ async function _backfillCandidateInfo(komgaId, candidates) {
         if (stats) {
           const type = _seriesTypeBadge(r.name);
           stats.innerHTML = (type ? `<span class="match-cand-type">${type}</span>` : '') +
-            `<span class="match-preview-issues">${issueStr}</span>`;
+            `<span class="match-preview-issues">${info.issue_count} in series</span>`;
         }
       }
     } catch { /* silently ignore — non-critical */ }
@@ -1185,7 +1187,7 @@ function updateMatchPreview(radio) {
   const stats = document.getElementById('match-preview-stats');
   if (stats) {
     const type = _seriesTypeBadge(cand.name);
-    const issues = cand.issue_count != null ? `<span class="match-preview-issues">${cand.issue_count} issues</span>` : '';
+    const issues = cand.issue_count != null ? `<span class="match-preview-issues">${cand.issue_count} in series</span>` : '';
     stats.innerHTML = (type ? `<span class="match-cand-type">${type}</span>` : '') + issues;
     if (cand.issue_count == null) _backfillCandidateInfo(_modalKomgaId, [cand]);
   }
