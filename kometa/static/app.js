@@ -717,7 +717,9 @@ async function renderActivity() {
 let _matchPollTimer = null;
 
 async function renderMatchReview() {
-  setTopbar(`<button class="btn btn-ghost" onclick="navigate('library')">← Library</button>`);
+  document.getElementById('topbar-title').textContent = 'Match Library';
+  document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-primary btn-sm" id="scan-new-btn" onclick="startScan(this)">Scan New Series</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   clearTimeout(_matchPollTimer);
   await _refreshMatchReview();
@@ -825,12 +827,11 @@ async function _refreshMatchReview() {
   const status = await api.get('/api/match/status');
 
   if (status.running) {
+    const scanBtn = document.getElementById('scan-new-btn');
+    if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanning…'; }
     const progressEl = document.getElementById('match-progress');
     if (!progressEl) {
-      setApp(`
-        <div class="page-title">Match Library</div>
-        <div id="match-progress">${_scanProgressHtml(status)}</div>
-      `);
+      setApp(`<div id="match-progress">${_scanProgressHtml(status)}</div>`);
     } else {
       // Update bar + label without touching expanded rows
       const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
@@ -854,21 +855,18 @@ async function _refreshMatchReview() {
     return;
   }
 
-  clearInterval(_matchPollTimer);
+  clearTimeout(_matchPollTimer);
+  const scanBtn = document.getElementById('scan-new-btn');
+  if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = 'Scan New Series'; }
 
   const { counts } = status;
   const total = counts.high + counts.medium + counts.low + counts.none;
 
   if (total === 0) {
     setApp(`
-      <div class="page-title">Match Library</div>
-      <div class="match-summary-bar">
-        <div class="match-summary-stat"><span class="match-count">0</span><span class="match-label">Pending</span></div>
-      </div>
       <div class="empty-state">
         <div class="empty-state-title">Nothing to match</div>
-        <div style="margin-top:8px;color:var(--tq);font-size:13px">Run a scan to compare your library against Metron.</div>
-        <button class="btn btn-primary" style="margin-top:20px" onclick="startScan(this)">Scan Library</button>
+        <div style="margin-top:8px;color:var(--tq);font-size:13px">Hit <strong>Scan New Series</strong> to compare your library against Metron.</div>
       </div>
     `);
     return;
@@ -893,7 +891,7 @@ async function _refreshMatchReview() {
     </div>
   `;
 
-  let html = `<div class="page-title">Match Library</div>${summaryBar}`;
+  let html = summaryBar;
 
   // High confidence
   if (groups.high.length) {
@@ -946,12 +944,6 @@ async function _refreshMatchReview() {
       </div>
     `;
   }
-
-  html += `
-    <div class="match-rescan">
-      <button class="btn btn-ghost btn-sm" onclick="startScan(this)">Scan for new series</button>
-    </div>
-  `;
 
   setApp(html);
 }
@@ -1014,13 +1006,9 @@ function _matchCard(c, autoChecked) {
 }
 
 async function startScan(btn) {
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   await api.post('/api/match/scan', {});
-  // Paint progress shell immediately — don't wait for first poll to avoid blank flash
-  setApp(`
-    <div class="page-title">Match Library</div>
-    <div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>
-  `);
+  setApp(`<div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>`);
   clearTimeout(_matchPollTimer);
   _matchPollTimer = setTimeout(_refreshMatchReview, 800);
 }
