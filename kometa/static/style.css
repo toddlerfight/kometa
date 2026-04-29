@@ -1360,14 +1360,49 @@ select.settings-input {
 
 .scan-feed-detail {
   width: 100%;
-  padding: 8px 0 4px 34px;
+  padding: 10px 0 8px 0;
+  border-top: 1px solid var(--bd);
+  margin-top: 4px;
 }
+
+.scan-feed-covers {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.scan-cover-yours {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.scan-cover-yours img {
+  width: 60px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--su3);
+  border: 1px solid var(--bd);
+}
+
+.scan-cover-yours span {
+  font-family: 'Space Mono', monospace;
+  font-size: 8px;
+  text-transform: uppercase;
+  color: var(--tq);
+}
+
+.scan-candidates-wrap { flex: 1; min-width: 0; }
 
 .scan-candidate-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 0;
 }
 
 .scan-candidate-row {
@@ -1375,10 +1410,24 @@ select.settings-input {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 3px 0;
+  padding: 4px 6px;
+  border-radius: 2px;
+  border: 1px solid transparent;
 }
 
+.scan-candidate-row:hover { background: var(--su2); }
+.scan-candidate-row:has(input:checked) { border-color: var(--pri); background: var(--prih); }
+
 .scan-candidate-row input[type=radio] { accent-color: var(--pri); flex-shrink: 0; }
+
+.scan-candidate-thumb {
+  width: 36px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 1px;
+  background: var(--su3);
+  flex-shrink: 0;
+}
 
 .scan-candidate-name {
   font-family: 'Space Mono', monospace;
@@ -1408,5 +1457,7 @@ select.settings-input {
 
 .scan-feed-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+  margin-top: 10px;
 }

@@ -737,28 +737,30 @@ function _scanFeedRow(r) {
   const pickerRows = candidates.map((c, i) => `
     <label class="scan-candidate-row">
       <input type="radio" name="smc_${safeId}" value="${c.id}" ${i === 0 ? 'checked' : ''}>
+      <img class="scan-candidate-thumb" src="/api/metron/series/${c.id}/thumbnail" alt=""
+        onerror="this.style.opacity='0.15'">
       <span class="scan-candidate-name">${esc(c.name)}</span>
       <span class="scan-candidate-year">${c.year || ''}</span>
       <span class="scan-candidate-score">${Math.round(c.score * 100)}%</span>
     </label>
   `).join('');
 
-  const detail = candidates.length ? `
+  const detail = `
     <div class="scan-feed-detail" id="sfd_${safeId}" hidden>
-      <div class="scan-candidate-list">${pickerRows}</div>
-      <div class="scan-feed-actions">
-        <button class="btn btn-primary btn-sm"
-          onclick="confirmScanRow('${esc(r.komga_id)}', this)">Confirm</button>
-        <button class="btn btn-ghost btn-sm"
-          onclick="rejectScanRow('${esc(r.komga_id)}', this)">Skip</button>
+      <div class="scan-feed-covers">
+        <div class="scan-cover-yours">
+          <img src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
+            onerror="this.style.opacity='0.15'">
+          <span>Yours</span>
+        </div>
+        ${candidates.length ? `<div class="scan-candidates-wrap"><div class="scan-candidate-list">${pickerRows}</div></div>` : ''}
       </div>
-    </div>
-  ` : `
-    <div class="scan-feed-detail" id="sfd_${safeId}" hidden>
-      <div style="color:var(--tq);font-size:10px;font-family:'Space Mono',monospace;padding:8px 0">
-        No Metron results —
-        <button class="btn btn-ghost btn-sm" style="display:inline-flex"
-          onclick="openManualMatch('${esc(r.komga_id)}','${esc(r.title)}')">Search manually</button>
+      <div class="scan-feed-actions">
+        ${candidates.length ? `<button class="btn btn-primary btn-sm" onclick="confirmScanRow('${esc(r.komga_id)}', this)">Confirm</button>` : ''}
+        <button class="btn btn-ghost btn-sm"
+          onclick="openManualMatch('${esc(r.komga_id)}','${esc(r.title)}')">Search Metron</button>
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto;opacity:0.5"
+          onclick="rejectScanRow('${esc(r.komga_id)}', this)">Skip</button>
       </div>
     </div>
   `;

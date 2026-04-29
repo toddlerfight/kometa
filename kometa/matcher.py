@@ -31,6 +31,7 @@ def _normalize(title: str) -> str:
     t = title.lower().strip()
     t = re.sub(r"^\[.*?\]\s*", "", t)       # strip leading [year] or [tag] prefixes
     t = re.sub(r"^\(\d{4}\)\s*", "", t)     # strip leading (year) prefixes
+    t = re.sub(r"\s*\(\d{4}\)\s*$", "", t)  # strip trailing (year) — Metron's disambiguator
     t = re.sub(r"[/\-:&]", " ", t)          # separators → space (preserves word gaps)
     t = re.sub(r"[^\w\s]", "", t)           # strip remaining punctuation
     t = re.sub(r"\b(the|a|an)\b\s*", "", t)

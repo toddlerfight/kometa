@@ -337,6 +337,25 @@ def komga_series_thumbnail(komga_series_id: str):
     return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
 
 
+# --- metron thumbnails ---
+
+@app.get("/api/metron/series/{metron_id}/thumbnail")
+def metron_series_thumbnail(metron_id: int):
+    metron = _metron()
+    try:
+        detail = metron.get_series(metron_id)
+        img_url = detail.get("image")
+        if not img_url:
+            raise HTTPException(404)
+        r = metron.session.get(img_url, timeout=10)
+        r.raise_for_status()
+        return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(404)
+
+
 # --- match / scan ---
 
 @app.post("/api/match/scan")
