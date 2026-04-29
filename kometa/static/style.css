@@ -324,15 +324,13 @@ select.settings-input {
 .browse-header {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 20px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--bd);
 }
 
 .browse-search {
-  flex: 1;
-  max-width: 320px;
   background: var(--su2);
   border: 1px solid var(--bd);
   border-radius: 2px;
@@ -341,6 +339,7 @@ select.settings-input {
   font-size: 12px;
   padding: 7px 12px;
   outline: none;
+  width: 240px;
 }
 
 .browse-search:focus { border-color: var(--pri); }
@@ -348,7 +347,6 @@ select.settings-input {
 .browse-filters {
   display: flex;
   gap: 4px;
-  margin-bottom: 20px;
 }
 
 .browse-filter-tab {
@@ -372,72 +370,6 @@ select.settings-input {
   border-color: var(--pri);
 }
 
-.browse-pagination {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 24px 0 8px;
-}
-
-.browse-page-info {
-  font-family: 'Space Mono', monospace;
-  font-size: 10px;
-  color: var(--tq);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.browse-tracked {
-  position: relative;
-  cursor: pointer;
-}
-
-.browse-tracked-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: var(--grn);
-  color: #000;
-  font-family: 'Space Mono', monospace;
-  font-size: 8px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 5px;
-  border-radius: 2px;
-}
-
-.browse-card {
-  position: relative;
-}
-
-.browse-add-overlay {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 268px;
-  background: rgba(0,0,0,0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.12s;
-  border-radius: 3px;
-}
-
-.browse-card:hover .browse-add-overlay,
-.browse-card:focus .browse-add-overlay { opacity: 1; }
-
-.browse-add-overlay span {
-  font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--pri);
-  background: rgba(0,0,0,0.7);
-  padding: 6px 12px;
-  border: 1px solid var(--pri);
-  border-radius: 2px;
-}
 
 
 /* ---- Metron Match Modal ---- */
