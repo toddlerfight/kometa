@@ -152,9 +152,11 @@ def _run(komga_factory, metron_factory, db_path):
             # Clean search query for Metron: strip prefixes, replace separators
             search_title = re.sub(r"^\[.*?\]\s*", "", k_title).strip()
             search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip()
-            search_title = re.sub(r"^[-–]\s*", "", search_title).strip()   # strip leading dash (folder artefact)
-            search_title = re.sub(r"\s+-\s+", ": ", search_title)           # "Batman - Lost" → "Batman: Lost"
-            search_title = re.sub(r"[/:&]", " ", search_title).strip() or k_title
+            search_title = re.sub(r"^[-–]\s*", "", search_title).strip()    # strip leading dash (folder artefact)
+            search_title = re.sub(r"\s*[-–]\s*", " ", search_title)         # all dashes → space
+            search_title = re.sub(r"[/:&,]", " ", search_title)             # separators → space
+            search_title = re.sub(r"[!?%#@$\^*'\"()]", "", search_title)    # strip chars that break Metron search
+            search_title = re.sub(r"\s+", " ", search_title).strip() or k_title
 
             results = _metron_search(metron, search_title)
 
