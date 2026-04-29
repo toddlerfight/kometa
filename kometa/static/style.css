@@ -1750,15 +1750,21 @@ select.settings-input {
 /* --- Monitor select --- */
 
 .monitor-select {
+  -webkit-appearance: none;
+  appearance: none;
   font-family: 'Space Mono', monospace;
   font-size: 9px;
-  background: var(--su2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--su2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E") no-repeat right 8px center;
   color: var(--tm);
   border: 1px solid var(--su3);
   border-radius: 4px;
-  padding: 0 8px;
+  padding: 0 24px 0 10px;
   cursor: pointer;
   height: 22px;
+  line-height: 22px;
+  box-sizing: border-box;
 }
 
 .monitor-select:focus { outline: none; border-color: var(--pri); }
