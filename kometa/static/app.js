@@ -715,6 +715,7 @@ async function renderActivity() {
 // --- Match Review ---
 
 let _matchPollTimer = null;
+let _matchPollGen  = 0;   // incremented each time we (re)enter the page
 
 async function renderMatchReview() {
   document.getElementById('topbar-title').textContent = 'Match Library';
@@ -722,7 +723,8 @@ async function renderMatchReview() {
     `<button class="btn btn-primary btn-sm" id="scan-new-btn" onclick="startScan(this)">Scan New Series</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   clearTimeout(_matchPollTimer);
-  await _refreshMatchReview();
+  _matchPollGen++;
+  await _refreshMatchReview(_matchPollGen);
 }
 
 const CONF_LABEL = { high: 'Auto', medium: 'Maybe', low: 'Weak', none: 'No match' };
@@ -823,8 +825,12 @@ async function rejectScanRow(komgaId, btn) {
   if (row) row.remove();
 }
 
-async function _refreshMatchReview() {
+async function _refreshMatchReview(gen) {
+  // Bail if a newer renderMatchReview() call has taken over
+  if (gen !== _matchPollGen) return;
+
   const status = await api.get('/api/match/status');
+  if (gen !== _matchPollGen) return;
 
   if (status.running) {
     const scanBtn = document.getElementById('scan-new-btn');
@@ -833,14 +839,12 @@ async function _refreshMatchReview() {
     if (!progressEl) {
       setApp(`<div id="match-progress">${_scanProgressHtml(status)}</div>`);
     } else {
-      // Update bar + label without touching expanded rows
       const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
       const barEl = progressEl.querySelector('.match-progress-bar');
       const lblEl = progressEl.querySelector('.match-progress-label');
       if (barEl) barEl.style.width = pct + '%';
       if (lblEl) lblEl.textContent = `Scanning ${status.done} / ${status.total || '?'} series…`;
 
-      // Prepend new rows that don't already exist in the feed
       const feed = document.getElementById('scan-feed');
       if (feed) {
         for (const r of (status.recent || [])) {
@@ -851,7 +855,7 @@ async function _refreshMatchReview() {
         }
       }
     }
-    _matchPollTimer = setTimeout(_refreshMatchReview, 1200);
+    _matchPollTimer = setTimeout(() => _refreshMatchReview(gen), 1200);
     return;
   }
 
@@ -1008,9 +1012,11 @@ function _matchCard(c, autoChecked) {
 async function startScan(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   await api.post('/api/match/scan', {});
-  setApp(`<div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>`);
   clearTimeout(_matchPollTimer);
-  _matchPollTimer = setTimeout(_refreshMatchReview, 800);
+  _matchPollGen++;
+  const gen = _matchPollGen;
+  setApp(`<div id="match-progress">${_scanProgressHtml({done: 0, total: 0, recent: []})}</div>`);
+  _matchPollTimer = setTimeout(() => _refreshMatchReview(gen), 800);
 }
 
 async function confirmCard(komgaId, btn, metronId) {
