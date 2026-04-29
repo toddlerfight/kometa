@@ -151,11 +151,13 @@ def _run(komga_factory, metron_factory, db_path):
                     confidence       = conf,
                     candidates_json  = json.dumps([
                         {
-                            "id":    r.get("id"),
-                            "name":  r.get("series") or r.get("name") or r.get("series_name") or "",
-                            "publisher": (r.get("publisher") or {}).get("name", "") if isinstance(r.get("publisher"), dict) else "",
-                            "year":  r.get("year_began"),
-                            "score": sc,
+                            "id":          r.get("id"),
+                            "name":        r.get("series") or r.get("name") or r.get("series_name") or "",
+                            "publisher":   (r.get("publisher") or {}).get("name", "") if isinstance(r.get("publisher"), dict) else "",
+                            "year":        r.get("year_began"),
+                            "issue_count": r.get("issue_count"),
+                            "volume":      r.get("volume"),
+                            "score":       sc,
                         }
                         for r, sc in scored[:5]
                     ]),
@@ -186,10 +188,12 @@ def _run(komga_factory, metron_factory, db_path):
                     "score":      best_score,
                     "candidates": [
                         {
-                            "id":    r.get("id"),
-                            "name":  r.get("series") or r.get("name") or r.get("series_name") or "",
-                            "year":  r.get("year_began"),
-                            "score": sc,
+                            "id":          r.get("id"),
+                            "name":        r.get("series") or r.get("name") or r.get("series_name") or "",
+                            "year":        r.get("year_began"),
+                            "issue_count": r.get("issue_count"),
+                            "volume":      r.get("volume"),
+                            "score":       sc,
                         }
                         for r, sc in scored[:5]
                     ],

@@ -1036,6 +1036,18 @@ function _metronCoverHtml(id, elId) {
     </div>`;
 }
 
+function _seriesTypeBadge(name) {
+  if (!name) return '';
+  const n = name.toUpperCase();
+  if (/\bTPB\b/.test(n))      return 'TPB';
+  if (/\bHC\b/.test(n) || /HARDCOVER/.test(n)) return 'HC';
+  if (/\bOMNIBUS\b/.test(n))  return 'Omnibus';
+  if (/\bANNUAL\b/.test(n))   return 'Annual';
+  if (/\bSPECIAL\b/.test(n))  return 'Special';
+  if (/\bGN\b/.test(n) || /GRAPHIC NOVEL/.test(n)) return 'GN';
+  return '';
+}
+
 function openMatchModal(komgaId) {
   const c = _matchCardData[komgaId];
   if (!c) return;
@@ -1045,7 +1057,10 @@ function openMatchModal(komgaId) {
   const badge = _confBadge(first.score || c.score || 0);
 
   const candidateRows = candidates.length ? candidates.map((r, i) => {
-    const cb = _confBadge(r.score);
+    const typeBadge = _seriesTypeBadge(r.name);
+    const issueStr  = r.issue_count != null ? `${r.issue_count} issue${r.issue_count === 1 ? '' : 's'}` : '';
+    const volStr    = r.volume > 1 ? `Vol. ${r.volume}` : '';
+    const metaLine  = [esc(r.publisher || ''), r.year, volStr].filter(Boolean).join(' · ');
     return `
     <label class="match-modal-candidate" onclick="event.stopPropagation()">
       <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
@@ -1057,9 +1072,10 @@ function openMatchModal(komgaId) {
       </div>
       <div class="match-modal-cand-info">
         <div class="match-modal-cand-name">${esc(r.name)}</div>
-        <div class="match-modal-cand-meta">${esc(r.publisher || '')}${r.year ? ' · ' + r.year : ''}</div>
+        <div class="match-modal-cand-meta">${metaLine}</div>
       </div>
-      <span class="match-conf-dot ${cb.cls}"></span>
+      ${typeBadge ? `<span class="match-cand-type">${typeBadge}</span>` : ''}
+      ${issueStr ? `<span class="match-cand-issues">${issueStr}</span>` : ''}
     </label>`;
   }).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found — try Search Metron</div>`;
 
@@ -1082,6 +1098,10 @@ function openMatchModal(komgaId) {
           <div class="match-modal-cover-label">Metron match</div>
           <div id="match-preview-title" class="match-modal-cover-title">${esc(first.name || '')}</div>
           <div id="match-preview-meta" class="match-modal-cover-meta">${esc(first.publisher || '')}${first.year ? ' · ' + first.year : ''}</div>
+          <div id="match-preview-stats" class="match-modal-cover-stats">
+            ${_seriesTypeBadge(first.name) ? `<span class="match-cand-type">${_seriesTypeBadge(first.name)}</span>` : ''}
+            ${first.issue_count != null ? `<span class="match-preview-issues">${first.issue_count} issues</span>` : ''}
+          </div>
         </div>
       </div>
       <div class="match-modal-conf-row">
@@ -1123,6 +1143,12 @@ function updateMatchPreview(radio) {
     const b = _confBadge(cand.score);
     badge.className = `match-conf-badge ${b.cls}`;
     badge.textContent = b.label;
+  }
+  const stats = document.getElementById('match-preview-stats');
+  if (stats) {
+    const type = _seriesTypeBadge(cand.name);
+    const issues = cand.issue_count != null ? `<span class="match-preview-issues">${cand.issue_count} issues</span>` : '';
+    stats.innerHTML = (type ? `<span class="match-cand-type">${type}</span>` : '') + issues;
   }
 }
 
