@@ -6,21 +6,24 @@ from collections import deque
 
 import kometa.db as db
 
-_lock  = threading.Lock()
-_state = {'running': False, 'done': 0, 'total': 0, 'error': None}
-_recent: deque = deque(maxlen=50)   # last N results for live feed
+_lock           = threading.Lock()
+_state          = {'running': False, 'done': 0, 'total': 0, 'auto_confirmed': 0, 'error': None}
+_recent: deque  = deque(maxlen=50)   # last N results for live feed
+_sync_callback  = None               # injected by start(); called after scan if series were auto-confirmed
 
 
 def get_state():
     return {**_state, 'recent': list(_recent)}
 
 
-def start(komga_factory, metron_factory, db_path) -> bool:
+def start(komga_factory, metron_factory, db_path, sync_callback=None) -> bool:
     """Acquire lock + set running=True in the calling thread, then spawn worker.
     Returns False if already running."""
+    global _sync_callback
     if not _lock.acquire(blocking=False):
         return False
-    _state.update({'running': True, 'done': 0, 'total': 0, 'error': None})
+    _sync_callback = sync_callback
+    _state.update({'running': True, 'done': 0, 'total': 0, 'auto_confirmed': 0, 'error': None})
     _recent.clear()
     t = threading.Thread(target=_run, args=(komga_factory, metron_factory, db_path), daemon=True)
     t.start()
@@ -72,9 +75,14 @@ def _score(komga_title, komga_year, komga_publisher, result) -> float:
     return round(score, 3)
 
 
-def _confidence(score: float) -> str:
-    if score >= 0.75: return "high"
-    if score >= 0.45: return "medium"
+def _confidence(score: float, gap: float) -> str:
+    """gap = best_score - second_best_score (0 if only one result)."""
+    # Clear winner: good score and nothing close behind it
+    if score >= 0.55 and gap >= 0.20:  return "high"
+    # Single result with a solid score is also fine
+    if score >= 0.55 and gap == score: return "high"
+    # Ambiguous — multiple plausible candidates or borderline score
+    if score >= 0.35: return "medium"
     if score >  0.15: return "low"
     return "none"
 
@@ -84,7 +92,7 @@ def _run(komga_factory, metron_factory, db_path):
         komga  = komga_factory()
         metron = metron_factory()
 
-        tracked_ids    = {s["komga_series_id"] for s in db.get_all_series(db_path)}
+        tracked_ids    = {s["komga_series_id"] for s in db.get_all_series(db_path)}  # mutable — updated on auto-confirm
         candidated_ids = db.get_candidate_komga_ids(db_path)
 
         all_series, page = [], 0
@@ -123,17 +131,22 @@ def _run(komga_factory, metron_factory, db_path):
                     key=lambda x: -x[1],
                 )
                 best, best_score = scored[0]
-                conf  = _confidence(best_score)
+                second_score     = scored[1][1] if len(scored) > 1 else 0.0
+                gap              = round(best_score - second_score, 3)
+                conf             = _confidence(best_score, gap)
+
                 m_pub = best.get("publisher") or {}
                 m_pub = m_pub.get("name", "") if isinstance(m_pub, dict) else str(m_pub)
                 m_title = best.get("series") or best.get("name") or best.get("series_name") or ""
+                m_id    = best.get("id")
+                m_year  = best.get("year_began")
 
                 db.upsert_candidate(
                     kid, k_title, k_pub, k_year,
-                    metron_id        = best.get("id"),
+                    metron_id        = m_id,
                     metron_title     = m_title,
                     metron_publisher = m_pub,
-                    metron_year      = best.get("year_began"),
+                    metron_year      = m_year,
                     score            = best_score,
                     confidence       = conf,
                     candidates_json  = json.dumps([
@@ -148,6 +161,23 @@ def _run(komga_factory, metron_factory, db_path):
                     ]),
                     path=db_path,
                 )
+
+                # Auto-confirm high-confidence matches without waiting for user
+                if conf == "high" and kid not in tracked_ids:
+                    try:
+                        db.add_series(
+                            kid, m_id,
+                            title      = k_title,
+                            publisher  = k_pub,
+                            year_began = m_year,
+                            path       = db_path,
+                        )
+                        db.confirm_candidate(kid, m_id, db_path)
+                        tracked_ids.add(kid)
+                        _state["auto_confirmed"] += 1
+                    except Exception:
+                        pass  # already tracked or DB error — leave as pending
+
                 _recent.appendleft({
                     "komga_id":   kid,
                     "title":      k_title,
@@ -177,6 +207,10 @@ def _run(komga_factory, metron_factory, db_path):
 
             _state["done"] += 1
             time.sleep(0.2)
+
+        # Kick off issue sync for all auto-confirmed series in background
+        if _state["auto_confirmed"] and _sync_callback:
+            threading.Thread(target=_sync_callback, daemon=True).start()
 
         _state["running"] = False
 

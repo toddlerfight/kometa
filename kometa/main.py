@@ -362,7 +362,7 @@ def metron_series_thumbnail(metron_id: int):
 def start_scan():
     if matcher.get_state()["running"]:
         return {"ok": False, "message": "Scan already running"}
-    started = matcher.start(_komga, _metron, DB_PATH)
+    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job)
     return {"ok": started, "state": matcher.get_state()}
 
 

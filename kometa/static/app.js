@@ -878,12 +878,14 @@ async function _refreshMatchReview(gen) {
 
   const groups = await api.get('/api/match/candidates');
 
+  const autoConfirmed = status.auto_confirmed || 0;
   const summaryBar = `
     <div class="match-summary-bar">
+      ${autoConfirmed ? `
       <div class="match-summary-stat">
-        <span class="match-count match-high">${counts.high}</span>
-        <span class="match-label">Auto-matched</span>
-      </div>
+        <span class="match-count match-high">${autoConfirmed}</span>
+        <span class="match-label">Auto-added</span>
+      </div>` : ''}
       <div class="match-summary-stat">
         <span class="match-count match-medium">${counts.medium + counts.low}</span>
         <span class="match-label">Needs review</span>
@@ -897,14 +899,14 @@ async function _refreshMatchReview(gen) {
 
   let html = summaryBar;
 
-  // High confidence
+  // High confidence (any still pending — e.g. from a previous scan before this feature)
   if (groups.high.length) {
     const cards = groups.high.map(c => _matchCard(c, true)).join('');
     html += `
       <div class="match-section">
         <div class="match-section-header">
           <span class="match-section-title">Auto-matched <span class="match-section-count">${groups.high.length}</span></span>
-          <button class="btn btn-primary btn-sm" onclick="confirmAllHigh()">Confirm All</button>
+          <button class="btn btn-primary btn-sm" onclick="confirmAllHigh()">Add All</button>
         </div>
         <div class="match-grid" id="match-grid-high">${cards}</div>
       </div>
