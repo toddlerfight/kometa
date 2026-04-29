@@ -66,6 +66,11 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function _fmtReleaseDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+}
+
 function fmtNum(n) {
   const f = parseFloat(n);
   return Number.isInteger(f) ? String(f) : String(f);
@@ -286,6 +291,8 @@ function _renderBrowseResults() {
     const total = (s.owned ?? 0) + (s.missing ?? 0);
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
     const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--grn)' : 'var(--tq)');
+    const nextRelease = s.next_release
+      ? `<div class="series-card-next-release">${_fmtReleaseDate(s.next_release)}</div>` : '';
     return `
       <div class="series-card" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
@@ -293,6 +300,7 @@ function _renderBrowseResults() {
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
             onerror="this.style.opacity='0.15'">
+          ${nextRelease}
         </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
@@ -1197,14 +1205,10 @@ async function confirmFromModal(btn) {
   const radio = document.querySelector('#modal input[name="mmd_cand"]:checked');
   const metronId = radio ? parseInt(radio.value) : (_matchCardData[_modalKomgaId]?.metron_id);
   if (!metronId || !_modalKomgaId) return;
-  btn.disabled = true; btn.textContent = '…';
-  try {
-    await api.post('/api/match/confirm', { komga_series_id: _modalKomgaId, metron_id: metronId });
-    document.getElementById(`mc_${_modalKomgaId}`)?.remove();
-    closeModal();
-  } catch {
-    btn.disabled = false; btn.textContent = 'Confirm';
-  }
+  const komgaId = _modalKomgaId;
+  document.getElementById(`mc_${komgaId}`)?.remove();
+  closeModal();
+  api.post('/api/match/confirm', { komga_series_id: komgaId, metron_id: metronId }).catch(() => {});
 }
 
 async function rejectFromModal(btn) {

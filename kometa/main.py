@@ -83,12 +83,17 @@ def _sync_one(series: dict):
 
 
 def _summary(series_id):
+    from datetime import timedelta
     rows = db.get_issues_for_series(series_id, DB_PATH)
     today = str(date.today())
+    cutoff = str(date.today() + timedelta(days=30))
     owned = sum(1 for r in rows if r["in_komga"])
     missing = sum(1 for r in rows if not r["in_komga"] and (not r["store_date"] or r["store_date"] <= today))
     upcoming = sum(1 for r in rows if not r["in_komga"] and r["store_date"] and r["store_date"] > today)
-    return {"owned": owned, "missing": missing, "upcoming": upcoming}
+    soon = [r["store_date"] for r in rows
+            if not r["in_komga"] and r["store_date"] and today < r["store_date"] <= cutoff]
+    return {"owned": owned, "missing": missing, "upcoming": upcoming,
+            "next_release": min(soon) if soon else None}
 
 
 # --- connection tests ---
@@ -466,7 +471,7 @@ def confirm_match(req: ConfirmRequest):
             path       = DB_PATH,
         )
         added = next(s for s in db.get_all_series(DB_PATH) if s["komga_series_id"] == req.komga_series_id)
-        _sync_one(added)
+        threading.Thread(target=_sync_one, args=(added,), daemon=True).start()
     db.confirm_candidate(req.komga_series_id, req.metron_id, DB_PATH)
     return {"ok": True}
 
