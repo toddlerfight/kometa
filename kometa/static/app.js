@@ -959,32 +959,50 @@ async function _refreshMatchReview(gen) {
     <button class="match-filter-pub" data-pub="${esc(p.toLowerCase())}"
       onclick="setMatchPubFilter('${esc(p.toLowerCase())}', this)">${esc(p)}</button>
   `).join('');
+
+  const confPills = [
+    { val: 'conf-high',   label: 'High' },
+    { val: 'conf-medium', label: 'Needs Review' },
+    { val: 'conf-low',    label: 'Weak' },
+    { val: 'conf-none',   label: 'No Match' },
+  ].map(f => `
+    <button class="match-filter-conf ${f.val}" data-conf="${f.val}"
+      onclick="setMatchConfFilter('${f.val}', this)">${f.label}</button>
+  `).join('');
+
   const filterBar = `
     <div class="match-filter-bar">
-      <input id="match-filter-text" class="match-filter-input" placeholder="Filter by title…"
-        oninput="filterMatchCards()">
+      <div class="match-filter-row">
+        <input id="match-filter-text" class="match-filter-input" placeholder="Filter by title…"
+          oninput="filterMatchCards()">
+        <div class="match-filter-confs">${confPills}</div>
+      </div>
       ${pubPills ? `<div class="match-filter-pubs">${pubPills}</div>` : ''}
     </div>
   `;
   document.getElementById('app').insertAdjacentHTML('afterbegin', filterBar);
 }
 
-let _matchFilterPub = '';
+let _matchFilterPub  = '';
+let _matchFilterConf = '';
 
 function filterMatchCards() {
   const text = (document.getElementById('match-filter-text')?.value || '').toLowerCase();
   const pub  = _matchFilterPub;
+  const conf = _matchFilterConf;
 
   document.querySelectorAll('.match-card').forEach(card => {
-    const titleOk = !text || card.dataset.title?.includes(text);
-    const pubOk   = !pub  || card.dataset.pub === pub;
-    card.style.display = titleOk && pubOk ? '' : 'none';
+    const ok = (!text || card.dataset.title?.includes(text))
+            && (!pub  || card.dataset.pub  === pub)
+            && (!conf || card.dataset.conf === conf);
+    card.style.display = ok ? '' : 'none';
   });
 
   document.querySelectorAll('.match-none-row').forEach(row => {
     const titleOk = !text || (row.querySelector('.match-none-title')?.textContent || '').toLowerCase().includes(text);
     const pubOk   = !pub  || (row.querySelector('.match-none-meta')?.textContent || '').toLowerCase().startsWith(pub);
-    row.style.display = titleOk && pubOk ? '' : 'none';
+    const confOk  = !conf || conf === 'conf-none';
+    row.style.display = titleOk && pubOk && confOk ? '' : 'none';
   });
 
   document.querySelectorAll('.match-section').forEach(section => {
@@ -998,6 +1016,13 @@ function setMatchPubFilter(pub, btn) {
   _matchFilterPub = _matchFilterPub === pub ? '' : pub;
   document.querySelectorAll('.match-filter-pub').forEach(el => el.classList.remove('active'));
   if (_matchFilterPub) btn.classList.add('active');
+  filterMatchCards();
+}
+
+function setMatchConfFilter(conf, btn) {
+  _matchFilterConf = _matchFilterConf === conf ? '' : conf;
+  document.querySelectorAll('.match-filter-conf').forEach(el => el.classList.remove('active'));
+  if (_matchFilterConf) btn.classList.add('active');
   filterMatchCards();
 }
 
@@ -1015,6 +1040,7 @@ function _matchCard(c, autoChecked) {
     <div class="match-card" id="mc_${esc(c.komga_series_id)}"
       data-pub="${esc((c.komga_publisher || '').toLowerCase())}"
       data-title="${esc(c.komga_title.toLowerCase())}"
+      data-conf="${badge.cls}"
       onclick="openMatchModal('${esc(c.komga_series_id)}')" role="button" tabindex="0"
       onkeydown="if(event.key==='Enter')openMatchModal('${esc(c.komga_series_id)}')">
       <div class="match-card-img-wrap">
@@ -1025,9 +1051,9 @@ function _matchCard(c, autoChecked) {
         <div class="match-card-title">${esc(c.komga_title)}</div>
         <div class="match-card-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
         <div class="match-card-conf-row">
-          <span class="match-conf-dot ${badge.cls}"></span>
-          <span class="match-card-match-line">${matchLine}</span>
+          <span class="match-conf-badge ${badge.cls}">${badge.label}</span>
         </div>
+        <div class="match-card-match-line">${matchLine}</div>
         ${autoChecked ? `
           <div class="match-card-actions">
             <button class="btn btn-primary btn-sm"
