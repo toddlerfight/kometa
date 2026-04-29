@@ -1272,14 +1272,6 @@ select.settings-input {
   gap: 6px;
   flex: 1;
 }
-.match-modal-cover img {
-  width: 140px;
-  height: 210px;
-  object-fit: cover;
-  border-radius: 3px;
-  background: var(--su3);
-  display: block;
-}
 .match-modal-cover-label {
   font-family: 'Space Mono', monospace;
   font-size: 9px;
@@ -1305,11 +1297,6 @@ select.settings-input {
   align-self: center;
   flex-shrink: 0;
   padding: 0 4px;
-}
-.match-modal-score-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 .match-modal-candidates {
   display: flex;
@@ -1363,12 +1350,87 @@ select.settings-input {
   color: var(--tq);
   margin-top: 2px;
 }
-.match-modal-cand-score {
+/* confidence badge + dot */
+.match-conf-badge {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid currentColor;
+}
+.match-conf-badge.conf-high   { color: var(--grn); }
+.match-conf-badge.conf-medium { color: var(--amb); }
+.match-conf-badge.conf-low    { color: var(--amb); opacity: 0.6; }
+.match-conf-badge.conf-none   { color: var(--tq); }
+
+.match-conf-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.match-conf-dot.conf-high   { background: var(--grn); }
+.match-conf-dot.conf-medium { background: var(--amb); }
+.match-conf-dot.conf-low    { background: var(--amb); opacity: 0.5; }
+.match-conf-dot.conf-none   { background: var(--tq); }
+
+.match-modal-conf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* cover image with fallback */
+.match-modal-cover-img-wrap {
+  width: 140px;
+  height: 210px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--su3);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.match-modal-cover-img-wrap img {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.match-modal-cover-fallback {
   font-family: 'Space Mono', monospace;
   font-size: 10px;
   color: var(--tq);
-  flex-shrink: 0;
+  text-align: center;
+  padding: 8px;
+  pointer-events: none;
 }
+.match-modal-cover-img-wrap:not([data-err]) .match-modal-cover-fallback { display: none; }
+.match-modal-cover-img-wrap[data-err] img { opacity: 0; }
+
+/* candidate img wrap */
+.match-modal-cand-img-wrap {
+  width: 32px; height: 48px;
+  border-radius: 2px;
+  background: var(--su3);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+.match-modal-cand-img-wrap img {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.match-modal-cand-fallback { display: none; }
+.match-modal-cand-img-wrap[data-err] img { opacity: 0; }
+
 .match-modal-actions {
   display: flex;
   gap: 8px;
