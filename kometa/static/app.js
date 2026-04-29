@@ -952,32 +952,20 @@ async function _refreshMatchReview(gen) {
   setApp(html);
 }
 
-function _matchCard(c, autoChecked) {
-  const candidates = c.candidates || [];
-  const pct = Math.round(c.score * 100);
+// Keyed store so we can pass rich data to the modal without escaping JSON in onclick attrs
+const _matchCardData = {};
 
-  let picker = '';
-  if (!autoChecked && candidates.length) {
-    picker = `<div class="match-candidates">
-      ${candidates.map((r, i) => `
-        <label class="match-candidate-row">
-          <input type="radio" name="mc_${esc(c.komga_series_id)}" value="${r.id}"
-            ${i === 0 ? 'checked' : ''}>
-          <span class="match-candidate-name">${esc(r.name)}</span>
-          <span class="match-candidate-meta">${esc(r.publisher || '')}${r.year ? ' · ' + r.year : ''}</span>
-          <span class="match-candidate-score">${Math.round(r.score * 100)}%</span>
-        </label>
-      `).join('')}
-    </div>`;
-  } else if (autoChecked) {
-    picker = `<div class="match-auto-label">
-      ${esc(c.metron_title)}
-      ${c.metron_year ? `<span class="match-year">${c.metron_year}</span>` : ''}
-    </div>`;
-  }
+function _matchCard(c, autoChecked) {
+  _matchCardData[c.komga_series_id] = c;
+  const pct = Math.round(c.score * 100);
+  const matchLine = c.metron_title
+    ? `${esc(c.metron_title)}${c.metron_year ? ' · ' + c.metron_year : ''}`
+    : 'No match';
 
   return `
-    <div class="match-card" id="mc_${esc(c.komga_series_id)}">
+    <div class="match-card" id="mc_${esc(c.komga_series_id)}"
+      onclick="openMatchModal('${esc(c.komga_series_id)}')" role="button" tabindex="0"
+      onkeydown="if(event.key==='Enter')openMatchModal('${esc(c.komga_series_id)}')">
       <div class="match-card-img-wrap">
         <img src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt="${esc(c.komga_title)}"
           onerror="this.style.opacity='0.2'">
@@ -986,27 +974,128 @@ function _matchCard(c, autoChecked) {
         <div class="match-card-title">${esc(c.komga_title)}</div>
         <div class="match-card-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
         <div class="match-score-bar-wrap">
-          <div class="match-score-bar" style="width:${pct}%"></div>
+          <div class="match-score-bar-track"><div class="match-score-bar" style="width:${pct}%"></div></div>
           <span class="match-score-pct">${pct}%</span>
         </div>
-        ${picker}
-        <div class="match-card-actions">
-          <button class="btn btn-primary btn-sm"
-            onclick="confirmCard('${esc(c.komga_series_id)}', this, ${autoChecked ? c.metron_id : 0})">
-            Confirm
-          </button>
-          <button class="btn btn-ghost btn-sm"
-            onclick="openManualMatch('${esc(c.komga_series_id)}', '${esc(c.komga_title)}')">
-            Change
-          </button>
-          <button class="btn btn-ghost btn-sm"
-            onclick="rejectCandidate('${esc(c.komga_series_id)}', this)">
-            Skip
-          </button>
-        </div>
+        <div class="match-card-match-line">${matchLine}</div>
+        ${autoChecked ? `
+          <div class="match-card-actions">
+            <button class="btn btn-primary btn-sm"
+              onclick="event.stopPropagation(); confirmCard('${esc(c.komga_series_id)}', this, ${c.metron_id})">
+              Confirm
+            </button>
+          </div>` : ''}
       </div>
     </div>
   `;
+}
+
+// --- Match detail modal ---
+
+let _modalKomgaId = null;
+
+function openMatchModal(komgaId) {
+  const c = _matchCardData[komgaId];
+  if (!c) return;
+  _modalKomgaId = komgaId;
+  const candidates = c.candidates || [];
+  const first = candidates[0] || { id: c.metron_id, name: c.metron_title, publisher: c.metron_publisher, year: c.metron_year, score: c.score };
+  const pct = Math.round(c.score * 100);
+
+  const candidateRows = candidates.length ? candidates.map((r, i) => `
+    <label class="match-modal-candidate" onclick="event.stopPropagation()">
+      <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
+        onchange="updateMatchPreview(this)">
+      <img class="match-modal-cand-thumb" src="/api/metron/series/${r.id}/thumbnail" alt=""
+        onerror="this.style.opacity='0.15'">
+      <div class="match-modal-cand-info">
+        <div class="match-modal-cand-name">${esc(r.name)}</div>
+        <div class="match-modal-cand-meta">${esc(r.publisher || '')}${r.year ? ' · ' + r.year : ''}</div>
+      </div>
+      <span class="match-modal-cand-score">${Math.round(r.score * 100)}%</span>
+    </label>
+  `).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found</div>`;
+
+  const html = `
+    <div class="match-modal-body" onclick="event.stopPropagation()">
+      <div class="match-modal-covers">
+        <div class="match-modal-cover">
+          <img src="/api/komga/series/${esc(komgaId)}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
+          <div class="match-modal-cover-label">Your library</div>
+          <div class="match-modal-cover-title">${esc(c.komga_title)}</div>
+          <div class="match-modal-cover-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
+        </div>
+        <div class="match-modal-arrow">→</div>
+        <div class="match-modal-cover">
+          <img id="match-preview-img" src="/api/metron/series/${first.id}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
+          <div class="match-modal-cover-label">Metron match</div>
+          <div id="match-preview-title" class="match-modal-cover-title">${esc(first.name || '')}</div>
+          <div id="match-preview-meta" class="match-modal-cover-meta">${esc(first.publisher || '')}${first.year ? ' · ' + first.year : ''}</div>
+        </div>
+      </div>
+      <div class="match-modal-score-row">
+        <div class="match-score-bar-track" style="flex:1"><div class="match-score-bar" id="match-preview-bar" style="width:${pct}%"></div></div>
+        <span class="match-score-pct" id="match-preview-pct">${pct}%</span>
+        <span style="font-size:11px;color:var(--tq);margin-left:4px">confidence</span>
+      </div>
+      <div class="match-modal-candidates">${candidateRows}</div>
+      <div class="match-modal-actions">
+        ${candidates.length || c.metron_id ? `
+          <button class="btn btn-primary" onclick="confirmFromModal(this)">Confirm</button>` : ''}
+        <button class="btn btn-ghost" onclick="openManualMatch('${esc(komgaId)}','${esc(c.komga_title)}'); closeModal()">Search Metron</button>
+        <button class="btn btn-ghost" style="margin-left:auto;opacity:0.5" onclick="rejectFromModal(this)">Skip</button>
+      </div>
+    </div>
+  `;
+
+  const modal = document.getElementById('modal');
+  modal.classList.add('modal-wide');
+  showModal(html);
+}
+
+function updateMatchPreview(radio) {
+  const c = Object.values(_matchCardData).find(x => x.komga_series_id === _modalKomgaId);
+  if (!c) return;
+  const candidates = c.candidates || [];
+  const cand = candidates.find(x => String(x.id) === radio.value);
+  if (!cand) return;
+  const img = document.getElementById('match-preview-img');
+  const title = document.getElementById('match-preview-title');
+  const meta = document.getElementById('match-preview-meta');
+  const bar = document.getElementById('match-preview-bar');
+  const pct = document.getElementById('match-preview-pct');
+  if (img) img.src = `/api/metron/series/${cand.id}/thumbnail`;
+  if (title) title.textContent = cand.name || '';
+  if (meta) meta.textContent = [cand.publisher, cand.year].filter(Boolean).join(' · ');
+  const p = Math.round(cand.score * 100);
+  if (bar) bar.style.width = p + '%';
+  if (pct) pct.textContent = p + '%';
+}
+
+async function confirmFromModal(btn) {
+  const radio = document.querySelector('#modal input[name="mmd_cand"]:checked');
+  const metronId = radio ? parseInt(radio.value) : (_matchCardData[_modalKomgaId]?.metron_id);
+  if (!metronId || !_modalKomgaId) return;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await api.post('/api/match/confirm', { komga_series_id: _modalKomgaId, metron_id: metronId });
+    document.getElementById(`mc_${_modalKomgaId}`)?.remove();
+    closeModal();
+  } catch {
+    btn.disabled = false; btn.textContent = 'Confirm';
+  }
+}
+
+async function rejectFromModal(btn) {
+  if (!_modalKomgaId) return;
+  btn.disabled = true;
+  try {
+    await api.post('/api/match/reject', { komga_series_id: _modalKomgaId });
+    document.getElementById(`mc_${_modalKomgaId}`)?.remove();
+    closeModal();
+  } catch {
+    btn.disabled = false;
+  }
 }
 
 async function startScan(btn) {
@@ -1167,7 +1256,9 @@ function showModal(html) {
 }
 
 function closeModal() {
-  document.getElementById('modal').classList.add('hidden');
+  const modal = document.getElementById('modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('modal-wide');
   document.getElementById('modal-backdrop').classList.add('hidden');
 }
 
