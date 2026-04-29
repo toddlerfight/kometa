@@ -1292,11 +1292,18 @@ select.settings-input {
 .scan-feed-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
-  padding: 5px 8px;
-  border-radius: 2px;
+  padding: 6px 8px;
+  border-radius: 3px;
   background: var(--su1);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.12s;
 }
+
+.scan-feed-row:hover { border-color: var(--bd); }
+.scan-feed-row.expanded { border-color: var(--pri); }
 
 .scan-feed-thumb {
   width: 24px;
@@ -1327,7 +1334,6 @@ select.settings-input {
 .scan-feed-match {
   font-family: 'Space Mono', monospace;
   font-size: 10px;
-  color: var(--tp);
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -1335,9 +1341,72 @@ select.settings-input {
   text-overflow: ellipsis;
 }
 
-.scan-feed-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+.scan-feed-conf {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   flex-shrink: 0;
+}
+
+.scan-feed-chevron {
+  font-size: 14px;
+  color: var(--tq);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.scan-feed-row.expanded .scan-feed-chevron { transform: rotate(90deg); }
+
+.scan-feed-detail {
+  width: 100%;
+  padding: 8px 0 4px 34px;
+}
+
+.scan-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.scan-candidate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 3px 0;
+}
+
+.scan-candidate-row input[type=radio] { accent-color: var(--pri); flex-shrink: 0; }
+
+.scan-candidate-name {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--tm);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-candidate-year {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  color: var(--tq);
+  flex-shrink: 0;
+}
+
+.scan-candidate-score {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  color: var(--tq);
+  flex-shrink: 0;
+  width: 30px;
+  text-align: right;
+}
+
+.scan-feed-actions {
+  display: flex;
+  gap: 6px;
 }

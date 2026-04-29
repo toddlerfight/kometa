@@ -723,44 +723,130 @@ async function renderMatchReview() {
   await _refreshMatchReview();
 }
 
+const CONF_LABEL = { high: 'Auto', medium: 'Maybe', low: 'Weak', none: 'No match' };
+const CONF_COLOR = { high: 'var(--grn)', medium: 'var(--amb)', low: 'var(--amb)', none: 'var(--tq)' };
+
+function _scanFeedRow(r) {
+  const conf = r.confidence;
+  const label = CONF_LABEL[conf] || 'No match';
+  const color = CONF_COLOR[conf] || 'var(--tq)';
+  const matchText = r.match ? esc(r.match) : 'No match';
+  const candidates = r.candidates || [];
+  const safeId = CSS.escape(r.komga_id);
+
+  const pickerRows = candidates.map((c, i) => `
+    <label class="scan-candidate-row">
+      <input type="radio" name="smc_${safeId}" value="${c.id}" ${i === 0 ? 'checked' : ''}>
+      <span class="scan-candidate-name">${esc(c.name)}</span>
+      <span class="scan-candidate-year">${c.year || ''}</span>
+      <span class="scan-candidate-score">${Math.round(c.score * 100)}%</span>
+    </label>
+  `).join('');
+
+  const detail = candidates.length ? `
+    <div class="scan-feed-detail" id="sfd_${safeId}" hidden>
+      <div class="scan-candidate-list">${pickerRows}</div>
+      <div class="scan-feed-actions">
+        <button class="btn btn-primary btn-sm"
+          onclick="confirmScanRow('${esc(r.komga_id)}', this)">Confirm</button>
+        <button class="btn btn-ghost btn-sm"
+          onclick="rejectScanRow('${esc(r.komga_id)}', this)">Skip</button>
+      </div>
+    </div>
+  ` : `
+    <div class="scan-feed-detail" id="sfd_${safeId}" hidden>
+      <div style="color:var(--tq);font-size:10px;font-family:'Space Mono',monospace;padding:8px 0">
+        No Metron results —
+        <button class="btn btn-ghost btn-sm" style="display:inline-flex"
+          onclick="openManualMatch('${esc(r.komga_id)}','${esc(r.title)}')">Search manually</button>
+      </div>
+    </div>
+  `;
+
+  return `
+    <div class="scan-feed-row" id="sfr_${safeId}"
+      onclick="toggleScanRow('${esc(r.komga_id)}')" role="button" tabindex="0"
+      onkeydown="if(event.key==='Enter')toggleScanRow('${esc(r.komga_id)}')">
+      <img class="scan-feed-thumb" src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
+        onerror="this.style.opacity='0.15'">
+      <div class="scan-feed-title">${esc(r.title)}</div>
+      <div class="scan-feed-arrow">→</div>
+      <div class="scan-feed-match" style="color:${color}">${matchText}</div>
+      <div class="scan-feed-conf" style="color:${color}">${label}</div>
+      <div class="scan-feed-chevron">›</div>
+      ${detail}
+    </div>
+  `;
+}
+
 function _scanProgressHtml(status) {
   const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
-  const feed = (status.recent || []).map(r => {
-    const conf = r.confidence;
-    const dot = conf === 'high' ? 'var(--grn)' : conf === 'medium' ? 'var(--amb)' : conf === 'low' ? 'var(--blu)' : 'var(--tq)';
-    const matchText = r.match ? esc(r.match) : '<span style="color:var(--tq)">No match</span>';
-    return `
-      <div class="scan-feed-row">
-        <img class="scan-feed-thumb" src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
-          onerror="this.style.opacity='0.15'">
-        <div class="scan-feed-title">${esc(r.title)}</div>
-        <div class="scan-feed-arrow">→</div>
-        <div class="scan-feed-match">${matchText}</div>
-        <div class="scan-feed-dot" style="background:${dot}"></div>
-      </div>
-    `;
-  }).join('');
+  const feed = (status.recent || []).map(_scanFeedRow).join('');
+  const label = status.running
+    ? `Scanning ${status.done} / ${status.total || '?'} series…`
+    : `Scanned ${status.done} series`;
   return `
     <div class="match-progress-wrap">
       <div class="match-progress-bar" style="width:${pct}%"></div>
     </div>
-    <div class="match-progress-label">Scanning ${status.done} / ${status.total || '?'} series…</div>
+    <div class="match-progress-label">${label}</div>
     <div class="scan-feed" id="scan-feed">${feed}</div>
   `;
+}
+
+function toggleScanRow(komgaId) {
+  const detail = document.getElementById(`sfd_${CSS.escape(komgaId)}`);
+  const row    = document.getElementById(`sfr_${CSS.escape(komgaId)}`);
+  if (!detail) return;
+  const open = !detail.hidden;
+  detail.hidden = open;
+  row?.classList.toggle('expanded', !open);
+}
+
+async function confirmScanRow(komgaId, btn) {
+  const radio = document.querySelector(`input[name="smc_${CSS.escape(komgaId)}"]:checked`);
+  if (!radio) return;
+  btn.disabled = true; btn.textContent = '…';
+  await api.post('/api/match/confirm', { komga_series_id: komgaId, metron_id: parseInt(radio.value) });
+  const row = document.getElementById(`sfr_${CSS.escape(komgaId)}`);
+  if (row) { row.style.opacity = '0.35'; row.onclick = null; }
+}
+
+async function rejectScanRow(komgaId, btn) {
+  btn.disabled = true;
+  await api.post('/api/match/reject', { komga_series_id: komgaId });
+  const row = document.getElementById(`sfr_${CSS.escape(komgaId)}`);
+  if (row) row.remove();
 }
 
 async function _refreshMatchReview() {
   const status = await api.get('/api/match/status');
 
   if (status.running) {
-    const el = document.getElementById('match-progress');
-    if (el) {
-      el.innerHTML = _scanProgressHtml(status);
-    } else {
+    const progressEl = document.getElementById('match-progress');
+    if (!progressEl) {
       setApp(`
         <div class="page-title">Match Library</div>
         <div id="match-progress">${_scanProgressHtml(status)}</div>
       `);
+    } else {
+      // Update bar + label without touching expanded rows
+      const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
+      const barEl = progressEl.querySelector('.match-progress-bar');
+      const lblEl = progressEl.querySelector('.match-progress-label');
+      if (barEl) barEl.style.width = pct + '%';
+      if (lblEl) lblEl.textContent = `Scanning ${status.done} / ${status.total || '?'} series…`;
+
+      // Prepend new rows that don't already exist in the feed
+      const feed = document.getElementById('scan-feed');
+      if (feed) {
+        for (const r of (status.recent || [])) {
+          const existing = document.getElementById(`sfr_${CSS.escape(r.komga_id)}`);
+          if (!existing) {
+            feed.insertAdjacentHTML('afterbegin', _scanFeedRow(r));
+          }
+        }
+      }
     }
     _matchPollTimer = setTimeout(_refreshMatchReview, 1200);
     return;

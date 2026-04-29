@@ -29,6 +29,8 @@ def start(komga_factory, metron_factory, db_path) -> bool:
 
 def _normalize(title: str) -> str:
     t = title.lower().strip()
+    t = re.sub(r"^\[.*?\]\s*", "", t)       # strip leading [year] or [tag] prefixes
+    t = re.sub(r"^\(\d{4}\)\s*", "", t)     # strip leading (year) prefixes
     t = re.sub(r"[^\w\s]", "", t)
     t = re.sub(r"\b(the|a|an)\b\s*", "", t)
     return re.sub(r"\s+", " ", t).strip()
@@ -97,13 +99,17 @@ def _run(komga_factory, metron_factory, db_path):
         _state["total"] = len(to_scan)
 
         for s in to_scan:
-            kid    = s["id"]
+            kid     = s["id"]
             k_title = s["name"]
             k_pub   = s.get("metadata", {}).get("publisher")
             k_year  = s.get("metadata", {}).get("startYear")
 
+            # Clean the search query — strip bracketed prefixes like [1996]
+            search_title = re.sub(r"^\[.*?\]\s*", "", k_title).strip()
+            search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip() or k_title
+
             try:
-                results = metron.search_series(k_title)
+                results = metron.search_series(search_title)
             except Exception:
                 results = []
 
@@ -144,6 +150,15 @@ def _run(komga_factory, metron_factory, db_path):
                     "match":      m_title or None,
                     "confidence": conf,
                     "score":      best_score,
+                    "candidates": [
+                        {
+                            "id":    r.get("id"),
+                            "name":  r.get("series") or r.get("name") or r.get("series_name") or "",
+                            "year":  r.get("year_began"),
+                            "score": sc,
+                        }
+                        for r, sc in scored[:5]
+                    ],
                 })
             else:
                 db.upsert_candidate(kid, k_title, k_pub, k_year, confidence="none", path=db_path)
@@ -153,6 +168,7 @@ def _run(komga_factory, metron_factory, db_path):
                     "match":      None,
                     "confidence": "none",
                     "score":      0,
+                    "candidates": [],
                 })
 
             _state["done"] += 1
