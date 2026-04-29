@@ -7,6 +7,8 @@ services:
       - "6969:6969"
     volumes:
       - /volume1/docker/kometa/data:/data
+      - /volume1/docker/kometa/downloads:/downloads
+      - "/volume1/📦/Comics:/comics"
     environment:
       KOMETA_DB: /data/kometa.db
       KOMGA_URL: ${KOMGA_URL:-http://$NAS_HOST:8585}
@@ -17,3 +19,5 @@ services:
       METRON_PASS: ${METRON_PASS}
       CV_API_KEY: ${CV_API_KEY:-}
       KOMETA_SYNC_HOURS: ${KOMETA_SYNC_HOURS:-5,12,17}
+      KOMETA_DOWNLOADS: /downloads
+      COMICS_ROOT: /comics

@@ -439,6 +439,17 @@ async function renderSeriesDetail(id) {
     ? `<button class="btn btn-ghost btn-sm" onclick="togglePullList(${s.id}, false)">Remove from Pull List</button>`
     : `<button class="btn btn-primary btn-sm" onclick="togglePullList(${s.id}, true)">+ Pull List</button>`;
 
+  const monStatus = s.monitor_status || 'monitored';
+  const monOpts = ['monitored','collected','ignored'].map(v =>
+    `<option value="${v}" ${monStatus === v ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`
+  ).join('');
+  const monSelect = `<select class="monitor-select" title="Monitor status"
+    onchange="setMonitorStatus(${s.id}, this.value)">${monOpts}</select>`;
+
+  const searchAllBtn = s.missing > 0 && monStatus !== 'ignored'
+    ? `<button class="btn btn-ghost btn-sm" onclick="searchAllMissing(${s.id}, this)">Search Missing</button>`
+    : '';
+
   const tabs = ['all','owned','missing','upcoming'].map(t => `
     <div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}</div>
   `).join('');
@@ -471,10 +482,15 @@ async function renderSeriesDetail(id) {
     const dateLabel = (st === 'upcoming' || st === 'missing') && issue.store_date
       ? `<div class="issue-tile-date">${issue.store_date}</div>`
       : '';
+    const searchBtn = st === 'missing'
+      ? `<button class="issue-tile-search" title="Search for this issue"
+           onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
+      : '';
     return `<div class="issue-tile" title="${esc(s.title)} ${num}">
       ${inner}
       <div class="issue-tile-num">${num}</div>
       ${dateLabel}
+      ${searchBtn}
     </div>`;
   }).join('');
 
@@ -491,6 +507,8 @@ async function renderSeriesDetail(id) {
     </div>
     <div class="detail-actions-row">
       ${pullBtn}
+      ${monSelect}
+      ${searchAllBtn}
       <button class="btn btn-ghost btn-sm" onclick="syncSeries(${s.id}, this)">Sync</button>
       <button class="btn btn-danger btn-sm" onclick="confirmDelete(${s.id}, '${esc(s.title)}')">Remove</button>
     </div>
@@ -557,6 +575,34 @@ function setDetailTab(tab, id) {
 async function togglePullList(id, on) {
   await api.patch(`/api/series/${id}/pull-list`, { on_pull_list: on });
   renderSeriesDetail(id);
+}
+
+async function setMonitorStatus(id, status) {
+  await api.patch(`/api/series/${id}/monitor`, { status });
+  renderSeriesDetail(id);
+}
+
+async function searchAllMissing(id, btn) {
+  btn.disabled = true; btn.textContent = 'Queuing…';
+  try {
+    const res = await api.post(`/api/series/${id}/search-missing`, {});
+    btn.textContent = `${res.queued} queued`;
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Search Missing'; }, 2000);
+  } catch {
+    btn.disabled = false; btn.textContent = 'Search Missing';
+  }
+}
+
+async function searchIssue(seriesId, issueNumber, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await api.post(`/api/series/${seriesId}/issues/${issueNumber}/search`, {});
+    btn.textContent = '✓';
+    btn.style.opacity = '0.5';
+  } catch {
+    btn.textContent = '↓';
+    btn.disabled = false;
+  }
 }
 
 function confirmDelete(id, title) {
@@ -626,46 +672,115 @@ async function renderPullList() {
   setApp(`<div class="page-title">Pull List</div>${html}`);
 }
 
-// --- Activity ---
+// --- Activity / Queue ---
+
+const QUEUE_STATE_LABEL = {
+  queued: 'Queued', searching: 'Searching', found: 'Found',
+  not_found: 'Not found', downloading: 'Downloading',
+  processing: 'Processing', done: 'Done', failed: 'Failed',
+};
+const QUEUE_STATE_COLOR = {
+  queued: 'var(--tq)', searching: 'var(--pri)', found: 'var(--pri)',
+  not_found: 'var(--su3)', downloading: 'var(--pri)', processing: 'var(--pri)',
+  done: 'var(--grn)', failed: 'var(--red, var(--amb))',
+};
 
 async function renderActivity() {
-  setTopbar();
+  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
-  const series = await api.get('/api/series');
+  const [queue, series] = await Promise.all([
+    api.get('/api/queue'),
+    api.get('/api/series'),
+  ]);
+
   const synced = series
     .filter(s => s.last_synced)
     .sort((a, b) => b.last_synced.localeCompare(a.last_synced));
 
-  if (!synced.length) {
-    setApp('<div class="page-title">Activity</div><div class="state-msg">No sync activity yet.</div>');
-    return;
-  }
+  let html = '<div class="page-title">Activity</div>';
 
-  const rows = synced.map(s => {
-    const hasNew = (s.missing + s.upcoming) > 0;
-    const evClass = hasNew ? 'ev-sync-ok' : 'ev-sync-none';
-    const detail = hasNew
-      ? `${s.title} — ${s.owned} owned`
-      : `${s.title} — no new issues`;
-    return `
-      <div class="activity-row ${evClass}" tabindex="0" role="button"
-        onclick="navigate('series-detail', {id: ${s.id}})"
-        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
-        <div class="activity-event">Sync complete</div>
-        <div class="activity-detail">${esc(detail)}</div>
-        <div class="activity-time">${relativeTime(s.last_synced)}</div>
+  // --- Queue section ---
+  if (queue.length) {
+    const qRows = queue.map(q => {
+      const label = QUEUE_STATE_LABEL[q.state] || q.state;
+      const color = QUEUE_STATE_COLOR[q.state] || 'var(--tq)';
+      const numStr = `#${fmtNum(q.issue_number)}`;
+      const actions = q.state === 'failed' || q.state === 'not_found'
+        ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>`
+        : '';
+      const errTip = q.error ? ` title="${esc(q.error)}"` : '';
+      return `
+        <div class="queue-row"${errTip}>
+          <div class="queue-series">${esc(q.title)}</div>
+          <div class="queue-issue">${numStr}</div>
+          <div class="queue-state" style="color:${color}">${label}</div>
+          <div class="queue-actions">
+            ${actions}
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)">✕</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    html += `
+      <div class="queue-section">
+        <div class="queue-section-header">Download Queue <span class="queue-count">${queue.length}</span></div>
+        <div class="queue-header-row">
+          <div>Series</div><div>Issue</div><div>Status</div><div></div>
+        </div>
+        ${qRows}
       </div>
     `;
-  }).join('');
+  } else {
+    html += `<div class="queue-section"><div class="queue-section-header">Download Queue</div>
+      <div class="state-msg" style="padding:20px 0">Queue is empty.</div></div>`;
+  }
 
-  setApp(`
-    <div class="page-title">Activity</div>
-    <div class="activity-header">
-      <div>Event</div><div>Detail</div><div class="ah-time">Time</div>
-    </div>
-    ${rows}
-  `);
+  // --- Sync history ---
+  if (synced.length) {
+    const rows = synced.map(s => {
+      const hasNew = (s.missing + s.upcoming) > 0;
+      const evClass = hasNew ? 'ev-sync-ok' : 'ev-sync-none';
+      const detail = hasNew ? `${s.title} — ${s.owned} owned` : `${s.title} — up to date`;
+      return `
+        <div class="activity-row ${evClass}" tabindex="0" role="button"
+          onclick="navigate('series-detail', {id: ${s.id}})"
+          onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
+          <div class="activity-event">Sync</div>
+          <div class="activity-detail">${esc(detail)}</div>
+          <div class="activity-time">${relativeTime(s.last_synced)}</div>
+        </div>
+      `;
+    }).join('');
+    html += `
+      <div class="queue-section" style="margin-top:32px">
+        <div class="queue-section-header">Sync History</div>
+        <div class="activity-header"><div>Event</div><div>Detail</div><div class="ah-time">Time</div></div>
+        ${rows}
+      </div>
+    `;
+  }
+
+  setApp(html);
+}
+
+async function triggerSweep(btn) {
+  btn.disabled = true; btn.textContent = 'Sweeping…';
+  await api.post('/api/queue/sweep', {});
+  btn.textContent = 'Sweep queued ✓';
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Sweep Missing'; renderActivity(); }, 1500);
+}
+
+async function retryQueue(id, btn) {
+  btn.disabled = true;
+  await api.post(`/api/queue/${id}/retry`, {});
+  renderActivity();
+}
+
+async function removeQueue(id, btn) {
+  btn.disabled = true;
+  await api.del(`/api/queue/${id}`);
+  renderActivity();
 }
 
 // --- Match Review ---

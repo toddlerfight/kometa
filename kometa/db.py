@@ -76,9 +76,25 @@ def _migrate(path=DB_PATH):
         series_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
         if "on_pull_list" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN on_pull_list INTEGER NOT NULL DEFAULT 1")
+        if "monitor_status" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN monitor_status TEXT NOT NULL DEFAULT 'monitored'")
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         if "metron_image" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS download_queue (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
+                issue_number      REAL NOT NULL,
+                state             TEXT NOT NULL DEFAULT 'queued',
+                source_url        TEXT,
+                filename          TEXT,
+                error             TEXT,
+                created_at        TEXT DEFAULT (datetime('now')),
+                updated_at        TEXT DEFAULT (datetime('now')),
+                UNIQUE(tracked_series_id, issue_number)
+            )
+        """)
 
 
 def _seed_defaults(path=DB_PATH):
@@ -236,6 +252,89 @@ def get_candidates_summary(path=DB_PATH):
             FROM match_candidates GROUP BY confidence, status
         """).fetchall()
         return [dict(r) for r in rows]
+
+
+def set_monitor_status(series_id, status, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET monitor_status = ? WHERE id = ?",
+            (status, series_id),
+        )
+
+
+# --- Download queue ---
+
+def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
+    """Add to queue; re-queues failed/not_found items but skips in-progress/done."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO download_queue (tracked_series_id, issue_number, state)
+            VALUES (?, ?, 'queued')
+            ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
+                state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
+                error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
+                updated_at = datetime('now')
+        """, (tracked_series_id, issue_number))
+
+
+def get_queue(path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began
+            FROM download_queue q
+            JOIN tracked_series s ON s.id = q.tracked_series_id
+            ORDER BY q.updated_at DESC
+        """)]
+
+
+def get_queued_items(path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began
+            FROM download_queue q
+            JOIN tracked_series s ON s.id = q.tracked_series_id
+            WHERE q.state = 'queued'
+            ORDER BY q.created_at ASC
+            LIMIT 10
+        """)]
+
+
+def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("""
+            UPDATE download_queue SET
+                state      = ?,
+                source_url = COALESCE(?, source_url),
+                filename   = COALESCE(?, filename),
+                error      = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+        """, (state, source_url, filename, error, queue_id))
+
+
+def remove_queue_item(queue_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
+
+
+def get_missing_for_monitored(path=DB_PATH):
+    """Return missing released issues for all monitored series not already queued."""
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT i.id as issue_id, i.number, i.store_date,
+                   s.id as tracked_series_id, s.title, s.publisher
+            FROM issue_status i
+            JOIN tracked_series s ON s.id = i.tracked_series_id
+            WHERE i.in_komga = 0
+              AND (i.store_date IS NULL OR i.store_date <= date('now'))
+              AND s.monitor_status = 'monitored'
+              AND NOT EXISTS (
+                  SELECT 1 FROM download_queue q
+                  WHERE q.tracked_series_id = s.id
+                    AND q.issue_number = i.number
+                    AND q.state NOT IN ('failed', 'not_found')
+              )
+        """)]
 
 
 def get_upcoming_issues(days=90, path=DB_PATH):

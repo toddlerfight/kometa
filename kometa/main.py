@@ -12,9 +12,11 @@ from pydantic import BaseModel
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient
+from kometa.getcomics_client import GetComicsClient
 from kometa.diff import compute_diff
 from kometa.scheduler import start_scheduler
 import kometa.db as db
+import kometa.downloader as downloader
 import kometa.matcher as matcher
 
 DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
@@ -44,10 +46,55 @@ def _sync_all_job():
         _sync_one(s)
 
 
+def _komga_scan():
+    _komga().scan_library()
+
+
+def _process_queue():
+    items = db.get_queued_items(DB_PATH)
+    if not items:
+        return
+    gc = GetComicsClient()
+    for item in items:
+        qid = item["id"]
+        db.update_queue_state(qid, "searching", path=DB_PATH)
+        try:
+            # get store_date from issue_status for year in filename
+            issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
+            issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
+            store_date = issue_row["store_date"] if issue_row else None
+
+            dl_url, hint_filename = gc.search(item["title"], item["issue_number"])
+            if not dl_url:
+                db.update_queue_state(qid, "not_found", error="No result on GetComics", path=DB_PATH)
+                continue
+
+            db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
+            dest = downloader.download_issue(
+                url=dl_url,
+                title=item["title"],
+                publisher=item["publisher"],
+                issue_number=item["issue_number"],
+                store_date=store_date,
+                hint_filename=hint_filename,
+                komga_scan_fn=_komga_scan,
+            )
+            db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
+        except Exception as e:
+            db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
+
+
+def _sweep_missing():
+    """Queue all missing issues for monitored series."""
+    rows = db.get_missing_for_monitored(DB_PATH)
+    for row in rows:
+        db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
-    start_scheduler(_sync_all_job)
+    start_scheduler(_sync_all_job, _process_queue, _sweep_missing)
     yield
 
 
@@ -529,6 +576,73 @@ class RejectRequest(BaseModel):
 @app.post("/api/match/reject")
 def reject_match(req: RejectRequest):
     db.reject_candidate(req.komga_series_id, DB_PATH)
+    return {"ok": True}
+
+
+# --- monitor status ---
+
+class MonitorRequest(BaseModel):
+    status: str  # monitored | collected | ignored
+
+
+@app.patch("/api/series/{series_id}/monitor")
+def set_monitor(series_id: int, req: MonitorRequest):
+    if req.status not in ("monitored", "collected", "ignored"):
+        raise HTTPException(400, "status must be monitored, collected, or ignored")
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    db.set_monitor_status(series_id, req.status, DB_PATH)
+    return db.get_series_by_id(series_id, DB_PATH)
+
+
+# --- download queue ---
+
+@app.get("/api/queue")
+def get_queue():
+    return db.get_queue(DB_PATH)
+
+
+@app.delete("/api/queue/{queue_id}", status_code=204)
+def delete_queue_item(queue_id: int):
+    db.remove_queue_item(queue_id, DB_PATH)
+
+
+@app.post("/api/queue/{queue_id}/retry", status_code=200)
+def retry_queue_item(queue_id: int):
+    db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
+    return {"ok": True}
+
+
+@app.post("/api/series/{series_id}/search-missing")
+def search_missing(series_id: int):
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    issues = db.get_issues_for_series(series_id, DB_PATH)
+    today = str(date.today())
+    queued = 0
+    for issue in issues:
+        if not issue["in_komga"] and (not issue["store_date"] or issue["store_date"] <= today):
+            db.queue_issue(series_id, issue["number"], DB_PATH)
+            queued += 1
+    return {"queued": queued}
+
+
+@app.post("/api/series/{series_id}/issues/{number}/search")
+def search_issue(series_id: int, number: float):
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    db.queue_issue(series_id, number, DB_PATH)
+    threading.Thread(target=_process_queue, daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/queue/sweep")
+def manual_sweep():
+    """Manually trigger the missing-issue sweep for monitored series."""
+    threading.Thread(target=_sweep_missing, daemon=True).start()
     return {"ok": True}
 
 
