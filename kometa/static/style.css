@@ -491,6 +491,24 @@ select.settings-input {
   text-overflow: ellipsis;
 }
 
+.series-card-next-release {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pri);
+  color: #000;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* ---- Series Detail ---- */
 
 .detail-band {
