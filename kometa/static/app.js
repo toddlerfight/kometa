@@ -1180,11 +1180,14 @@ function _seriesTypeBadge(name) {
   return '';
 }
 
-function openMatchModal(komgaId) {
+async function openMatchModal(komgaId) {
   const c = _matchCardData[komgaId];
   if (!c) return;
   _modalKomgaId = komgaId;
-  const candidates = c.candidates || [];
+
+  // Fetch full candidate detail (candidates_json excluded from list response)
+  const detail = await api.get(`/api/match/candidates/${encodeURIComponent(komgaId)}`);
+  const candidates = (detail && detail.candidates) || [];
   const first = candidates[0] || { id: c.metron_id, name: c.metron_title, publisher: c.metron_publisher, year: c.metron_year, score: c.score };
   const badge = _confBadge(first.score || c.score || 0);
 
