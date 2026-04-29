@@ -1255,6 +1255,36 @@ select.settings-input {
   outline: none;
 }
 .match-filter-input:focus { border-color: var(--pri); }
+.match-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.match-filter-confs {
+  display: flex;
+  gap: 6px;
+}
+.match-filter-conf {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid currentColor;
+  background: transparent;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+  opacity: 0.45;
+}
+.match-filter-conf:hover { opacity: 0.8; }
+.match-filter-conf.active { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+.match-filter-conf.conf-high   { color: var(--grn); }
+.match-filter-conf.conf-medium { color: var(--amb); }
+.match-filter-conf.conf-low    { color: var(--amb); }
+.match-filter-conf.conf-none   { color: var(--tq); }
+
 .match-filter-pubs {
   display: flex;
   flex-wrap: wrap;
@@ -1406,6 +1436,11 @@ select.settings-input {
   padding: 3px 10px;
   border-radius: 20px;
   border: 1px solid currentColor;
+}
+/* smaller variant inside cards */
+.match-card .match-conf-badge {
+  font-size: 8px;
+  padding: 2px 7px;
 }
 .match-conf-badge.conf-high   { color: var(--grn); }
 .match-conf-badge.conf-medium { color: var(--amb); }
