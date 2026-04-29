@@ -814,7 +814,7 @@ function _scanFeedRow(r) {
   const pickerRows = candidates.map((c, i) => `
     <label class="scan-candidate-row" onclick="event.stopPropagation()">
       <input type="radio" name="smc_${safeId}" value="${c.id}" ${i === 0 ? 'checked' : ''}>
-      <img class="scan-candidate-thumb" src="/api/metron/series/${c.id}/thumbnail" alt=""
+      <img class="scan-candidate-thumb" data-src="/api/metron/series/${c.id}/thumbnail" alt=""
         onerror="this.style.opacity='0.15'">
       <span class="scan-candidate-name">${esc(c.name)}</span>
       <span class="scan-candidate-year">${c.year || ''}</span>
@@ -826,7 +826,7 @@ function _scanFeedRow(r) {
     <div class="scan-feed-detail" id="sfd_${safeId}" hidden>
       <div class="scan-feed-covers">
         <div class="scan-cover-yours">
-          <img src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
+          <img data-src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
             onerror="this.style.opacity='0.15'">
           <span>Yours</span>
         </div>
@@ -847,7 +847,7 @@ function _scanFeedRow(r) {
       onclick="toggleScanRow('${esc(r.komga_id)}')" role="button" tabindex="0"
       onkeydown="if(event.key==='Enter')toggleScanRow('${esc(r.komga_id)}')">
       <img class="scan-feed-thumb" src="/api/komga/series/${esc(r.komga_id)}/thumbnail" alt=""
-        onerror="this.style.opacity='0.15'">
+        loading="lazy" onerror="this.style.opacity='0.15'">
       <div class="scan-feed-title">${esc(r.title)}</div>
       <div class="scan-feed-arrow">→</div>
       <div class="scan-feed-match" style="color:${color}">${matchText}</div>
@@ -880,6 +880,13 @@ function toggleScanRow(komgaId) {
   const open = !detail.hidden;
   detail.hidden = open;
   row?.classList.toggle('expanded', !open);
+  // Activate deferred images on first expand
+  if (!open) {
+    detail.querySelectorAll('img[data-src]').forEach(img => {
+      img.src = img.dataset.src;
+      img.removeAttribute('data-src');
+    });
+  }
 }
 
 async function confirmScanRow(komgaId, btn) {
@@ -1005,7 +1012,7 @@ async function _refreshMatchReview(gen) {
     const rows = groups.none.map(c => `
       <div class="match-none-row">
         <img class="match-none-thumb" src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt=""
-          onerror="this.style.opacity='0.2'">
+          loading="lazy" onerror="this.style.opacity='0.2'">
         <div class="match-none-title">${esc(c.komga_title)}</div>
         <div class="match-none-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
         <div class="match-none-actions">
@@ -1120,7 +1127,7 @@ function _matchCard(c, autoChecked) {
       onkeydown="if(event.key==='Enter')openMatchModal('${esc(c.komga_series_id)}')">
       <div class="match-card-img-wrap">
         <img src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt="${esc(c.komga_title)}"
-          onerror="this.style.opacity='0.2'">
+          loading="lazy" onerror="this.style.opacity='0.2'">
       </div>
       <div class="match-card-body">
         <div class="match-card-title">${esc(c.komga_title)}</div>
