@@ -1091,6 +1091,7 @@ function openMatchModal(komgaId) {
           <div class="match-modal-cover-label">Your library</div>
           <div class="match-modal-cover-title">${esc(c.komga_title)}</div>
           <div class="match-modal-cover-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
+          <div id="match-owned-count" class="match-modal-cover-stats"></div>
         </div>
         <div class="match-modal-arrow">→</div>
         <div class="match-modal-cover">
@@ -1120,6 +1121,11 @@ function openMatchModal(komgaId) {
   const modal = document.getElementById('modal');
   modal.classList.add('modal-wide');
   showModal(html);
+
+  api.get(`/api/komga/series/${encodeURIComponent(komgaId)}/books`).then(books => {
+    const el = document.getElementById('match-owned-count');
+    if (el) el.innerHTML = `<span class="match-preview-issues">${books.length} in library</span>`;
+  }).catch(() => {});
 
   const needsInfo = candidates.filter(r => r.issue_count == null);
   if (needsInfo.length) _backfillCandidateInfo(komgaId, needsInfo);
@@ -1181,6 +1187,7 @@ function updateMatchPreview(radio) {
     const type = _seriesTypeBadge(cand.name);
     const issues = cand.issue_count != null ? `<span class="match-preview-issues">${cand.issue_count} issues</span>` : '';
     stats.innerHTML = (type ? `<span class="match-cand-type">${type}</span>` : '') + issues;
+    if (cand.issue_count == null) _backfillCandidateInfo(_modalKomgaId, [cand]);
   }
 }
 
