@@ -994,49 +994,72 @@ function _matchCard(c, autoChecked) {
 
 let _modalKomgaId = null;
 
+function _confBadge(score) {
+  if (score >= 0.75) return { cls: 'conf-high',   label: 'High confidence' };
+  if (score >= 0.45) return { cls: 'conf-medium', label: 'Needs review' };
+  if (score >  0.15) return { cls: 'conf-low',    label: 'Weak match' };
+  return                    { cls: 'conf-none',   label: 'No match' };
+}
+
+function _metronCoverHtml(id, elId) {
+  return `
+    <div class="match-modal-cover-img-wrap" id="${elId ? elId + '-wrap' : ''}">
+      <img id="${elId || ''}" src="/api/metron/series/${id}/thumbnail" alt=""
+        onerror="this.parentNode.dataset.err='1'">
+      <div class="match-modal-cover-fallback">No cover</div>
+    </div>`;
+}
+
 function openMatchModal(komgaId) {
   const c = _matchCardData[komgaId];
   if (!c) return;
   _modalKomgaId = komgaId;
   const candidates = c.candidates || [];
   const first = candidates[0] || { id: c.metron_id, name: c.metron_title, publisher: c.metron_publisher, year: c.metron_year, score: c.score };
-  const pct = Math.round(c.score * 100);
+  const badge = _confBadge(first.score || c.score || 0);
 
-  const candidateRows = candidates.length ? candidates.map((r, i) => `
+  const candidateRows = candidates.length ? candidates.map((r, i) => {
+    const cb = _confBadge(r.score);
+    return `
     <label class="match-modal-candidate" onclick="event.stopPropagation()">
       <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
         onchange="updateMatchPreview(this)">
-      <img class="match-modal-cand-thumb" src="/api/metron/series/${r.id}/thumbnail" alt=""
-        onerror="this.style.opacity='0.15'">
+      <div class="match-modal-cand-img-wrap">
+        <img class="match-modal-cand-thumb" src="/api/metron/series/${r.id}/thumbnail" alt=""
+          onerror="this.parentNode.dataset.err='1'">
+        <div class="match-modal-cand-fallback"></div>
+      </div>
       <div class="match-modal-cand-info">
         <div class="match-modal-cand-name">${esc(r.name)}</div>
         <div class="match-modal-cand-meta">${esc(r.publisher || '')}${r.year ? ' · ' + r.year : ''}</div>
       </div>
-      <span class="match-modal-cand-score">${Math.round(r.score * 100)}%</span>
-    </label>
-  `).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found</div>`;
+      <span class="match-conf-dot ${cb.cls}"></span>
+    </label>`;
+  }).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found — try Search Metron</div>`;
 
   const html = `
     <div class="match-modal-body" onclick="event.stopPropagation()">
       <div class="match-modal-covers">
         <div class="match-modal-cover">
-          <img src="/api/komga/series/${esc(komgaId)}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
+          <div class="match-modal-cover-img-wrap">
+            <img src="/api/komga/series/${esc(komgaId)}/thumbnail" alt=""
+              onerror="this.parentNode.dataset.err='1'">
+            <div class="match-modal-cover-fallback">No cover</div>
+          </div>
           <div class="match-modal-cover-label">Your library</div>
           <div class="match-modal-cover-title">${esc(c.komga_title)}</div>
           <div class="match-modal-cover-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
         </div>
         <div class="match-modal-arrow">→</div>
         <div class="match-modal-cover">
-          <img id="match-preview-img" src="/api/metron/series/${first.id}/thumbnail" alt="" onerror="this.style.opacity='0.2'">
+          ${_metronCoverHtml(first.id, 'match-preview-img')}
           <div class="match-modal-cover-label">Metron match</div>
           <div id="match-preview-title" class="match-modal-cover-title">${esc(first.name || '')}</div>
           <div id="match-preview-meta" class="match-modal-cover-meta">${esc(first.publisher || '')}${first.year ? ' · ' + first.year : ''}</div>
         </div>
       </div>
-      <div class="match-modal-score-row">
-        <div class="match-score-bar-track" style="flex:1"><div class="match-score-bar" id="match-preview-bar" style="width:${pct}%"></div></div>
-        <span class="match-score-pct" id="match-preview-pct">${pct}%</span>
-        <span style="font-size:11px;color:var(--tq);margin-left:4px">confidence</span>
+      <div class="match-modal-conf-row">
+        <span class="match-conf-badge ${badge.cls}" id="match-preview-badge">${badge.label}</span>
       </div>
       <div class="match-modal-candidates">${candidateRows}</div>
       <div class="match-modal-actions">
@@ -1054,22 +1077,27 @@ function openMatchModal(komgaId) {
 }
 
 function updateMatchPreview(radio) {
-  const c = Object.values(_matchCardData).find(x => x.komga_series_id === _modalKomgaId);
+  const c = _matchCardData[_modalKomgaId];
   if (!c) return;
-  const candidates = c.candidates || [];
-  const cand = candidates.find(x => String(x.id) === radio.value);
+  const cand = (c.candidates || []).find(x => String(x.id) === radio.value);
   if (!cand) return;
-  const img = document.getElementById('match-preview-img');
+
+  const wrap = document.getElementById('match-preview-img-wrap');
+  if (wrap) {
+    delete wrap.dataset.err;
+    const img = wrap.querySelector('img');
+    if (img) img.src = `/api/metron/series/${cand.id}/thumbnail`;
+  }
   const title = document.getElementById('match-preview-title');
-  const meta = document.getElementById('match-preview-meta');
-  const bar = document.getElementById('match-preview-bar');
-  const pct = document.getElementById('match-preview-pct');
-  if (img) img.src = `/api/metron/series/${cand.id}/thumbnail`;
+  const meta  = document.getElementById('match-preview-meta');
+  const badge = document.getElementById('match-preview-badge');
   if (title) title.textContent = cand.name || '';
-  if (meta) meta.textContent = [cand.publisher, cand.year].filter(Boolean).join(' · ');
-  const p = Math.round(cand.score * 100);
-  if (bar) bar.style.width = p + '%';
-  if (pct) pct.textContent = p + '%';
+  if (meta)  meta.textContent  = [cand.publisher, cand.year].filter(Boolean).join(' · ');
+  if (badge) {
+    const b = _confBadge(cand.score);
+    badge.className = `match-conf-badge ${b.cls}`;
+    badge.textContent = b.label;
+  }
 }
 
 async function confirmFromModal(btn) {
