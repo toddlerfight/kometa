@@ -1062,7 +1062,7 @@ function openMatchModal(komgaId) {
     const volStr    = r.volume > 1 ? `Vol. ${r.volume}` : '';
     const metaLine  = [esc(r.publisher || ''), r.year, volStr].filter(Boolean).join(' · ');
     return `
-    <label class="match-modal-candidate" onclick="event.stopPropagation()">
+    <label class="match-modal-candidate" data-mid="${r.id}" onclick="event.stopPropagation()">
       <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
         onchange="updateMatchPreview(this)">
       <div class="match-modal-cand-img-wrap">
@@ -1075,7 +1075,7 @@ function openMatchModal(komgaId) {
         <div class="match-modal-cand-meta">${metaLine}</div>
       </div>
       ${typeBadge ? `<span class="match-cand-type">${typeBadge}</span>` : ''}
-      ${issueStr ? `<span class="match-cand-issues">${issueStr}</span>` : ''}
+      <span class="match-cand-issues" data-issues="${r.id}">${issueStr}</span>
     </label>`;
   }).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found — try Search Metron</div>`;
 
@@ -1120,6 +1120,38 @@ function openMatchModal(komgaId) {
   const modal = document.getElementById('modal');
   modal.classList.add('modal-wide');
   showModal(html);
+
+  const needsInfo = candidates.filter(r => r.issue_count == null);
+  if (needsInfo.length) _backfillCandidateInfo(komgaId, needsInfo);
+}
+
+async function _backfillCandidateInfo(komgaId, candidates) {
+  await Promise.all(candidates.map(async r => {
+    try {
+      const info = await api.get(`/api/metron/series/${r.id}/info`);
+      if (info.issue_count == null) return;
+      const c = _matchCardData[komgaId];
+      if (c) {
+        const cached = (c.candidates || []).find(x => x.id === r.id);
+        if (cached) {
+          cached.issue_count = info.issue_count;
+          cached.volume      = info.volume;
+        }
+      }
+      const issueStr = `${info.issue_count} issue${info.issue_count === 1 ? '' : 's'}`;
+      const span = document.querySelector(`[data-issues="${r.id}"]`);
+      if (span) span.textContent = issueStr;
+      const radio = document.querySelector(`#modal input[name="mmd_cand"][value="${r.id}"]`);
+      if (radio && radio.checked) {
+        const stats = document.getElementById('match-preview-stats');
+        if (stats) {
+          const type = _seriesTypeBadge(r.name);
+          stats.innerHTML = (type ? `<span class="match-cand-type">${type}</span>` : '') +
+            `<span class="match-preview-issues">${issueStr}</span>`;
+        }
+      }
+    } catch { /* silently ignore — non-critical */ }
+  }));
 }
 
 function updateMatchPreview(radio) {
