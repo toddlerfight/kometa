@@ -442,7 +442,7 @@ async function renderSeriesDetail(id) {
   const monStatus = s.monitor_status || 'monitored';
   const monLabels = { monitored: 'Monitored', collected: 'Collected', ignored: 'Ignored' };
   const monNext   = { monitored: 'collected', collected: 'ignored', ignored: 'monitored' };
-  const monSelect = `<button class="btn btn-ghost btn-sm monitor-toggle" title="Click to change"
+  const monSelect = `<button class="btn btn-ghost btn-sm"
     onclick="setMonitorStatus(${s.id}, '${monNext[monStatus]}', this)">${monLabels[monStatus]} ⇄</button>`;
 
   const searchAllBtn = s.missing > 0 && monStatus !== 'ignored'
