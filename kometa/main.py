@@ -356,6 +356,21 @@ def metron_series_thumbnail(metron_id: int):
         raise HTTPException(404)
 
 
+@app.get("/api/metron/series/{metron_id}/info")
+def metron_series_info(metron_id: int):
+    metron = _metron()
+    try:
+        detail = metron.get_series(metron_id)
+        return {
+            "id":          metron_id,
+            "issue_count": detail.get("issue_count"),
+            "volume":      detail.get("volume"),
+            "series_type": (detail.get("series_type") or {}).get("name", "") if isinstance(detail.get("series_type"), dict) else detail.get("series_type", ""),
+        }
+    except Exception:
+        raise HTTPException(404)
+
+
 # --- match / scan ---
 
 @app.post("/api/match/scan")
