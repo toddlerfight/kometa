@@ -1235,6 +1235,47 @@ select.settings-input {
   padding-top: 6px;
 }
 
+/* match filter bar */
+.match-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.match-filter-input {
+  width: 100%;
+  max-width: 360px;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  padding: 7px 12px;
+  color: var(--tp);
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  outline: none;
+}
+.match-filter-input:focus { border-color: var(--pri); }
+.match-filter-pubs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.match-filter-pub {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--bd);
+  background: transparent;
+  color: var(--tq);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.match-filter-pub:hover { border-color: var(--pri); color: var(--tp); }
+.match-filter-pub.active { border-color: var(--pri); color: var(--pri); background: color-mix(in srgb, var(--pri) 10%, transparent); }
+
 /* match card — clickable */
 .match-card {
   cursor: pointer;
@@ -1244,6 +1285,12 @@ select.settings-input {
   border-color: var(--pri);
   background: var(--su2);
 }
+.match-card-conf-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
 .match-card-match-line {
   font-family: 'Space Mono', monospace;
   font-size: 9px;
@@ -1251,7 +1298,6 @@ select.settings-input {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
 }
 
 /* match detail modal */
