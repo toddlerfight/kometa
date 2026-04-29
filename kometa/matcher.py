@@ -31,7 +31,8 @@ def _normalize(title: str) -> str:
     t = title.lower().strip()
     t = re.sub(r"^\[.*?\]\s*", "", t)       # strip leading [year] or [tag] prefixes
     t = re.sub(r"^\(\d{4}\)\s*", "", t)     # strip leading (year) prefixes
-    t = re.sub(r"[^\w\s]", "", t)
+    t = re.sub(r"[/\-:&]", " ", t)          # separators → space (preserves word gaps)
+    t = re.sub(r"[^\w\s]", "", t)           # strip remaining punctuation
     t = re.sub(r"\b(the|a|an)\b\s*", "", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -104,9 +105,11 @@ def _run(komga_factory, metron_factory, db_path):
             k_pub   = s.get("metadata", {}).get("publisher")
             k_year  = s.get("metadata", {}).get("startYear")
 
-            # Clean the search query — strip bracketed prefixes like [1996]
+            # Clean search query for Metron: strip prefixes, replace separators
             search_title = re.sub(r"^\[.*?\]\s*", "", k_title).strip()
-            search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip() or k_title
+            search_title = re.sub(r"^\(\d{4}\)\s*", "", search_title).strip()
+            search_title = re.sub(r"\s+-\s+", " ", search_title)   # "Batman - Aliens" → "Batman Aliens"
+            search_title = re.sub(r"[/:&]", " ", search_title).strip() or k_title
 
             try:
                 results = metron.search_series(search_title)
