@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from contextlib import contextmanager
+from datetime import date, timedelta
 
 DB_PATH = "/data/kometa.db"
 
@@ -58,8 +59,9 @@ def init_db(path=DB_PATH):
 
 @contextmanager
 def _connect(path=DB_PATH):
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -78,9 +80,92 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN on_pull_list INTEGER NOT NULL DEFAULT 1")
         if "monitor_status" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN monitor_status TEXT NOT NULL DEFAULT 'monitored'")
+        if "folder_path" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN folder_path TEXT")
+
+        if "cv_volume_id" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
+        if "locg_series_id" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_series_id INTEGER")
+
+        # Make komga_series_id nullable — SQLite can't drop NOT NULL via ALTER, must rebuild
+        series_info = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(tracked_series)")}
+        if series_info.get("komga_series_id", 0) == 1:
+            conn.execute("ALTER TABLE tracked_series RENAME TO _ts_old")
+            conn.execute("""
+                CREATE TABLE tracked_series (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    komga_series_id   TEXT UNIQUE,
+                    metron_series_id  INTEGER NOT NULL,
+                    title             TEXT NOT NULL,
+                    publisher         TEXT,
+                    year_began        INTEGER,
+                    added_at          TEXT DEFAULT (datetime('now')),
+                    last_synced       TEXT,
+                    on_pull_list      INTEGER NOT NULL DEFAULT 1,
+                    monitor_status    TEXT NOT NULL DEFAULT 'monitored',
+                    folder_path       TEXT
+                )
+            """)
+            conn.execute("""
+                INSERT INTO tracked_series
+                    (id, komga_series_id, metron_series_id, title, publisher, year_began,
+                     added_at, last_synced, on_pull_list, monitor_status, folder_path)
+                SELECT id, komga_series_id, metron_series_id, title, publisher, year_began,
+                       added_at, last_synced, on_pull_list, monitor_status, folder_path
+                FROM _ts_old
+            """)
+            conn.execute("DROP TABLE _ts_old")
+
+        # Make metron_series_id nullable — fetch fresh PRAGMA after any prior rebuild
+        series_info2 = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(tracked_series)")}
+        if series_info2.get("metron_series_id", 0) == 1:
+            conn.execute("ALTER TABLE tracked_series RENAME TO _ts_old2")
+            conn.execute("""
+                CREATE TABLE tracked_series (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    komga_series_id   TEXT UNIQUE,
+                    metron_series_id  INTEGER,
+                    title             TEXT NOT NULL,
+                    publisher         TEXT,
+                    year_began        INTEGER,
+                    added_at          TEXT DEFAULT (datetime('now')),
+                    last_synced       TEXT,
+                    on_pull_list      INTEGER NOT NULL DEFAULT 1,
+                    monitor_status    TEXT NOT NULL DEFAULT 'monitored',
+                    folder_path       TEXT,
+                    cv_volume_id      TEXT,
+                    locg_series_id    INTEGER
+                )
+            """)
+            conn.execute("""
+                INSERT INTO tracked_series
+                    (id, komga_series_id, metron_series_id, title, publisher, year_began,
+                     added_at, last_synced, on_pull_list, monitor_status, folder_path,
+                     cv_volume_id, locg_series_id)
+                SELECT id, komga_series_id, metron_series_id, title, publisher, year_began,
+                       added_at, last_synced, on_pull_list, monitor_status, folder_path,
+                       cv_volume_id, locg_series_id
+                FROM _ts_old2
+            """)
+            conn.execute("DROP TABLE _ts_old2")
+
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         if "metron_image" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
+        if "metron_issue_id" not in issue_cols:
+            conn.execute("ALTER TABLE issue_status ADD COLUMN metron_issue_id INTEGER")
+        if "locg_issue_id" not in issue_cols:
+            conn.execute("ALTER TABLE issue_status ADD COLUMN locg_issue_id TEXT")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS variant_prefs (
+                tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
+                number            REAL NOT NULL,
+                selected          TEXT NOT NULL,
+                primary_id        TEXT NOT NULL,
+                UNIQUE(tracked_series_id, number)
+            )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mc_status ON match_candidates(status)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS download_queue (
@@ -130,12 +215,17 @@ def set_config(updates: dict, path=DB_PATH):
 
 # --- Series ---
 
-def add_series(komga_series_id, metron_series_id, title, publisher=None, year_began=None, path=DB_PATH):
+def add_series(komga_series_id=None, metron_series_id=None, title=None, publisher=None,
+               year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
+               path=DB_PATH) -> int:
     with _connect(path) as conn:
-        conn.execute("""
-            INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher, year_began)
-            VALUES (?, ?, ?, ?, ?)
-        """, (komga_series_id, metron_series_id, title, publisher, year_began))
+        cur = conn.execute("""
+            INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher,
+                                        year_began, folder_path, on_pull_list, locg_series_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (komga_series_id, metron_series_id, title, publisher, year_began,
+              folder_path, int(on_pull_list), locg_series_id))
+        return cur.lastrowid
 
 
 def remove_series(series_id, path=DB_PATH):
@@ -149,23 +239,43 @@ def get_all_series(path=DB_PATH):
         return [dict(r) for r in conn.execute("SELECT * FROM tracked_series ORDER BY title")]
 
 
+def get_all_series_summaries(path=DB_PATH):
+    """Single-query bulk aggregation of issue counts for all series."""
+    today = str(date.today())
+    cutoff = str(date.today() + timedelta(days=30))
+    with _connect(path) as conn:
+        rows = conn.execute("""
+            SELECT
+                tracked_series_id,
+                SUM(CASE WHEN in_komga = 1 THEN 1 ELSE 0 END) as owned,
+                SUM(CASE WHEN in_komga = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
+                MIN(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date > ? AND store_date <= ? THEN store_date END) as next_release
+            FROM issue_status
+            GROUP BY tracked_series_id
+        """, (today, today, today, cutoff))
+        return {r["tracked_series_id"]: dict(r) for r in rows}
+
+
 def get_series_by_id(series_id, path=DB_PATH):
     with _connect(path) as conn:
         row = conn.execute("SELECT * FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
         return dict(row) if row else None
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, metron_image=None, path=DB_PATH):
+def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, metron_image=None, metron_issue_id=None, locg_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id, metron_image)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id, metron_image, metron_issue_id, locg_issue_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
-                store_date = excluded.store_date,
-                in_komga = excluded.in_komga,
-                komga_book_id = excluded.komga_book_id,
-                metron_image = excluded.metron_image
-        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id, metron_image))
+                store_date      = excluded.store_date,
+                in_komga        = excluded.in_komga,
+                komga_book_id   = excluded.komga_book_id,
+                metron_image    = excluded.metron_image,
+                metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
+                locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
+        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id, metron_image, metron_issue_id, locg_issue_id))
 
 
 def set_pull_list(series_id, on_pull_list, path=DB_PATH):
@@ -269,6 +379,30 @@ def get_candidates_summary(path=DB_PATH):
         return [dict(r) for r in rows]
 
 
+def set_folder_path(series_id, folder_path, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET folder_path = ? WHERE id = ?",
+            (folder_path, series_id),
+        )
+
+
+def set_cv_volume_id(series_id, cv_volume_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET cv_volume_id = ? WHERE id = ?",
+            (str(cv_volume_id), series_id),
+        )
+
+
+def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET locg_series_id = ? WHERE id = ?",
+            (locg_series_id, series_id),
+        )
+
+
 def set_monitor_status(series_id, status, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(
@@ -302,10 +436,20 @@ def get_queue(path=DB_PATH):
         """)]
 
 
+def reset_stuck_queue_items(path=DB_PATH):
+    """Reset searching/downloading items left orphaned by a container restart."""
+    with _connect(path) as conn:
+        conn.execute("""
+            UPDATE download_queue
+            SET state = 'queued', error = NULL, updated_at = datetime('now')
+            WHERE state IN ('searching', 'downloading')
+        """)
+
+
 def get_queued_items(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began
+            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began, s.folder_path
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'queued'
@@ -332,6 +476,11 @@ def remove_queue_item(queue_id, path=DB_PATH):
         conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
 
 
+def clear_queue_history(path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("DELETE FROM download_queue WHERE state IN ('done', 'not_found', 'failed')")
+
+
 def get_missing_for_monitored(path=DB_PATH):
     """Return missing released issues for all monitored series not already queued."""
     with _connect(path) as conn:
@@ -342,7 +491,7 @@ def get_missing_for_monitored(path=DB_PATH):
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.in_komga = 0
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
-              AND s.monitor_status = 'monitored'
+              AND s.on_pull_list = 1
               AND NOT EXISTS (
                   SELECT 1 FROM download_queue q
                   WHERE q.tracked_series_id = s.id
@@ -391,3 +540,35 @@ def get_upcoming_issues(days=90, path=DB_PATH):
               AND s.on_pull_list = 1
             ORDER BY i.store_date, s.title
         """, (str(days),))]
+
+
+def set_variant_prefs(tracked_series_id, number, selected: list, primary_id: str, path=DB_PATH):
+    import json
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO variant_prefs (tracked_series_id, number, selected, primary_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(tracked_series_id, number) DO UPDATE SET
+                selected   = excluded.selected,
+                primary_id = excluded.primary_id
+        """, (tracked_series_id, number, json.dumps(selected), primary_id))
+
+
+def get_variant_prefs(tracked_series_id, number, path=DB_PATH):
+    import json
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT selected, primary_id FROM variant_prefs WHERE tracked_series_id = ? AND number = ?",
+            (tracked_series_id, number)
+        ).fetchone()
+    if not row:
+        return None
+    return {"selected": json.loads(row["selected"]), "primary_id": row["primary_id"]}
+
+
+def clear_variant_prefs(tracked_series_id, number, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "DELETE FROM variant_prefs WHERE tracked_series_id = ? AND number = ?",
+            (tracked_series_id, number)
+        )

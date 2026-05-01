@@ -1,5 +1,8 @@
 // --- API ---
 
+let _appConfig = {};
+let _issueModalPollTimer = null;
+
 const api = {
   get(url) {
     return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -17,19 +20,51 @@ const api = {
   },
 };
 
+let _toastTimer = null;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `toast-show${type === 'error' ? ' toast-error' : ''}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, 3000);
+}
+
 // --- Router ---
 
 let currentView = 'series';
 let currentParams = {};
 let detailTab = 'all';
+let detailSortDesc = true;
 
 function navigate(view, params = {}) {
   currentView = view;
   currentParams = params;
-  if (view !== 'series-detail') detailTab = 'all';
+  if (view !== 'series-detail') {
+    detailTab = 'all';
+    document.getElementById('series-bg').classList.add('hidden');
+    document.getElementById('series-bg-img').style.backgroundImage = '';
+  }
+  const hash = params && Object.keys(params).length
+    ? `#${view}?${new URLSearchParams(params).toString()}`
+    : `#${view}`;
+  history.pushState({ view, params }, '', hash);
   updateNav();
   renderView();
 }
+
+window.addEventListener('popstate', () => {
+  const { view, params } = _parseHash();
+  currentView = view;
+  currentParams = params;
+  if (view !== 'series-detail') {
+    detailTab = 'all';
+    document.getElementById('series-bg').classList.add('hidden');
+    document.getElementById('series-bg-img').style.backgroundImage = '';
+  }
+  updateNav();
+  renderView();
+});
 
 function updateNav() {
   const navView = currentView === 'series-detail' ? 'library' : currentView;
@@ -128,7 +163,7 @@ function countColor(owned, total) {
 
 async function renderSeries() {
   setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>
-    <button class="btn btn-primary" onclick="navigate('library-browse')">+ Add Series</button>`);
+    <button class="btn btn-primary" onclick="showAddWizard()">+ Add Series</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
   const series = await api.get('/api/series');
@@ -137,8 +172,8 @@ async function renderSeries() {
     setApp(`
       <div class="empty-state">
         <div class="empty-state-title">No series tracked yet</div>
-        <div class="empty-state-body">Browse your Komga library to start tracking series.</div>
-        <button class="btn btn-primary" onclick="navigate('library-browse')">Browse Library</button>
+        <div class="empty-state-body">Search for a series to start tracking.</div>
+        <button class="btn btn-primary" onclick="showAddWizard()">Add Series</button>
       </div>
     `);
     return;
@@ -174,27 +209,37 @@ async function renderSeries() {
 }
 
 async function syncAll(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Sync started'; }
+  api.post('/api/sync', {});
+  if (btn) setTimeout(() => { btn.disabled = false; btn.textContent = 'Sync All'; }, 3000);
+}
+
+async function sweepSeries(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
-    await api.post('/api/sync', {});
-    await _loadBrowsePage();
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Sync All'; }
+    const res = await api.post(`/api/series/${id}/search-missing`, {});
+    if (res.queued > 0) {
+      navigate('activity');
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = 'Sweep Missing'; }
+    }
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sweep Missing'; }
   }
 }
 
 async function syncSeries(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
-  try {
-    await api.post(`/api/sync/${id}`, {});
+  await api.post(`/api/sync/${id}`, {});
+  // Sync runs in a background thread — wait for it then refresh
+  setTimeout(async () => {
     if (currentView === 'series-detail' && currentParams.id === id) {
-      renderSeriesDetail(id);
+      await renderSeriesDetail(id);
     } else {
-      renderSeries();
+      await renderSeries();
     }
-  } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
-  }
+  }, 4000);
 }
 
 // --- Library Browse ---
@@ -205,20 +250,20 @@ async function renderLibraryBrowse() {
   document.getElementById('topbar-title').textContent = 'Library';
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="syncAll(this)">Sync All</button>
-    <button class="btn btn-primary btn-sm" onclick="navigate('match-review')">+ Add Series</button>
+    <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search = '';
-  browseState.filter = 'all';
+  browseState.filter = 'monitored';
   browseState._cache = null;
   setApp('<div class="state-msg">Loading...</div>');
   await _loadBrowsePage();
 }
 
 const BROWSE_FILTERS = [
-  { key: 'all',      label: 'All' },
-  { key: 'complete', label: 'Complete' },
-  { key: 'partial',  label: 'Partial' },
-  { key: 'missing',  label: 'Missing' },
+  { key: 'monitored', label: 'Monitored' },
+  { key: 'upcoming',  label: 'Upcoming' },
+  { key: 'missing',   label: 'Missing' },
+  { key: 'all',       label: 'All' },
 ];
 
 function _browseFilterTabs() {
@@ -264,12 +309,9 @@ function _renderBrowseResults() {
   const q = search.toLowerCase();
   const filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
-    const missing = s.missing ?? 0;
-    const owned   = s.owned   ?? 0;
-    const total   = owned + missing;
-    if (filter === 'complete') return total > 0 && missing === 0;
-    if (filter === 'partial')  return owned > 0 && missing > 0;
-    if (filter === 'missing')  return missing > 0;
+    if (filter === 'monitored') return !!s.on_pull_list;
+    if (filter === 'upcoming')  return (s.upcoming ?? 0) > 0;
+    if (filter === 'missing')   return (s.missing ?? 0) > 0;
     return true;
   });
 
@@ -278,7 +320,7 @@ function _renderBrowseResults() {
       ? `<div class="empty-state">
            <div class="empty-state-title">Nothing tracked yet</div>
            <div style="margin-top:8px;color:var(--tq);font-size:13px">
-             Use <strong>+ Add Series</strong> to link your Komga library to Metron.
+             Use <strong>+ Add Series</strong> to start tracking a series.
            </div>
          </div>`
       : `<div class="state-msg">No series match.</div>`;
@@ -299,7 +341,7 @@ function _renderBrowseResults() {
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
-            onerror="this.style.opacity='0.15'">
+            loading="lazy" onerror="this.style.opacity='0.15'">
           ${nextRelease}
         </div>
         <div class="series-card-bar-track">
@@ -410,6 +452,65 @@ async function submitMetronMatch() {
 
 // --- Series Detail ---
 
+let _detailSeries = null;
+
+function buildIssueTiles(s) {
+  const filtered = s.issues.filter(i => {
+    const st = issueStatus(i);
+    if (detailTab === 'owned')    return st === 'owned';
+    if (detailTab === 'missing')  return st === 'missing';
+    if (detailTab === 'upcoming') return st === 'upcoming';
+    return true;
+  }).sort((a, b) => detailSortDesc ? b.number - a.number : a.number - b.number);
+
+  return filtered.map(issue => {
+    const st = issueStatus(issue);
+    const num = `#${fmtNum(issue.number)}`;
+    const dateBadge = st === 'upcoming' && issue.store_date
+      ? `<div class="series-card-next-release">${issue.store_date.replace(/-/g, '/')}</div>`
+      : '';
+    let inner = '';
+    if (st === 'owned') {
+      const thumbSrc = issue.komga_book_id
+        ? `/api/book/${issue.komga_book_id}/thumbnail`
+        : `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
+      inner = `<div class="issue-tile-img">
+        <img src="${thumbSrc}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
+      </div>`;
+    } else if (issue.metron_image) {
+      inner = `<div class="issue-tile-img ${st}">
+        <img src="${esc(issue.metron_image)}" alt="${num}" loading="lazy"
+          onerror="this.remove()">${dateBadge}
+      </div>`;
+    } else {
+      inner = `<div class="issue-tile-img ${st}">${dateBadge}</div>`;
+    }
+    const searchBtn = st === 'missing'
+      ? `<button class="issue-tile-search" title="Search for this issue"
+           onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
+      : '';
+    return `<div class="issue-tile" title="${esc(s.title)} ${num}"
+      onclick="showIssueModal(${s.id}, ${issue.number})">
+      ${inner}
+      <div class="issue-tile-num">${num}</div>
+      ${searchBtn}
+    </div>`;
+  }).join('');
+}
+
+function flipIssueSort(id) {
+  const btn = document.querySelector('.sort-toggle');
+  if (btn) {
+    btn.title = detailSortDesc ? 'Newest first' : 'Oldest first';
+    btn.textContent = detailSortDesc ? '↓ #' : '↑ #';
+  }
+  const grid = document.querySelector('.issue-grid');
+  if (grid && _detailSeries) {
+    const tiles = buildIssueTiles(_detailSeries);
+    grid.innerHTML = tiles || '<div class="state-msg" style="grid-column:1/-1">Nothing here.</div>';
+  }
+}
+
 async function renderSeriesDetail(id) {
   // Untracked series — show preview with Track CTA
   if (!id && currentParams.komgaId) {
@@ -420,98 +521,59 @@ async function renderSeriesDetail(id) {
   setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
+  _detailSeries = s;
   const meta = [s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
   const total = s.owned + s.missing + s.upcoming;
-
-  const statsLine = [total + ' issues tracked',
-    s.owned    ? s.owned + ' owned' : '',
-    s.missing  ? s.missing + ' missing' : '',
-    s.upcoming ? s.upcoming + ' upcoming' : '',
-  ].filter(Boolean).join('  •  ');
+  const released = s.owned + s.missing;
 
   const chips = [
-    s.owned    ? `<span class="chip chip-owned">${s.owned} owned</span>` : '',
-    s.missing  ? `<span class="chip chip-missing">${s.missing} missing</span>` : '',
+    released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
   ].filter(Boolean).join('');
 
-  const pullBtn = s.on_pull_list
-    ? `<button class="btn btn-ghost btn-sm" onclick="togglePullList(${s.id}, false)">Remove from Pull List</button>`
-    : `<button class="btn btn-primary btn-sm" onclick="togglePullList(${s.id}, true)">+ Pull List</button>`;
-
-  const monStatus = s.monitor_status || 'monitored';
-  const monLabels = { monitored: 'Monitored', collected: 'Collected', ignored: 'Ignored' };
-  const monNext   = { monitored: 'collected', collected: 'ignored', ignored: 'monitored' };
-  const monSelect = `<button class="btn btn-ghost btn-sm"
-    onclick="setMonitorStatus(${s.id}, '${monNext[monStatus]}', this)">${monLabels[monStatus]} ⇄</button>`;
-
-  const searchAllBtn = s.missing > 0 && monStatus !== 'ignored'
-    ? `<button class="btn btn-ghost btn-sm" onclick="searchAllMissing(${s.id}, this)">Search Missing</button>`
-    : '';
+  const pullBtn = `<button class="btn btn-sm ${s.on_pull_list ? 'btn-primary' : 'btn-ghost'}"
+    onclick="togglePullList(${s.id}, ${!s.on_pull_list})">Pull</button>`;
 
   const tabs = ['all','owned','missing','upcoming'].map(t => `
     <div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}</div>
   `).join('');
 
-  const filtered = s.issues.filter(i => {
-    const st = issueStatus(i);
-    if (detailTab === 'owned')    return st === 'owned';
-    if (detailTab === 'missing')  return st === 'missing';
-    if (detailTab === 'upcoming') return st === 'upcoming';
-    return true;
-  });
+  const tiles = buildIssueTiles(s);
 
-  const tiles = filtered.map(issue => {
-    const st = issueStatus(issue);
-    const num = `#${fmtNum(issue.number)}`;
-    let inner = '';
-    if (st === 'owned') {
-      inner = `<div class="issue-tile-img">
-        <img src="/api/book/${issue.komga_book_id}/thumbnail" alt="${num}" loading="lazy"
-          onerror="this.parentElement.classList.add('unknown');this.remove()">
-      </div>`;
-    } else if (issue.metron_image) {
-      inner = `<div class="issue-tile-img ${st}">
-        <img src="${esc(issue.metron_image)}" alt="${num}" loading="lazy"
-          onerror="this.parentElement.innerHTML=''">
-      </div>`;
-    } else {
-      inner = `<div class="issue-tile-img ${st}"></div>`;
-    }
-    const dateLabel = (st === 'upcoming' || st === 'missing') && issue.store_date
-      ? `<div class="issue-tile-date">${issue.store_date}</div>`
-      : '';
-    const searchBtn = st === 'missing'
-      ? `<button class="issue-tile-search" title="Search for this issue"
-           onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
-      : '';
-    return `<div class="issue-tile" title="${esc(s.title)} ${num}">
-      ${inner}
-      <div class="issue-tile-num">${num}</div>
-      ${dateLabel}
-      ${searchBtn}
-    </div>`;
-  }).join('');
+  const seriesBg = document.getElementById('series-bg');
+  const seriesBgImg = document.getElementById('series-bg-img');
+  seriesBgImg.style.backgroundImage = `url('/api/series/${s.id}/thumbnail')`;
+  seriesBg.classList.remove('hidden');
 
   setApp(`
-    <div class="detail-band">
-      <img class="detail-thumb" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
-        onerror="this.style.opacity='0.2'">
-      <div class="detail-info">
-        <div class="detail-title">${esc(s.title)}</div>
-        <div class="detail-meta">${esc(meta)}</div>
-        <div class="detail-stats-line">${esc(statsLine)}</div>
-        <div class="detail-chips">${chips}</div>
+    <div class="detail-hero">
+      <div class="detail-hero-gradient"></div>
+      <div class="detail-hero-content">
+        <div class="detail-hero-text">
+          <div class="detail-hero-publisher">${esc(meta)}</div>
+          <div class="detail-hero-title">${esc(s.title)}</div>
+          <div class="detail-hero-chips">${chips}</div>
+        </div>
       </div>
     </div>
-    <div class="detail-actions-row">
-      ${pullBtn}
-      ${monSelect}
-      ${searchAllBtn}
-      <button class="btn btn-ghost btn-sm" onclick="syncSeries(${s.id}, this)">Sync</button>
-      <button class="btn btn-danger btn-sm" onclick="confirmDelete(${s.id}, '${esc(s.title)}')">Remove</button>
+    <div class="detail-folder-row" id="folder-row">
+      <button class="btn-icon" title="Browse for folder" onclick="browseFolderPath(${s.id})"><svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
+      <span class="detail-folder-path">${esc(s.folder_path || 'Not set')}</span>
+      <button class="btn-icon" title="Edit folder path" onclick="editFolderPath(${s.id}, '${esc(s.folder_path || '')}')">✎</button>
+      <div class="detail-folder-actions">
+        ${pullBtn}
+        ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="syncSeries(${s.id}, this)">Sync</button>
+        <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id}, '${esc(s.title)}')">Remove</button>
+      </div>
     </div>
-    <div class="issue-tabs">${tabs}</div>
+    <div class="issue-tabs-row">
+      <div class="issue-tabs">${tabs}</div>
+      <button class="btn-icon sort-toggle" title="${detailSortDesc ? 'Newest first' : 'Oldest first'}"
+        onclick="detailSortDesc=!detailSortDesc;flipIssueSort(${id})">
+        ${detailSortDesc ? '↓ #' : '↑ #'}
+      </button>
+    </div>
     <div class="issue-grid">${tiles || '<div class="state-msg" style="grid-column:1/-1">Nothing here.</div>'}</div>
   `);
 }
@@ -576,11 +638,249 @@ async function togglePullList(id, on) {
   renderSeriesDetail(id);
 }
 
-async function setMonitorStatus(id, status, btn) {
-  if (btn) { btn.disabled = true; }
-  await api.patch(`/api/series/${id}/monitor`, { status });
+
+let _fbSeriesId = null;
+let _fbPath = null;
+let _fbCallback = null;
+
+// --- Add Series Wizard ---
+
+let _wizardResults = [];
+let _wizardSearchTimer = null;
+let _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
+
+function showAddWizard() {
+  _wizardResults = [];
+  _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
+  showModal(`
+    <div class="modal-title">Add Series</div>
+    <div class="wizard-search-row">
+      <input class="search-input" id="wizard-search" placeholder="Search Metron…" autocomplete="off"
+        onkeydown="if(event.key==='Enter')wizardSearch()">
+      <button class="btn btn-primary" onclick="wizardSearch()">Search</button>
+    </div>
+    <div class="wizard-results" id="wizard-results">
+      <div class="state-msg" style="padding:16px 0;font-size:11px">Search for a series…</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('wizard-search')?.focus(), 50);
+}
+
+function _wizardStatus(text) {
+  const el = document.getElementById('wizard-results');
+  if (!el) return;
+  el.innerHTML = `<div class="state-msg _wiz-status" style="padding:16px 0;font-size:11px">${text}<span class="animated-dots"></span></div>`;
+}
+
+function _renderWizardResults(results, q) {
+  const container = document.getElementById('wizard-results');
+  if (!container) return;
+  const ql = q.toLowerCase();
+  results.sort((a, b) => {
+    const at = (a.series || a.name || '').toLowerCase();
+    const bt = (b.series || b.name || '').toLowerCase();
+    const aExact = at === ql, bExact = bt === ql;
+    const aPrefix = at.startsWith(ql), bPrefix = bt.startsWith(ql);
+    if (aExact !== bExact) return aExact ? -1 : 1;
+    if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+    return 0;
+  });
+  _wizardResults = results.slice(0, 15);
+
+  const paint = () => {
+    const el = document.getElementById('wizard-results');
+    if (!el) return;
+    el.innerHTML = _wizardResults.length
+      ? _wizardResults.map((r, i) => `
+          <div class="wizard-result wizard-result-enter" style="animation-delay:${i * 80}ms" onclick="wizardPickSeries(${i})">
+            <img class="wizard-result-thumb" src="${r.source === 'locg' ? '' : `/api/metron/series/${r.id}/thumbnail`}" alt=""
+              onerror="this.style.opacity=0" loading="lazy">
+            <div class="wizard-result-text">
+              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+            </div>
+          </div>`).join('')
+      : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
+  };
+
+  const status = container.querySelector('._wiz-status');
+  if (status) {
+    status.style.transition = 'opacity 0.35s ease';
+    status.style.opacity = '0';
+    setTimeout(paint, 350);
+  } else {
+    paint();
+  }
+}
+
+async function wizardSearch() {
+  const q = document.getElementById('wizard-search')?.value?.trim() || '';
+  if (!document.getElementById('wizard-results') || !q) return;
+  try {
+    _wizardStatus('Searching Metron');
+    const metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
+    if (!document.getElementById('wizard-results')) return;
+    if (metronResults.length) { _renderWizardResults(metronResults, q); return; }
+
+    _wizardStatus('Searching LOCG');
+    const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
+    if (!document.getElementById('wizard-results')) return;
+    _renderWizardResults(locgResults, q);
+  } catch (err) {
+    console.error('wizardSearch error:', err);
+    const el = document.getElementById('wizard-results');
+    if (el) el.innerHTML = `<div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--amb)">Search failed: ${esc(String(err))}</div>`;
+  }
+}
+
+function wizardPickSeries(idx) {
+  const r = _wizardResults[idx];
+  if (!r) return;
+  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: r.source || 'metron', locgId: r.source === 'locg' ? r.id : null };
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-title">Add Series</div>
+    <div class="wizard-series-preview">
+      <img class="wizard-result-thumb" src="${r.source === 'locg' ? '' : `/api/metron/series/${r.id}/thumbnail`}" alt="" onerror="this.style.opacity=0">
+      <div class="wizard-result-text">
+        <div class="wizard-result-title">${esc(r.series || r.name || '')}</div>
+        <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+      </div>
+    </div>
+    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(optional — set later if needed)</span></div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input class="search-input" id="wizard-folder" placeholder="/comics/Publisher/Series Name"
+        style="flex:1;margin:0">
+      <button class="btn btn-ghost btn-sm" onclick="wizardBrowseFolder()">Browse</button>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;user-select:none">
+      <input type="checkbox" id="wizard-pull" checked style="accent-color:var(--pri);width:14px;height:14px">
+      <span style="font-family:'Space Mono',monospace;font-size:10px;color:var(--tp)">Add to Pull List</span>
+      <span style="font-size:10px;color:var(--tq)">— queue download of all missing issues now</span>
+    </label>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="showAddWizard()">← Back</button>
+      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Track Series</button>
+    </div>
+  `;
+}
+
+function wizardBrowseFolder() {
+  const { idx } = _wizardState;
+  _fbCallback = (path) => {
+    wizardPickSeries(idx);
+    setTimeout(() => {
+      const inp = document.getElementById('wizard-folder');
+      if (inp) inp.value = path;
+    }, 20);
+  };
+  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
+  _fbNav('');
+}
+
+async function wizardConfirm() {
+  const { metronId, source, locgId } = _wizardState;
+  if (!metronId && !locgId) return;
+  const r = _wizardResults[_wizardState.idx];
+  const folder = (document.getElementById('wizard-folder')?.value || '').trim() || null;
+  const onPullList = document.getElementById('wizard-pull')?.checked ?? true;
+  const btn = document.getElementById('wizard-add-btn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const payload = {
+      folder_path: folder,
+      on_pull_list: onPullList,
+    };
+    if (source === 'locg') {
+      payload.locg_id = locgId;
+      payload.title = r.series || r.name || '';
+      payload.publisher_name = r.publisher?.name || '';
+      payload.year_began = r.year_began || null;
+    } else {
+      payload.metron_id = metronId;
+    }
+    const added = await api.post('/api/series', payload);
+    closeModal();
+    navigate('series-detail', { id: added.id });
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Track Series';
+    console.error(e);
+  }
+}
+
+async function browseFolderPath(seriesId) {
+  _fbSeriesId = seriesId;
+  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
+  await _fbNav('');
+}
+
+async function _fbNav(path) {
+  _fbPath = path;
+  let data;
+  try {
+    data = await api.get(`/api/fs/browse?path=${encodeURIComponent(path)}`);
+  } catch {
+    document.getElementById('modal').innerHTML += '<div class="fb-error">Failed to load directory.</div>';
+    return;
+  }
+  _fbPath = data.path;
+
+  const items = data.dirs.length
+    ? data.dirs.map(d => `<div class="fb-item" data-path="${esc(data.path + '/' + d)}">${esc(d)}</div>`).join('')
+    : '<div class="fb-empty">No subdirectories</div>';
+
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-title">Select Folder</div>
+    <div class="fb-path">${esc(data.path)}</div>
+    <div class="fb-list">${items}</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      ${data.parent ? `<button class="btn btn-ghost btn-sm" data-up="${esc(data.parent)}" id="fb-up">↑ Up</button>` : ''}
+      <button class="btn btn-primary" onclick="_fbSelect()">Select This Folder</button>
+    </div>
+  `;
+
+  document.querySelectorAll('.fb-item').forEach(el =>
+    el.addEventListener('click', () => _fbNav(el.dataset.path))
+  );
+  const upBtn = document.getElementById('fb-up');
+  if (upBtn) upBtn.addEventListener('click', () => _fbNav(upBtn.dataset.up));
+}
+
+async function _fbSelect() {
+  if (_fbCallback) {
+    const cb = _fbCallback;
+    _fbCallback = null;
+    cb(_fbPath);
+    return;
+  }
+  await api.patch(`/api/series/${_fbSeriesId}/folder`, { folder_path: _fbPath });
+  closeModal();
+  renderSeriesDetail(_fbSeriesId);
+}
+
+function editFolderPath(id, current) {
+  const row = document.getElementById('folder-row');
+  if (!row) return;
+  row.innerHTML = `
+    <svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" style="color:var(--tq)"/></svg>
+    <input class="detail-folder-input" id="folder-input" value="${esc(current)}" placeholder="/comics/Publisher/Series">
+    <div class="detail-folder-actions">
+      <button class="btn btn-primary btn-sm" onclick="saveFolderPath(${id})">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="renderSeriesDetail(${id})">Cancel</button>
+    </div>
+  `;
+  document.getElementById('folder-input').focus();
+}
+
+async function saveFolderPath(id) {
+  const val = (document.getElementById('folder-input')?.value || '').trim();
+  await api.patch(`/api/series/${id}/folder`, { folder_path: val || null });
   renderSeriesDetail(id);
 }
+
 
 async function searchAllMissing(id, btn) {
   btn.disabled = true; btn.textContent = 'Queuing…';
@@ -654,11 +954,11 @@ async function renderPullList() {
         <div class="pull-group-label">${label.toUpperCase()}</div>
         ${entries.map(e => {
           const sid = seriesMap[e.title];
-          const thumb = sid ? `/api/series/${sid}/thumbnail` : '';
+          const thumb = sid ? `/api/series/${sid}/issues/${e.number}/thumbnail` : '';
           return `
             <div class="pull-row" ${sid ? `tabindex="0" role="button" onclick="navigate('series-detail', {id: ${sid}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})"` : ''}>
               ${thumb
-                ? `<img class="pull-thumb" src="${thumb}" alt="" onerror="this.style.opacity='0.2'">`
+                ? `<img class="pull-thumb" src="${thumb}" alt="" loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null">`
                 : `<div class="pull-thumb"></div>`}
               <div class="pull-series">${esc(e.title)}</div>
               <div class="pull-issue">Issue #${fmtNum(e.number)}</div>
@@ -685,90 +985,146 @@ const QUEUE_STATE_COLOR = {
   done: 'var(--grn)', failed: 'var(--red, var(--amb))',
 };
 
+let _activityPollTimer = null;
+
+function _fmtBytes(n) {
+  if (!n) return '';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 async function renderActivity() {
-  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>`);
+  clearTimeout(_activityPollTimer);
+  setTopbar(`
+    <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
+    <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearHistory(this)">Clear History</button>
+  `);
   setApp('<div class="state-msg">Loading...</div>');
+  await _refreshActivity();
+}
 
-  const [queue, series] = await Promise.all([
-    api.get('/api/queue'),
-    api.get('/api/series'),
-  ]);
+async function _refreshActivity() {
+  if (currentView !== 'activity') return;
+  const queue = await api.get('/api/queue');
+  _buildActivityHtml(queue);
+  const hasActive = queue.some(q => ['searching','found','downloading','processing'].includes(q.state));
+  if (hasActive) _activityPollTimer = setTimeout(_refreshActivity, 2000);
+}
 
-  const synced = series
-    .filter(s => s.last_synced)
-    .sort((a, b) => b.last_synced.localeCompare(a.last_synced));
+function _actChip(state) {
+  const map = {
+    queued:      ['chip chip-muted',   'Queued'],
+    searching:   ['chip chip-active',  'Searching'],
+    found:       ['chip chip-muted',   'Found'],
+    downloading: ['chip chip-active',  'Downloading'],
+    processing:  ['chip chip-muted',   'Processing'],
+    done:        ['chip chip-done',    'Done'],
+    not_found:   ['chip chip-warn',    'Not Found'],
+    failed:      ['chip chip-fail',    'Failed'],
+  };
+  const [cls, label] = map[state] || ['chip chip-muted', state];
+  return `<span class="${cls}">${label}</span>`;
+}
 
-  let html = '<div class="page-title">Activity</div>';
+function _buildActivityHtml(queue) {
+  const inProgress = queue.filter(q => ['queued','searching','found','downloading','processing'].includes(q.state));
+  const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
 
-  // --- Queue section ---
-  if (queue.length) {
-    const qRows = queue.map(q => {
-      const label = QUEUE_STATE_LABEL[q.state] || q.state;
-      const color = QUEUE_STATE_COLOR[q.state] || 'var(--tq)';
+  if (!queue.length) {
+    setApp(`<div class="act-empty">
+      <div class="act-empty-icon">◌</div>
+      <div class="act-empty-msg">Nothing in the queue</div>
+      <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
+    </div>`);
+    return;
+  }
+
+  let html = '<div class="act-wrap">';
+
+  if (inProgress.length) {
+    const cards = inProgress.map(q => {
       const numStr = `#${fmtNum(q.issue_number)}`;
-      const actions = q.state === 'failed' || q.state === 'not_found'
-        ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>`
-        : '';
+      const thumbSrc = q.tracked_series_id ? `/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail` : '';
+      const thumb = thumbSrc ? `<img src="${thumbSrc}" onerror="this.src='/api/series/${q.tracked_series_id}/thumbnail'">` : '';
+      const isDownloading = q.state === 'downloading';
+      const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
+      const progress = isDownloading ? `
+        <div class="act-card-progress">
+          <div class="act-progress-track"><div class="act-progress-fill" style="width:${pct}%"></div></div>
+          <div class="act-progress-text">${pct}%${q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : ''}</div>
+        </div>` : '';
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
+      const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
       return `
-        <div class="queue-row"${errTip}>
-          <div class="queue-series">${esc(q.title)}</div>
-          <div class="queue-issue">${numStr}</div>
-          <div class="queue-state" style="color:${color}">${label}</div>
-          <div class="queue-actions">
-            ${actions}
+        <div class="act-card${isDownloading ? '' : ' compact'}"${errTip}>
+          <div class="act-card-cover">${thumb}</div>
+          <div class="act-card-body"${nav}>
+            <div class="act-card-title">${esc(q.title)}</div>
+            <div class="act-card-meta">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
+            ${progress}
+          </div>
+          <div class="act-card-side">${_actChip(q.state)}</div>
+        </div>`;
+    }).join('');
+    html += `<div class="act-section">
+      <div class="act-section-hdr">In Progress <span class="act-count">${inProgress.length}</span></div>
+      ${cards}
+    </div>`;
+  }
+
+  if (completed.length) {
+    const rows = completed.map(q => {
+      const numStr = `#${fmtNum(q.issue_number)}`;
+      const thumbSrc = q.tracked_series_id ? `/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail` : '';
+      const thumb = thumbSrc ? `<img src="${thumbSrc}" onerror="this.src='/api/series/${q.tracked_series_id}/thumbnail'">` : '';
+      const isDone = q.state === 'done';
+      const errTip = q.error ? ` title="${esc(q.error)}"` : '';
+      const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
+      const retry = !isDone ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
+      return `
+        <div class="act-row${isDone ? ' done' : ''}"${errTip}>
+          <div class="act-row-cover">${thumb}</div>
+          <div class="act-row-meta"${nav}>
+            <div class="act-row-title">${esc(q.title)}</div>
+            <div class="act-row-issue">${numStr}</div>
+          </div>
+          <div class="act-row-actions">
+            ${_actChip(q.state)}
+            ${retry}
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)">✕</button>
           </div>
-        </div>
-      `;
+        </div>`;
     }).join('');
-    html += `
-      <div class="queue-section">
-        <div class="queue-section-header">Download Queue <span class="queue-count">${queue.length}</span></div>
-        <div class="queue-header-row">
-          <div>Series</div><div>Issue</div><div>Status</div><div></div>
-        </div>
-        ${qRows}
-      </div>
-    `;
-  } else {
-    html += `<div class="queue-section"><div class="queue-section-header">Download Queue</div>
-      <div class="state-msg" style="padding:20px 0">Queue is empty.</div></div>`;
+    html += `<div class="act-section">
+      <div class="act-section-hdr">Completed <span class="act-count">${completed.length}</span></div>
+      ${rows}
+    </div>`;
   }
 
-  // --- Sync history ---
-  if (synced.length) {
-    const rows = synced.map(s => {
-      const hasNew = (s.missing + s.upcoming) > 0;
-      const evClass = hasNew ? 'ev-sync-ok' : 'ev-sync-none';
-      const detail = hasNew ? `${s.title} — ${s.owned} owned` : `${s.title} — up to date`;
-      return `
-        <div class="activity-row ${evClass}" tabindex="0" role="button"
-          onclick="navigate('series-detail', {id: ${s.id}})"
-          onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
-          <div class="activity-event">Sync</div>
-          <div class="activity-detail">${esc(detail)}</div>
-          <div class="activity-time">${relativeTime(s.last_synced)}</div>
-        </div>
-      `;
-    }).join('');
-    html += `
-      <div class="queue-section" style="margin-top:32px">
-        <div class="queue-section-header">Sync History</div>
-        <div class="activity-header"><div>Event</div><div>Detail</div><div class="ah-time">Time</div></div>
-        ${rows}
-      </div>
-    `;
-  }
-
+  html += '</div>';
   setApp(html);
 }
 
 async function triggerSweep(btn) {
   btn.disabled = true; btn.textContent = 'Sweeping…';
   await api.post('/api/queue/sweep', {});
-  btn.textContent = 'Sweep queued ✓';
+  btn.textContent = 'Queued ✓';
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Sweep Missing'; renderActivity(); }, 1500);
+}
+
+async function forceQueueStart(btn) {
+  btn.disabled = true; btn.textContent = 'Starting…';
+  await api.post('/api/queue/process', {});
+  btn.textContent = 'Started ✓';
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Start Queue'; _refreshActivity(); }, 1000);
+}
+
+async function clearHistory(btn) {
+  btn.disabled = true; btn.textContent = 'Clearing…';
+  await api.post('/api/queue/clear-history', {});
+  btn.disabled = false; btn.textContent = 'Clear History';
+  _refreshActivity();
 }
 
 async function retryQueue(id, btn) {
@@ -1009,24 +1365,13 @@ async function _refreshMatchReview(gen) {
 
   // No match
   if (groups.none.length) {
-    const rows = groups.none.map(c => `
-      <div class="match-none-row">
-        <img class="match-none-thumb" src="/api/komga/series/${esc(c.komga_series_id)}/thumbnail" alt=""
-          loading="lazy" onerror="this.style.opacity='0.2'">
-        <div class="match-none-title">${esc(c.komga_title)}</div>
-        <div class="match-none-meta">${esc(c.komga_publisher || '')}${c.komga_year ? ' · ' + c.komga_year : ''}</div>
-        <div class="match-none-actions">
-          <button class="btn btn-ghost btn-sm" onclick="openManualMatch('${esc(c.komga_series_id)}', '${esc(c.komga_title)}')">Search Metron</button>
-          <button class="btn btn-ghost btn-sm" onclick="rejectCandidate('${esc(c.komga_series_id)}', this)">Skip</button>
-        </div>
-      </div>
-    `).join('');
+    const cards = groups.none.map(c => _matchCard(c, false)).join('');
     html += `
       <div class="match-section">
         <div class="match-section-header">
           <span class="match-section-title">No match found <span class="match-section-count">${groups.none.length}</span></span>
         </div>
-        <div class="match-none-list">${rows}</div>
+        <div class="match-grid">${cards}</div>
       </div>
     `;
   }
@@ -1080,15 +1425,8 @@ function filterMatchCards() {
     card.style.display = ok ? '' : 'none';
   });
 
-  document.querySelectorAll('.match-none-row').forEach(row => {
-    const titleOk = !text || (row.querySelector('.match-none-title')?.textContent || '').toLowerCase().includes(text);
-    const pubOk   = !pub  || (row.querySelector('.match-none-meta')?.textContent || '').toLowerCase().startsWith(pub);
-    const confOk  = !conf || conf === 'conf-none';
-    row.style.display = titleOk && pubOk && confOk ? '' : 'none';
-  });
-
   document.querySelectorAll('.match-section').forEach(section => {
-    const hasVisible = [...section.querySelectorAll('.match-card, .match-none-row')]
+    const hasVisible = [...section.querySelectorAll('.match-card')]
       .some(el => el.style.display !== 'none');
     section.style.display = hasVisible ? '' : 'none';
   });
@@ -1119,7 +1457,7 @@ function _matchCard(c, autoChecked) {
     : 'No match';
 
   return `
-    <div class="match-card" id="mc_${esc(c.komga_series_id)}"
+    <div class="match-card${badge.cls === 'conf-none' ? ' conf-none-card' : ''}" id="mc_${esc(c.komga_series_id)}"
       data-pub="${esc((c.komga_publisher || '').toLowerCase())}"
       data-title="${esc(c.komga_title.toLowerCase())}"
       data-conf="${badge.cls}"
@@ -1185,34 +1523,9 @@ async function openMatchModal(komgaId) {
   if (!c) return;
   _modalKomgaId = komgaId;
 
-  // Fetch full candidate detail (candidates_json excluded from list response)
-  const detail = await api.get(`/api/match/candidates/${encodeURIComponent(komgaId)}`);
-  const candidates = (detail && detail.candidates) || [];
-  const first = candidates[0] || { id: c.metron_id, name: c.metron_title, publisher: c.metron_publisher, year: c.metron_year, score: c.score };
-  const badge = _confBadge(first.score || c.score || 0);
-
-  const candidateRows = candidates.length ? candidates.map((r, i) => {
-    const typeBadge = _seriesTypeBadge(r.name);
-    const issueStr  = r.issue_count != null ? `${r.issue_count} issue${r.issue_count === 1 ? '' : 's'}` : '';
-    const volStr    = r.volume > 1 ? `Vol. ${r.volume}` : '';
-    const metaLine  = [esc(r.publisher || ''), r.year, volStr].filter(Boolean).join(' · ');
-    return `
-    <label class="match-modal-candidate" data-mid="${r.id}" onclick="event.stopPropagation()">
-      <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
-        onchange="updateMatchPreview(this)">
-      <div class="match-modal-cand-img-wrap">
-        <img class="match-modal-cand-thumb" src="/api/metron/series/${r.id}/thumbnail" alt=""
-          onerror="this.parentNode.dataset.err='1'">
-        <div class="match-modal-cand-fallback"></div>
-      </div>
-      <div class="match-modal-cand-info">
-        <div class="match-modal-cand-name">${esc(r.name)}</div>
-        <div class="match-modal-cand-meta">${metaLine}</div>
-      </div>
-      ${typeBadge ? `<span class="match-cand-type">${typeBadge}</span>` : ''}
-      <span class="match-cand-issues" data-issues="${r.id}">${issueStr}</span>
-    </label>`;
-  }).join('') : `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found — try Search Metron</div>`;
+  // Use what we already have to show the modal immediately — no network wait
+  const first = { id: c.metron_id, name: c.metron_title, publisher: c.metron_publisher, year: c.metron_year, score: c.score };
+  const badge = _confBadge(c.score || 0);
 
   const html = `
     <div class="match-modal-body" onclick="event.stopPropagation()">
@@ -1231,24 +1544,23 @@ async function openMatchModal(komgaId) {
         </div>
         <div class="match-modal-arrow">→</div>
         <div class="match-modal-cover">
-          ${_metronCoverHtml(first.id, 'match-preview-img')}
+          <div class="match-modal-cover-img-wrap" id="match-preview-img-wrap">
+            <div class="match-modal-cover-fallback">Loading…</div>
+          </div>
           <div class="match-modal-cover-label">Metron match</div>
           <div class="match-modal-cover-sublabel">Cover from series database</div>
           <div id="match-preview-title" class="match-modal-cover-title">${esc(first.name || '')}</div>
           <div id="match-preview-meta" class="match-modal-cover-meta">${esc(first.publisher || '')}${first.year ? ' · ' + first.year : ''}</div>
-          <div id="match-preview-stats" class="match-modal-cover-stats">
-            ${_seriesTypeBadge(first.name) ? `<span class="match-cand-type">${_seriesTypeBadge(first.name)}</span>` : ''}
-            ${first.issue_count != null ? `<span class="match-preview-issues">${first.issue_count} in series</span>` : ''}
-          </div>
+          <div id="match-preview-stats" class="match-modal-cover-stats"></div>
         </div>
       </div>
       <div class="match-modal-conf-row">
         <span class="match-conf-badge ${badge.cls}" id="match-preview-badge">${badge.label}</span>
       </div>
-      <div class="match-modal-candidates">${candidateRows}</div>
-      <div class="match-modal-actions">
-        ${candidates.length || c.metron_id ? `
-          <button class="btn btn-primary" onclick="confirmFromModal(this)">Confirm</button>` : ''}
+      <div class="match-modal-candidates" id="match-modal-cand-list">
+        <div style="color:var(--tq);font-size:12px;padding:8px 0">Loading…</div>
+      </div>
+      <div class="match-modal-actions" id="match-modal-actions">
         <button class="btn btn-ghost" onclick="openManualMatch('${esc(komgaId)}','${esc(c.komga_title)}'); closeModal()">Search Metron</button>
         <button class="btn btn-ghost" style="margin-left:auto;opacity:0.5" onclick="rejectFromModal(this)">Skip</button>
       </div>
@@ -1259,13 +1571,77 @@ async function openMatchModal(komgaId) {
   modal.classList.add('modal-wide');
   showModal(html);
 
+  // Background: book count
   api.get(`/api/komga/series/${encodeURIComponent(komgaId)}/books`).then(books => {
     const el = document.getElementById('match-owned-count');
     if (el) el.innerHTML = `<span class="match-preview-issues">${books.length} books in Komga</span>`;
   }).catch(() => {});
 
-  const needsInfo = candidates.filter(r => r.issue_count == null);
-  if (needsInfo.length) _backfillCandidateInfo(komgaId, needsInfo);
+  // Background: fetch full candidates and slot them in
+  try {
+    const detail = await api.get(`/api/match/candidates/${encodeURIComponent(komgaId)}`);
+    if (_modalKomgaId !== komgaId) return; // modal was closed/changed
+    const candidates = (detail && detail.candidates) || [];
+    const candList = document.getElementById('match-modal-cand-list');
+    const actionsEl = document.getElementById('match-modal-actions');
+    if (!candList) return;
+
+    if (candidates.length) {
+      // Store so updateMatchPreview can look them up
+      _matchCardData[komgaId].candidates = candidates;
+      const first = candidates[0];
+      // Update the Metron cover side with scored data
+      const badge2 = _confBadge(first.score || c.score || 0);
+      const badgeEl = document.getElementById('match-preview-badge');
+      if (badgeEl) { badgeEl.className = `match-conf-badge ${badge2.cls}`; badgeEl.textContent = badge2.label; }
+      const titleEl = document.getElementById('match-preview-title');
+      const metaEl  = document.getElementById('match-preview-meta');
+      if (titleEl) titleEl.textContent = first.name || '';
+      if (metaEl)  metaEl.textContent  = [first.publisher, first.year].filter(Boolean).join(' · ');
+      const wrap = document.getElementById('match-preview-img-wrap');
+      if (wrap && first.id) {
+        wrap.innerHTML = `<img id="match-preview-img" src="/api/metron/series/${first.id}/thumbnail" alt=""
+          onerror="this.parentNode.dataset.err='1'">
+          <div class="match-modal-cover-fallback">No cover</div>`;
+      }
+
+      candList.innerHTML = candidates.map((r, i) => {
+        const typeBadge = _seriesTypeBadge(r.name);
+        const issueStr  = r.issue_count != null ? `${r.issue_count} issue${r.issue_count === 1 ? '' : 's'}` : '';
+        const volStr    = r.volume > 1 ? `Vol. ${r.volume}` : '';
+        const metaLine  = [esc(r.publisher || ''), r.year, volStr].filter(Boolean).join(' · ');
+        return `
+          <label class="match-modal-candidate" data-mid="${r.id}" onclick="event.stopPropagation()">
+            <input type="radio" name="mmd_cand" value="${r.id}" ${i === 0 ? 'checked' : ''}
+              onchange="updateMatchPreview(this)">
+            <div class="match-modal-cand-img-wrap">
+              <img class="match-modal-cand-thumb" src="/api/metron/series/${r.id}/thumbnail" alt=""
+                onerror="this.parentNode.dataset.err='1'">
+              <div class="match-modal-cand-fallback"></div>
+            </div>
+            <div class="match-modal-cand-info">
+              <div class="match-modal-cand-name">${esc(r.name)}</div>
+              <div class="match-modal-cand-meta">${metaLine}</div>
+            </div>
+            ${typeBadge ? `<span class="match-cand-type">${typeBadge}</span>` : ''}
+            <span class="match-cand-issues" data-issues="${r.id}">${issueStr}</span>
+          </label>`;
+      }).join('');
+
+      // Insert Confirm button if not already there
+      if (actionsEl && !actionsEl.querySelector('.btn-primary')) {
+        actionsEl.insertAdjacentHTML('afterbegin', `<button class="btn btn-primary" onclick="confirmFromModal(this)">Confirm</button>`);
+      }
+
+      const needsInfo = candidates.filter(r => r.issue_count == null);
+      if (needsInfo.length) _backfillCandidateInfo(komgaId, needsInfo);
+    } else {
+      candList.innerHTML = `<div style="color:var(--tq);font-size:12px;padding:8px 0">No candidates found — try Search Metron</div>`;
+    }
+  } catch (e) {
+    const candList = document.getElementById('match-modal-cand-list');
+    if (candList) candList.innerHTML = `<div style="color:var(--tq);font-size:12px;padding:8px 0">Failed to load candidates</div>`;
+  }
 }
 
 async function _backfillCandidateInfo(komgaId, candidates) {
@@ -1305,9 +1681,10 @@ function updateMatchPreview(radio) {
 
   const wrap = document.getElementById('match-preview-img-wrap');
   if (wrap) {
+    wrap.innerHTML = `<img id="match-preview-img" src="/api/metron/series/${cand.id}/thumbnail" alt=""
+      onerror="this.parentNode.dataset.err='1'">
+      <div class="match-modal-cover-fallback">No cover</div>`;
     delete wrap.dataset.err;
-    const img = wrap.querySelector('img');
-    if (img) img.src = `/api/metron/series/${cand.id}/thumbnail`;
   }
   const title = document.getElementById('match-preview-title');
   const meta  = document.getElementById('match-preview-meta');
@@ -1426,7 +1803,7 @@ async function rejectCandidate(komgaId, btn) {
   await api.post('/api/match/reject', { komga_series_id: komgaId });
   document.getElementById(`mc_${komgaId}`)?.remove();
   // also handles none-row which doesn't have mc_ id
-  btn.closest('.match-card, .match-none-row')?.remove();
+  btn.closest('.match-card')?.remove();
 }
 
 function openManualMatch(komgaId, komgaTitle) {
@@ -1488,6 +1865,17 @@ async function renderSettings() {
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
+          <div class="settings-card-header">League of Comic Geeks <span style="font-weight:400;font-size:11px;color:var(--tq)">(optional)</span></div>
+          <div class="settings-field">
+            <div class="settings-field-label">Username ${cfg.locg_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
+            <input class="settings-input" id="s-locg-user" value="${esc(cfg.locg_user || '')}">
+          </div>
+          <div class="settings-field">
+            <div class="settings-field-label">Password</div>
+            <input class="settings-input" id="s-locg-pass" type="password" placeholder="${cfg.locg_configured ? 'Leave blank to keep current' : 'Enter password'}">
+          </div>
+        </div>
+        <div class="settings-card" style="margin-top:24px">
           <div class="settings-card-header">Sync Schedule</div>
           <div class="settings-field">
             <div class="settings-field-label">Hours (24h, comma-separated)</div>
@@ -1511,12 +1899,14 @@ async function saveSettings(btn) {
     metron_user:      document.getElementById('s-metron-user').value.trim(),
     sync_hours:       document.getElementById('s-sync-hours').value.trim(),
   };
-  const pass  = document.getElementById('s-komga-pass').value;
-  const mpass = document.getElementById('s-metron-pass').value;
-  const cvkey = document.getElementById('s-cv-key').value;
-  if (pass)  updates.komga_pass  = pass;
-  if (mpass) updates.metron_pass = mpass;
-  if (cvkey) updates.cv_api_key  = cvkey;
+  const pass      = document.getElementById('s-komga-pass').value;
+  const mpass     = document.getElementById('s-metron-pass').value;
+  const cvkey     = document.getElementById('s-cv-key').value;
+  const locgpass  = document.getElementById('s-locg-pass').value;
+  if (pass)     updates.komga_pass  = pass;
+  if (mpass)    updates.metron_pass = mpass;
+  if (cvkey)    updates.cv_api_key  = cvkey;
+  if (locgpass) updates.locg_pass   = locgpass;
 
   try {
     await api.patch('/api/config', updates);
@@ -1555,10 +1945,315 @@ function showModal(html) {
 }
 
 function closeModal() {
+  clearTimeout(_issueModalPollTimer);
   const modal = document.getElementById('modal');
   modal.classList.add('hidden');
   modal.classList.remove('modal-wide');
   document.getElementById('modal-backdrop').classList.add('hidden');
+}
+
+// --- Issue Detail Modal ---
+
+let _issueVariantCovers  = [];
+let _issueVariantSelected = new Set();
+let _issueVariantPrimary  = null;
+let _issueVariantFetched  = false;
+let _issueVariantSeriesId = null;
+let _issueVariantNumber   = null;
+
+async function showIssueModal(seriesId, number) {
+  clearTimeout(_issueModalPollTimer);
+  const issue = _detailSeries?.issues?.find(i => i.number === number);
+  if (!issue) return;
+
+  _issueVariantCovers   = [];
+  _issueVariantSelected = new Set();
+  _issueVariantPrimary  = null;
+  _issueVariantFetched  = false;
+  _issueVariantSeriesId = seriesId;
+  _issueVariantNumber   = number;
+
+  const s = _detailSeries;
+  const st = issueStatus(issue);
+  const num = `#${fmtNum(number)}`;
+
+  const imgSrc = issue.komga_book_id
+    ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
+    : (issue.metron_image || '');
+
+  const chipMap = {
+    owned:   `<span class="chip chip-complete">Owned</span>`,
+    missing: `<span class="chip chip-missing">Missing</span>`,
+    upcoming:`<span class="chip chip-upcoming">Upcoming</span>`,
+    unknown: `<span class="chip" style="color:var(--tq);border-color:var(--tq)">Unknown</span>`,
+  };
+
+  let dateHtml = '';
+  if (issue.store_date) {
+    const d = new Date(issue.store_date + 'T00:00:00');
+    const fmtDate = d.toLocaleDateString('en', { month: 'long', day: 'numeric', year: 'numeric' });
+    if (st === 'upcoming') {
+      const daysAway = Math.max(0, Math.round((d - Date.now()) / 86400000));
+      dateHtml = `<div class="issue-modal-date">${fmtDate}</div>
+                  <div class="issue-modal-days">${daysAway} day${daysAway !== 1 ? 's' : ''} away</div>`;
+    } else {
+      dateHtml = `<div class="issue-modal-release-label">Released ${fmtDate}</div>`;
+    }
+  }
+
+  let footerAction = '';
+  if (st === 'owned' && issue.komga_book_id && _appConfig.komga_url) {
+    const readerUrl = `${_appConfig.komga_url}/book/${esc(issue.komga_book_id)}/read`;
+    footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
+  } else if (st === 'missing') {
+    footerAction = `<button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
+  }
+
+  const hasLocgId = !!issue.locg_issue_id;
+
+  document.getElementById('modal').classList.add('modal-wide');
+  showModal(`
+    <div class="issue-modal-layout">
+      <div class="issue-modal-cover">
+        ${imgSrc
+          ? `<img src="${esc(imgSrc)}" alt="${num}" onerror="this.style.opacity='0.1'">`
+          : `<div class="issue-modal-no-cover"></div>`}
+      </div>
+      <div class="issue-modal-info">
+        <div class="issue-modal-num">${num}</div>
+        <div class="issue-modal-series">${esc(s.title)}</div>
+        <div class="issue-modal-meta">${esc([s.publisher, s.year_began].filter(Boolean).join(' · '))}</div>
+        <div style="margin:8px 0">${chipMap[st] || ''}</div>
+        ${dateHtml}
+        ${hasLocgId ? `
+        <div class="issue-modal-tabs" style="margin-top:12px">
+          <button class="issue-modal-tab active" id="imtab-details"  onclick="_imSwitchTab('details')">Details</button>
+          <button class="issue-modal-tab"        id="imtab-variants" onclick="_imSwitchTab('variants')">
+            Variants <span class="vtab-badge" id="imtab-variants-badge" style="display:none"></span>
+          </button>
+        </div>` : ''}
+        <div class="issue-modal-panel active" id="impanel-details">
+          <div class="issue-modal-details" id="issue-modal-details">
+            ${issue.metron_issue_id ? '<div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>' : ''}
+          </div>
+        </div>
+        ${hasLocgId ? `
+        <div class="issue-modal-panel" id="impanel-variants">
+          <div id="variant-area" class="variant-loading">Loading covers from LOCG…</div>
+          <div id="variant-footer" class="variant-footer" style="display:none">
+            <div class="variant-hint" id="variant-hint">Select variants to include, ★ one as the cover.</div>
+            <button class="btn btn-primary btn-sm" id="variant-apply-btn" disabled
+              onclick="_imApplyVariants(${seriesId}, ${number}, ${st === 'owned' ? 'true' : 'false'})">Apply</button>
+          </div>
+        </div>` : ''}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${footerAction}
+    </div>
+  `);
+
+  // Fetch Metron detail async
+  if (issue.metron_issue_id) {
+    try {
+      const detail = await api.get(`/api/series/${seriesId}/issues/${number}/metron`);
+      const detailEl = document.getElementById('issue-modal-details');
+      if (!detailEl) return;
+      let html = '';
+      if (detail.desc) {
+        html += `<div class="issue-modal-desc">${esc(detail.desc)}</div>`;
+      }
+      if (detail.credits?.length) {
+        const grouped = {};
+        for (const c of detail.credits) {
+          const role = c.role?.name || 'Other';
+          const name = c.creator?.name || '';
+          if (name) (grouped[role] = grouped[role] || []).push(name);
+        }
+        html += '<div class="issue-modal-credits">' +
+          Object.entries(grouped).map(([role, names]) =>
+            `<div class="issue-modal-credit-row">
+              <div class="issue-modal-credit-role">${esc(role)}</div>
+              <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
+            </div>`
+          ).join('') + '</div>';
+      }
+      detailEl.innerHTML = html || '';
+    } catch {
+      const el = document.getElementById('issue-modal-details');
+      if (el) el.innerHTML = '';
+    }
+  }
+
+  // Fetch variants in background
+  if (hasLocgId) _imFetchVariants(seriesId, number);
+
+  if (st === 'missing') _pollIssueQueue(seriesId, number);
+}
+
+function _imSwitchTab(name) {
+  ['details', 'variants'].forEach(t => {
+    document.getElementById(`imtab-${t}`)?.classList.toggle('active', t === name);
+    document.getElementById(`impanel-${t}`)?.classList.toggle('active', t === name);
+  });
+}
+
+async function _imFetchVariants(seriesId, number) {
+  try {
+    const data = await api.get(`/api/series/${seriesId}/issues/${number}/variants`);
+    if (seriesId !== _issueVariantSeriesId || number !== _issueVariantNumber) return;
+    _issueVariantCovers  = data.covers || [];
+    _issueVariantFetched = true;
+    _imRenderVariants();
+    if (_issueVariantCovers.length > 1) {
+      const badge = document.getElementById('imtab-variants-badge');
+      if (badge) { badge.textContent = _issueVariantCovers.length; badge.style.display = 'inline-flex'; }
+    }
+  } catch(e) {
+    const el = document.getElementById('variant-area');
+    if (el) el.innerHTML = `<div class="variant-empty">Could not load variants: ${esc(e.message)}</div>`;
+  }
+}
+
+function _imRenderVariants() {
+  const area = document.getElementById('variant-area');
+  if (!area) return;
+  if (!_issueVariantCovers.length) {
+    area.innerHTML = '<div class="variant-empty">No variants found.</div>';
+    return;
+  }
+  area.className = '';
+  area.innerHTML = `<div class="variant-grid">${
+    _issueVariantCovers.map((c, i) => `
+      <div class="v-card" id="vc-${c.id}" style="animation-delay:${i*25}ms" onclick="_imToggleVariant('${c.id}')">
+        <div class="v-cover">
+          <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy"
+            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="no-img" style="display:none">No image</div>
+          <div class="v-tick">✓</div>
+          <button class="v-star" onclick="_imSetPrimary(event,'${c.id}')" title="Set as cover">★</button>
+          <div class="v-primary-label">COVER</div>
+        </div>
+        <div class="v-name">${esc(c.name)}</div>
+      </div>`).join('')
+  }</div>`;
+  const footer = document.getElementById('variant-footer');
+  if (footer) footer.style.display = 'flex';
+}
+
+function _imToggleVariant(id) {
+  if (_issueVariantSelected.has(id)) {
+    _issueVariantSelected.delete(id);
+    if (_issueVariantPrimary === id)
+      _issueVariantPrimary = _issueVariantSelected.size ? [..._issueVariantSelected][0] : null;
+  } else {
+    _issueVariantSelected.add(id);
+    if (!_issueVariantPrimary) _issueVariantPrimary = id;
+  }
+  _imRefreshCards();
+  _imUpdateHint();
+}
+
+function _imSetPrimary(e, id) {
+  e.stopPropagation();
+  if (!_issueVariantSelected.has(id)) {
+    _issueVariantSelected.add(id);
+    if (!_issueVariantPrimary) _issueVariantPrimary = id;
+  }
+  _issueVariantPrimary = id;
+  _imRefreshCards();
+  _imUpdateHint();
+}
+
+function _imRefreshCards() {
+  _issueVariantCovers.forEach(c => {
+    const el = document.getElementById(`vc-${c.id}`);
+    if (!el) return;
+    el.classList.toggle('selected',   _issueVariantSelected.has(c.id));
+    el.classList.toggle('is-primary', c.id === _issueVariantPrimary);
+  });
+  const btn = document.getElementById('variant-apply-btn');
+  if (btn) btn.disabled = _issueVariantSelected.size === 0;
+}
+
+function _imUpdateHint() {
+  const hint = document.getElementById('variant-hint');
+  if (!hint) return;
+  const n = _issueVariantSelected.size;
+  if (n === 0) { hint.innerHTML = 'Select variants to include, ★ one as the cover.'; return; }
+  const primary = _issueVariantCovers.find(c => c.id === _issueVariantPrimary);
+  const pName = primary ? `<strong>${esc(primary.name)}</strong>` : '—';
+  hint.innerHTML = `${n} variant${n > 1 ? 's' : ''} · Cover: ${pName}`;
+}
+
+async function _imApplyVariants(seriesId, number, isOwned) {
+  if (!_issueVariantSelected.size) return;
+  const btn = document.getElementById('variant-apply-btn');
+  if (btn) { btn.disabled = true; btn.textContent = isOwned ? 'Building…' : 'Saving…'; }
+  const selected = _issueVariantCovers.filter(c => _issueVariantSelected.has(c.id));
+  try {
+    const res = await api.post(`/api/series/${seriesId}/issues/${number}/variants/apply`, {
+      selected,
+      primary_id: _issueVariantPrimary,
+    });
+    if (isOwned) {
+      showToast(`${res.added} variant cover${res.added > 1 ? 's' : ''} added to CBZ`);
+    } else {
+      showToast(`${selected.length} variant${selected.length > 1 ? 's' : ''} queued for download`);
+    }
+    closeModal();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
+    showToast(`Error: ${e.message || 'failed'}`, 'error');
+  }
+}
+
+function _pollIssueQueue(seriesId, number) {
+  clearTimeout(_issueModalPollTimer);
+  _issueModalPollTimer = setTimeout(async () => {
+    if (!document.getElementById('issue-dl-btn')) return;
+    try {
+      const qs = await api.get(`/api/series/${seriesId}/issues/${number}/queue-status`);
+      _updateIssueDlBtn(seriesId, number, qs);
+      if (qs.state && !['done', 'failed', 'not_found'].includes(qs.state)) {
+        _pollIssueQueue(seriesId, number);
+      }
+    } catch {}
+  }, 2000);
+}
+
+function _updateIssueDlBtn(seriesId, number, qs) {
+  const btn = document.getElementById('issue-dl-btn');
+  if (!btn) return;
+  const { state, progress } = qs;
+  if (!state)               { btn.disabled = false; btn.textContent = 'Download'; btn.onclick = () => issueDownload(seriesId, number); return; }
+  if (state === 'queued')   { btn.disabled = true;  btn.textContent = 'Queued…'; return; }
+  if (state === 'searching'){ btn.disabled = true;  btn.textContent = 'Searching…'; return; }
+  if (state === 'downloading') {
+    const pct = progress?.total ? Math.round(progress.done / progress.total * 100) : 0;
+    btn.disabled = true; btn.textContent = `Downloading ${pct}%`;
+    return;
+  }
+  if (state === 'done') {
+    btn.disabled = true; btn.textContent = 'Done ✓';
+    btn.style.cssText += ';background:var(--grn);border-color:var(--grn)';
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = state === 'not_found' ? 'Not Found · Retry' : 'Failed · Retry';
+  btn.onclick = () => issueDownload(seriesId, number);
+}
+
+async function issueDownload(seriesId, number) {
+  const btn = document.getElementById('issue-dl-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; }
+  try {
+    await api.post(`/api/series/${seriesId}/issues/${number}/search`, {});
+    _pollIssueQueue(seriesId, number);
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = 'Download'; }
+  }
 }
 
 document.addEventListener('keydown', e => {
@@ -1741,12 +2436,24 @@ document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => navigate(el.dataset.view));
 });
 
+function _parseHash() {
+  const raw = location.hash.slice(1);
+  if (!raw) return { view: 'library', params: {} };
+  const [view, qs] = raw.split('?');
+  const params = qs ? Object.fromEntries(new URLSearchParams(qs)) : {};
+  // coerce numeric id back to number
+  if (params.id) params.id = parseInt(params.id, 10) || params.id;
+  return { view: view || 'library', params };
+}
+
 async function boot() {
   const cfg = await api.get('/api/config');
-  if (!cfg.komga_url) {
+  _appConfig = cfg;
+  if (!cfg.komga_url && !cfg.metron_user) {
     renderOnboarding();
   } else {
-    navigate('library');
+    const { view, params } = _parseHash();
+    navigate(view, params);
   }
 }
 

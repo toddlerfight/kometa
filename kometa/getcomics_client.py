@@ -1,6 +1,7 @@
+import re
 import time
 import logging
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
@@ -12,27 +13,43 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Button text that signals a GetComics-hosted direct download
 GC_DIRECT_TERMS = (
     "download now", "main download", "main server", "main link",
     "mirror download", "mirror server", "mirror link", "link 1", "link 2", "getcomics",
 )
 
+_ISSUE_NUM_RE = re.compile(r'#(\d+(?:\.\d+)?)')
+
+
+def _normalize(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r'[–—‒\-]+', ' ', text)   # all dash variants → space
+    text = re.sub(r'[^\w\s]', ' ', text)     # strip remaining punctuation
+    return re.sub(r'\s+', ' ', text).strip() # collapse whitespace
+
+
+class GCRateLimitError(Exception):
+    pass
+
 
 class GetComicsClient:
     def __init__(self):
-        self.session = requests.Session()
+        self.session = cloudscraper.create_scraper()
         self.session.headers.update(HEADERS)
 
-    def search(self, title: str, issue_number: float) -> tuple[str | None, str | None]:
+    def search(self, title: str, issue_number: float, store_date: str | None = None) -> tuple[str | None, str | None]:
         """
         Returns (download_url, hint_filename) or (None, None).
         Tries progressively looser queries until a match is found.
         """
         num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
-        num_str = f"{num_int:03d}" if isinstance(num_int, int) else str(num_int)
+        num_str = str(num_int)  # no zero-padding — GC titles use "#25" not "#025"
+        year = store_date[:4] if store_date else None
 
-        queries = [
+        queries = []
+        if year:
+            queries.append(f"{title} #{num_str} ({year})")
+        queries += [
             f"{title} #{num_str}",
             f"{title} {num_str}",
             title,
@@ -40,7 +57,7 @@ class GetComicsClient:
 
         for query in queries:
             logger.info(f"GetComics search: {query!r}")
-            post_url = self._search_page(query, title, num_str)
+            post_url = self._search_page(query, title, issue_number)
             if post_url:
                 time.sleep(0.75)
                 url, fname = self._extract_download(post_url)
@@ -49,10 +66,14 @@ class GetComicsClient:
 
         return None, None
 
-    def _search_page(self, query: str, title: str, num_str: str) -> str | None:
+    def _search_page(self, query: str, title: str, issue_number: float) -> str | None:
         try:
             r = self.session.get(BASE, params={"s": query}, timeout=15)
+            if r.status_code == 429:
+                raise GCRateLimitError("Rate limited by GetComics")
             r.raise_for_status()
+        except GCRateLimitError:
+            raise
         except Exception as e:
             logger.warning(f"GetComics search request failed: {e}")
             return None
@@ -63,10 +84,9 @@ class GetComicsClient:
             logger.info(f"GetComics: no articles on search page for {query!r}")
             return None
 
-        title_lower = title.lower()
-        num_needle = f"#{num_str}"
+        title_norm = _normalize(title)
 
-        # Best match: title + issue number both in post title
+        # Best match: series name AND issue number both present (numeric, not string)
         for article in articles:
             h1 = article.find("h1", {"class": "post-title"})
             if not h1:
@@ -74,13 +94,15 @@ class GetComicsClient:
             a = h1.find("a")
             if not a:
                 continue
-            text = a.get_text(strip=True).lower()
+            text = a.get_text(strip=True)
             href = a.get("href", "")
-            if title_lower in text and num_needle.lower() in text:
-                logger.info(f"GetComics: matched post {text!r}")
-                return href
+            if title_norm in _normalize(text):
+                nums = _ISSUE_NUM_RE.findall(text)
+                if any(float(n) == issue_number for n in nums):
+                    logger.info(f"GetComics: matched post {text!r}")
+                    return href
 
-        # Fallback: first result whose title contains our series name
+        # Fallback: first result whose title contains the series name
         for article in articles:
             h1 = article.find("h1", {"class": "post-title"})
             if not h1:
@@ -88,9 +110,9 @@ class GetComicsClient:
             a = h1.find("a")
             if not a:
                 continue
-            text = a.get_text(strip=True).lower()
+            text = a.get_text(strip=True)
             href = a.get("href", "")
-            if title_lower in text:
+            if title_norm in _normalize(text):
                 logger.info(f"GetComics: fallback post {text!r}")
                 return href
 
@@ -107,14 +129,12 @@ class GetComicsClient:
         soup = BeautifulSoup(r.text, "lxml")
         body = soup.find("section", {"class": "post-contents"})
         if not body:
-            body = soup  # fallback to full page
+            body = soup
 
-        # Strategy 1: find download groups — <p> containing "Language" marks a group,
-        # followed by <div class="aio-button-center"> siblings with actual links
+        # Strategy 1: find download groups — <p> containing "Language" marks a group
         for p in body.find_all("p"):
             if "Language" not in p.get_text():
                 continue
-            # Walk siblings until we hit <hr> or run out
             for sibling in p.next_siblings:
                 if not isinstance(sibling, Tag):
                     continue
