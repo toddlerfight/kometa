@@ -36,3 +36,6 @@ class MetronClient:
             page += 1
             time.sleep(0.3)
         return issues
+
+    def get_issue(self, issue_id: int):
+        return self._get(f"/issue/{issue_id}/")
