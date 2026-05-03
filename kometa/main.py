@@ -15,6 +15,7 @@ from kometa.comicvine_client import ComicVineClient
 from kometa.getcomics_client import GetComicsClient
 from kometa.diff import compute_diff
 from kometa.scheduler import start_scheduler
+from kometa.apns import send_push
 import kometa.db as db
 import kometa.downloader as downloader
 import kometa.matcher as matcher
@@ -50,6 +51,31 @@ def _komga_scan():
     _komga().scan_library()
 
 
+def _notify_acquired(title: str, issue_number: float):
+    cfg = db.get_config(DB_PATH)
+    key_pem  = cfg.get("apns_key_pem", "")
+    key_id   = cfg.get("apns_key_id", "")
+    team_id  = cfg.get("apns_team_id", "")
+    bundle_id = cfg.get("apns_bundle_id", "")
+    if not all([key_pem, key_id, team_id, bundle_id]):
+        return
+    tokens = db.get_push_tokens(DB_PATH)
+    if not tokens:
+        return
+    num = int(issue_number) if issue_number == int(issue_number) else issue_number
+    send_push(
+        tokens=tokens,
+        title="Acquired",
+        body=f"{title} #{num}",
+        data={"type": "acquired"},
+        key_pem=key_pem,
+        key_id=key_id,
+        team_id=team_id,
+        bundle_id=bundle_id,
+        sandbox=cfg.get("apns_sandbox", "0") == "1",
+    )
+
+
 def _process_queue():
     items = db.get_queued_items(DB_PATH)
     if not items:
@@ -80,6 +106,11 @@ def _process_queue():
                 komga_scan_fn=_komga_scan,
             )
             db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
+            threading.Thread(
+                target=_notify_acquired,
+                args=(item["title"], item["issue_number"]),
+                daemon=True,
+            ).start()
         except Exception as e:
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
 
@@ -653,6 +684,80 @@ def manual_sweep():
     """Manually trigger the missing-issue sweep for monitored series."""
     threading.Thread(target=_sweep_missing, daemon=True).start()
     return {"ok": True}
+
+
+# --- push / widget ---
+
+class PushRegisterRequest(BaseModel):
+    token: str
+
+
+@app.post("/api/push/register", status_code=204)
+def register_push(req: PushRegisterRequest):
+    db.register_push_token(req.token, DB_PATH)
+
+
+class ApnsConfigRequest(BaseModel):
+    apns_key_pem:  str | None = None
+    apns_key_id:   str | None = None
+    apns_team_id:  str | None = None
+    apns_bundle_id: str | None = None
+    apns_sandbox:  str | None = None  # "0" or "1"
+
+
+@app.patch("/api/config/apns", status_code=204)
+def update_apns_config(req: ApnsConfigRequest):
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    db.set_config(updates, DB_PATH)
+
+
+@app.get("/api/widget/upcoming")
+def widget_upcoming():
+    """Pull-list issues releasing this week, with thumbnail URLs."""
+    cfg = db.get_config(DB_PATH)
+    komga_url = cfg.get("komga_url", "").rstrip("/")
+    rows = db.get_pull_list_this_week(DB_PATH)
+    result = []
+    for r in rows:
+        thumb = None
+        if r["komga_book_id"]:
+            thumb = f"{komga_url}/api/v1/books/{r['komga_book_id']}/thumbnail"
+        elif r["komga_series_id"]:
+            thumb = f"{komga_url}/api/v1/series/{r['komga_series_id']}/thumbnail"
+        elif r["metron_image"]:
+            thumb = r["metron_image"]
+        result.append({
+            "title":      r["title"],
+            "number":     r["number"],
+            "store_date": r["store_date"],
+            "in_komga":   bool(r["in_komga"]),
+            "thumbnail":  thumb,
+        })
+    return result
+
+
+@app.get("/api/widget/recent")
+def widget_recent(limit: int = 10):
+    """Recently acquired issues, with thumbnail URLs."""
+    cfg = db.get_config(DB_PATH)
+    komga_url = cfg.get("komga_url", "").rstrip("/")
+    rows = db.get_recent_acquisitions(limit, DB_PATH)
+    result = []
+    for r in rows:
+        thumb = None
+        if r["komga_book_id"]:
+            thumb = f"{komga_url}/api/v1/books/{r['komga_book_id']}/thumbnail"
+        elif r["komga_series_id"]:
+            thumb = f"{komga_url}/api/v1/series/{r['komga_series_id']}/thumbnail"
+        elif r["metron_image"]:
+            thumb = r["metron_image"]
+        result.append({
+            "title":      r["title"],
+            "number":     r["issue_number"],
+            "acquired_at": r["updated_at"],
+            "thumbnail":  thumb,
+        })
+    return result
 
 
 app.mount("/", StaticFiles(directory="kometa/static", html=True), name="static")
