@@ -36,6 +36,7 @@ from kometa.sources import (
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
+    _resolve_dir,
 )
 from kometa.sync import sync_one as _sync_one
 from kometa.acquisition import (
@@ -282,6 +283,13 @@ def add_series(req: AddSeriesRequest):
                 komga_series_id = match["id"]
         except Exception:
             pass
+
+    # No folder yet (no Komga, or Komga had none)? Derive it from publisher+title.
+    # _resolve_dir finds an existing on-disk folder (variation-tolerant) or returns
+    # the canonical new path, so the first sync reconciles owned-vs-missing correctly
+    # whether or not the series is already on disk. This is what makes Komga optional.
+    if not folder_path:
+        folder_path = _resolve_dir(_COMICS_ROOT, publisher or "Unknown", title)
 
     new_id = db.add_series(
         komga_series_id, metron_series_id,

@@ -70,3 +70,43 @@ class TestNormalizeUrl:
 class TestNorm:
     def test_strips_punctuation_and_lowercases(self):
         assert naming.norm("Spider-Man! (2018)") == "spiderman 2018"
+
+
+class TestSafe:
+    def test_strips_illegal_chars(self):
+        assert naming._safe('Bat:man/Year?One') == "Bat-man-Year-One"
+
+    def test_collapses_and_trims_dashes(self):
+        assert naming._safe("--Saga--") == "Saga"
+
+
+class TestPubKey:
+    def test_suffix_variants_collapse(self):
+        assert naming._pub_key("Image") == naming._pub_key("Image Comics") == "image"
+
+    def test_strips_noise_words_and_punct(self):
+        assert naming._pub_key("DC Comics") == "dc"
+        assert naming._pub_key("Marvel Entertainment, LLC") == "marvel"
+
+
+class TestResolveDir:
+    def test_matches_existing_folder_despite_publisher_variation(self, tmp_path):
+        existing = tmp_path / "Image Comics" / "Saga"
+        existing.mkdir(parents=True)
+        # short publisher form still resolves to the existing long-form folder
+        assert naming._resolve_dir(str(tmp_path), "Image", "Saga") == str(existing)
+
+    def test_matches_existing_folder_case_insensitive_title(self, tmp_path):
+        existing = tmp_path / "Image Comics" / "Saga"
+        existing.mkdir(parents=True)
+        assert naming._resolve_dir(str(tmp_path), "Image Comics", "saga") == str(existing)
+
+    def test_new_series_reuses_existing_publisher_dir(self, tmp_path):
+        (tmp_path / "Image Comics").mkdir()
+        # new title lands under the canonical existing publisher dir, not a new "Image/"
+        assert naming._resolve_dir(str(tmp_path), "Image", "Nimona") == \
+            str(tmp_path / "Image Comics" / "Nimona")
+
+    def test_brand_new_publisher_and_title_computes_safe_path(self, tmp_path):
+        assert naming._resolve_dir(str(tmp_path), "Oni Press", "Rick & Morty") == \
+            str(tmp_path / "Oni Press" / "Rick & Morty")
