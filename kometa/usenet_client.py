@@ -80,7 +80,9 @@ class NewznabClient:
         return results
 
     def _parse_xml(self, text: str) -> list[dict]:
-        import xml.etree.ElementTree as ET
+        # defusedxml hardens against XML bombs / XXE — indexer responses are untrusted.
+        import defusedxml.ElementTree as ET
+        from defusedxml.common import DefusedXmlException
         results = []
         try:
             root = ET.fromstring(text)
@@ -101,7 +103,7 @@ class NewznabClient:
                     size = 0
                 if url:
                     results.append({"title": title, "url": url, "size": size, "indexer": self.name})
-        except ET.ParseError as e:
+        except (ET.ParseError, DefusedXmlException) as e:
             logger.warning(f"Newznab {self.name} XML parse failed: {e}")
         return results
 

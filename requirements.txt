@@ -8,3 +8,4 @@ beautifulsoup4==4.13.4
 lxml==5.4.0
 cloudscraper==1.2.71
 rarfile==4.2
+defusedxml==0.7.1
