@@ -1,0 +1,4 @@
+# Dev/test-only deps. NOT installed in the Docker image — keep this out of the
+# runtime requirements.txt so it never ships to the NAS container.
+-r requirements.txt
+pytest==9.0.3
