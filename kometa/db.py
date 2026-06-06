@@ -104,15 +104,19 @@ def _migrate(path=DB_PATH):
                     last_synced       TEXT,
                     on_pull_list      INTEGER NOT NULL DEFAULT 1,
                     monitor_status    TEXT NOT NULL DEFAULT 'monitored',
-                    folder_path       TEXT
+                    folder_path       TEXT,
+                    cv_volume_id      TEXT,
+                    locg_series_id    INTEGER
                 )
             """)
             conn.execute("""
                 INSERT INTO tracked_series
                     (id, komga_series_id, metron_series_id, title, publisher, year_began,
-                     added_at, last_synced, on_pull_list, monitor_status, folder_path)
+                     added_at, last_synced, on_pull_list, monitor_status, folder_path,
+                     cv_volume_id, locg_series_id)
                 SELECT id, komga_series_id, metron_series_id, title, publisher, year_began,
-                       added_at, last_synced, on_pull_list, monitor_status, folder_path
+                       added_at, last_synced, on_pull_list, monitor_status, folder_path,
+                       cv_volume_id, locg_series_id
                 FROM _ts_old
             """)
             conn.execute("DROP TABLE _ts_old")
