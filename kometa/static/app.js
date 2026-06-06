@@ -101,7 +101,14 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function _localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function _fmtReleaseDate(dateStr) {
+  const today = _localToday();
+  if (dateStr === today) return 'TODAY';
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
 }
@@ -112,7 +119,7 @@ function fmtNum(n) {
 }
 
 function issueStatus(issue) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = _localToday();
   if (issue.in_komga) return 'owned';
   if (!issue.store_date) return 'unknown';
   return issue.store_date > today ? 'upcoming' : 'missing';
@@ -230,21 +237,32 @@ async function sweepSeries(id, btn) {
 
 async function syncSeries(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  const before = await api.get(`/api/series/${id}`);
+  const preSynced = before.last_synced;
   await api.post(`/api/sync/${id}`, {});
-  // Sync runs in a background thread — wait for it then refresh
-  setTimeout(async () => {
-    if (currentView === 'series-detail' && currentParams.id === id) {
-      await renderSeriesDetail(id);
-    } else {
-      await renderSeries();
+  const deadline = Date.now() + 90_000;
+  const poll = setInterval(async () => {
+    try {
+      const s = await api.get(`/api/series/${id}`);
+      if (s.last_synced !== preSynced || Date.now() > deadline) {
+        clearInterval(poll);
+        if (currentView === 'series-detail' && currentParams.id === id) {
+          await renderSeriesDetail(id);
+        } else {
+          await renderSeries();
+        }
+        if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
+      }
+    } catch {
+      clearInterval(poll);
+      if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
     }
-    if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
-  }, 4000);
+  }, 2000);
 }
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null };
+let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'desc' } };
 
 async function renderLibraryBrowse() {
   document.getElementById('topbar-title').textContent = 'Library';
@@ -252,9 +270,11 @@ async function renderLibraryBrowse() {
     <button class="btn btn-ghost btn-sm" onclick="syncAll(this)">Sync All</button>
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
-  browseState.search = '';
-  browseState.filter = 'monitored';
-  browseState._cache = null;
+  browseState.search  = '';
+  browseState.filter  = 'monitored';
+  browseState._cache  = null;
+  browseState.sortKey = 'date';
+  browseState.sortDir = { date: 'desc' };
   setApp('<div class="state-msg">Loading...</div>');
   await _loadBrowsePage();
 }
@@ -283,6 +303,51 @@ function browseFilter(key) {
   _renderBrowseResults();
 }
 
+function _browseSortControls() {
+  return `
+    <div class="browse-sort">
+      <button class="sort-btn${browseState.sortKey === 'alpha' ? ' active' : ''}" id="sort-alpha"
+        onclick="browseSort('alpha')" title="Sort by title">
+        <span class="sort-btn-icon sort-icon-alpha">A</span>
+      </button>
+      <button class="sort-btn${browseState.sortKey === 'date' ? ' active' : ''}" id="sort-date"
+        onclick="browseSort('date')" title="Sort by release date">
+        <span class="sort-btn-icon">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="2.5" width="12" height="10.5" rx="1.2"/>
+            <line x1="1" y1="6" x2="13" y2="6"/>
+            <line x1="4.5" y1="1" x2="4.5" y2="4"/>
+            <line x1="9.5" y1="1" x2="9.5" y2="4"/>
+          </svg>
+        </span>
+      </button>
+      <div class="sort-arrow-box${_isDefaultSort() ? '' : ' non-default'}" id="sort-arrow">
+        ${(browseState.sortDir[browseState.sortKey] ?? 'desc') === 'asc' ? '↑' : '↓'}
+      </div>
+    </div>`;
+}
+
+function _isDefaultSort() {
+  return browseState.sortKey === 'date' && (browseState.sortDir.date ?? 'desc') === 'desc';
+}
+
+function browseSort(key) {
+  if (browseState.sortKey === key) {
+    browseState.sortDir[key] = browseState.sortDir[key] === 'asc' ? 'desc' : 'asc';
+  } else {
+    browseState.sortKey = key;
+    browseState.sortDir[key] = browseState.sortDir[key] || 'asc';
+  }
+  const arrowBox = document.getElementById('sort-arrow');
+  if (arrowBox) {
+    arrowBox.textContent = browseState.sortDir[browseState.sortKey] === 'asc' ? '↑' : '↓';
+    arrowBox.classList.toggle('non-default', !_isDefaultSort());
+  }
+  document.getElementById('sort-alpha')?.classList.toggle('active', browseState.sortKey === 'alpha');
+  document.getElementById('sort-date')?.classList.toggle('active', browseState.sortKey === 'date');
+  _renderBrowseResults();
+}
+
 async function _loadBrowsePage() {
   const firstRender = !document.getElementById('browse-search');
   if (firstRender) {
@@ -292,6 +357,7 @@ async function _loadBrowsePage() {
           value="${esc(browseState.search)}"
           oninput="browseSearch(this.value)">
         ${_browseFilterTabs()}
+        ${_browseSortControls()}
       </div>
       <div id="browse-results"><div class="state-msg">Loading...</div></div>
     `);
@@ -303,17 +369,30 @@ async function _loadBrowsePage() {
 }
 
 function _renderBrowseResults() {
-  const { filter, search, _cache: all } = browseState;
+  const { filter, search, sortKey, sortDir, _cache: all } = browseState;
   if (!all) return;
 
   const q = search.toLowerCase();
-  const filtered = all.filter(s => {
+  let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (filter === 'monitored') return !!s.on_pull_list;
     if (filter === 'upcoming')  return (s.upcoming ?? 0) > 0;
     if (filter === 'missing')   return (s.missing ?? 0) > 0;
     return true;
   });
+
+  if (sortKey === 'alpha') {
+    const dir = sortDir.alpha === 'asc' ? 1 : -1;
+    filtered = filtered.slice().sort((a, b) => dir * a.title.localeCompare(b.title));
+  } else if (sortKey === 'date') {
+    const dir = (sortDir.date ?? 'desc') === 'asc' ? 1 : -1;
+    filtered = filtered.slice().sort((a, b) => {
+      if (!a.next_release && !b.next_release) return 0;
+      if (!a.next_release) return 1;
+      if (!b.next_release) return -1;
+      return dir * a.next_release.localeCompare(b.next_release);
+    });
+  }
 
   if (!filtered.length) {
     const empty = all.length === 0
@@ -335,13 +414,15 @@ function _renderBrowseResults() {
     const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--grn)' : 'var(--tq)');
     const nextRelease = s.next_release
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.next_release)}</div>` : '';
+    const thumbSrc  = s.next_release_image || `/api/series/${s.id}/thumbnail`;
+    const thumbFall = s.next_release_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
     return `
       <div class="series-card" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="series-card-img-wrap">
-          <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
-            loading="lazy" onerror="this.style.opacity='0.15'">
+          <img class="series-card-cover" src="${esc(thumbSrc)}" alt="${esc(s.title)}"
+            loading="lazy" onerror="${thumbFall}">
           ${nextRelease}
         </div>
         <div class="series-card-bar-track">
@@ -574,8 +655,18 @@ async function renderSeriesDetail(id) {
         ${detailSortDesc ? '↓ #' : '↑ #'}
       </button>
     </div>
-    <div class="issue-grid">${tiles || '<div class="state-msg" style="grid-column:1/-1">Nothing here.</div>'}</div>
+    <div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${s.metron_series_id && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>
   `);
+
+  if (s.metron_series_id && total === 0) {
+    const _pollId = setInterval(async () => {
+      if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
+      const fresh = await api.get(`/api/series/${id}`).catch(() => null);
+      if (!fresh) { clearInterval(_pollId); return; }
+      const freshTotal = fresh.owned + fresh.missing + fresh.upcoming;
+      if (freshTotal > 0) { clearInterval(_pollId); renderSeriesDetail(id); }
+    }, 3000);
+  }
 }
 
 async function renderKomgaPreview(s) {
@@ -927,25 +1018,56 @@ async function doDelete(id) {
 
 // --- Pull List ---
 
-async function renderPullList() {
-  setTopbar();
-  setApp('<div class="state-msg">Loading...</div>');
+function _pullStatus(e) {
+  const today = _localToday();
+  if (e.in_komga) return `<span class="pull-status pull-status-owned">✓</span>`;
+  if (e.store_date < today) return `<span class="pull-status pull-status-missing">Missing</span>`;
+  if (e.store_date === today) return `<span class="pull-status pull-status-today">Today</span>`;
+  return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
+}
 
-  const [items, allSeries] = await Promise.all([
-    api.get('/api/pull-list?days=180'),
-    api.get('/api/series'),
-  ]);
+let _pullShowPast = false;
+
+async function renderPullList() {
+  setTopbar(`
+    <button class="btn btn-sm ${_pullShowPast ? 'btn-primary' : 'btn-ghost'}"
+      onclick="_togglePullPast(this)">Last 4 Weeks</button>
+  `);
+  setApp('<div class="state-msg">Loading...</div>');
+  await _renderPullListContent();
+}
+
+async function _togglePullPast(btn) {
+  _pullShowPast = !_pullShowPast;
+  btn.classList.toggle('btn-primary', _pullShowPast);
+  btn.classList.toggle('btn-ghost', !_pullShowPast);
+  setApp('<div class="state-msg">Loading...</div>');
+  await _renderPullListContent();
+}
+
+async function _renderPullListContent() {
+  const url = _pullShowPast ? '/api/pull-list?days=180&past=28' : '/api/pull-list?days=180';
+  const items = await api.get(url);
 
   if (!items.length) {
-    setApp('<div class="page-title">Pull List</div><div class="state-msg">Nothing upcoming on your pull list.</div>');
+    setApp('<div class="page-title">Pull List</div><div class="state-msg">Nothing on your pull list.</div>');
     return;
   }
 
-  const seriesMap = {};
-  for (const s of allSeries) seriesMap[s.title] = s.id;
+  const weekStart = (() => { const d = new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate() - d.getDay()); return d; })();
 
-  const groups = { 'This Week': [], 'Next Week': [], 'Later': [] };
-  for (const item of items) groups[pullGroup(item.store_date)].push(item);
+  const groups = _pullShowPast
+    ? { 'Previous Releases': [], 'This Week': [], 'Next Week': [], 'Later': [] }
+    : { 'This Week': [], 'Next Week': [], 'Later': [] };
+
+  for (const item of items) {
+    const d = new Date(item.store_date + 'T00:00:00');
+    if (_pullShowPast && d < weekStart) {
+      groups['Previous Releases'].push(item);
+    } else {
+      groups[pullGroup(item.store_date)].push(item);
+    }
+  }
 
   const html = Object.entries(groups)
     .filter(([, entries]) => entries.length > 0)
@@ -953,16 +1075,16 @@ async function renderPullList() {
       <div class="pull-group">
         <div class="pull-group-label">${label.toUpperCase()}</div>
         ${entries.map(e => {
-          const sid = seriesMap[e.title];
-          const thumb = sid ? `/api/series/${sid}/issues/${e.number}/thumbnail` : '';
+          const sid = e.id;
           return `
-            <div class="pull-row" ${sid ? `tabindex="0" role="button" onclick="navigate('series-detail', {id: ${sid}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})"` : ''}>
-              ${thumb
-                ? `<img class="pull-thumb" src="${thumb}" alt="" loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null">`
-                : `<div class="pull-thumb"></div>`}
+            <div class="pull-row" tabindex="0" role="button"
+              onclick="navigate('series-detail', {id: ${sid}})"
+              onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})">
+              <img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
+                loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null">
               <div class="pull-series">${esc(e.title)}</div>
-              <div class="pull-issue">Issue #${fmtNum(e.number)}</div>
-              <div class="pull-date">${fmtDayDate(e.store_date)}</div>
+              <div class="pull-issue">#${fmtNum(e.number)}</div>
+              ${_pullStatus(e)}
             </div>
           `;
         }).join('')}
@@ -1056,6 +1178,11 @@ function _buildActivityHtml(queue) {
         </div>` : '';
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
+      // Queued items can stall on a retry_after backoff (dupe guard). Give the
+      // user the wheel: kick a search right now, or yank it from the queue.
+      const actions = q.state === 'queued' ? `
+            <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue">✕</button>` : '';
       return `
         <div class="act-card${isDownloading ? '' : ' compact'}"${errTip}>
           <div class="act-card-cover">${thumb}</div>
@@ -1064,7 +1191,7 @@ function _buildActivityHtml(queue) {
             <div class="act-card-meta">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
             ${progress}
           </div>
-          <div class="act-card-side">${_actChip(q.state)}</div>
+          <div class="act-card-side">${_actChip(q.state)}${actions}</div>
         </div>`;
     }).join('');
     html += `<div class="act-section">

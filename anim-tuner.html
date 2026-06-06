@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Animation Tuner</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:   #000000;
+  --su1:  #111111;
+  --su2:  #1a1a1a;
+  --su3:  #2a2a2a;
+  --bd:   #2a2a2a;
+  --pri:  #91fc4e;
+  --amb:  #fddd57;
+  --tp:   #fafafa;
+  --tm:   #d2d2d2;
+  --tq:   #666666;
+}
+body {
+  background: var(--bg);
+  color: var(--tp);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- Controls ---- */
+#controls {
+  background: var(--su1);
+  border-right: 1px solid var(--bd);
+  padding: 24px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+#controls h2 {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tq);
+  margin-bottom: 4px;
+}
+.ctrl-group { display: flex; flex-direction: column; gap: 12px; }
+.ctrl { display: flex; flex-direction: column; gap: 4px; }
+.ctrl label {
+  font-size: 11px;
+  color: var(--tm);
+  display: flex;
+  justify-content: space-between;
+}
+.ctrl label span { color: var(--pri); font-family: 'Space Mono', monospace; font-size: 10px; }
+.ctrl input[type=range] {
+  width: 100%;
+  accent-color: var(--pri);
+  cursor: pointer;
+}
+.ctrl-divider { border: none; border-top: 1px solid var(--bd); margin: 4px 0; }
+
+#run-btn {
+  margin-top: 4px;
+  padding: 10px;
+  background: var(--pri);
+  color: #000;
+  border: none;
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-weight: bold;
+}
+#run-btn:hover { background: #a5fc6e; }
+
+.speed-presets {
+  display: flex;
+  gap: 6px;
+}
+.preset-btn {
+  flex: 1;
+  padding: 6px;
+  background: transparent;
+  color: var(--tq);
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.preset-btn:hover { color: var(--tp); border-color: var(--tq); }
+
+#copy-btn {
+  padding: 8px;
+  background: transparent;
+  color: var(--tq);
+  border: 1px solid var(--bd);
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#copy-btn:hover { color: var(--tp); border-color: var(--tq); }
+#copy-btn.copied { color: var(--pri); border-color: var(--pri); }
+
+/* ---- Preview ---- */
+#preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+.modal-shell {
+  background: var(--su1);
+  border: 1px solid var(--bd);
+  border-radius: 4px;
+  width: 560px;
+  max-height: 520px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-title {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 20px 24px 0;
+  flex-shrink: 0;
+}
+.wizard-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  padding: 16px 24px 0;
+  flex-shrink: 0;
+}
+.search-input {
+  flex: 1;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  border-radius: 2px;
+  color: var(--tp);
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  padding: 8px 12px;
+  outline: none;
+}
+.search-input:focus { border-color: var(--pri); }
+.btn-search {
+  padding: 0 14px;
+  background: var(--pri);
+  color: #000;
+  border: none;
+  border-radius: 3px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wizard-results {
+  margin: 12px 24px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.state-msg {
+  color: var(--tq);
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 28px 0;
+  text-align: center;
+}
+.animated-dots {
+  display: inline-block;
+  width: 3ch;
+  text-align: left;
+}
+.wizard-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.wizard-result:hover { background: var(--su2); }
+.wizard-result-thumb {
+  width: 36px;
+  height: 55px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+}
+.wizard-result-text { flex: 1; min-width: 0; }
+.wizard-result-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tp);
+}
+.wizard-result-meta { font-size: 11px; color: var(--tq); margin-top: 2px; }
+.locg-badge {
+  display: inline-block;
+  font-size: 8px;
+  font-family: 'Space Mono', monospace;
+  color: var(--amb);
+  border: 1px solid var(--amb);
+  border-radius: 2px;
+  padding: 0 3px;
+  vertical-align: middle;
+  margin-left: 4px;
+  letter-spacing: 0.05em;
+}
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <div>
+    <h2>Speed Presets</h2>
+    <div class="speed-presets" style="margin-top:8px">
+      <button class="preset-btn" onclick="applyPreset('snappy')">Snappy</button>
+      <button class="preset-btn" onclick="applyPreset('smooth')">Smooth</button>
+      <button class="preset-btn" onclick="applyPreset('slow')">Slow</button>
+    </div>
+  </div>
+
+  <hr class="ctrl-divider">
+
+  <div>
+    <h2>Dots</h2>
+    <div class="ctrl-group">
+      <div class="ctrl">
+        <label>Cycle speed <span id="v-dots-speed">0.6s</span></label>
+        <input type="range" id="dots-speed" min="200" max="2000" step="50" value="600">
+      </div>
+    </div>
+  </div>
+
+  <hr class="ctrl-divider">
+
+  <div>
+    <h2>Status → Results transition</h2>
+    <div class="ctrl-group">
+      <div class="ctrl">
+        <label>Status fade-out <span id="v-fade-out">120ms</span></label>
+        <input type="range" id="fade-out" min="0" max="500" step="10" value="120">
+      </div>
+      <div class="ctrl">
+        <label>Result fade-in duration <span id="v-fade-in">180ms</span></label>
+        <input type="range" id="fade-in" min="50" max="600" step="10" value="180">
+      </div>
+      <div class="ctrl">
+        <label>Stagger between items <span id="v-stagger">45ms</span></label>
+        <input type="range" id="stagger" min="0" max="200" step="5" value="45">
+      </div>
+      <div class="ctrl">
+        <label>Y lift distance <span id="v-lift">4px</span></label>
+        <input type="range" id="lift" min="0" max="20" step="1" value="4">
+      </div>
+    </div>
+  </div>
+
+  <hr class="ctrl-divider">
+
+  <div>
+    <h2>Simulate</h2>
+    <div class="ctrl-group">
+      <div class="ctrl">
+        <label>Metron latency <span id="v-m-delay">800ms</span></label>
+        <input type="range" id="m-delay" min="0" max="3000" step="100" value="800">
+      </div>
+      <div class="ctrl">
+        <label>LOCG latency <span id="v-l-delay">1200ms</span></label>
+        <input type="range" id="l-delay" min="0" max="3000" step="100" value="1200">
+      </div>
+      <div class="ctrl">
+        <label>
+          Source
+          <select id="source-select" style="background:var(--su2);color:var(--tp);border:1px solid var(--bd);padding:2px 6px;border-radius:2px;font-size:11px">
+            <option value="metron">Metron hit</option>
+            <option value="locg">LOCG fallback</option>
+            <option value="none">No results</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <button id="run-btn" onclick="runDemo()">▶ Run Demo</button>
+  <button id="copy-btn" onclick="copyValues()">Copy CSS Values</button>
+</div>
+
+<div id="preview">
+  <div class="modal-shell">
+    <div class="modal-title">Add Series</div>
+    <div class="wizard-search-row">
+      <input class="search-input" placeholder="absolute green arrow" readonly>
+      <button class="btn-search" onclick="runDemo()">Search</button>
+    </div>
+    <div class="wizard-results" id="wizard-results">
+      <div class="state-msg" style="padding:28px 0">Search for a series…</div>
+    </div>
+  </div>
+</div>
+
+<style id="dynamic-styles"></style>
+
+<script>
+const FAKE_RESULTS_METRON = [
+  { title: 'Absolute Green Lantern (2025)', meta: 'DC Comics · 2025 · 12 issues', source: 'metron' },
+  { title: 'Green Lantern (2023)', meta: 'DC Comics · 2023 · 20 issues', source: 'metron' },
+  { title: 'Green Lantern: War Journal (2024)', meta: 'DC Comics · 2024 · 12 issues', source: 'metron' },
+  { title: 'Green Lantern Corps (1986)', meta: 'DC Comics · 1986 · 224 issues', source: 'metron' },
+  { title: 'Green Lantern (2021)', meta: 'DC Comics · 2021 · 12 issues', source: 'metron' },
+];
+const FAKE_RESULTS_LOCG = [
+  { title: 'Absolute Green Arrow (2025)', meta: 'DC Comics · 2025', source: 'locg' },
+  { title: 'Green Arrow (2023)', meta: 'DC Comics · 2023', source: 'locg' },
+  { title: 'Green Arrow: The Longbow Hunters (1987)', meta: 'DC Comics · 1987', source: 'locg' },
+];
+
+function vals() {
+  return {
+    dotsSpeed:  +document.getElementById('dots-speed').value,
+    fadeOut:    +document.getElementById('fade-out').value,
+    fadeIn:     +document.getElementById('fade-in').value,
+    stagger:    +document.getElementById('stagger').value,
+    lift:       +document.getElementById('lift').value,
+    mDelay:     +document.getElementById('m-delay').value,
+    lDelay:     +document.getElementById('l-delay').value,
+    source:     document.getElementById('source-select').value,
+  };
+}
+
+function updateLabels() {
+  const v = vals();
+  document.getElementById('v-dots-speed').textContent = v.dotsSpeed + 'ms';
+  document.getElementById('v-fade-out').textContent   = v.fadeOut + 'ms';
+  document.getElementById('v-fade-in').textContent    = v.fadeIn + 'ms';
+  document.getElementById('v-stagger').textContent    = v.stagger + 'ms';
+  document.getElementById('v-lift').textContent       = v.lift + 'px';
+  document.getElementById('v-m-delay').textContent    = v.mDelay + 'ms';
+  document.getElementById('v-l-delay').textContent    = v.lDelay + 'ms';
+  rebuildStyles(v);
+}
+
+function rebuildStyles(v) {
+  document.getElementById('dynamic-styles').textContent = `
+    @keyframes dots {
+      0%  { content: '.'; }
+      33% { content: '..'; }
+      66% { content: '...'; }
+    }
+    .animated-dots::after {
+      content: '.';
+      animation: dots ${v.dotsSpeed}ms steps(1, end) infinite;
+    }
+    @keyframes result-enter {
+      from { opacity: 0; transform: translateY(${v.lift}px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .wizard-result-enter {
+      opacity: 0;
+      animation: result-enter ${v.fadeIn}ms ease forwards;
+    }
+  `;
+}
+
+document.querySelectorAll('input[type=range]').forEach(el => el.addEventListener('input', updateLabels));
+
+function setStatus(text) {
+  const el = document.getElementById('wizard-results');
+  el.innerHTML = `<div class="state-msg _wiz-status" style="padding:28px 0">${text}<span class="animated-dots"></span></div>`;
+}
+
+function renderResults(results) {
+  const v = vals();
+  const container = document.getElementById('wizard-results');
+
+  const paint = () => {
+    const el = document.getElementById('wizard-results');
+    if (!el) return;
+    if (!results.length) {
+      el.innerHTML = '<div class="state-msg" style="padding:28px 0">No results.</div>';
+      return;
+    }
+    el.innerHTML = results.map((r, i) => `
+      <div class="wizard-result wizard-result-enter" style="animation-delay:${i * v.stagger}ms">
+        <div class="wizard-result-thumb"></div>
+        <div class="wizard-result-text">
+          <div class="wizard-result-title">${r.title}${r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+          <div class="wizard-result-meta">${r.meta}</div>
+        </div>
+      </div>`).join('');
+  };
+
+  const status = container.querySelector('._wiz-status');
+  if (status && v.fadeOut > 0) {
+    status.style.transition = `opacity ${v.fadeOut}ms ease`;
+    status.style.opacity = '0';
+    setTimeout(paint, v.fadeOut);
+  } else {
+    paint();
+  }
+}
+
+let _running = false;
+async function runDemo() {
+  if (_running) return;
+  _running = true;
+  const v = vals();
+  const btn = document.getElementById('run-btn');
+  btn.textContent = '⏳ Running…';
+  btn.disabled = true;
+
+  document.getElementById('wizard-results').innerHTML =
+    '<div class="state-msg" style="padding:28px 0">Search for a series…</div>';
+
+  await sleep(300);
+  setStatus('Searching Metron');
+
+  await sleep(v.mDelay);
+
+  if (v.source === 'metron') {
+    renderResults(FAKE_RESULTS_METRON);
+  } else {
+    // No Metron results — go to LOCG
+    setStatus('Searching LOCG');
+    await sleep(v.lDelay);
+    renderResults(v.source === 'locg' ? FAKE_RESULTS_LOCG : []);
+  }
+
+  const totalAnim = v.fadeOut + v.fadeIn + (Math.max(0, (v.source === 'none' ? 0 : (v.source === 'metron' ? FAKE_RESULTS_METRON.length : FAKE_RESULTS_LOCG.length)) - 1) * v.stagger);
+  await sleep(totalAnim + 400);
+  btn.textContent = '▶ Run Demo';
+  btn.disabled = false;
+  _running = false;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+const PRESETS = {
+  snappy: { 'dots-speed': 400, 'fade-out': 80,  'fade-in': 120, stagger: 25, lift: 2 },
+  smooth: { 'dots-speed': 600, 'fade-out': 120, 'fade-in': 180, stagger: 45, lift: 4 },
+  slow:   { 'dots-speed': 900, 'fade-out': 250, 'fade-in': 300, stagger: 80, lift: 6 },
+};
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  document.getElementById('dots-speed').value = p['dots-speed'];
+  document.getElementById('fade-out').value   = p['fade-out'];
+  document.getElementById('fade-in').value    = p['fade-in'];
+  document.getElementById('stagger').value    = p.stagger;
+  document.getElementById('lift').value       = p.lift;
+  updateLabels();
+  runDemo();
+}
+
+function copyValues() {
+  const v = vals();
+  const css = `/* Dot animation */
+dots cycle:   ${v.dotsSpeed}ms
+
+/* Status → Results */
+fade-out:     ${v.fadeOut}ms
+fade-in:      ${v.fadeIn}ms
+stagger:      ${v.stagger}ms
+lift:         ${v.lift}px`;
+  navigator.clipboard.writeText(css);
+  const btn = document.getElementById('copy-btn');
+  btn.textContent = 'Copied ✓';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = 'Copy CSS Values'; btn.classList.remove('copied'); }, 1500);
+}
+
+// Init
+updateLabels();
+</script>
+</body>
+</html>

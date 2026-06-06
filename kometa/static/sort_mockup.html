@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kometa — Sort Mock-up</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Space+Grotesk:wght@700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:   #000000;
+      --su1:  #111111;
+      --su2:  #1a1a1a;
+      --su3:  #2a2a2a;
+      --bd:   #2a2a2a;
+      --pri:  #91fc4e;
+      --prih: #1a2e0d;
+      --grn:  #48c774;
+      --amb:  #fddd57;
+      --red:  #fc3860;
+      --upc:  #00d3ff;
+      --blu:  #249cee;
+      --tp:   #fafafa;
+      --tm:   #d2d2d2;
+      --tq:   #666666;
+      --nw:   140px;
+      --tb:   48px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--tp);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+      padding: 24px;
+    }
+
+    /* ---- Browse header ---- */
+
+    .browse-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--bd);
+      flex-wrap: wrap;
+    }
+
+    .browse-search {
+      background: var(--su2);
+      border: 1px solid var(--bd);
+      border-radius: 2px;
+      color: var(--tp);
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      padding: 8px 12px;
+      outline: none;
+      width: 240px;
+    }
+    .browse-search:focus { border-color: var(--pri); }
+    .browse-search::placeholder { color: var(--tq); }
+
+    .browse-filters {
+      display: flex;
+      gap: 4px;
+    }
+
+    .browse-filter-tab {
+      background: none;
+      border: 1px solid var(--bd);
+      border-radius: 2px;
+      color: var(--tq);
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 5px 12px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .browse-filter-tab:hover { color: var(--tp); border-color: var(--tp); }
+    .browse-filter-tab.active { color: var(--pri); border-color: var(--pri); }
+
+    /* ---- Sort controls ---- */
+
+    .browse-sort {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sort-arrow-box {
+      padding: 5px;
+      width: 30px;
+      border: 1px solid var(--bd);
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--tq);
+      transition: color 0.15s, border-color 0.15s;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    /* only highlight when deviating from default (date desc) */
+    .sort-arrow-box.non-default {
+      color: var(--pri);
+      border-color: var(--pri);
+    }
+
+    .sort-btn {
+      background: none;
+      border: 1px solid var(--bd);
+      border-radius: 2px;
+      color: var(--tq);
+      padding: 5px;
+      width: 30px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .sort-btn:hover { color: var(--tm); border-color: var(--tq); }
+    .sort-btn.active {
+      color: var(--pri);
+      border-color: var(--pri);
+      background: var(--prih);
+    }
+
+    .sort-btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* capital A — Space Grotesk bold to match card titles */
+    .sort-icon-alpha {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 15px;
+      line-height: 1;
+    }
+
+    /* ---- Series grid ---- */
+
+    .series-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 205px);
+      gap: 32px 27px;
+    }
+
+    .series-card {
+      cursor: pointer;
+      width: 205px;
+      transition: opacity 0.2s;
+    }
+
+    .series-card-img-wrap {
+      width: 205px;
+      aspect-ratio: 205 / 315;
+      border-radius: 3px;
+      overflow: hidden;
+      background: var(--su2);
+      position: relative;
+    }
+
+    /* placeholder covers — colored blocks with initials */
+    .series-card-cover-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 48px;
+      color: rgba(255,255,255,0.15);
+      transition: transform 0.3s ease;
+    }
+    .series-card:hover .series-card-cover-placeholder { transform: scale(1.06); }
+
+    .series-card-bar-track {
+      width: 100%;
+      height: 2px;
+      background: var(--su3);
+    }
+    .series-card-bar-fill { height: 100%; }
+
+    .series-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-top: 8px;
+    }
+
+    .series-card-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--tp);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      flex: 1;
+      min-width: 0;
+      margin-right: 8px;
+    }
+
+    .series-card-count {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      flex-shrink: 0;
+      text-align: right;
+    }
+
+    .series-card-publisher {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      color: var(--tq);
+      text-transform: uppercase;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .series-card-next-release {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ff0097;
+      color: #fff;
+      font-family: 'Space Mono', monospace;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 7px;
+      border-radius: 3px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* transition for re-sort animation */
+    .series-grid.sorting .series-card {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="browse-header">
+    <input class="browse-search" id="browse-search" placeholder="Search your collection…" oninput="applyFilters()">
+
+    <div class="browse-filters">
+      <button class="browse-filter-tab active" onclick="setFilter('all', this)">All</button>
+      <button class="browse-filter-tab" onclick="setFilter('monitored', this)">Monitored</button>
+      <button class="browse-filter-tab" onclick="setFilter('upcoming', this)">Upcoming</button>
+      <button class="browse-filter-tab" onclick="setFilter('missing', this)">Missing</button>
+    </div>
+
+    <div class="browse-sort">
+      <button class="sort-btn" id="sort-alpha" onclick="cycleSort('alpha')" title="Sort by title">
+        <span class="sort-btn-icon sort-icon-alpha">A</span>
+      </button>
+      <button class="sort-btn" id="sort-date" onclick="cycleSort('date')" title="Sort by release date">
+        <span class="sort-btn-icon">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="2.5" width="12" height="10.5" rx="1.2"/>
+            <line x1="1" y1="6" x2="13" y2="6"/>
+            <line x1="4.5" y1="1" x2="4.5" y2="4"/>
+            <line x1="9.5" y1="1" x2="9.5" y2="4"/>
+          </svg>
+        </span>
+      </button>
+      <div class="sort-arrow-box" id="sort-arrow">↓</div>
+    </div>
+  </div>
+
+  <div class="series-grid" id="series-grid"></div>
+
+  <script>
+    /* ------------------------------------------------------------------
+       Mock series data — mirrors real DB shape
+       next_release: ISO date string or null
+       owned/missing: ints
+    ------------------------------------------------------------------ */
+    const SERIES = [
+      { id:1,  title: 'Amazing Spider-Man',      publisher: 'Marvel',       owned: 24, missing: 8,  on_pull_list: true,  next_release: '2026-05-14', hue: 210 },
+      { id:2,  title: 'Batman',                  publisher: 'DC',           owned: 40, missing: 2,  on_pull_list: true,  next_release: '2026-05-21', hue: 30  },
+      { id:3,  title: 'Saga',                    publisher: 'Image Comics', owned: 66, missing: 0,  on_pull_list: false, next_release: null,         hue: 280 },
+      { id:4,  title: 'Invincible',              publisher: 'Image Comics', owned: 144,missing: 0,  on_pull_list: false, next_release: null,         hue: 340 },
+      { id:5,  title: 'X-Men',                   publisher: 'Marvel',       owned: 18, missing: 4,  on_pull_list: true,  next_release: '2026-05-07', hue: 0   },
+      { id:6,  title: 'Daredevil',               publisher: 'Marvel',       owned: 31, missing: 11, on_pull_list: true,  next_release: '2026-05-28', hue: 0   },
+      { id:7,  title: 'Hellboy',                 publisher: 'Dark Horse',   owned: 12, missing: 1,  on_pull_list: false, next_release: null,         hue: 15  },
+      { id:8,  title: 'The Boys',                publisher: 'Dynamite',     owned: 72, missing: 0,  on_pull_list: false, next_release: null,         hue: 60  },
+      { id:9,  title: 'Sandman',                 publisher: 'DC',           owned: 75, missing: 0,  on_pull_list: false, next_release: null,         hue: 260 },
+      { id:10, title: 'Absolute Batman',         publisher: 'DC',           owned: 5,  missing: 3,  on_pull_list: true,  next_release: '2026-06-04', hue: 200 },
+      { id:11, title: 'Wolverine',               publisher: 'Marvel',       owned: 9,  missing: 7,  on_pull_list: true,  next_release: '2026-05-14', hue: 160 },
+      { id:12, title: 'Bone',                    publisher: 'Cartoon Books', owned: 9, missing: 0,  on_pull_list: false, next_release: null,         hue: 45  },
+      { id:13, title: 'Zot!',                    publisher: 'Eclipse Comics', owned: 4, missing: 32, on_pull_list: false, next_release: null,        hue: 120 },
+      { id:14, title: 'Nausicaä of the Valley of the Wind', publisher: 'Viz', owned: 7, missing: 0, on_pull_list: false, next_release: null,         hue: 80  },
+      { id:15, title: 'Miracleman',              publisher: 'Marvel',       owned: 6,  missing: 4,  on_pull_list: true,  next_release: '2026-05-21', hue: 190 },
+    ];
+
+    /* ------------------------------------------------------------------
+       State
+    ------------------------------------------------------------------ */
+    let filterKey  = 'all';
+    let sortKey    = 'date';
+    let sortDir    = { date: 'desc' };
+
+    function setFilter(key, btn) {
+      filterKey = key;
+      document.querySelectorAll('.browse-filter-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyFilters();
+    }
+
+    function cycleSort(key) {
+      if (sortKey === key) {
+        // same key — flip direction
+        sortDir[key] = sortDir[key] === 'asc' ? 'desc' : 'asc';
+      } else {
+        // different key — activate it
+        sortKey = key;
+        sortDir[key] = sortDir[key] || 'asc';
+      }
+      updateSortUI();
+      applyFilters();
+    }
+
+    const DEFAULT_SORT_KEY = 'date';
+    const DEFAULT_SORT_DIR = 'desc';
+
+    function isDefaultSort() {
+      return sortKey === DEFAULT_SORT_KEY && sortDir[sortKey] === DEFAULT_SORT_DIR;
+    }
+
+    function updateSortUI() {
+      const arrowBox = document.getElementById('sort-arrow');
+      ['alpha', 'date'].forEach(k => {
+        document.getElementById(`sort-${k}`).classList.toggle('active', k === sortKey);
+      });
+      arrowBox.textContent = sortKey ? (sortDir[sortKey] === 'asc' ? '↑' : '↓') : '↓';
+      arrowBox.classList.toggle('non-default', !isDefaultSort());
+    }
+
+    function applyFilters() {
+      const q = document.getElementById('browse-search').value.toLowerCase();
+
+      let list = SERIES.filter(s => {
+        if (q && !s.title.toLowerCase().includes(q)) return false;
+        if (filterKey === 'monitored') return s.on_pull_list;
+        if (filterKey === 'upcoming')  return !!s.next_release;
+        if (filterKey === 'missing')   return s.missing > 0;
+        return true;
+      });
+
+      if (sortKey === 'alpha') {
+        list = list.slice().sort((a, b) => {
+          const cmp = a.title.localeCompare(b.title);
+          return sortDir.alpha === 'asc' ? cmp : -cmp;
+        });
+      } else if (sortKey === 'date') {
+        list = list.slice().sort((a, b) => {
+          // nulls always to the end regardless of direction
+          if (!a.next_release && !b.next_release) return 0;
+          if (!a.next_release) return 1;
+          if (!b.next_release) return -1;
+          const cmp = a.next_release.localeCompare(b.next_release);
+          return sortDir.date === 'asc' ? cmp : -cmp;
+        });
+      }
+
+      renderGrid(list);
+    }
+
+    function renderGrid(list) {
+      const grid = document.getElementById('series-grid');
+
+      if (!list.length) {
+        grid.innerHTML = '<div style="color:var(--tq);font-family:\'Space Mono\',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;padding:64px 0;grid-column:1/-1;text-align:center">No series match.</div>';
+        return;
+      }
+
+      grid.innerHTML = list.map(s => {
+        const total = s.owned + s.missing;
+        const pct   = total ? Math.round((s.owned / total) * 100) : 0;
+        const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--grn)' : 'var(--tq)');
+        const pub   = s.publisher
+          ? `<div class="series-card-publisher">${s.publisher.toUpperCase()}</div>` : '';
+
+        const fmtDate = (iso) => {
+          if (!iso) return '';
+          const [, m, d] = iso.split('-');
+          const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+          return `${months[parseInt(m,10)-1]} ${parseInt(d,10)}`;
+        };
+
+        const badge = s.next_release
+          ? `<div class="series-card-next-release">${fmtDate(s.next_release)}</div>` : '';
+
+        const initials = s.title.split(' ').slice(0,2).map(w=>w[0]).join('');
+
+        return `
+          <div class="series-card">
+            <div class="series-card-img-wrap">
+              <div class="series-card-cover-placeholder"
+                style="background: hsl(${s.hue}, 25%, 15%)">
+                ${initials}
+              </div>
+              ${badge}
+            </div>
+            <div class="series-card-bar-track">
+              <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <div class="series-card-footer">
+              <div class="series-card-title">${s.title}</div>
+              <div class="series-card-count" style="color:${color}">${s.owned}/${total}</div>
+            </div>
+            ${pub}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // initial render
+    updateSortUI();
+    applyFilters();
+  </script>
+</body>
+</html>

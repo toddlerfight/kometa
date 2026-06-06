@@ -26,8 +26,11 @@ from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
+from kometa.downloader import DuplicateIssueError, WrongIssueError
 from kometa.locg_client import search_series_anon as _locg_search_anon
 from kometa.scheduler import start_scheduler
+from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
+from kometa.sabnzbd_client import SABnzbdClient, find_comic_in_dir, find_comics_in_dir
 import kometa.db as db
 import kometa.downloader as downloader
 import kometa.matcher as matcher
@@ -72,6 +75,25 @@ def _comicvine() -> ComicVineClient | None:
     return ComicVineClient(key) if key else None
 
 
+def _sabnzbd() -> SABnzbdClient | None:
+    cfg = db.get_config(DB_PATH)
+    url = cfg.get("sab_url", "")
+    key = cfg.get("sab_apikey", "")
+    return SABnzbdClient(url, key) if url and key else None
+
+
+def _usenet_indexers() -> list[dict]:
+    import json
+    cfg = db.get_config(DB_PATH)
+    raw = cfg.get("newznab_indexers", "")
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
+
+
 def _locg():
     cfg = db.get_config(DB_PATH)
     user = cfg.get("locg_user", "")
@@ -93,6 +115,7 @@ def _locg():
 def _sync_all_job():
     for s in db.get_all_series(DB_PATH):
         _sync_one(s)
+    _sweep_missing()
 
 
 def _komga_scan():
@@ -115,9 +138,22 @@ def _process_queue():
             issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
             store_date = issue_row["store_date"] if issue_row else None
 
-            dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date)
+            dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"))
             if not dl_url:
-                db.update_queue_state(qid, "not_found", error="No result on GetComics", path=DB_PATH)
+                # GetComics failed — try Usenet indexers before giving up
+                indexers = _usenet_indexers()
+                sab = _sabnzbd()
+                if indexers and sab:
+                    nzb_url = search_usenet(indexers, item["title"], item["issue_number"])
+                    if nzb_url:
+                        nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
+                        if nzo_id:
+                            db.update_queue_state(qid, "pending_usenet",
+                                                  source_url=nzb_url, path=DB_PATH)
+                            db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
+                            logger.info(f"Usenet: submitted nzo_id={nzo_id} for {item['title']} #{int(item['issue_number'])}")
+                            continue
+                db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
                 continue
 
             if dl_url in downloaded_urls:
@@ -153,15 +189,185 @@ def _process_queue():
         except GCRateLimitError:
             db.update_queue_state(qid, "failed", error="Rate limited by GetComics — wait a few minutes before retrying", path=DB_PATH)
             break  # stop processing the rest of the queue too, we're blocked
+        except DuplicateIssueError as e:
+            from datetime import datetime, timedelta
+            retry_at = (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+            db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
+            logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
         except Exception as e:
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
 
 
 def _sweep_missing():
-    """Queue all missing issues for monitored series."""
+    """Queue missing issues; try a pack NZB first for series with many gaps."""
+    missing_counts = db.get_missing_counts_by_series(DB_PATH)
+    pack_submitted: set[int] = set()
+    indexers = _usenet_indexers()
+    sab = _sabnzbd()
+
+    if indexers and sab:
+        for series_id, count in missing_counts.items():
+            if count < PACK_THRESHOLD:
+                continue
+            if db.has_active_pack(series_id, DB_PATH):
+                continue
+            series = db.get_series_by_id(series_id, DB_PATH)
+            if not series:
+                continue
+            nzb_url = search_usenet_pack(indexers, series["title"])
+            if nzb_url:
+                nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{series['title']} - Pack")
+                if nzo_id:
+                    db.queue_pack(series_id, nzo_id, nzb_url, DB_PATH)
+                    logger.info(f"Pack submitted for {series['title']!r} ({count} missing): {nzo_id}")
+                    pack_submitted.add(series_id)
+
     rows = db.get_missing_for_monitored(DB_PATH)
     for row in rows:
-        db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
+        if row["tracked_series_id"] not in pack_submitted:
+            db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
+
+
+def _poll_usenet_jobs():
+    """Check SABnzbd for completed pending_usenet queue items and finalize them."""
+    from datetime import datetime, timedelta
+    sab = _sabnzbd()
+    if not sab:
+        return
+    items = db.get_pending_usenet_items(DB_PATH)
+    if not items:
+        return
+
+    for item in items:
+        qid = item["id"]
+        nzo_id = item["sab_nzo_id"]
+        result = sab.poll_job(nzo_id)
+        status = result["status"]
+
+        if status == "queued":
+            logger.debug(f"Usenet job {nzo_id} still downloading ({result.get('pct', 0):.0f}%)")
+            continue
+
+        if status == "completed":
+            storage = result.get("storage", "")
+            logger.info(f"Usenet job {nzo_id} completed — storage: {storage}")
+            _finalize_usenet_download(item, qid, storage)
+
+        elif status in ("failed", "unknown"):
+            age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+            if status == "unknown" and age < timedelta(hours=4):
+                # SABnzbd may have cleaned old queue/history entries — wait a bit
+                continue
+            err = result.get("error") or f"SABnzbd status: {status}"
+            logger.warning(f"Usenet job {nzo_id} failed: {err}")
+            db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
+
+
+def _finalize_usenet_download(item: dict, qid: int, storage: str):
+    """Move a SABnzbd-completed download into the library and mark it done."""
+    import shutil as _shutil
+    from kometa.downloader import (
+        _issue_num_from_file, _read_cbz_number, _num_from_filename,
+        _safe, _resolve_dir, COMICS_ROOT, WrongIssueError, _fix_extension,
+    )
+    issue_number = item["issue_number"]
+    title = item["title"]
+    publisher = item.get("publisher")
+    dest_dir = item.get("folder_path") or _resolve_dir(COMICS_ROOT, publisher or "Unknown", title)
+
+    # Pack sentinel — move every comic in storage to dest_dir, let next sync mark issues
+    if issue_number == -1:
+        comics = find_comics_in_dir(storage)
+        if not comics:
+            db.update_queue_state(qid, "failed", error="Usenet pack: no comic files in download", path=DB_PATH)
+            return
+        os.makedirs(dest_dir, exist_ok=True)
+        placed = 0
+        for src in comics:
+            fname = os.path.basename(src)
+            dst = os.path.join(dest_dir, fname)
+            if os.path.exists(dst):
+                logger.info(f"Pack: skipping {fname} — already in library")
+                continue
+            _shutil.move(src, dst)
+            _fix_extension(dst)
+            placed += 1
+        logger.info(f"Pack: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
+        db.update_queue_state(qid, "done", path=DB_PATH)
+        if not item.get("folder_path") and placed:
+            db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        try:
+            _komga_scan()
+        except Exception as e:
+            logger.warning(f"Komga scan after pack placement failed: {e}")
+        return
+
+    comics = find_comics_in_dir(storage)
+    if not comics:
+        db.update_queue_state(qid, "failed", error="Usenet: no comic files found in completed download", path=DB_PATH)
+        return
+
+    # If single file, take it. If multiple, find the one matching our issue number.
+    target = None
+    if len(comics) == 1:
+        target = comics[0]
+    else:
+        for f in comics:
+            if _issue_num_from_file(f) == issue_number:
+                target = f
+                break
+
+    if target is None:
+        found = [os.path.basename(f) for f in comics]
+        db.update_queue_state(
+            qid, "failed",
+            error=f"Usenet pack didn't contain #{int(issue_number)} (found: {found})",
+            path=DB_PATH,
+        )
+        return
+
+    # Rename to Kometa format
+    ext = os.path.splitext(target)[1].lower()
+    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
+    dest_name = f"{_safe(title)} #{int(num_int):03d}{ext}"
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = os.path.join(dest_dir, dest_name)
+
+    if os.path.exists(dest_path):
+        db.update_queue_state(qid, "done", filename=dest_path, path=DB_PATH)
+        db.upsert_issue_status(item["tracked_series_id"], issue_number, item.get("store_date"),
+                               in_komga=True, path=DB_PATH)
+        _komga_scan()
+        return
+
+    try:
+        import shutil
+        shutil.move(target, dest_path)
+    except Exception as e:
+        db.update_queue_state(qid, "failed", error=f"Usenet move failed: {e}", path=DB_PATH)
+        return
+
+    logger.info(f"Usenet: placed {dest_path}")
+    db.update_queue_state(qid, "done", filename=dest_path, path=DB_PATH)
+    if not item.get("folder_path"):
+        db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+    db.upsert_issue_status(item["tracked_series_id"], issue_number, item.get("store_date"),
+                           in_komga=True, path=DB_PATH)
+    try:
+        _komga_scan()
+    except Exception as e:
+        logger.warning(f"Komga scan after usenet placement failed: {e}")
+
+
+def _release_day_retry():
+    """Re-queue this week's release-day issues that weren't found yet — runs Thu AEST (= Wed EDT)."""
+    from datetime import timedelta
+    # store_dates are US Wednesday; running Thu AEST means today AEST = Wed US + 1 day
+    release_dates = {str(date.today()), str(date.today() - timedelta(days=1))}
+    rows = db.get_missing_for_monitored(DB_PATH)
+    for row in rows:
+        if row.get("store_date") in release_dates:
+            db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
 
 
 @asynccontextmanager
@@ -169,7 +375,7 @@ async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
-    start_scheduler(_sync_all_job, _process_queue, _sweep_missing)
+    start_scheduler(_sync_all_job, _process_queue, _sweep_missing, _release_day_retry, _poll_usenet_jobs)
     yield
 
 
@@ -237,8 +443,21 @@ def _sync_one(series: dict):
                 if b.get("media", {}).get("status") == "ERROR":
                     continue
                 n = b["metadata"]["numberSort"]
-                if n is not None:
-                    book_map[float(n)] = b["id"]
+                if n is None:
+                    continue
+                key = float(n)
+                if key in book_map:
+                    # numberSort collision = Komga metadata is wrong on at least one book.
+                    # Prefer whichever book's filename actually matches the key.
+                    fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
+                    logger.warning(
+                        "numberSort collision at %s for '%s': %s vs %s",
+                        key, series.get("title"), book_map[key], b["id"]
+                    )
+                    if fn_num == key:
+                        book_map[key] = b["id"]
+                else:
+                    book_map[key] = b["id"]
         except Exception:
             pass
 
@@ -326,10 +545,10 @@ def _summary(issues):
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
     owned = sum(1 for r in issues if r["in_komga"])
-    missing = sum(1 for r in issues if not r["in_komga"] and (not r["store_date"] or r["store_date"] <= today))
-    upcoming = sum(1 for r in issues if not r["in_komga"] and r["store_date"] and r["store_date"] > today)
+    missing = sum(1 for r in issues if not r["in_komga"] and (not r["store_date"] or r["store_date"] < today))
+    upcoming = sum(1 for r in issues if not r["in_komga"] and r["store_date"] and r["store_date"] >= today)
     soon = [r["store_date"] for r in issues
-            if not r["in_komga"] and r["store_date"] and today < r["store_date"] <= cutoff]
+            if not r["in_komga"] and r["store_date"] and today <= r["store_date"] <= cutoff]
     return {"owned": owned, "missing": missing, "upcoming": upcoming,
             "next_release": min(soon) if soon else None}
 
@@ -404,34 +623,48 @@ def test_comicvine(req: TestCVRequest):
 
 @app.get("/api/config")
 def get_config():
+    import json
     cfg = db.get_config(DB_PATH)
+    indexers_raw = cfg.get("newznab_indexers", "[]")
+    try:
+        indexers = json.loads(indexers_raw)
+    except Exception:
+        indexers = []
+    # Strip apikeys from indexer list before returning
+    safe_indexers = [{"name": i["name"], "host": i["host"], "ssl": i.get("ssl", True)} for i in indexers]
     return {
-        "komga_url":        cfg.get("komga_url", ""),
-        "komga_user":       cfg.get("komga_user", ""),
-        "komga_pass":       "",  # never expose password
-        "komga_library_id": cfg.get("komga_library_id", ""),
-        "metron_user":      cfg.get("metron_user", ""),
-        "metron_pass":      "",  # never expose password
-        "cv_api_key":       "",  # never expose key
-        "cv_configured":    bool(cfg.get("cv_api_key", "")),
-        "locg_user":        cfg.get("locg_user", ""),
-        "locg_pass":        "",  # never expose password
-        "locg_configured":  bool(cfg.get("locg_user", "") and cfg.get("locg_pass", "")),
-        "sync_hours":       cfg.get("sync_hours", "5,12,17"),
+        "komga_url":           cfg.get("komga_url", ""),
+        "komga_user":          cfg.get("komga_user", ""),
+        "komga_pass":          "",
+        "komga_library_id":    cfg.get("komga_library_id", ""),
+        "metron_user":         cfg.get("metron_user", ""),
+        "metron_pass":         "",
+        "cv_api_key":          "",
+        "cv_configured":       bool(cfg.get("cv_api_key", "")),
+        "locg_user":           cfg.get("locg_user", ""),
+        "locg_pass":           "",
+        "locg_configured":     bool(cfg.get("locg_user", "") and cfg.get("locg_pass", "")),
+        "sync_hours":          cfg.get("sync_hours", "5,12,17"),
+        "sab_url":             cfg.get("sab_url", ""),
+        "sab_configured":      bool(cfg.get("sab_url", "") and cfg.get("sab_apikey", "")),
+        "newznab_indexers":    safe_indexers,
     }
 
 
 class ConfigRequest(BaseModel):
-    komga_url:        str | None = None
-    komga_user:       str | None = None
-    komga_pass:       str | None = None
-    komga_library_id: str | None = None
-    metron_user:      str | None = None
-    metron_pass:      str | None = None
-    cv_api_key:       str | None = None
-    locg_user:        str | None = None
-    locg_pass:        str | None = None
-    sync_hours:       str | None = None
+    komga_url:          str | None = None
+    komga_user:         str | None = None
+    komga_pass:         str | None = None
+    komga_library_id:   str | None = None
+    metron_user:        str | None = None
+    metron_pass:        str | None = None
+    cv_api_key:         str | None = None
+    locg_user:          str | None = None
+    locg_pass:          str | None = None
+    sync_hours:         str | None = None
+    sab_url:            str | None = None
+    sab_apikey:         str | None = None
+    newznab_indexers:   str | None = None  # JSON array of {name, host, apikey, ssl}
 
 
 @app.patch("/api/config")
@@ -541,17 +774,19 @@ def add_series(req: AddSeriesRequest):
         path=DB_PATH,
     )
     added = db.get_series_by_id(new_id, DB_PATH)
-    _sync_one(added)
 
-    if req.on_pull_list:
-        issues = db.get_issues_for_series(new_id, DB_PATH)
-        today_str = str(date.today())
-        for issue in issues:
-            if not issue["in_komga"] and (not issue["store_date"] or issue["store_date"] <= today_str):
-                db.queue_issue(new_id, issue["number"], DB_PATH)
-        threading.Thread(target=_process_queue, daemon=True).start()
+    def _bg_sync():
+        _sync_one(added)
+        if req.on_pull_list:
+            issues = db.get_issues_for_series(new_id, DB_PATH)
+            today_str = str(date.today())
+            for issue in issues:
+                if not issue["in_komga"] and (not issue["store_date"] or issue["store_date"] <= today_str):
+                    db.queue_issue(new_id, issue["number"], DB_PATH)
+            _process_queue()
 
-    return db.get_series_by_id(new_id, DB_PATH)
+    threading.Thread(target=_bg_sync, daemon=True).start()
+    return added
 
 
 @app.delete("/api/series/{series_id}", status_code=204)
@@ -686,8 +921,8 @@ def sync_one(series_id: int):
 # --- pull list ---
 
 @app.get("/api/pull-list")
-def pull_list(days: int = 90):
-    return db.get_upcoming_issues(days, DB_PATH)
+def pull_list(days: int = 90, past: int = 0):
+    return db.get_upcoming_issues(days, past, DB_PATH)
 
 
 # --- thumbnails ---
@@ -1100,6 +1335,60 @@ def search_issue(series_id: int, number: float):
     return {"ok": True}
 
 
+class DownloadFromUrlRequest(BaseModel):
+    page_url: str
+
+
+@app.post("/api/series/{series_id}/issues/{number}/download-from")
+def download_from_url(series_id: int, number: float, req: DownloadFromUrlRequest):
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    issues = db.get_issues_for_series(series_id, DB_PATH)
+    issue_row = next((i for i in issues if i["number"] == number), None)
+    store_date = issue_row["store_date"] if issue_row else None
+
+    gc = GetComicsClient()
+    dl_url, hint_filename = gc._extract_download(req.page_url)
+    if not dl_url:
+        raise HTTPException(422, detail="No download link found on that page")
+
+    db.queue_issue(series_id, number, DB_PATH)
+    queue = db.get_queue(DB_PATH)
+    item = next((q for q in queue if q["tracked_series_id"] == series_id and q["issue_number"] == number), None)
+    if not item:
+        raise HTTPException(500, detail="Queue item not found after insert")
+    qid = item["id"]
+    db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
+
+    def _do_download():
+        try:
+            dest = downloader.download_issue(
+                url=dl_url,
+                title=s["title"],
+                publisher=s.get("publisher"),
+                issue_number=number,
+                store_date=store_date,
+                hint_filename=hint_filename,
+                komga_scan_fn=_komga_scan,
+                progress_fn=lambda done, total: _dl_progress.update({qid: {"done": done, "total": total}}),
+                dest_dir=s.get("folder_path") or None,
+                tracked_series_id=series_id,
+                db_path=DB_PATH,
+            )
+            _dl_progress.pop(qid, None)
+            db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
+            if not s.get("folder_path"):
+                db.set_folder_path(series_id, os.path.dirname(dest), DB_PATH)
+            db.upsert_issue_status(series_id, number, store_date, in_komga=True, path=DB_PATH)
+        except Exception as e:
+            _dl_progress.pop(qid, None)
+            db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
+
+    threading.Thread(target=_do_download, daemon=True).start()
+    return {"ok": True, "download_url": dl_url}
+
+
 @app.post("/api/queue/sweep")
 def manual_sweep():
     def _sweep_and_process():
@@ -1175,8 +1464,12 @@ def get_issue_variants(series_id: int, number: float):
     if not locg_issue_id:
         return {"covers": [], "locg_issue_id": None}
     try:
-        from kometa.locg_client import fetch_variants
-        data = fetch_variants(locg_issue_id)
+        locg = _locg()
+        if locg:
+            data = locg.fetch_variants(locg_issue_id)
+        else:
+            from kometa.locg_client import fetch_variants
+            data = fetch_variants(locg_issue_id)
         return {"covers": data["covers"], "locg_issue_id": locg_issue_id}
     except Exception as e:
         raise HTTPException(502, detail=str(e))
