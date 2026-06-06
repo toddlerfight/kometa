@@ -176,11 +176,17 @@ def _migrate(path=DB_PATH):
                 source_url        TEXT,
                 filename          TEXT,
                 error             TEXT,
+                retry_after       TEXT,
                 created_at        TEXT DEFAULT (datetime('now')),
                 updated_at        TEXT DEFAULT (datetime('now')),
                 UNIQUE(tracked_series_id, issue_number)
             )
         """)
+        dq_cols = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
+        if "retry_after" not in dq_cols:
+            conn.execute("ALTER TABLE download_queue ADD COLUMN retry_after TEXT")
+        if "sab_nzo_id" not in dq_cols:
+            conn.execute("ALTER TABLE download_queue ADD COLUMN sab_nzo_id TEXT")
 
 
 def _seed_defaults(path=DB_PATH):
@@ -248,12 +254,20 @@ def get_all_series_summaries(path=DB_PATH):
             SELECT
                 tracked_series_id,
                 SUM(CASE WHEN in_komga = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN in_komga = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,
-                SUM(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
-                MIN(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date > ? AND store_date <= ? THEN store_date END) as next_release
+                SUM(CASE WHEN in_komga = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
+                MIN(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
+                (SELECT metron_image FROM issue_status i2
+                 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.in_komga = 0
+                   AND i2.store_date IS NOT NULL
+                   AND i2.store_date >= ?
+                   AND i2.store_date <= ?
+                   AND i2.metron_image IS NOT NULL
+                 ORDER BY i2.store_date ASC LIMIT 1) as next_release_image
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (today, today, today, cutoff))
+        """, (today, today, today, cutoff, today, cutoff))
         return {r["tracked_series_id"]: dict(r) for r in rows}
 
 
@@ -269,7 +283,7 @@ def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_b
             INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id, metron_image, metron_issue_id, locg_issue_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
-                store_date      = excluded.store_date,
+                store_date      = COALESCE(excluded.store_date, store_date),
                 in_komga        = excluded.in_komga,
                 komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
@@ -426,6 +440,20 @@ def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
         """, (tracked_series_id, issue_number))
 
 
+def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):
+    """Insert a pack sentinel (issue_number=-1) directly into pending_usenet state."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO download_queue (tracked_series_id, issue_number, state, sab_nzo_id, source_url)
+            VALUES (?, -1, 'pending_usenet', ?, ?)
+            ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
+                state      = CASE WHEN state IN ('failed', 'not_found', 'done') THEN 'pending_usenet' ELSE state END,
+                sab_nzo_id = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.sab_nzo_id ELSE sab_nzo_id END,
+                source_url = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.source_url ELSE source_url END,
+                updated_at = datetime('now')
+        """, (tracked_series_id, nzo_id, nzb_url))
+
+
 def get_queue(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
@@ -441,7 +469,7 @@ def reset_stuck_queue_items(path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
             UPDATE download_queue
-            SET state = 'queued', error = NULL, updated_at = datetime('now')
+            SET state = 'queued', error = NULL, sab_nzo_id = NULL, updated_at = datetime('now')
             WHERE state IN ('searching', 'downloading')
         """)
 
@@ -453,22 +481,43 @@ def get_queued_items(path=DB_PATH):
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'queued'
+              AND (q.retry_after IS NULL OR q.retry_after <= datetime('now'))
             ORDER BY q.created_at ASC
             LIMIT 10
         """)]
 
 
-def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, path=DB_PATH):
+def get_pending_usenet_items(path=DB_PATH):
+    """Items waiting on SABnzbd to finish downloading."""
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path
+            FROM download_queue q
+            JOIN tracked_series s ON s.id = q.tracked_series_id
+            WHERE q.state = 'pending_usenet' AND q.sab_nzo_id IS NOT NULL
+        """)]
+
+
+def set_sab_nzo_id(queue_id, nzo_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE download_queue SET sab_nzo_id = ?, updated_at = datetime('now') WHERE id = ?",
+            (nzo_id, queue_id),
+        )
+
+
+def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, retry_after=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
             UPDATE download_queue SET
-                state      = ?,
-                source_url = COALESCE(?, source_url),
-                filename   = COALESCE(?, filename),
-                error      = ?,
-                updated_at = datetime('now')
+                state       = ?,
+                source_url  = COALESCE(?, source_url),
+                filename    = COALESCE(?, filename),
+                error       = ?,
+                retry_after = ?,
+                updated_at  = datetime('now')
             WHERE id = ?
-        """, (state, source_url, filename, error, queue_id))
+        """, (state, source_url, filename, error, retry_after, queue_id))
 
 
 def remove_queue_item(queue_id, path=DB_PATH):
@@ -479,6 +528,34 @@ def remove_queue_item(queue_id, path=DB_PATH):
 def clear_queue_history(path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM download_queue WHERE state IN ('done', 'not_found', 'failed')")
+
+
+def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
+    """Return {series_id: count} of released issues not yet in Komga, for all monitored series."""
+    with _connect(path) as conn:
+        rows = conn.execute("""
+            SELECT s.id, COUNT(*) as cnt
+            FROM issue_status i
+            JOIN tracked_series s ON s.id = i.tracked_series_id
+            WHERE i.in_komga = 0
+              AND (i.store_date IS NULL OR i.store_date <= date('now'))
+              AND s.monitor_status = 'monitored'
+              AND s.on_pull_list = 1
+            GROUP BY s.id
+        """)
+        return {r["id"]: r["cnt"] for r in rows}
+
+
+def has_active_pack(series_id, path=DB_PATH) -> bool:
+    """True if a pack queue entry exists for this series that isn't done or failed."""
+    with _connect(path) as conn:
+        row = conn.execute("""
+            SELECT 1 FROM download_queue
+            WHERE tracked_series_id = ? AND issue_number = -1
+              AND state NOT IN ('done', 'failed', 'not_found')
+            LIMIT 1
+        """, (series_id,)).fetchone()
+        return row is not None
 
 
 def get_missing_for_monitored(path=DB_PATH):
@@ -527,15 +604,18 @@ def update_candidate_confidence(komga_series_id, confidence, path=DB_PATH):
         )
 
 
-def get_upcoming_issues(days=90, path=DB_PATH):
+def get_upcoming_issues(days=90, past=0, path=DB_PATH):
+    if past:
+        lookback = f"date('now', '-{int(past)} days')"
+    else:
+        lookback = "date('now', '-7 days', 'weekday 0')"
     with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
-            SELECT s.title, i.number, i.store_date
+        return [dict(r) for r in conn.execute(f"""
+            SELECT s.id, s.title, i.number, i.store_date, i.in_komga
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
-            WHERE i.in_komga = 0
-              AND i.store_date IS NOT NULL
-              AND i.store_date > date('now')
+            WHERE i.store_date IS NOT NULL
+              AND i.store_date >= {lookback}
               AND i.store_date <= date('now', ? || ' days')
               AND s.on_pull_list = 1
             ORDER BY i.store_date, s.title

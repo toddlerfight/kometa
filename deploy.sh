@@ -18,6 +18,8 @@ pipe kometa/downloader.py
 pipe kometa/locg_client.py
 pipe kometa/comicvine_client.py
 pipe kometa/getcomics_client.py
+pipe kometa/usenet_client.py
+pipe kometa/sabnzbd_client.py
 pipe kometa/static/app.js
 pipe kometa/static/style.css
 pipe kometa/static/index.html

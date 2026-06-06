@@ -400,7 +400,60 @@ select.settings-input {
   border-color: var(--pri);
 }
 
+/* ---- Browse sort controls ---- */
 
+.browse-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sort-btn {
+  background: none;
+  border: 1px solid var(--bd);
+  border-radius: 2px;
+  color: var(--tq);
+  padding: 5px;
+  width: 30px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sort-btn:hover { color: var(--tm); border-color: var(--tq); }
+.sort-btn.active { color: var(--pri); border-color: var(--pri); background: var(--prih); }
+
+.sort-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sort-icon-alpha {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.sort-arrow-box {
+  padding: 5px;
+  width: 30px;
+  border: 1px solid var(--bd);
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--tq);
+  transition: color 0.15s, border-color 0.15s;
+  user-select: none;
+  flex-shrink: 0;
+}
+.sort-arrow-box.non-default { color: var(--pri); border-color: var(--pri); }
 
 /* ---- Metron Match Modal ---- */
 
@@ -903,7 +956,7 @@ select.settings-input {
 
 .pull-row {
   display: grid;
-  grid-template-columns: 28px 1fr 140px 240px;
+  grid-template-columns: 28px 1fr 60px 90px;
   align-items: center;
   gap: 16px;
   padding: 14px 0;
@@ -944,6 +997,19 @@ select.settings-input {
   color: var(--tq);
   text-align: right;
 }
+
+.pull-status {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: right;
+  white-space: nowrap;
+}
+.pull-status-owned   { color: var(--grn); }
+.pull-status-missing { color: var(--amb); }
+.pull-status-today   { color: #ff0097; }
+.pull-status-upcoming { color: var(--tq); }
 
 /* ---- Activity ---- */
 
@@ -2104,6 +2170,7 @@ select.settings-input {
 .act-card-side {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .act-card-progress { margin-top: 10px; }

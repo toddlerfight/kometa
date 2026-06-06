@@ -40,7 +40,13 @@ class ComicVineClient:
                 s += 5
             return s
 
-        return max(results, key=score)
+        best = max(results, key=score)
+        # Require both title AND year match — either alone is too ambiguous
+        if (best.get("name") or "").lower() != title_l:
+            return None
+        if year and str(best.get("start_year", "")) != str(year):
+            return None
+        return best
 
     def find_series_image(self, title: str, year: int | None = None) -> str | None:
         """Search CV volumes by title, optionally filter by start year. Returns image URL or None."""

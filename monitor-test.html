@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Monitor Button Test</title>
+<style>
+  :root {
+    --bg:  #111;
+    --su2: #1e1e1e;
+    --su3: #333;
+    --tm:  #ccc;
+    --bd:  #2a2a2a;
+    --pri: #e63;
+    --grn: #3c3;
+    --tq:  #888;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--tm);
+    font-family: 'Space Mono', monospace;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    padding: 40px;
+  }
+  h2 { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--tq); margin-bottom: 8px; }
+
+  /* ---- btn base (from style.css) ---- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    padding: 0 10px;
+    height: 22px;
+    background: transparent;
+    color: var(--tm);
+  }
+  .btn-ghost  { border-color: var(--su3); }
+  .btn-ghost:hover { border-color: var(--tm); }
+  .btn-danger { border-color: var(--pri); color: var(--pri); }
+  .btn-danger:hover { background: var(--pri); color: #fff; }
+  .btn:disabled { opacity: .4; cursor: default; }
+
+  /* ---- action bar ---- */
+  .action-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--bd);
+    border-top: 1px solid var(--bd);
+  }
+
+  /* ---- OPTION A: native select (current problem) ---- */
+  .opt-select {
+    font-family: 'Space Mono', monospace;
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    background: var(--su2);
+    color: var(--tm);
+    border: 1px solid var(--su3);
+    border-radius: 4px;
+    padding: 0 8px;
+    height: 22px;
+    cursor: pointer;
+  }
+
+  /* ---- OPTION B: plain button cycle ---- */
+  /* uses .btn .btn-ghost above, no extra styles needed */
+
+  /* ---- OPTION C: segmented control ---- */
+  .seg-group { display: flex; }
+  .seg-group .btn {
+    border-radius: 0;
+    border-right-width: 0;
+    opacity: .45;
+  }
+  .seg-group .btn:first-child { border-radius: 4px 0 0 4px; }
+  .seg-group .btn:last-child  { border-radius: 0 4px 4px 0; border-right-width: 1px; }
+  .seg-group .btn.active { opacity: 1; background: var(--su2); }
+</style>
+</head>
+<body>
+
+<div>
+  <h2>Option A — native &lt;select&gt; (current, broken on Safari)</h2>
+  <div class="action-bar">
+    <button class="btn btn-ghost">Remove from pull list</button>
+    <select class="opt-select">
+      <option>Monitored</option>
+      <option>Collected</option>
+      <option>Ignored</option>
+    </select>
+    <button class="btn btn-ghost">Sync</button>
+    <button class="btn btn-danger">Remove</button>
+  </div>
+</div>
+
+<div>
+  <h2>Option B — cycle button (current deploy attempt)</h2>
+  <div class="action-bar">
+    <button class="btn btn-ghost">Remove from pull list</button>
+    <button class="btn btn-ghost" onclick="cycleB(this)">Monitored ⇄</button>
+    <button class="btn btn-ghost">Sync</button>
+    <button class="btn btn-danger">Remove</button>
+  </div>
+</div>
+
+<div>
+  <h2>Option C — segmented control</h2>
+  <div class="action-bar">
+    <button class="btn btn-ghost">Remove from pull list</button>
+    <div class="seg-group">
+      <button class="btn btn-ghost active" onclick="segClick(this)">Monitored</button>
+      <button class="btn btn-ghost"        onclick="segClick(this)">Collected</button>
+      <button class="btn btn-ghost"        onclick="segClick(this)">Ignored</button>
+    </div>
+    <button class="btn btn-ghost">Sync</button>
+    <button class="btn btn-danger">Remove</button>
+  </div>
+</div>
+
+<script>
+const cycleB_states = ['Monitored ⇄', 'Collected ⇄', 'Ignored ⇄'];
+let cycleB_i = 0;
+function cycleB(btn) {
+  cycleB_i = (cycleB_i + 1) % cycleB_states.length;
+  btn.textContent = cycleB_states[cycleB_i];
+}
+
+function segClick(btn) {
+  btn.closest('.seg-group').querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

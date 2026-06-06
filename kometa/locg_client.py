@@ -218,23 +218,17 @@ class LOCGClient:
             logger.warning(f"LoCG get_issues({series_id}) failed: {e}")
             return []
 
+    def fetch_variants(self, locg_issue_id: str) -> dict:
+        """Fetch variant covers for an issue using the authenticated session."""
+        return _fetch_variants_with_get(locg_issue_id, self._get)
 
-def fetch_variants(locg_issue_id: str) -> dict:
-    """
-    Scrape LOCG issue page for all variant covers. Works without auth via cloudscraper.
-    Returns {"title": str, "covers": [{"id", "name", "thumb", "large"}]}
-    """
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
-        )
-    except ImportError:
-        raise RuntimeError("cloudscraper not installed")
 
+def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
+    """Shared variant-scraping logic. get_fn(url, **kwargs) must return a requests.Response."""
     url = f"{BASE}/comic/{locg_issue_id}/comic"
-    r = scraper.get(url, headers={'Referer': BASE + '/', 'Accept': 'text/html'})
-    r.raise_for_status()
+    r = get_fn(url, headers={'Referer': BASE + '/', 'Accept': 'text/html'})
+    if hasattr(r, 'raise_for_status'):
+        r.raise_for_status()
 
     soup = BeautifulSoup(r.text, 'html.parser')
     title_tag = soup.find('h1') or soup.find('title')
@@ -264,3 +258,17 @@ def fetch_variants(locg_issue_id: str) -> dict:
                            'large': S3_LARGE.format(vid)})
 
     return {'title': issue_title, 'covers': covers}
+
+
+def fetch_variants(locg_issue_id: str) -> dict:
+    """Fetch variants anonymously via cloudscraper. Prefer LOCGClient.fetch_variants() when auth is available."""
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
+        )
+    except ImportError:
+        raise RuntimeError("cloudscraper not installed")
+
+    scraper.get(BASE + '/')
+    return _fetch_variants_with_get(locg_issue_id, scraper.get)

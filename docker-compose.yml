@@ -9,6 +9,9 @@ services:
       - /volume1/docker/kometa/data:/data
       - /volume1/docker/kometa/downloads:/downloads
       - "/volume1/📦/Comics:/comics"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       KOMETA_DB: /data/kometa.db
       KOMGA_URL: ${KOMGA_URL:-http://192.168.1.166:8585}

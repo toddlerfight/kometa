@@ -18,7 +18,15 @@ GC_DIRECT_TERMS = (
     "mirror download", "mirror server", "mirror link", "link 1", "link 2", "getcomics",
 )
 
-_ISSUE_NUM_RE = re.compile(r'#(\d+(?:\.\d+)?)')
+_ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
+_ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
+_ISSUE_WORD_RE  = re.compile(r'\bissues?\s+(\d+(?:\.\d+)?)\b', re.IGNORECASE)
+
+# Words that pad a post title but don't indicate a different series
+_TITLE_NOISE = frozenset({'the', 'a', 'an'})
+# Words that indicate a collected/format edition — should NOT match a single-issue search
+_FORMAT_WORDS = frozenset({'vol', 'volume', 'tpb', 'hc', 'omnibus', 'compendium',
+                            'complete', 'collected', 'collection', 'fan', 'made'})
 
 
 def _normalize(text: str) -> str:
@@ -26,6 +34,47 @@ def _normalize(text: str) -> str:
     text = re.sub(r'[–—‒\-]+', ' ', text)   # all dash variants → space
     text = re.sub(r'[^\w\s]', ' ', text)     # strip remaining punctuation
     return re.sub(r'\s+', ' ', text).strip() # collapse whitespace
+
+
+def _post_covers_issue(text: str, issue_number: float) -> bool | None:
+    """
+    True  = post explicitly covers issue_number (exact or within range).
+    False = post explicitly covers a different issue.
+    None  = no issue number info found — caller decides.
+    """
+    # Ranges: "#130-136", "Issues 130–136", "#130 – 136"
+    # Collect all plausible ranges; True if any covers us, False if all explicitly don't.
+    ranges = [
+        (float(m.group(1)), float(m.group(2)))
+        for m in _ISSUE_RANGE_RE.finditer(text)
+        if float(m.group(2)) > float(m.group(1)) and float(m.group(1)) < 1000
+    ]
+    if ranges:
+        return any(lo <= issue_number <= hi for lo, hi in ranges)
+
+    # Single-issue numbers from all formats: "#135", "Issue 135"
+    nums = {float(n) for n in _ISSUE_NUM_RE.findall(text)}
+    nums |= {float(m.group(1)) for m in _ISSUE_WORD_RE.finditer(text)}
+    if nums:
+        return issue_number in nums
+
+    return None
+
+
+def _series_matches(title_norm: str, post_norm: str) -> bool:
+    """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
+    if title_norm not in post_norm:
+        return False
+    # Strip numbers and years, find extra words in the post beyond the series title
+    stripped = re.sub(r'\b\d+\b', '', post_norm)
+    post_words = {w for w in stripped.split() if w}
+    title_words = set(title_norm.split())
+    extra = post_words - title_words - _TITLE_NOISE
+    # Any format-edition word = different product, not a single-issue post
+    if extra & _FORMAT_WORDS:
+        return False
+    # Any extra content word = spinoff ("Batman Eternal", "X-Men Gold") — reject
+    return len(extra) == 0
 
 
 class GCRateLimitError(Exception):
@@ -37,7 +86,7 @@ class GetComicsClient:
         self.session = cloudscraper.create_scraper()
         self.session.headers.update(HEADERS)
 
-    def search(self, title: str, issue_number: float, store_date: str | None = None) -> tuple[str | None, str | None]:
+    def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None) -> tuple[str | None, str | None]:
         """
         Returns (download_url, hint_filename) or (None, None).
         Tries progressively looser queries until a match is found.
@@ -45,10 +94,14 @@ class GetComicsClient:
         num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
         num_str = str(num_int)  # no zero-padding — GC titles use "#25" not "#025"
         year = store_date[:4] if store_date else None
+        # Strip trailing (YYYY) from title — GC posts never include the year in the series name
+        title = re.sub(r'\s*\(\d{4}\)\s*$', '', title).strip()
+        # Use series start year as fallback anchor so "Batman #1" doesn't match the wrong era
+        anchor_year = year or (str(series_year) if series_year else None)
 
         queries = []
-        if year:
-            queries.append(f"{title} #{num_str} ({year})")
+        if anchor_year:
+            queries.append(f"{title} #{num_str} ({anchor_year})")
         queries += [
             f"{title} #{num_str}",
             f"{title} {num_str}",
@@ -86,7 +139,7 @@ class GetComicsClient:
 
         title_norm = _normalize(title)
 
-        # Best match: series name AND issue number both present (numeric, not string)
+        # Best match: series name matches AND post explicitly covers our issue number
         for article in articles:
             h1 = article.find("h1", {"class": "post-title"})
             if not h1:
@@ -96,13 +149,13 @@ class GetComicsClient:
                 continue
             text = a.get_text(strip=True)
             href = a.get("href", "")
-            if title_norm in _normalize(text):
-                nums = _ISSUE_NUM_RE.findall(text)
-                if any(float(n) == issue_number for n in nums):
+            if _series_matches(title_norm, _normalize(text)):
+                if _post_covers_issue(text, issue_number) is True:
                     logger.info(f"GetComics: matched post {text!r}")
                     return href
 
-        # Fallback: first result whose title contains the series name
+        # Fallback: series name matches but no explicit issue number in post title.
+        # Skip posts that explicitly cover a different issue or a format edition.
         for article in articles:
             h1 = article.find("h1", {"class": "post-title"})
             if not h1:
@@ -112,7 +165,11 @@ class GetComicsClient:
                 continue
             text = a.get_text(strip=True)
             href = a.get("href", "")
-            if title_norm in _normalize(text):
+            if _series_matches(title_norm, _normalize(text)):
+                coverage = _post_covers_issue(text, issue_number)
+                if coverage is False:
+                    logger.info(f"GetComics: fallback skipped {text!r} (wrong issue)")
+                    continue
                 logger.info(f"GetComics: fallback post {text!r}")
                 return href
 
@@ -168,6 +225,17 @@ class GetComicsClient:
                 fname = href.rsplit("/", 1)[-1]
                 logger.info(f"GetComics: direct file link {href[:80]}")
                 return href, fname
+
+        # Strategy 4: plain <a> links (no aio-button-center) whose text matches terms
+        # and href is an on-site GC download URL — catches pack pages with bare link markup
+        for a in body.find_all("a", href=True):
+            href = a["href"]
+            if "getcomics.org/dls/" not in href:
+                continue
+            text = a.get_text(strip=True).lower()
+            if any(t in text for t in GC_DIRECT_TERMS):
+                logger.info(f"GetComics: strategy-4 plain link {href[:80]}")
+                return href, None
 
         logger.info(f"GetComics: no download link found on {post_url}")
         return None, None
