@@ -61,15 +61,29 @@ Komga merely reflects it on its next scan.
 
 ## Module map
 
-- **main.py** — FastAPI app (48 routes), request handlers, plus orchestration logic:
-  queue processing, per-series sync, scheduler bootstrap. Currently the system's monolith.
-- **db.py** — all SQLite access; every query lives here behind plain functions.
+- **main.py** — FastAPI app + the ~48 route handlers and lifespan/scheduler bootstrap.
+  The deep orchestration that used to live here has been extracted (see below); main is
+  now the web layer plus glue (`_sync_all_job`, `_summary`).
+- **sources.py** — the seam to every external system. Configured-client accessors
+  (`komga`, `metron`, `comicvine`, `sabnzbd`, `locg`, `usenet_indexers`) that read config
+  from the DB and cache where it makes sense. Callers never touch credentials.
+- **sync.py** — `sync_one`: per-series reconciliation against Komga + metadata sources
+  (Metron primary, CV/LOCG supplements), then upsert the merged issue list.
+- **acquisition.py** — the download state machine (`_process_queue`, `_sweep_missing`,
+  `_poll_usenet_jobs`, `_finalize_usenet_download`, `_release_day_retry`, `_komga_scan`).
+  Owns `_dl_progress`, the live progress map the UI polls.
+- **naming.py** — pure parsing helpers (`parse_issue_number`, `scan_folder_numbers`,
+  `find_issue_file`, `normalize_url`, `norm`). No state; unit-testable in isolation.
+- **db.py** — all SQLite access; every query lives here behind plain functions. Owns the
+  schema/migrations and atomic operations like `complete_download`.
 - **matcher.py** — Komga↔Metron matching: normalization, scoring, confidence, corroboration.
 - **downloader.py** — download, archive extraction, filename/dir resolution, duplicate
   detection, cover injection into CBZ.
 - **scheduler.py** — APScheduler job registration.
-- **diff.py** — small set-difference helper for issue reconciliation.
 - **\*_client.py** — one module per external source, wrapping its API/scrape surface.
+
+Dependency direction: `main` → `acquisition`/`sync` → `sources`/`naming`/`db` → `*_client`.
+No cycles. Logic modules import the source seam, never `main`.
 
 ## Glossary
 
