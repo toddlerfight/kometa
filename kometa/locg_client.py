@@ -268,7 +268,7 @@ def fetch_variants(locg_issue_id: str) -> dict:
             browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
         )
     except ImportError:
-        raise RuntimeError("cloudscraper not installed")
+        raise RuntimeError("cloudscraper not installed") from None
 
     scraper.get(BASE + '/')
     return _fetch_variants_with_get(locg_issue_id, scraper.get)

@@ -1014,8 +1014,8 @@ def book_thumbnail(book_id: str):
         raise HTTPException(r.status_code)
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(504)
+    except Exception as e:
+        raise HTTPException(504) from e
 
 
 @app.get("/api/komga/series/{komga_series_id}/books")
@@ -1068,8 +1068,8 @@ def metron_series_thumbnail(metron_id: int):
         return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(404)
+    except Exception as e:
+        raise HTTPException(404) from e
 
 
 @app.get("/api/metron/series/{metron_id}/info")
@@ -1083,8 +1083,8 @@ def metron_series_info(metron_id: int):
             "volume":      detail.get("volume"),
             "series_type": (detail.get("series_type") or {}).get("name", "") if isinstance(detail.get("series_type"), dict) else detail.get("series_type", ""),
         }
-    except Exception:
-        raise HTTPException(404)
+    except Exception as e:
+        raise HTTPException(404) from e
 
 
 # --- match / scan ---
@@ -1424,8 +1424,8 @@ def get_issue_metron(series_id: int, number: float):
             "characters": [c.get("name", "") for c in detail.get("characters", [])],
             "arcs":       [a.get("name", "") for a in detail.get("arcs", [])],
         }
-    except Exception:
-        raise HTTPException(404)
+    except Exception as e:
+        raise HTTPException(404) from e
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
@@ -1472,7 +1472,7 @@ def get_issue_variants(series_id: int, number: float):
             data = fetch_variants(locg_issue_id)
         return {"covers": data["covers"], "locg_issue_id": locg_issue_id}
     except Exception as e:
-        raise HTTPException(502, detail=str(e))
+        raise HTTPException(502, detail=str(e)) from e
 
 
 class VariantApplyRequest(BaseModel):
@@ -1503,7 +1503,7 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
             added = inject_covers(file_path, req.selected, req.primary_id)
             return {"ok": True, "added": added}
         except Exception as e:
-            raise HTTPException(500, detail=str(e))
+            raise HTTPException(500, detail=str(e)) from e
     else:
         db.set_variant_prefs(series_id, number, req.selected, req.primary_id, DB_PATH)
         return {"ok": True, "queued": True}

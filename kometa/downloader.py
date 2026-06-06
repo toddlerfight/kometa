@@ -43,7 +43,7 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
             browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
         )
     except ImportError:
-        raise RuntimeError("cloudscraper not installed — cannot fetch cover images")
+        raise RuntimeError("cloudscraper not installed — cannot fetch cover images") from None
 
     variant_pages = []
     for cover in selected:
@@ -61,7 +61,7 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
             rarfile.UNRAR_TOOL = 'bsdtar'
             opener = rarfile.RarFile
         except ImportError:
-            raise RuntimeError("rarfile not installed — cannot read CBR")
+            raise RuntimeError("rarfile not installed — cannot read CBR") from None
     else:
         opener = zipfile.ZipFile
 
