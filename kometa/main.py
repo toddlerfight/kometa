@@ -170,7 +170,7 @@ def _process_queue():
                 store_date=store_date,
                 hint_filename=hint_filename,
                 komga_scan_fn=_komga_scan,
-                progress_fn=lambda done, total: _dl_progress.update({qid: {"done": done, "total": total}}),
+                progress_fn=lambda done, total, qid=qid: _dl_progress.update({qid: {"done": done, "total": total}}),
                 dest_dir=item.get("folder_path") or None,
                 tracked_series_id=item["tracked_series_id"],
                 db_path=DB_PATH,
@@ -375,7 +375,7 @@ async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
-    start_scheduler(_sync_all_job, _process_queue, _sweep_missing, _release_day_retry, _poll_usenet_jobs)
+    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs)
     yield
 
 
