@@ -57,52 +57,6 @@ def init_db(path=DB_PATH):
     _seed_defaults(path)
 
 
-# --- Push tokens ---
-
-def register_push_token(token: str, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute("""
-            INSERT INTO push_tokens (token) VALUES (?)
-            ON CONFLICT(token) DO UPDATE SET updated_at = datetime('now')
-        """, (token,))
-
-
-def get_push_tokens(path=DB_PATH) -> list[str]:
-    with _connect(path) as conn:
-        return [r[0] for r in conn.execute("SELECT token FROM push_tokens")]
-
-
-def get_recent_acquisitions(limit: int = 20, path=DB_PATH) -> list[dict]:
-    with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
-            SELECT q.id, q.issue_number, q.filename, q.updated_at,
-                   s.title, s.publisher, s.komga_series_id,
-                   i.komga_book_id, i.metron_image
-            FROM download_queue q
-            JOIN tracked_series s ON s.id = q.tracked_series_id
-            LEFT JOIN issue_status i ON i.tracked_series_id = q.tracked_series_id
-              AND i.number = q.issue_number
-            WHERE q.state = 'done'
-            ORDER BY q.updated_at DESC
-            LIMIT ?
-        """, (limit,))]
-
-
-def get_pull_list_this_week(path=DB_PATH) -> list[dict]:
-    with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
-            SELECT s.title, s.komga_series_id, s.metron_series_id,
-                   i.number, i.store_date, i.in_komga, i.komga_book_id, i.metron_image
-            FROM issue_status i
-            JOIN tracked_series s ON s.id = i.tracked_series_id
-            WHERE s.on_pull_list = 1
-              AND i.store_date IS NOT NULL
-              AND i.store_date >= date('now')
-              AND i.store_date <= date('now', '7 days')
-            ORDER BY i.store_date, s.title
-        """)]
-
-
 @contextmanager
 def _connect(path=DB_PATH):
     conn = sqlite3.connect(path, timeout=30)
@@ -233,13 +187,6 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE download_queue ADD COLUMN retry_after TEXT")
         if "sab_nzo_id" not in dq_cols:
             conn.execute("ALTER TABLE download_queue ADD COLUMN sab_nzo_id TEXT")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS push_tokens (
-                token      TEXT PRIMARY KEY,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now'))
-            )
-        """)
 
 
 def _seed_defaults(path=DB_PATH):
