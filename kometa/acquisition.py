@@ -19,10 +19,26 @@ from kometa.sabnzbd_client import find_comics_in_dir
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
+DB_PATH = db.DB_PATH
 
-# Live download progress, keyed by queue id — written here, polled by UI routes.
+# Live download progress, keyed by queue id. Shared mutable state: download
+# threads (here AND in main's download-from-url route) write it, the queue
+# routes read it. Nobody touches this dict directly across a module boundary —
+# go through set_progress/clear_progress/get_progress so the contract stays in
+# one place: {"done": int, "total": int} while downloading, gone when finished.
 _dl_progress: dict[int, dict] = {}
+
+
+def set_progress(qid: int, done: int, total: int) -> None:
+    _dl_progress[qid] = {"done": done, "total": total}
+
+
+def clear_progress(qid: int) -> None:
+    _dl_progress.pop(qid, None)
+
+
+def get_progress(qid: int) -> dict | None:
+    return _dl_progress.get(qid)
 
 
 def _komga_scan():
@@ -77,12 +93,12 @@ def _process_queue():
                 store_date=store_date,
                 hint_filename=hint_filename,
                 komga_scan_fn=_komga_scan,
-                progress_fn=lambda done, total, qid=qid: _dl_progress.update({qid: {"done": done, "total": total}}),
+                progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
                 dest_dir=item.get("folder_path") or None,
                 tracked_series_id=item["tracked_series_id"],
                 db_path=DB_PATH,
             )
-            _dl_progress.pop(qid, None)
+            clear_progress(qid)
             # Mark done + record ownership in one transaction — no crash-gap re-download.
             # folder_path auto-populated so the next sync's folder scan finds the file.
             # komga_book_id stays NULL until next full sync (only needed for thumbnails).

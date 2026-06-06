@@ -39,11 +39,12 @@ from kometa.naming import (
 )
 from kometa.sync import sync_one as _sync_one
 from kometa.acquisition import (
-    _dl_progress, _komga_scan, _process_queue, _sweep_missing,
+    set_progress, clear_progress, get_progress,
+    _komga_scan, _process_queue, _sweep_missing,
     _poll_usenet_jobs, _release_day_retry,
 )
 
-DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
+DB_PATH = db.DB_PATH
 
 
 def _sync_all_job():
@@ -807,8 +808,9 @@ def set_folder(series_id: int, req: FolderRequest):
 def get_queue():
     items = db.get_queue(DB_PATH)
     for item in items:
-        if item["id"] in _dl_progress:
-            item["progress"] = _dl_progress[item["id"]]
+        prog = get_progress(item["id"])
+        if prog:
+            item["progress"] = prog
     return items
 
 
@@ -887,18 +889,18 @@ def download_from_url(series_id: int, number: float, req: DownloadFromUrlRequest
                 store_date=store_date,
                 hint_filename=hint_filename,
                 komga_scan_fn=_komga_scan,
-                progress_fn=lambda done, total: _dl_progress.update({qid: {"done": done, "total": total}}),
+                progress_fn=lambda done, total: set_progress(qid, done, total),
                 dest_dir=s.get("folder_path") or None,
                 tracked_series_id=series_id,
                 db_path=DB_PATH,
             )
-            _dl_progress.pop(qid, None)
+            clear_progress(qid)
             db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
             if not s.get("folder_path"):
                 db.set_folder_path(series_id, os.path.dirname(dest), DB_PATH)
             db.upsert_issue_status(series_id, number, store_date, in_komga=True, path=DB_PATH)
         except Exception as e:
-            _dl_progress.pop(qid, None)
+            clear_progress(qid)
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
 
     threading.Thread(target=_do_download, daemon=True).start()
@@ -951,8 +953,9 @@ def get_issue_queue_status(series_id: int, number: float):
     if not q:
         return {"state": None}
     result = {"state": q["state"], "error": q.get("error")}
-    if q["id"] in _dl_progress:
-        result["progress"] = _dl_progress[q["id"]]
+    prog = get_progress(q["id"])
+    if prog:
+        result["progress"] = prog
     return result
 
 
