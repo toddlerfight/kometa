@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import logging
 import threading
@@ -37,6 +36,10 @@ import kometa.matcher as matcher
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
     sabnzbd as _sabnzbd, locg as _locg, usenet_indexers as _usenet_indexers,
+)
+from kometa.naming import (
+    parse_issue_number as _parse_issue_number, scan_folder_numbers as _scan_folder_numbers,
+    find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
 )
 
 DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
@@ -315,42 +318,6 @@ app = FastAPI(lifespan=lifespan)
 
 # --- sync logic ---
 
-def _parse_issue_number(filename: str, series_title: str = "") -> float | None:
-    import re
-    name = os.path.splitext(filename)[0]
-    # #001 or #1.5
-    m = re.search(r'#(\d+(?:\.\d+)?)', name)
-    if m:
-        return float(m.group(1))
-    # Issue 001
-    m = re.search(r'\bIssue\s+(\d+(?:\.\d+)?)\b', name, re.IGNORECASE)
-    if m:
-        return float(m.group(1))
-    # Strip series title then find first number under 1000 (avoids years)
-    remainder = name
-    if series_title:
-        remainder = re.sub(re.escape(series_title), '', name, count=1, flags=re.IGNORECASE).strip(' -_')
-    for m in re.finditer(r'\b(\d+(?:\.\d+)?)\b', remainder):
-        val = float(m.group(1))
-        if val < 1000:
-            return val
-    return None
-
-
-def _scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
-    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
-    numbers = set()
-    try:
-        for name in os.listdir(folder_path):
-            if os.path.splitext(name)[1].lower() in exts:
-                num = _parse_issue_number(name, series_title)
-                if num is not None:
-                    numbers.add(num)
-    except Exception:
-        pass
-    return numbers
-
-
 def _sync_one(series: dict):
     komga = _komga()
     metron = _metron()
@@ -490,13 +457,6 @@ class TestKomgaRequest(BaseModel):
     url: str
     user: str
     password: str
-
-
-def _normalize_url(url: str) -> str:
-    url = url.strip()
-    if url and not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    return url
 
 
 @app.post("/api/test/komga")
@@ -787,9 +747,6 @@ def search_komga(q: str):
 _STOP_WORDS = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "is", "it",
                "as", "by", "be", "or", "and", "but", "from", "with", "this", "that",
                "not", "are", "was", "were", "has", "have", "had", "its", "here", "there"}
-
-def _norm(s: str) -> str:
-    return re.sub(r'[^a-z0-9 ]', '', s.lower())
 
 @app.get("/api/search/metron")
 def search_metron(q: str):
@@ -1369,20 +1326,6 @@ def get_issue_queue_status(series_id: int, number: float):
     if q["id"] in _dl_progress:
         result["progress"] = _dl_progress[q["id"]]
     return result
-
-
-def _find_issue_file(folder_path: str, series_title: str, number: float) -> str | None:
-    """Scan folder_path for a comic file matching issue number. Returns full path or None."""
-    if not folder_path or not os.path.isdir(folder_path):
-        return None
-    for fname in os.listdir(folder_path):
-        ext = os.path.splitext(fname)[1].lower()
-        if ext not in {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}:
-            continue
-        parsed = _parse_issue_number(fname, series_title)
-        if parsed is not None and parsed == number:
-            return os.path.join(folder_path, fname)
-    return None
 
 
 @app.get("/api/series/{series_id}/issues/{number}/variants")
