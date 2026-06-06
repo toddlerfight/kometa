@@ -64,3 +64,75 @@ def normalize_url(url: str) -> str:
 
 def norm(s: str) -> str:
     return re.sub(r'[^a-z0-9 ]', '', s.lower())
+
+
+def _safe(name: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*]', "-", name)
+    name = re.sub(r'-+', '-', name)   # collapse consecutive dashes
+    return name.strip('-').strip()
+
+
+_PUB_NOISE = re.compile(r'\b(comics?|studios?|publishing|entertainment|press|inc|llc|productions?)\b', re.I)
+
+
+def _pub_key(s: str) -> str:
+    """Strip publisher suffixes and punctuation for fuzzy matching."""
+    return re.sub(r'[^a-z0-9]', '', _PUB_NOISE.sub('', s).lower())
+
+
+def _resolve_dir(root: str, publisher: str, title: str) -> str:
+    """
+    Find the best matching publisher+title directory under root.
+    Strips common suffixes so 'Image' matches 'Image Comics', handles
+    case differences, and prefers the most-populated dir when ambiguous.
+    Falls back to safe-computed names if nothing matches.
+
+    This is how the folder path gets derived from publisher+title alone —
+    no Komga needed. Existing series resolve to their real on-disk folder
+    (variation-tolerant), new ones to a fresh canonical path.
+    """
+    safe_pub = _safe(publisher)
+    safe_title = _safe(title)
+    pub_key = _pub_key(publisher)
+
+    # Score candidate publisher dirs: exact key match beats prefix, more subdirs wins ties
+    best, best_score = None, (-1, -1)
+    try:
+        for entry in os.listdir(root):
+            if not os.path.isdir(os.path.join(root, entry)):
+                continue
+            entry_key = _pub_key(entry)
+            if not entry_key or not pub_key:
+                continue
+            if entry_key == pub_key:
+                exact = 1
+            elif entry_key.startswith(pub_key) or pub_key.startswith(entry_key):
+                exact = 0
+            else:
+                continue
+            # Count subdirectories as tiebreaker — more content = more canonical
+            try:
+                subdirs = sum(1 for e in os.listdir(os.path.join(root, entry))
+                              if os.path.isdir(os.path.join(root, entry, e)))
+            except OSError:
+                subdirs = 0
+            score = (exact, subdirs)
+            if score > best_score:
+                best, best_score = entry, score
+    except OSError:
+        pass
+
+    if best:
+        safe_pub = best
+
+    pub_dir = os.path.join(root, safe_pub)
+
+    # Find existing series dir — case-insensitive
+    try:
+        for entry in os.listdir(pub_dir):
+            if entry.lower() == safe_title.lower() and os.path.isdir(os.path.join(pub_dir, entry)):
+                return os.path.join(pub_dir, entry)
+    except OSError:
+        pass
+
+    return os.path.join(pub_dir, safe_title)
