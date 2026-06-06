@@ -3,7 +3,9 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import date, timedelta
 
-DB_PATH = "/data/kometa.db"
+# Single source of truth for the DB location. Other modules import this
+# (DB_PATH = db.DB_PATH) so the env var gets read exactly once, right here.
+DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
 
 
 def init_db(path=DB_PATH):

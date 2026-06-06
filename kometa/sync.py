@@ -19,7 +19,7 @@ import kometa.db as db
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
+DB_PATH = db.DB_PATH
 
 
 def sync_one(series: dict):

@@ -6,7 +6,6 @@ Each accessor reads current config straight from the DB and rebuilds its client
 when credentials change, so callers never touch credentials or worry about
 caching. This is the seam between Kometa's logic and the outside world.
 """
-import os
 import logging
 
 from kometa.komga_client import KomgaClient
@@ -17,7 +16,7 @@ import kometa.db as db
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
+DB_PATH = db.DB_PATH
 
 # Cached clients — rebuilt only when the relevant config key changes.
 _komga_instance: "KomgaClient | None" = None
