@@ -100,7 +100,7 @@ def find_comic_in_dir(directory: str) -> str | None:
 
 def find_comics_in_dir(directory: str) -> list[str]:
     """Return all comic files under directory, sorted."""
-    out = []
+    out: list[str] = []
     if not directory or not os.path.isdir(directory):
         return out
     for root, _, files in os.walk(directory):

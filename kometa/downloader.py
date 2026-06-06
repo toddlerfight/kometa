@@ -353,7 +353,7 @@ def download_issue(
             last_exc = e
             logger.warning(f"Download attempt {attempt + 1} failed ({e}), retrying...")
     else:
-        raise last_exc
+        raise last_exc or RuntimeError(f"Download failed after retries: {url[:80]}")
 
     filename = _server_filename(r, hint_filename, url)
     if not filename:
