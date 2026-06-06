@@ -1225,8 +1225,8 @@ def confirm_bulk(req: BulkConfirmRequest):
         for s in db.get_all_series(DB_PATH):
             try:
                 _sync_one(s)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Background sync failed for series {s.get('id')} ({s.get('title')!r}): {e}")
 
     threading.Thread(target=_bg_sync, daemon=True).start()
     return {"confirmed": confirmed, "errors": errors}
