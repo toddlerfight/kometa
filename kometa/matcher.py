@@ -175,8 +175,8 @@ def rescore_candidates(db_path) -> dict:
                 db.confirm_candidate(row["komga_series_id"], row["metron_id"], db_path)
                 tracked_ids.add(row["komga_series_id"])
                 promoted += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Rescore: failed to confirm candidate {row.get('komga_series_id')}: {e}")
 
     return {"promoted": promoted, "updated": updated}
 
@@ -309,8 +309,8 @@ def _run(komga_factory, metron_factory, locg_factory, db_path):
                         db.confirm_candidate(kid, m_id, db_path)
                         tracked_ids.add(kid)
                         _state["auto_confirmed"] += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Auto-confirm: failed to confirm candidate {kid}: {e}")
 
                 _recent.appendleft({
                     "komga_id":   kid,
