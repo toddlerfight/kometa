@@ -436,7 +436,7 @@ def _sync_one(series: dict):
             pass
 
     # Komga book map — used for ownership supplement and book IDs (thumbnails)
-    book_map = {}
+    book_map: dict[float, str] = {}
     if series.get("komga_series_id") and komga:
         try:
             for b in komga.get_books(series["komga_series_id"]):
@@ -1135,7 +1135,7 @@ def scan_status():
 @app.get("/api/match/candidates")
 def get_candidates():
     rows = db.get_pending_candidates(DB_PATH)
-    groups = {"high": [], "medium": [], "low": [], "none": []}
+    groups: dict[str, list] = {"high": [], "medium": [], "low": [], "none": []}
     for r in rows:
         conf = r.get("confidence", "none")
         if conf in groups:
