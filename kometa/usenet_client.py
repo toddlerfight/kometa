@@ -85,7 +85,6 @@ class NewznabClient:
         try:
             root = ET.fromstring(text)
             # RSS: <rss><channel><item>...</item></channel></rss>
-            ns = {"newznab": "http://www.newznab.com/DTD/2010/feeds/attributes/"}
             for item in root.iter("item"):
                 title_el = item.find("title")
                 title = title_el.text if title_el is not None else ""
