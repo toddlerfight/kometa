@@ -26,11 +26,11 @@ from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
-from kometa.downloader import DuplicateIssueError, WrongIssueError
+from kometa.downloader import DuplicateIssueError
 from kometa.locg_client import search_series_anon as _locg_search_anon
 from kometa.scheduler import start_scheduler
 from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
-from kometa.sabnzbd_client import SABnzbdClient, find_comic_in_dir, find_comics_in_dir
+from kometa.sabnzbd_client import SABnzbdClient, find_comics_in_dir
 import kometa.db as db
 import kometa.downloader as downloader
 import kometa.matcher as matcher
@@ -266,8 +266,7 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
     """Move a SABnzbd-completed download into the library and mark it done."""
     import shutil as _shutil
     from kometa.downloader import (
-        _issue_num_from_file, _read_cbz_number, _num_from_filename,
-        _safe, _resolve_dir, COMICS_ROOT, WrongIssueError, _fix_extension,
+        _issue_num_from_file, _safe, _resolve_dir, COMICS_ROOT, _fix_extension,
     )
     issue_number = item["issue_number"]
     title = item["title"]
