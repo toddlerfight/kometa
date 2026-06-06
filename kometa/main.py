@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
-from kometa.comicvine_client import ComicVineClient
+from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
 from kometa.downloader import DuplicateIssueError
 from kometa.locg_client import search_series_anon as _locg_search_anon
@@ -606,7 +606,7 @@ def test_comicvine(req: TestCVRequest):
     try:
         client = ComicVineClient(req.api_key)
         r = client.session.get(
-            f"{client.base_url}/search/",
+            f"{CV_BASE_URL}/search/",
             params=client._params({"resources": "volume", "query": "batman", "limit": 1, "field_list": "id,name"}),
             timeout=10,
         )
@@ -1115,7 +1115,7 @@ def retry_empty_scan():
 def rescore_candidates():
     """Re-evaluate stored medium/low candidates with current thresholds. No API calls."""
     result = matcher.rescore_candidates(DB_PATH)
-    if result["promoted"] and _sync_all_job:
+    if result["promoted"]:
         threading.Thread(target=_sync_all_job, daemon=True).start()
     return result
 
