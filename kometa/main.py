@@ -176,15 +176,14 @@ def _process_queue():
                 db_path=DB_PATH,
             )
             _dl_progress.pop(qid, None)
-            db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
-            # Auto-populate folder_path so the next sync's folder scan finds the file.
-            if not item.get("folder_path"):
-                db.set_folder_path(item["tracked_series_id"], os.path.dirname(dest), DB_PATH)
-            # Mark owned immediately — we placed the file, we know it's there.
+            # Mark done + record ownership in one transaction — no crash-gap re-download.
+            # folder_path auto-populated so the next sync's folder scan finds the file.
             # komga_book_id stays NULL until next full sync (only needed for thumbnails).
-            db.upsert_issue_status(
-                item["tracked_series_id"], item["issue_number"], store_date,
-                in_komga=True, path=DB_PATH,
+            db.complete_download(
+                qid, item["tracked_series_id"], item["issue_number"], store_date,
+                filename=dest,
+                set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
+                path=DB_PATH,
             )
         except GCRateLimitError:
             db.update_queue_state(qid, "failed", error="Rate limited by GetComics — wait a few minutes before retrying", path=DB_PATH)
@@ -334,9 +333,10 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
     dest_path = os.path.join(dest_dir, dest_name)
 
     if os.path.exists(dest_path):
-        db.update_queue_state(qid, "done", filename=dest_path, path=DB_PATH)
-        db.upsert_issue_status(item["tracked_series_id"], issue_number, item.get("store_date"),
-                               in_komga=True, path=DB_PATH)
+        db.complete_download(
+            qid, item["tracked_series_id"], issue_number, item.get("store_date"),
+            filename=dest_path, path=DB_PATH,
+        )
         _komga_scan()
         return
 
@@ -348,11 +348,12 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
         return
 
     logger.info(f"Usenet: placed {dest_path}")
-    db.update_queue_state(qid, "done", filename=dest_path, path=DB_PATH)
-    if not item.get("folder_path"):
-        db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
-    db.upsert_issue_status(item["tracked_series_id"], issue_number, item.get("store_date"),
-                           in_komga=True, path=DB_PATH)
+    db.complete_download(
+        qid, item["tracked_series_id"], issue_number, item.get("store_date"),
+        filename=dest_path,
+        set_folder_path=dest_dir if not item.get("folder_path") else None,
+        path=DB_PATH,
+    )
     try:
         _komga_scan()
     except Exception as e:
