@@ -35,12 +35,25 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:6970/api/series   # ex
 Note: most remaining mypy output is bs4 typing noise (`str | AttributeValueList`)
 and `_komga()` None paths guarded by `try/except` — not real bugs.
 
-## Testing extracted logic
+## Tests
 
-The logic modules (`naming`, `sync`, `acquisition`, `sources`, `db`) are testable in
-isolation. Pattern: set `KOMETA_DB` to a temp file, `db.init_db(path)`, seed rows,
-inject fakes for source accessors (e.g. `acquisition._sabnzbd = lambda: None`), call
-the function, assert DB state. No live external APIs required.
+```bash
+.venv/bin/pip install -r requirements-dev.txt   # one-time: pulls in pytest
+.venv/bin/python -m pytest                       # runs tests/ (see pytest.ini)
+.venv/bin/python -m pytest tests/test_acquisition.py -q   # one file
+```
+
+The suite (`tests/`) runs against a throwaway SQLite DB per test (`db_path` fixture
+in `conftest.py`) and injects fakes for every external source — no GetComics,
+SABnzbd, Komga, or network. Coverage: `naming` pure parsers, `db` (atomic
+`complete_download`, queue requeue rules, the fresh-install migration), and
+`acquisition` (`_process_queue` happy/not-found paths, `_finalize_usenet_download`
+file moves). Dev-only deps live in `requirements-dev.txt` and never ship to the
+container.
+
+Pattern for new tests: use the `db_path`/`series` fixtures, `monkeypatch.setattr`
+the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._komga_scan`,
+`acq.GetComicsClient`), call the function, assert DB/disk state.
 
 ## Deploy to the NAS (only when explicitly approved)
 
