@@ -104,7 +104,9 @@ def find_comics_in_dir(directory: str) -> list[str]:
     if not directory or not os.path.isdir(directory):
         return out
     for root, _, files in os.walk(directory):
-        for f in sorted(files):
-            if os.path.splitext(f)[1].lower() in _COMIC_EXTS:
-                out.append(os.path.join(root, f))
+        out.extend(
+            os.path.join(root, f)
+            for f in sorted(files)
+            if os.path.splitext(f)[1].lower() in _COMIC_EXTS
+        )
     return out

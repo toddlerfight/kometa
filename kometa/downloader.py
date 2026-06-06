@@ -68,7 +68,7 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as zf:
         cover_names = []
-        for i, (vid, name, data) in enumerate(variant_pages):
+        for i, (_vid, name, data) in enumerate(variant_pages):
             safe = re.sub(r'[^\w\s\-]', '', name).strip().replace(' ', '_')
             fname = f"{str(i).zfill(3)}_cover_{safe}.jpg"
             zf.writestr(fname, data)
