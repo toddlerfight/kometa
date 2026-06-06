@@ -520,6 +520,47 @@ def update_queue_state(queue_id, state, source_url=None, filename=None, error=No
         """, (state, source_url, filename, error, retry_after, queue_id))
 
 
+def complete_download(queue_id, tracked_series_id, issue_number, store_date,
+                      filename, set_folder_path=None, path=DB_PATH):
+    """Mark a queued download done AND record issue ownership in ONE transaction.
+
+    The whole point is the single commit. Split these across two transactions —
+    like the old code did — and a crash in the gap leaves the file rotting on disk
+    while the DB still swears the issue is missing. Next sync sees the hole and
+    downloads the damn thing all over again. One commit, no gap, no ghost re-download.
+
+    set_folder_path: when given, also stamp the series' folder_path (callers pass it
+    only when the series doesn't have one yet — same condition as before, just atomic).
+    """
+    with _connect(path) as conn:
+        conn.execute("""
+            UPDATE download_queue SET
+                state       = 'done',
+                filename    = COALESCE(?, filename),
+                error       = NULL,
+                retry_after = NULL,
+                updated_at  = datetime('now')
+            WHERE id = ?
+        """, (filename, queue_id))
+        if set_folder_path is not None:
+            conn.execute(
+                "UPDATE tracked_series SET folder_path = ? WHERE id = ?",
+                (set_folder_path, tracked_series_id),
+            )
+        conn.execute("""
+            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga,
+                                      komga_book_id, metron_image, metron_issue_id, locg_issue_id)
+            VALUES (?, ?, ?, 1, NULL, NULL, NULL, NULL)
+            ON CONFLICT(tracked_series_id, number) DO UPDATE SET
+                store_date      = COALESCE(excluded.store_date, store_date),
+                in_komga        = excluded.in_komga,
+                komga_book_id   = excluded.komga_book_id,
+                metron_image    = excluded.metron_image,
+                metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
+                locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
+        """, (tracked_series_id, issue_number, store_date))
+
+
 def remove_queue_item(queue_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
