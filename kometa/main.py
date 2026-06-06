@@ -30,86 +30,17 @@ from kometa.downloader import DuplicateIssueError
 from kometa.locg_client import search_series_anon as _locg_search_anon
 from kometa.scheduler import start_scheduler
 from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
-from kometa.sabnzbd_client import SABnzbdClient, find_comics_in_dir
+from kometa.sabnzbd_client import find_comics_in_dir
 import kometa.db as db
 import kometa.downloader as downloader
 import kometa.matcher as matcher
+from kometa.sources import (
+    komga as _komga, metron as _metron, comicvine as _comicvine,
+    sabnzbd as _sabnzbd, locg as _locg, usenet_indexers as _usenet_indexers,
+)
 
 DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
 _dl_progress: dict[int, dict] = {}
-
-_komga_instance: "KomgaClient | None" = None
-_komga_cfg_key: str = ""
-_metron_instance: "MetronClient | None" = None
-_metron_cfg_key: str = ""
-
-
-def _komga() -> KomgaClient | None:
-    global _komga_instance, _komga_cfg_key
-    cfg = db.get_config(DB_PATH)
-    if not cfg.get("komga_url"):
-        return None
-    key = f"{cfg.get('komga_url')}|{cfg.get('komga_user')}|{cfg.get('komga_pass')}|{cfg.get('komga_library_id')}"
-    if _komga_instance is None or key != _komga_cfg_key:
-        _komga_instance = KomgaClient(
-            base_url=cfg.get("komga_url", ""),
-            auth=(cfg.get("komga_user", ""), cfg.get("komga_pass", "")),
-            library_id=cfg.get("komga_library_id", ""),
-        )
-        _komga_cfg_key = key
-    return _komga_instance
-
-
-def _metron() -> MetronClient:
-    global _metron_instance, _metron_cfg_key
-    cfg = db.get_config(DB_PATH)
-    key = f"{cfg.get('metron_user')}|{cfg.get('metron_pass')}"
-    if _metron_instance is None or key != _metron_cfg_key:
-        _metron_instance = MetronClient(auth=(cfg.get("metron_user", ""), cfg.get("metron_pass", "")))
-        _metron_cfg_key = key
-    return _metron_instance
-
-
-def _comicvine() -> ComicVineClient | None:
-    key = db.get_config(DB_PATH).get("cv_api_key", "")
-    return ComicVineClient(key) if key else None
-
-
-def _sabnzbd() -> SABnzbdClient | None:
-    cfg = db.get_config(DB_PATH)
-    url = cfg.get("sab_url", "")
-    key = cfg.get("sab_apikey", "")
-    return SABnzbdClient(url, key) if url and key else None
-
-
-def _usenet_indexers() -> list[dict]:
-    import json
-    cfg = db.get_config(DB_PATH)
-    raw = cfg.get("newznab_indexers", "")
-    if not raw:
-        return []
-    try:
-        return json.loads(raw)
-    except Exception:
-        return []
-
-
-def _locg():
-    cfg = db.get_config(DB_PATH)
-    user = cfg.get("locg_user", "")
-    pw   = cfg.get("locg_pass", "")
-    if not user or not pw:
-        return None
-    try:
-        from kometa.locg_client import LOCGClient
-        client = LOCGClient(user, pw, session=cfg.get("locg_session") or None)
-        # Persist refreshed session if it changed (re-login happened)
-        if client.session_cookie and client.session_cookie != cfg.get("locg_session"):
-            db.set_config({"locg_session": client.session_cookie}, DB_PATH)
-        return client
-    except Exception as e:
-        logger.warning(f"LoCG init failed: {e}")
-        return None
 
 
 def _sync_all_job():
