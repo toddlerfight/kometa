@@ -874,10 +874,20 @@ def get_taste():
     return recommend.taste_profile(DB_PATH)
 
 
+@app.get("/api/recommendations")
+def get_recommendations():
+    """Series you don't track, by the creators you collect most — with the 'because'."""
+    return recommend.recommendations(DB_PATH)
+
+
 @app.post("/api/recommendations/enrich")
 def enrich_recommendations():
-    """Cache creators for tracked series (background — hits LOCG for what's missing)."""
-    threading.Thread(target=recommend.enrich_library, args=(DB_PATH,), daemon=True).start()
+    """Background: cache tracked-series creators, then top creators' catalogs. Hits
+    LOCG only for what's missing."""
+    def _job():
+        recommend.enrich_library(DB_PATH)
+        recommend.enrich_creators(DB_PATH)
+    threading.Thread(target=_job, daemon=True).start()
     return {"ok": True, "started": True}
 
 

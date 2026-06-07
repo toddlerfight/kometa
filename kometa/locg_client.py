@@ -351,3 +351,45 @@ def get_issue_details_anon(comic_id) -> dict:
                     headers={'Referer': BASE + '/', 'Accept': 'text/html'})
     r.raise_for_status()
     return _parse_issue_details(r.text)
+
+
+def _parse_creator_series(html: str) -> list[dict]:
+    """Parse a creator's comics page into [{locg_series_id, title, publisher}]."""
+    soup = BeautifulSoup(html, "lxml")
+    out = []
+    ul = soup.find(id="comic-list-titles")
+    if not ul:
+        return out
+    for li in ul.find_all("li"):
+        a = li.find("a", class_="link-collection-series")
+        if not a:
+            continue
+        sid = a.get("data-id")
+        if not sid:
+            m = re.search(r"/comics/series/(\d+)", a.get("href", ""))
+            sid = m.group(1) if m else None
+        img = a.find("img")
+        title = (img.get("alt") or "").strip() if img else ""
+        pe = li.find(class_=re.compile(r"copy-really-small"))
+        # "DC Comics ·  2026 - Present" -> "DC Comics"
+        pub = re.split(r"·", pe.get_text(" ", strip=True))[0].strip() if pe else ""
+        if sid and title:
+            out.append({"locg_series_id": int(sid), "title": title, "publisher": pub})
+    return out
+
+
+def get_creator_series_anon(people_id, slug) -> list[dict]:
+    """A creator's full catalog from LOCG (keyless). The slug is required — a wrong
+    slug renders an empty (JS) view. Returns [{locg_series_id, title, publisher}]."""
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
+        )
+    except ImportError:
+        raise RuntimeError("cloudscraper not installed") from None
+    scraper.get(BASE + '/')
+    r = scraper.get(f"{BASE}/people/{people_id}/{slug or 'x'}/comics",
+                    headers={'Referer': BASE + '/', 'Accept': 'text/html'})
+    r.raise_for_status()
+    return _parse_creator_series(r.text)

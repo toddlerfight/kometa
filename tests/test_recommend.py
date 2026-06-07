@@ -16,6 +16,44 @@ def _w(name, pid):
     return {"role": "Writer", "name": name, "people_id": pid, "people_slug": name.lower()}
 
 
+class TestRecommendations:
+    def test_filters_and_explains(self, tmp_path):
+        p = str(tmp_path / "k.db")
+        db.init_db(p)
+        # You track 2 DC series by Snyder -> he lands in your taste profile.
+        _seed(p, "Absolute Batman", "i1", [_w("Snyder", "2")])
+        _seed(p, "Wytches", "i2", [_w("Snyder", "2")])
+        # Make them DC + give them locg_series_ids so the "already tracked" filter works.
+        for sid, lid in ((1, 100), (2, 101)):
+            with db._connect(p) as c:
+                c.execute("UPDATE tracked_series SET publisher='DC Comics', locg_series_id=? WHERE id=?", (lid, sid))
+
+        db.set_creator_works_cache("2", [
+            {"locg_series_id": 200, "title": "American Vampire", "publisher": "DC Comics"},  # ✓ rec
+            {"locg_series_id": 100, "title": "Absolute Batman", "publisher": "DC Comics"},   # already tracked
+            {"locg_series_id": 300, "title": "Batman Omnibus", "publisher": "DC Comics"},    # noise
+            {"locg_series_id": 400, "title": "Batman", "publisher": "Planeta"},              # not your publisher
+        ], path=p)
+
+        recs = rec.recommendations(p)
+        titles = [r["title"] for r in recs]
+        assert "American Vampire" in titles
+        assert "Absolute Batman" not in titles   # already tracked
+        assert "Batman Omnibus" not in titles     # reprint noise
+        assert all(r["publisher"] != "Planeta" for r in recs)  # foreign publisher dropped
+
+        av = next(r for r in recs if r["title"] == "American Vampire")
+        assert av["because"][0]["creator"] == "Snyder"
+        assert av["score"] == 2                    # Snyder is on 2 of your series
+
+    def test_empty_when_no_creator_cache(self, tmp_path):
+        p = str(tmp_path / "k.db")
+        db.init_db(p)
+        _seed(p, "Saga", "i1", [_w("BKV", "1")])
+        _seed(p, "Paper Girls", "i2", [_w("BKV", "1")])
+        assert rec.recommendations(p) == []   # taste exists but no catalogs cached yet
+
+
 class TestTasteProfile:
     def test_ranks_by_series_count_and_excludes_editorial(self, tmp_path):
         p = str(tmp_path / "k.db")
