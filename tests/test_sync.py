@@ -97,8 +97,8 @@ class TestIssueDetailsParser:
         d = locg_client._parse_issue_details(html)
         assert d["desc"] == "A bold reimagining of the Dark Knight."
         assert d["credits"] == [
-            {"role": "Writer", "name": "Scott Snyder", "people_id": "179"},
-            {"role": "Artist", "name": "Nick Dragotta", "people_id": "876"},
+            {"role": "Writer", "name": "Scott Snyder", "people_id": "179", "people_slug": "scott-snyder"},
+            {"role": "Artist", "name": "Nick Dragotta", "people_id": "876", "people_slug": "nick-dragotta"},
         ]
 
     def test_no_creators_yields_empty_credits(self):

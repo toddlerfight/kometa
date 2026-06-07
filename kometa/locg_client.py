@@ -323,15 +323,16 @@ def _parse_issue_details(html: str) -> dict:
         if not a:
             continue
         name = a.get_text(strip=True)
-        m = re.search(r"/people/(\d+)", a.get("href", ""))
+        m = re.search(r"/people/(\d+)/([^/?#\"]+)", a.get("href", ""))
         pid = m.group(1) if m else None
+        slug = m.group(2) if m else None
         wrap = name_el.parent
         role_el = wrap.find(class_="role") if wrap else None
         role = role_el.get_text(strip=True) if role_el else "Other"
         key = (name, role)
         if name and key not in seen:
             seen.add(key)
-            credits.append({"role": role, "name": name, "people_id": pid})
+            credits.append({"role": role, "name": name, "people_id": pid, "people_slug": slug})
     return {"desc": desc, "credits": credits}
 
 
