@@ -38,6 +38,12 @@ def init_db(path=DB_PATH):
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS issue_details_cache (
+                locg_issue_id TEXT PRIMARY KEY,
+                data_json     TEXT NOT NULL,
+                fetched_at    TEXT DEFAULT (datetime('now'))
+            );
+
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -230,6 +236,28 @@ def set_config(updates: dict, path=DB_PATH):
                 "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+
+# --- Issue details cache (LOCG desc + credits; also the recommendation signal) ---
+
+def get_issue_details_cache(locg_issue_id, path=DB_PATH):
+    import json
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT data_json FROM issue_details_cache WHERE locg_issue_id = ?",
+            (str(locg_issue_id),),
+        ).fetchone()
+        return json.loads(row["data_json"]) if row else None
+
+
+def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
+    import json
+    with _connect(path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO issue_details_cache (locg_issue_id, data_json, fetched_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (str(locg_issue_id), json.dumps(data)),
+        )
 
 
 # --- Series ---
