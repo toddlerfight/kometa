@@ -1594,7 +1594,7 @@ async function showIssueModal(seriesId, number) {
         <div class="issue-modal-tabs" style="margin-top:12px">
           <button class="issue-modal-tab active" id="imtab-details"  onclick="_imSwitchTab('details')">Details</button>
           <button class="issue-modal-tab"        id="imtab-variants" onclick="_imSwitchTab('variants')">
-            Variants <span class="vtab-badge" id="imtab-variants-badge" style="display:none"></span>
+            Variants
           </button>
         </div>` : ''}
         <div class="issue-modal-panel active" id="impanel-details">
@@ -1654,10 +1654,6 @@ async function _imFetchVariants(seriesId, number) {
     _issueVariantCovers  = data.covers || [];
     _issueVariantFetched = true;
     _imRenderVariants();
-    if (_issueVariantCovers.length > 1) {
-      const badge = document.getElementById('imtab-variants-badge');
-      if (badge) { badge.textContent = _issueVariantCovers.length; badge.style.display = 'inline-flex'; }
-    }
   } catch(e) {
     const el = document.getElementById('variant-area');
     if (el) el.innerHTML = `<div class="variant-empty">Could not load variants: ${esc(e.message)}</div>`;
