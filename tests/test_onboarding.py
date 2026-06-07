@@ -61,3 +61,31 @@ def test_explicit_folder_path_is_respected(tmp_path, monkeypatch):
                                              folder_path="/custom/path", on_pull_list=False))
 
     assert added["folder_path"] == "/custom/path"
+
+
+class TestMetronSearchDegradesGracefully:
+    """A missing/failing Metron must return [] (not 500) so the wizard reaches LOCG."""
+
+    def test_not_configured_returns_empty(self, tmp_path, monkeypatch):
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)  # fresh DB has no metron_user/metron_pass
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+        # _metron must never even be called when creds are absent
+        def _boom():
+            raise AssertionError("_metron() should not be called when unconfigured")
+        monkeypatch.setattr(main, "_metron", _boom)
+
+        assert main.search_metron("saga") == []
+
+    def test_configured_but_failing_returns_empty(self, tmp_path, monkeypatch):
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        db.set_config({"metron_user": "u", "metron_pass": "p"}, dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+
+        class FailingMetron:
+            def search_series(self, q):
+                raise RuntimeError("401 Unauthorized")
+        monkeypatch.setattr(main, "_metron", lambda: FailingMetron())
+
+        assert main.search_metron("saga") == []

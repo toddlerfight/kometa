@@ -811,8 +811,15 @@ async function wizardSearch() {
   const q = document.getElementById('wizard-search')?.value?.trim() || '';
   if (!document.getElementById('wizard-results') || !q) return;
   try {
-    _wizardStatus('Searching Metron');
-    const metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
+    // Metron is optional — if it's not configured or hiccups, don't let it kill
+    // the search. Swallow its error and fall through to LOCG (works key-free).
+    let metronResults = [];
+    try {
+      _wizardStatus('Searching Metron');
+      metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
+    } catch (e) {
+      console.warn('Metron search unavailable, falling back to LOCG:', e);
+    }
     if (!document.getElementById('wizard-results')) return;
     if (metronResults.length) { _renderWizardResults(metronResults, q); return; }
 
