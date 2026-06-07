@@ -2047,6 +2047,18 @@ async function renderSettings() {
             <input class="settings-input" id="s-sync-hours" value="${esc(cfg.sync_hours)}">
           </div>
         </div>
+        <div class="settings-card" style="margin-top:24px">
+          <div class="settings-card-header">SABnzbd <span style="font-weight:400;font-size:11px;color:var(--tq)">(optional — Usenet downloads)</span></div>
+          <div class="settings-field">
+            <div class="settings-field-label">Server URL ${cfg.sab_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
+            <input class="settings-input" id="s-sab-url" value="${esc(cfg.sab_url || '')}" placeholder="http://host:8080">
+          </div>
+          <div class="settings-field">
+            <div class="settings-field-label">API Key</div>
+            <input class="settings-input" id="s-sab-apikey" type="password" placeholder="${cfg.sab_configured ? 'Leave blank to keep current' : 'Enter API key'}">
+          </div>
+          <div id="indexers-section"></div>
+        </div>
       </div>
       <div class="settings-footer">
         <button class="btn btn-primary" onclick="saveSettings(this)">Save Settings</button>
@@ -2062,16 +2074,20 @@ async function saveSettings(btn) {
     komga_user:       document.getElementById('s-komga-user').value.trim(),
     komga_library_id: document.getElementById('s-komga-lib').value.trim(),
     metron_user:      document.getElementById('s-metron-user').value.trim(),
+    locg_user:        document.getElementById('s-locg-user').value.trim(),
     sync_hours:       document.getElementById('s-sync-hours').value.trim(),
+    sab_url:          document.getElementById('s-sab-url').value.trim(),
   };
   const pass      = document.getElementById('s-komga-pass').value;
   const mpass     = document.getElementById('s-metron-pass').value;
   const cvkey     = document.getElementById('s-cv-key').value;
   const locgpass  = document.getElementById('s-locg-pass').value;
+  const sabkey    = document.getElementById('s-sab-apikey').value;
   if (pass)     updates.komga_pass  = pass;
   if (mpass)    updates.metron_pass = mpass;
   if (cvkey)    updates.cv_api_key  = cvkey;
   if (locgpass) updates.locg_pass   = locgpass;
+  if (sabkey)   updates.sab_apikey  = sabkey;
 
   try {
     await api.patch('/api/config', updates);
