@@ -847,12 +847,13 @@ function wizardPickSeries(idx) {
         <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
       </div>
     </div>
-    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(optional — set later if needed)</span></div>
+    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
     <div style="display:flex;gap:6px;align-items:center">
-      <input class="search-input" id="wizard-folder" placeholder="/comics/Publisher/Series Name"
+      <input class="search-input" id="wizard-folder" placeholder="Resolving…"
         style="flex:1;margin:0">
       <button class="btn btn-ghost btn-sm" onclick="wizardBrowseFolder()">Browse</button>
     </div>
+    <div id="wizard-folder-hint" style="margin-top:6px;font-size:10px;color:var(--tq)">&nbsp;</div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;user-select:none">
       <input type="checkbox" id="wizard-pull" checked style="accent-color:var(--pri);width:14px;height:14px">
       <span style="font-family:'Space Mono',monospace;font-size:10px;color:var(--tp)">Add to Pull List</span>
@@ -863,6 +864,27 @@ function wizardPickSeries(idx) {
       <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Track Series</button>
     </div>
   `;
+  _previewFolder(r);
+}
+
+async function _previewFolder(r) {
+  const pub = r.publisher?.name || '';
+  const title = r.series || r.name || '';
+  try {
+    const res = await api.get(`/api/fs/resolve?publisher=${encodeURIComponent(pub)}&title=${encodeURIComponent(title)}`);
+    const input = document.getElementById('wizard-folder');
+    const hint = document.getElementById('wizard-folder-hint');
+    if (!input) return;
+    input.placeholder = res.path;
+    if (!input.value) input.value = res.path;   // pre-fill, still editable
+    if (hint) {
+      hint.textContent = res.exists ? '✓ Existing folder — owned issues will be detected' : 'New folder — will be created on first download';
+      hint.style.color = res.exists ? 'var(--grn)' : 'var(--tq)';
+    }
+  } catch (e) {
+    const input = document.getElementById('wizard-folder');
+    if (input) input.placeholder = '/comics/Publisher/Series Name';
+  }
 }
 
 function wizardBrowseFolder() {

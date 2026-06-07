@@ -811,6 +811,15 @@ def browse_fs(path: str = ""):
     }
 
 
+@app.get("/api/fs/resolve")
+def resolve_folder(publisher: str = "", title: str = ""):
+    """Preview where a series will be filed — the same publisher+title resolution
+    add_series uses. Reports whether that folder already exists on disk so the UI
+    can say 'existing' vs 'new'."""
+    path = _resolve_dir(_COMICS_ROOT, publisher or "Unknown", title)
+    return {"path": path, "exists": os.path.isdir(path)}
+
+
 # --- folder path ---
 
 class FolderRequest(BaseModel):

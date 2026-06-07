@@ -80,6 +80,28 @@ def test_locg_add_skips_metron_autolink_when_unconfigured(tmp_path, monkeypatch)
     assert added["locg_series_id"] == 100002
 
 
+class TestResolveFolderPreview:
+    """The wizard previews where a series will land — same logic add_series uses."""
+
+    def test_existing_folder_reports_exists(self, tmp_path, monkeypatch):
+        root = tmp_path / "comics"
+        (root / "Image Comics" / "Saga").mkdir(parents=True)
+        monkeypatch.setattr(main, "_COMICS_ROOT", str(root))
+
+        res = main.resolve_folder(publisher="Image", title="Saga")
+        assert res["path"] == str(root / "Image Comics" / "Saga")
+        assert res["exists"] is True
+
+    def test_new_series_reports_not_exists(self, tmp_path, monkeypatch):
+        root = tmp_path / "comics"
+        root.mkdir()
+        monkeypatch.setattr(main, "_COMICS_ROOT", str(root))
+
+        res = main.resolve_folder(publisher="Oni Press", title="Nimona")
+        assert res["path"] == str(root / "Oni Press" / "Nimona")
+        assert res["exists"] is False
+
+
 class TestMetronSearchDegradesGracefully:
     """A missing/failing Metron must return [] (not 500) so the wizard reaches LOCG."""
 
