@@ -2396,174 +2396,6 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// --- Onboarding ---
-
-let onboardState = {
-  komgaOk: false,
-  metronOk: false,
-  libraries: [],
-};
-
-async function renderOnboarding() {
-  document.getElementById('sidebar').style.opacity = '0.35';
-  document.getElementById('sidebar').style.pointerEvents = 'none';
-  setTopbar();
-  setApp(`
-    <div class="onboard-wrap">
-      <div class="onboard-title">Welcome to kometa</div>
-      <div class="onboard-subtitle">Connect your Komga library and Metron account to get started.</div>
-
-      <div class="onboard-card" id="onboard-komga">
-        <div class="onboard-card-header">Komga</div>
-        <div class="settings-field">
-          <div class="settings-field-label">Server URL</div>
-          <input class="settings-input" id="ob-komga-url" placeholder="http://192.168.1.x:8585"
-            oninput="onboardReset('komga')">
-        </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Username</div>
-          <input class="settings-input" id="ob-komga-user" placeholder="your@email.com"
-            oninput="onboardReset('komga')">
-        </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Password</div>
-          <input class="settings-input" id="ob-komga-pass" type="password"
-            oninput="onboardReset('komga')">
-        </div>
-        <div class="onboard-card-footer">
-          <span class="onboard-status" id="ob-komga-status"></span>
-          <button class="btn btn-ghost btn-sm" onclick="testKomga(this)">Test Connection</button>
-        </div>
-        <div id="ob-library-wrap" class="hidden">
-          <div class="settings-field" style="margin-top:14px">
-            <div class="settings-field-label">Library</div>
-            <select class="settings-input" id="ob-library-id">
-              <option value="">— select library —</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div class="onboard-card" id="onboard-metron">
-        <div class="onboard-card-header">Metron</div>
-        <div class="settings-field">
-          <div class="settings-field-label">Username</div>
-          <input class="settings-input" id="ob-metron-user" placeholder="your username"
-            oninput="onboardReset('metron')">
-        </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Password</div>
-          <input class="settings-input" id="ob-metron-pass" type="password"
-            oninput="onboardReset('metron')">
-        </div>
-        <div class="onboard-card-footer">
-          <span class="onboard-status" id="ob-metron-status"></span>
-          <button class="btn btn-ghost btn-sm" onclick="testMetron(this)">Test Connection</button>
-        </div>
-      </div>
-
-      <div class="onboard-footer">
-        <button class="btn btn-primary" id="ob-finish-btn" disabled onclick="finishOnboarding(this)">
-          Save &amp; Browse Library →
-        </button>
-      </div>
-    </div>
-  `);
-}
-
-function onboardReset(which) {
-  if (which === 'komga') {
-    onboardState.komgaOk = false;
-    document.getElementById('ob-komga-status').textContent = '';
-    document.getElementById('ob-komga-status').className = 'onboard-status';
-    document.getElementById('ob-library-wrap')?.classList.add('hidden');
-  } else {
-    onboardState.metronOk = false;
-    document.getElementById('ob-metron-status').textContent = '';
-    document.getElementById('ob-metron-status').className = 'onboard-status';
-  }
-  document.getElementById('ob-finish-btn').disabled = true;
-}
-
-function _onboardCheck() {
-  const libId = document.getElementById('ob-library-id')?.value;
-  const ready = onboardState.komgaOk && onboardState.metronOk && libId;
-  document.getElementById('ob-finish-btn').disabled = !ready;
-}
-
-async function testKomga(btn) {
-  btn.disabled = true; btn.textContent = 'Testing…';
-  const status = document.getElementById('ob-komga-status');
-  const url  = document.getElementById('ob-komga-url').value.trim();
-  const user = document.getElementById('ob-komga-user').value.trim();
-  const pass = document.getElementById('ob-komga-pass').value;
-  try {
-    const res = await api.post('/api/test/komga', { url, user, password: pass });
-    if (res.ok) {
-      onboardState.komgaOk = true;
-      onboardState.libraries = res.libraries;
-      status.textContent = '✓ Connected';
-      status.className = 'onboard-status ok';
-      const wrap = document.getElementById('ob-library-wrap');
-      const sel = document.getElementById('ob-library-id');
-      sel.innerHTML = '<option value="">— select library —</option>' +
-        res.libraries.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
-      if (res.libraries.length === 1) sel.value = res.libraries[0].id;
-      wrap.classList.remove('hidden');
-      sel.onchange = _onboardCheck;
-      _onboardCheck();
-    } else {
-      status.textContent = '✗ ' + (res.error || 'Failed');
-      status.className = 'onboard-status err';
-    }
-  } catch (e) {
-    status.textContent = '✗ Request failed';
-    status.className = 'onboard-status err';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Test Connection';
-  }
-}
-
-async function testMetron(btn) {
-  btn.disabled = true; btn.textContent = 'Testing…';
-  const status = document.getElementById('ob-metron-status');
-  const user = document.getElementById('ob-metron-user').value.trim();
-  const pass = document.getElementById('ob-metron-pass').value;
-  try {
-    const res = await api.post('/api/test/metron', { user, password: pass });
-    if (res.ok) {
-      onboardState.metronOk = true;
-      status.textContent = '✓ Connected';
-      status.className = 'onboard-status ok';
-      _onboardCheck();
-    } else {
-      status.textContent = '✗ ' + (res.error || 'Failed');
-      status.className = 'onboard-status err';
-    }
-  } catch (e) {
-    status.textContent = '✗ Request failed';
-    status.className = 'onboard-status err';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Test Connection';
-  }
-}
-
-async function finishOnboarding(btn) {
-  btn.disabled = true; btn.textContent = 'Saving…';
-  const updates = {
-    komga_url:        document.getElementById('ob-komga-url').value.trim(),
-    komga_user:       document.getElementById('ob-komga-user').value.trim(),
-    komga_pass:       document.getElementById('ob-komga-pass').value,
-    komga_library_id: document.getElementById('ob-library-id').value,
-    metron_user:      document.getElementById('ob-metron-user').value.trim(),
-    metron_pass:      document.getElementById('ob-metron-pass').value,
-  };
-  await api.patch('/api/config', updates);
-  document.getElementById('sidebar').style.opacity = '';
-  document.getElementById('sidebar').style.pointerEvents = '';
-  navigate('library');
-}
-
 // --- Boot ---
 
 document.querySelectorAll('.nav-item').forEach(el => {
@@ -2581,14 +2413,13 @@ function _parseHash() {
 }
 
 async function boot() {
+  // Always land on the library. Komga and Metron are optional integrations,
+  // configured in Settings — never a blocking welcome gate. Kometa runs fine
+  // with neither: search and track via LOCG, own via folders.
   const cfg = await api.get('/api/config');
   _appConfig = cfg;
-  if (!cfg.komga_url && !cfg.metron_user) {
-    renderOnboarding();
-  } else {
-    const { view, params } = _parseHash();
-    navigate(view, params);
-  }
+  const { view, params } = _parseHash();
+  navigate(view, params);
 }
 
 boot();
