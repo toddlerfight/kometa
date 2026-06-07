@@ -299,3 +299,54 @@ def fetch_variants(locg_issue_id: str) -> dict:
 
     scraper.get(BASE + '/')
     return _fetch_variants_with_get(locg_issue_id, scraper.get)
+
+
+def _parse_issue_details(html: str) -> dict:
+    """Pull description + credits (with roles + people ids) from a LOCG issue page.
+    Returns {"desc": str, "credits": [{"role","name","people_id"}]}. The people_id
+    is the taste signal the recommendation engine builds on."""
+    soup = BeautifulSoup(html, "lxml")
+    desc = ""
+    for sel in ("[itemprop=description]", "div.copy", "section.copy", "div.comic-description"):
+        el = soup.select_one(sel)
+        if el and el.get_text(strip=True):
+            desc = el.get_text(" ", strip=True)
+            break
+    if not desc:  # fallback: the longest real paragraph
+        ps = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
+        ps = [t for t in ps if len(t) > 60 and "could not find" not in t.lower()]
+        desc = max(ps, key=len) if ps else ""
+
+    credits, seen = [], set()
+    for name_el in soup.select(".name"):
+        a = name_el.find("a", href=re.compile(r"/people/(\d+)"))
+        if not a:
+            continue
+        name = a.get_text(strip=True)
+        m = re.search(r"/people/(\d+)", a.get("href", ""))
+        pid = m.group(1) if m else None
+        wrap = name_el.parent
+        role_el = wrap.find(class_="role") if wrap else None
+        role = role_el.get_text(strip=True) if role_el else "Other"
+        key = (name, role)
+        if name and key not in seen:
+            seen.add(key)
+            credits.append({"role": role, "name": name, "people_id": pid})
+    return {"desc": desc, "credits": credits}
+
+
+def get_issue_details_anon(comic_id) -> dict:
+    """Fetch an issue's description + credits from LOCG with no login. Same /comic/
+    {id}/comic page the variant scraper uses. Keyless — works for any install."""
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
+        )
+    except ImportError:
+        raise RuntimeError("cloudscraper not installed") from None
+    scraper.get(BASE + '/')
+    r = scraper.get(f"{BASE}/comic/{comic_id}/comic",
+                    headers={'Referer': BASE + '/', 'Accept': 'text/html'})
+    r.raise_for_status()
+    return _parse_issue_details(r.text)

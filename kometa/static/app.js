@@ -1506,6 +1506,26 @@ let _issueVariantFetched  = false;
 let _issueVariantSeriesId = null;
 let _issueVariantNumber   = null;
 
+function _renderIssueDetails(desc, credits) {
+  const el = document.getElementById('issue-modal-details');
+  if (!el) return;
+  let html = '';
+  if (desc) html += `<div class="issue-modal-desc">${esc(desc)}</div>`;
+  if (credits && credits.length) {
+    const grouped = {};
+    for (const c of credits) {
+      if (c.name) (grouped[c.role || 'Other'] = grouped[c.role || 'Other'] || []).push(c.name);
+    }
+    html += '<div class="issue-modal-credits">' +
+      Object.entries(grouped).map(([role, names]) =>
+        `<div class="issue-modal-credit-row">
+          <div class="issue-modal-credit-role">${esc(role)}</div>
+          <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
+        </div>`).join('') + '</div>';
+  }
+  el.innerHTML = html || '<div class="state-msg" style="font-size:11px;padding:8px 0;color:var(--tq)">No details available.</div>';
+}
+
 async function showIssueModal(seriesId, number) {
   clearTimeout(_issueModalPollTimer);
   const issue = _detailSeries?.issues?.find(i => i.number === number);
@@ -1579,7 +1599,7 @@ async function showIssueModal(seriesId, number) {
         </div>` : ''}
         <div class="issue-modal-panel active" id="impanel-details">
           <div class="issue-modal-details" id="issue-modal-details">
-            ${issue.metron_issue_id ? '<div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>' : ''}
+            ${(issue.metron_issue_id || hasLocgId) ? '<div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>' : ''}
           </div>
         </div>
         ${hasLocgId ? `
@@ -1599,36 +1619,19 @@ async function showIssueModal(seriesId, number) {
     </div>
   `);
 
-  // Fetch Metron detail async
+  // Fetch issue details async — Metron when configured, else LOCG (keyless).
+  // Both normalise to flat [{role, name}] credits for _renderIssueDetails.
   if (issue.metron_issue_id) {
     try {
-      const detail = await api.get(`/api/series/${seriesId}/issues/${number}/metron`);
-      const detailEl = document.getElementById('issue-modal-details');
-      if (!detailEl) return;
-      let html = '';
-      if (detail.desc) {
-        html += `<div class="issue-modal-desc">${esc(detail.desc)}</div>`;
-      }
-      if (detail.credits?.length) {
-        const grouped = {};
-        for (const c of detail.credits) {
-          const role = c.role?.name || 'Other';
-          const name = c.creator?.name || '';
-          if (name) (grouped[role] = grouped[role] || []).push(name);
-        }
-        html += '<div class="issue-modal-credits">' +
-          Object.entries(grouped).map(([role, names]) =>
-            `<div class="issue-modal-credit-row">
-              <div class="issue-modal-credit-role">${esc(role)}</div>
-              <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
-            </div>`
-          ).join('') + '</div>';
-      }
-      detailEl.innerHTML = html || '';
-    } catch {
-      const el = document.getElementById('issue-modal-details');
-      if (el) el.innerHTML = '';
-    }
+      const d = await api.get(`/api/series/${seriesId}/issues/${number}/metron`);
+      const credits = (d.credits || []).map(c => ({ role: c.role?.name || 'Other', name: c.creator?.name || '' }));
+      _renderIssueDetails(d.desc, credits);
+    } catch { _renderIssueDetails('', []); }
+  } else if (hasLocgId) {
+    try {
+      const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
+      _renderIssueDetails(d.desc, d.credits || []);   // LOCG credits already {role, name}
+    } catch { _renderIssueDetails('', []); }
   }
 
   // Fetch variants in background

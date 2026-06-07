@@ -78,6 +78,35 @@ class TestSearchParser:
         assert locg_client._parse_search_html(html)[0]["cover"].endswith("medium-9.jpg")
 
 
+class TestIssueDetailsParser:
+    """Issue desc + credits-with-roles from a LOCG issue page (keyless Details +
+    the creator signal for recommendations)."""
+
+    def test_parses_desc_and_roled_credits(self):
+        html = (
+            '<div class="copy">A bold reimagining of the Dark Knight.</div>'
+            '<div class="d-flex flex-column">'
+            '  <div class="role">Writer</div>'
+            '  <div class="name"><a href="/people/179/scott-snyder">Scott Snyder</a></div>'
+            '</div>'
+            '<div class="d-flex flex-column">'
+            '  <div class="role">Artist</div>'
+            '  <div class="name"><a href="/people/876/nick-dragotta">Nick Dragotta</a></div>'
+            '</div>'
+        )
+        d = locg_client._parse_issue_details(html)
+        assert d["desc"] == "A bold reimagining of the Dark Knight."
+        assert d["credits"] == [
+            {"role": "Writer", "name": "Scott Snyder", "people_id": "179"},
+            {"role": "Artist", "name": "Nick Dragotta", "people_id": "876"},
+        ]
+
+    def test_no_creators_yields_empty_credits(self):
+        d = locg_client._parse_issue_details('<div class="copy">Just a synopsis.</div>')
+        assert d["desc"] == "Just a synopsis."
+        assert d["credits"] == []
+
+
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
     monkeypatch.setattr(sync, "_komga", lambda: None)

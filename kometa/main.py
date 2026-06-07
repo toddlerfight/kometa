@@ -25,7 +25,7 @@ from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
 from kometa.getcomics_client import GetComicsClient
-from kometa.locg_client import search_series_anon as _locg_search_anon
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 import kometa.downloader as downloader
@@ -845,6 +845,26 @@ def get_issue_metron(series_id: int, number: float):
         }
     except Exception as e:
         raise HTTPException(404) from e
+
+
+@app.get("/api/series/{series_id}/issues/{number}/locg-details")
+def get_issue_locg_details(series_id: int, number: float):
+    """Description + credits from LOCG (keyless). Cached per locg_issue_id — the
+    cache doubles as the creator signal for recommendations."""
+    issues = db.get_issues_for_series(series_id, DB_PATH)
+    issue = next((i for i in issues if i["number"] == number), None)
+    if not issue or not issue.get("locg_issue_id"):
+        raise HTTPException(404)
+    lid = issue["locg_issue_id"]
+    cached = db.get_issue_details_cache(lid, DB_PATH)
+    if cached is not None:
+        return cached
+    try:
+        detail = _locg_issue_details(lid)
+    except Exception as e:
+        raise HTTPException(502, "LOCG details fetch failed") from e
+    db.set_issue_details_cache(lid, detail, DB_PATH)
+    return detail
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
