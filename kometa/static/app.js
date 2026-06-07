@@ -746,7 +746,7 @@ function showAddWizard() {
   showModal(`
     <div class="modal-title">Add Series</div>
     <div class="wizard-search-row">
-      <input class="search-input" id="wizard-search" placeholder="Search Metron…" autocomplete="off"
+      <input class="search-input" id="wizard-search" placeholder="Search for a series…" autocomplete="off"
         onkeydown="if(event.key==='Enter')wizardSearch()">
       <button class="btn btn-primary" onclick="wizardSearch()">Search</button>
     </div>
@@ -811,11 +811,12 @@ async function wizardSearch() {
   const q = document.getElementById('wizard-search')?.value?.trim() || '';
   if (!document.getElementById('wizard-results') || !q) return;
   try {
+    _wizardStatus('Searching…');
     // Metron is optional — if it's not configured or hiccups, don't let it kill
     // the search. Swallow its error and fall through to LOCG (works key-free).
+    // The user just searches "for a series"; which source answers is our problem.
     let metronResults = [];
     try {
-      _wizardStatus('Searching Metron');
       metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
     } catch (e) {
       console.warn('Metron search unavailable, falling back to LOCG:', e);
@@ -823,7 +824,6 @@ async function wizardSearch() {
     if (!document.getElementById('wizard-results')) return;
     if (metronResults.length) { _renderWizardResults(metronResults, q); return; }
 
-    _wizardStatus('Searching LOCG');
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     if (!document.getElementById('wizard-results')) return;
     _renderWizardResults(locgResults, q);
