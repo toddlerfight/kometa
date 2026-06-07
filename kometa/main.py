@@ -153,8 +153,12 @@ def get_config():
         indexers = []
     # Strip apikeys from indexer list before returning
     safe_indexers = [{"name": i["name"], "host": i["host"], "ssl": i.get("ssl", True)} for i in indexers]
+    root = _comics_root()
     return {
-        "comics_root":         _comics_root(),
+        "comics_root":         root,
+        # Usable = exists and writable. Drives the just-in-time folder prompt:
+        # a properly-mounted deploy is ok and never gets nagged.
+        "comics_root_ok":      os.path.isdir(root) and os.access(root, os.W_OK),
         "komga_url":           cfg.get("komga_url", ""),
         "komga_user":          cfg.get("komga_user", ""),
         "komga_pass":          "",
