@@ -36,7 +36,7 @@ def wired(db_path, series, monkeypatch):
 class TestProcessQueue:
     def test_getcomics_hit_marks_done_and_owns_issue(self, wired, monkeypatch):
         db_path, series = wired
-        db.upsert_issue_status(series, 1.0, "2012-03-14", in_komga=False, path=db_path)
+        db.upsert_issue_status(series, 1.0, "2012-03-14", owned=False, path=db_path)
         db.queue_issue(series, 1.0, db_path)
 
         class FakeGC:
@@ -53,7 +53,7 @@ class TestProcessQueue:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "done"
         issue = next(i for i in db.get_issues_for_series(series, db_path) if i["number"] == 1.0)
-        assert issue["in_komga"] == 1
+        assert issue["owned"] == 1
         # folder_path auto-stamped from the download destination
         assert db.get_series_by_id(series, db_path)["folder_path"] == "/comics/Image/Saga"
 
@@ -101,7 +101,7 @@ class TestFinalizeUsenetDownload:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "done"
         issue = next(i for i in db.get_issues_for_series(series, db_path) if i["number"] == 1.0)
-        assert issue["in_komga"] == 1
+        assert issue["owned"] == 1
 
     def test_multi_file_picks_matching_issue(self, wired, monkeypatch, tmp_path):
         db_path, series = wired

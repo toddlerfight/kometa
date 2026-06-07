@@ -28,7 +28,7 @@ class TestCompleteDownload:
         assert q["filename"] == "/comics/Image/Saga/Saga #001.cbz"
 
         issue = next(i for i in db.get_issues_for_series(series, db_path) if i["number"] == 1.0)
-        assert issue["in_komga"] == 1
+        assert issue["owned"] == 1
         assert issue["store_date"] == "2012-03-14"
 
         # folder_path stamped on the series in the same transaction
@@ -36,7 +36,7 @@ class TestCompleteDownload:
 
     def test_completed_issue_is_no_longer_missing(self, db_path, series):
         """The whole point of the atomic write: once done, no ghost re-download."""
-        db.upsert_issue_status(series, 1.0, "2012-03-14", in_komga=False, path=db_path)
+        db.upsert_issue_status(series, 1.0, "2012-03-14", owned=False, path=db_path)
 
         # missing before we touch it (no live queue row yet)
         before = {r["number"] for r in db.get_missing_for_monitored(db_path)}
@@ -94,6 +94,40 @@ class TestResetStuckQueueItems:
         states = {q["id"]: q["state"] for q in db.get_queue(db_path)}
         assert states[ids[1.0]] == "queued"
         assert states[ids[2.0]] == "queued"
+
+
+class TestOwnedColumnMigration:
+    def test_in_komga_renamed_to_owned_preserving_data(self, tmp_path):
+        """A pre-rename DB (issue_status.in_komga) must migrate to .owned with
+        every row's value intact, and the migration must be idempotent."""
+        p = str(tmp_path / "old.db")
+        conn = sqlite3.connect(p)
+        conn.executescript("""
+            CREATE TABLE issue_status (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracked_series_id INTEGER NOT NULL,
+                number            REAL NOT NULL,
+                store_date        TEXT,
+                in_komga          INTEGER NOT NULL DEFAULT 0,
+                komga_book_id     TEXT,
+                UNIQUE(tracked_series_id, number)
+            );
+            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga)
+                VALUES (1, 1.0, '2012-03-14', 1), (1, 2.0, NULL, 0);
+        """)
+        conn.commit()
+        conn.close()
+
+        db.init_db(p)  # runs the rename migration
+
+        cols = {r[1] for r in sqlite3.connect(p).execute("PRAGMA table_info(issue_status)")}
+        assert "owned" in cols and "in_komga" not in cols
+        rows = {r["number"]: r["owned"] for r in db.get_issues_for_series(1, p)}
+        assert rows == {1.0: 1, 2.0: 0}  # values carried through the rename
+
+        db.init_db(p)  # idempotent — a second run must not error or double-rename
+        rows2 = {r["number"]: r["owned"] for r in db.get_issues_for_series(1, p)}
+        assert rows2 == {1.0: 1, 2.0: 0}
 
 
 class TestFreshInstallMigration:
