@@ -665,6 +665,19 @@ function _showComicsRootSetup() {
   setTimeout(() => document.getElementById('setup-comics-root')?.focus(), 50);
 }
 
+function browseSettingsRoot() {
+  // Same filesystem browser (with New Folder), but for the Settings field:
+  // selecting just fills the input — Settings has its own Save button.
+  _fbScope = 'fs';
+  _fbCallback = (path) => {
+    closeModal();
+    const i = document.getElementById('s-comics-root');
+    if (i) i.value = path;
+  };
+  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
+  _fbNav('');
+}
+
 function browseComicsRoot() {
   // Pick the comics root by browsing the whole filesystem (scope='fs') — it's not
   // inside the comics root yet, so the sandboxed library browse can't reach it.
@@ -1280,7 +1293,10 @@ async function renderSettings() {
         <div class="settings-card-header">Comics Library <span style="font-weight:400;font-size:11px;color:var(--tq)">(required)</span></div>
         <div class="settings-field">
           <div class="settings-field-label">Library path</div>
-          <input class="settings-input" id="s-comics-root" value="${esc(cfg.comics_root || '')}" placeholder="/comics">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="settings-input" id="s-comics-root" value="${esc(cfg.comics_root || '')}" placeholder="/comics" style="flex:1;margin:0">
+            <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
+          </div>
         </div>
         <div style="font-size:10px;color:var(--tq);margin-top:2px">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
       </div>
