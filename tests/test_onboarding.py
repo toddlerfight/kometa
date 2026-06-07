@@ -151,6 +151,37 @@ class TestBrowseScope:
         assert res["path"] == os.path.realpath(str(root))
 
 
+class TestMkdir:
+    """Create a folder while browsing (the 'New Folder' button)."""
+
+    def test_creates_subfolder(self, tmp_path, monkeypatch):
+        import os
+        from kometa.main import MkdirRequest
+        monkeypatch.setattr(main, "_comics_root", lambda: str(tmp_path))
+        res = main.fs_mkdir(MkdirRequest(path=str(tmp_path), name="New Series", scope="library"))
+        assert res["path"] == str(tmp_path / "New Series")
+        assert os.path.isdir(res["path"])
+
+    def test_rejects_separators_and_traversal(self, tmp_path, monkeypatch):
+        import pytest
+        from fastapi import HTTPException
+        from kometa.main import MkdirRequest
+        monkeypatch.setattr(main, "_comics_root", lambda: str(tmp_path))
+        for bad in ("../evil", "a/b", ".."):
+            with pytest.raises(HTTPException):
+                main.fs_mkdir(MkdirRequest(path=str(tmp_path), name=bad, scope="library"))
+
+    def test_blocks_outside_scope(self, tmp_path, monkeypatch):
+        import pytest
+        from fastapi import HTTPException
+        from kometa.main import MkdirRequest
+        root = tmp_path / "root"
+        root.mkdir()
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
+        with pytest.raises(HTTPException):
+            main.fs_mkdir(MkdirRequest(path="/etc", name="x", scope="library"))
+
+
 class TestComicsRootHealth:
     """config.comics_root_ok drives the just-in-time folder prompt."""
 
