@@ -13,13 +13,21 @@ import time
 import logging
 
 import kometa.db as db
-from kometa.locg_client import get_issue_details_anon
+from kometa.naming import _pub_key
+from kometa.locg_client import get_issue_details_anon, get_creator_series_anon
 
 logger = logging.getLogger(__name__)
 
 # LOCG rate-limits hard; throttle enrichment and back off on 429.
 _ENRICH_DELAY = 1.5
 _ENRICH_RETRIES = 3
+
+# Reprints / promos / format variants — not real "new series to discover".
+_NOISE_RE = re.compile(
+    r"\b(omnibus|ashcan|deluxe|edition|compendium|sampler|preview|fcbd|"
+    r"director'?s? cut|tpb|hardcover|hc|giant|showcase|free comic book day|"
+    r"day 20\d\d|noir|facsimile)\b", re.I
+)
 
 # Roles that don't signal reader taste (editors, letterers, production, etc.)
 _EXCLUDE_ROLE_RE = re.compile(r"editor|letter|production|publisher|designer|translat", re.I)
@@ -105,4 +113,70 @@ def taste_profile(path=db.DB_PATH, limit=20, min_series=2) -> list[dict]:
             "roles": sorted(e["roles"]),
         }
         for e in ranked if len(e["series"]) >= min_series
+    ][:limit]
+
+
+def enrich_creators(path=db.DB_PATH, top=15) -> dict:
+    """Cache each top creator's catalog (their other series). Throttled + 429-backoff."""
+    prof = taste_profile(path, limit=top)
+    fetched = skipped = failed = 0
+    for c in prof:
+        if not c.get("slug"):
+            skipped += 1
+            continue
+        if db.get_creator_works_cache(c["people_id"], path) is not None:
+            skipped += 1
+            continue
+        for attempt in range(_ENRICH_RETRIES):
+            try:
+                works = get_creator_series_anon(c["people_id"], c["slug"])
+                db.set_creator_works_cache(c["people_id"], works, path)
+                fetched += 1
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < _ENRICH_RETRIES - 1:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                failed += 1
+                logger.warning(f"creator works fetch failed for {c['name']!r}: {e}")
+                break
+        time.sleep(_ENRICH_DELAY)
+    return {"creators": len(prof), "fetched": fetched, "cached": skipped, "failed": failed}
+
+
+def recommendations(path=db.DB_PATH, limit=20, top_creators=15) -> list[dict]:
+    """Series you don't track, by the creators you collect most. Ranked by how
+    strongly your taste converges on them; each carries the 'because' that earned it."""
+    tracked = db.get_all_series(path)
+    tracked_ids = {s["locg_series_id"] for s in tracked if s.get("locg_series_id")}
+    my_pubs = {_pub_key(s["publisher"]) for s in tracked if s.get("publisher")}
+
+    cand = {}
+    for c in taste_profile(path, limit=top_creators):
+        works = db.get_creator_works_cache(c["people_id"], path)
+        if not works:
+            continue
+        for w in works:
+            sid = w["locg_series_id"]
+            if sid in tracked_ids:                       # already yours
+                continue
+            if _pub_key(w["publisher"]) not in my_pubs:  # only publishers you read
+                continue
+            if _NOISE_RE.search(w["title"]):             # reprints/promos
+                continue
+            e = cand.setdefault(sid, {
+                "locg_series_id": sid, "title": w["title"],
+                "publisher": w["publisher"], "score": 0, "because": {},
+            })
+            e["score"] += c["series_count"]              # weight by how much you like them
+            e["because"][c["name"]] = c["series"][0]     # an example of your books by them
+
+    ranked = sorted(cand.values(), key=lambda e: (e["score"], len(e["because"])), reverse=True)
+    return [
+        {
+            "locg_series_id": e["locg_series_id"], "title": e["title"],
+            "publisher": e["publisher"], "score": e["score"],
+            "because": [{"creator": k, "your_series": v} for k, v in e["because"].items()],
+        }
+        for e in ranked
     ][:limit]
