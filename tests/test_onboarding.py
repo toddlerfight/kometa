@@ -80,6 +80,42 @@ def test_locg_add_skips_metron_autolink_when_unconfigured(tmp_path, monkeypatch)
     assert added["locg_series_id"] == 100002
 
 
+class TestIndexerManagement:
+    """Add/remove individual newznab indexers without round-tripping apikeys."""
+
+    def test_add_remove_preserves_apikeys(self, tmp_path, monkeypatch):
+        import json
+        from kometa.main import IndexerRequest
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+
+        main.add_indexer(IndexerRequest(name="Geek", host="api.geek.info", apikey="s3cret", ssl=True))
+        main.add_indexer(IndexerRequest(name="Two", host="h2", apikey="k2", ssl=False))
+
+        stored = json.loads(db.get_config(dbp)["newznab_indexers"])
+        assert [i["name"] for i in stored] == ["Geek", "Two"]
+        assert stored[0]["apikey"] == "s3cret"          # secret persisted server-side
+
+        # config GET never exposes apikeys to the browser
+        safe = main.get_config()["newznab_indexers"]
+        assert all("apikey" not in i for i in safe)
+
+        main.remove_indexer(0)
+        after = json.loads(db.get_config(dbp)["newznab_indexers"])
+        assert [i["name"] for i in after] == ["Two"]
+        assert after[0]["apikey"] == "k2"               # survivor keeps its key
+
+    def test_remove_out_of_range_404s(self, tmp_path, monkeypatch):
+        import pytest
+        from fastapi import HTTPException
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+        with pytest.raises(HTTPException):
+            main.remove_indexer(5)
+
+
 class TestResolveFolderPreview:
     """The wizard previews where a series will land — same logic add_series uses."""
 

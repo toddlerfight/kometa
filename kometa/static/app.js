@@ -2065,6 +2065,51 @@ async function renderSettings() {
       </div>
     </div>
   `);
+  _renderIndexers(cfg.newznab_indexers);
+}
+
+function _renderIndexers(list) {
+  const el = document.getElementById('indexers-section');
+  if (!el) return;
+  const rows = (list || []).map((ix, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
+      <span style="flex:1">${esc(ix.name)} <span style="color:var(--tq)">${esc(ix.host)}${ix.ssl ? '' : ' · no ssl'}</span></span>
+      <button class="btn btn-ghost btn-sm" onclick="removeIndexer(${i})">Remove</button>
+    </div>`).join('') || '<div style="color:var(--tq);font-size:11px;padding:3px 0">No indexers yet.</div>';
+  el.innerHTML = `
+    <div class="settings-field-label" style="margin-top:16px">Newznab Indexers <span style="color:var(--tq);font-weight:400">(saved immediately)</span></div>
+    ${rows}
+    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <input class="settings-input" id="ix-name" placeholder="Name" style="flex:1;min-width:70px">
+      <input class="settings-input" id="ix-host" placeholder="api.example.info" style="flex:2;min-width:130px">
+      <input class="settings-input" id="ix-apikey" type="password" placeholder="API key" style="flex:1;min-width:70px">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--tp);cursor:pointer"><input type="checkbox" id="ix-ssl" checked> SSL</label>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="addIndexer(this)">Add Indexer</button>
+    </div>`;
+}
+
+async function addIndexer(btn) {
+  const name = document.getElementById('ix-name').value.trim();
+  const host = document.getElementById('ix-host').value.trim();
+  const apikey = document.getElementById('ix-apikey').value.trim();
+  const ssl = document.getElementById('ix-ssl').checked;
+  if (!name || !host || !apikey) { alert('Name, host, and API key are all required.'); return; }
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    await api.post('/api/config/indexers', { name, host, apikey, ssl });
+    const cfg = await api.get('/api/config');
+    _renderIndexers(cfg.newznab_indexers);  // re-renders cleared inputs too
+  } catch (e) { btn.disabled = false; btn.textContent = 'Add Indexer'; alert('Add failed — check console.'); console.error(e); }
+}
+
+async function removeIndexer(idx) {
+  try {
+    await api.del(`/api/config/indexers/${idx}`);
+    const cfg = await api.get('/api/config');
+    _renderIndexers(cfg.newznab_indexers);
+  } catch (e) { alert('Remove failed — check console.'); console.error(e); }
 }
 
 async function saveSettings(btn) {
