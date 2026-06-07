@@ -832,8 +832,11 @@ def reject_match(req: RejectRequest):
 # --- filesystem browse ---
 
 @app.get("/api/fs/browse")
-def browse_fs(path: str = ""):
-    root = os.path.realpath(_comics_root())   # read live — Settings can change it
+def browse_fs(path: str = "", scope: str = "library"):
+    # 'library' stays sandboxed to the comics root (picking a series subfolder).
+    # 'fs' browses from filesystem root — needed to pick the comics root itself,
+    # which by definition isn't inside the (maybe missing) comics root yet.
+    root = "/" if scope == "fs" else os.path.realpath(_comics_root())
     target = os.path.realpath(path or root)
     if not target.startswith(root):
         raise HTTPException(403)

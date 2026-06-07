@@ -736,6 +736,7 @@ async function togglePullList(id, on) {
 let _fbSeriesId = null;
 let _fbPath = null;
 let _fbCallback = null;
+let _fbScope = 'library';   // 'library' = sandboxed to comics root, 'fs' = whole filesystem
 
 // --- Add Series Wizard ---
 
@@ -775,9 +776,12 @@ function _showComicsRootSetup() {
     </div>
     <div class="settings-field">
       <div class="settings-field-label">Comics library path</div>
-      <input class="search-input" id="setup-comics-root" value="${esc(_appConfig.comics_root || '')}"
-        placeholder="/comics" style="width:100%;box-sizing:border-box"
-        onkeydown="if(event.key==='Enter')saveComicsRoot(document.getElementById('setup-root-btn'))">
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="search-input" id="setup-comics-root" value="${esc(_appConfig.comics_root || '')}"
+          placeholder="/comics" style="flex:1;margin:0;box-sizing:border-box"
+          onkeydown="if(event.key==='Enter')saveComicsRoot(document.getElementById('setup-root-btn'))">
+        <button class="btn btn-ghost btn-sm" onclick="browseComicsRoot()">Browse</button>
+      </div>
     </div>
     <div id="setup-root-err" style="font-size:11px;color:var(--amb);margin-top:6px;min-height:14px"></div>
     <div class="modal-footer">
@@ -786,6 +790,18 @@ function _showComicsRootSetup() {
     </div>
   `);
   setTimeout(() => document.getElementById('setup-comics-root')?.focus(), 50);
+}
+
+function browseComicsRoot() {
+  // Pick the comics root by browsing the whole filesystem (scope='fs') — it's not
+  // inside the comics root yet, so the sandboxed library browse can't reach it.
+  _fbScope = 'fs';
+  _fbCallback = (path) => {
+    _showComicsRootSetup();
+    setTimeout(() => { const i = document.getElementById('setup-comics-root'); if (i) i.value = path; }, 20);
+  };
+  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
+  _fbNav('');
 }
 
 async function saveComicsRoot(btn) {
@@ -938,6 +954,7 @@ async function _previewFolder(r) {
 
 function wizardBrowseFolder() {
   const { idx } = _wizardState;
+  _fbScope = 'library';
   _fbCallback = (path) => {
     wizardPickSeries(idx);
     setTimeout(() => {
@@ -989,7 +1006,7 @@ async function _fbNav(path) {
   _fbPath = path;
   let data;
   try {
-    data = await api.get(`/api/fs/browse?path=${encodeURIComponent(path)}`);
+    data = await api.get(`/api/fs/browse?scope=${_fbScope}&path=${encodeURIComponent(path)}`);
   } catch {
     document.getElementById('modal').innerHTML += '<div class="fb-error">Failed to load directory.</div>';
     return;
