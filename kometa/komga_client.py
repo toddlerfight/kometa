@@ -1,12 +1,14 @@
 import os
 import requests
 
-BASE_URL = os.environ.get("KOMGA_URL", "http://$NAS_HOST:8585")
+# Empty defaults — real config comes from the DB (sources.komga passes it in).
+# No hardcoded host/library: this has to run on anyone's setup, not one NAS.
+BASE_URL = os.environ.get("KOMGA_URL", "")
 AUTH = (
     os.environ.get("KOMGA_USER", ""),
     os.environ.get("KOMGA_PASS", ""),
 )
-LIBRARY_ID = os.environ.get("KOMGA_LIBRARY_ID", "<your-komga-library-id>")
+LIBRARY_ID = os.environ.get("KOMGA_LIBRARY_ID", "")
 
 
 class KomgaClient:
