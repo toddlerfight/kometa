@@ -435,6 +435,7 @@ def search_locg(q: str):
         "series":     r["title"],
         "publisher":  {"name": r["publisher"]} if r["publisher"] else None,
         "year_began": r["year"],
+        "cover":      r.get("cover"),
         "source":     "locg",
     } for r in raw[:15]]
 
