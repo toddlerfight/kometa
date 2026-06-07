@@ -104,7 +104,7 @@ class TestKeylessSync:
         issues = db.get_issues_for_series(sid, dbp)
         assert sorted(i["number"] for i in issues) == [1.0, 2.0, 3.0]
         # nothing on disk -> everything is missing, ready to queue
-        assert all(i["in_komga"] == 0 for i in issues)
+        assert all(i["owned"] == 0 for i in issues)
 
     def test_owned_on_disk_are_marked_not_missing(self, tmp_path, monkeypatch):
         dbp = str(tmp_path / "k.db")
@@ -125,8 +125,8 @@ class TestKeylessSync:
                             locg_series_id=100002, path=dbp)
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
-        owned = {i["number"] for i in db.get_issues_for_series(sid, dbp) if i["in_komga"]}
-        missing = {i["number"] for i in db.get_issues_for_series(sid, dbp) if not i["in_komga"]}
+        owned = {i["number"] for i in db.get_issues_for_series(sid, dbp) if i["owned"]}
+        missing = {i["number"] for i in db.get_issues_for_series(sid, dbp) if not i["owned"]}
         assert owned == {1.0, 2.0}
         assert missing == {3.0}
 

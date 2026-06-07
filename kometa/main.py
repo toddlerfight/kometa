@@ -72,11 +72,11 @@ def _summary(issues):
     from datetime import timedelta
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
-    owned = sum(1 for r in issues if r["in_komga"])
-    missing = sum(1 for r in issues if not r["in_komga"] and (not r["store_date"] or r["store_date"] < today))
-    upcoming = sum(1 for r in issues if not r["in_komga"] and r["store_date"] and r["store_date"] >= today)
+    owned = sum(1 for r in issues if r["owned"])
+    missing = sum(1 for r in issues if not r["owned"] and (not r["store_date"] or r["store_date"] < today))
+    upcoming = sum(1 for r in issues if not r["owned"] and r["store_date"] and r["store_date"] >= today)
     soon = [r["store_date"] for r in issues
-            if not r["in_komga"] and r["store_date"] and today <= r["store_date"] <= cutoff]
+            if not r["owned"] and r["store_date"] and today <= r["store_date"] <= cutoff]
     return {"owned": owned, "missing": missing, "upcoming": upcoming,
             "next_release": min(soon) if soon else None}
 
@@ -312,7 +312,7 @@ def add_series(req: AddSeriesRequest):
             issues = db.get_issues_for_series(new_id, DB_PATH)
             today_str = str(date.today())
             for issue in issues:
-                if not issue["in_komga"] and (not issue["store_date"] or issue["store_date"] <= today_str):
+                if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today_str):
                     db.queue_issue(new_id, issue["number"], DB_PATH)
             _process_queue()
 
@@ -860,7 +860,7 @@ def search_missing(series_id: int):
     today = str(date.today())
     queued = 0
     for issue in issues:
-        if not issue["in_komga"] and (not issue["store_date"] or issue["store_date"] <= today):
+        if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today):
             db.queue_issue(series_id, issue["number"], DB_PATH)
             queued += 1
     if queued:
@@ -923,7 +923,7 @@ def download_from_url(series_id: int, number: float, req: DownloadFromUrlRequest
             db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
             if not s.get("folder_path"):
                 db.set_folder_path(series_id, os.path.dirname(dest), DB_PATH)
-            db.upsert_issue_status(series_id, number, store_date, in_komga=True, path=DB_PATH)
+            db.upsert_issue_status(series_id, number, store_date, owned=True, path=DB_PATH)
         except Exception as e:
             clear_progress(qid)
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
@@ -1024,7 +1024,7 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
     if not issue:
         raise HTTPException(404)
 
-    if issue.get("in_komga"):
+    if issue.get("owned"):
         file_path = _find_issue_file(series.get("folder_path", ""), series["title"], number)
         if not file_path:
             raise HTTPException(404, detail="File not found on disk")

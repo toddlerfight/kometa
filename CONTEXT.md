@@ -23,7 +23,8 @@ Komga merely reflects it on its next scan.
   `komga_series_id` ↔ `metron_series_id` ↔ `cv_volume_id` ↔ `locg_series_id`. Carries
   `folder_path` (ownership), `on_pull_list`, `monitor_status`, `year_began`, `publisher`.
 - **issue_status** — per-issue state for a tracked series: `number` (REAL), `store_date`,
-  `in_komga`, `komga_book_id`, `metron_image`, `metron_issue_id`, `locg_issue_id`.
+  `owned` (on disk — the ownership flag; set by the folder scan, not Komga),
+  `komga_book_id`, `metron_image`, `metron_issue_id`, `locg_issue_id`.
 - **download_queue** — issues being acquired. State machine:
   `queued → searching → downloading → done | not_found | failed | pending_usenet`.
   Carries `retry_after` (release-day/duplicate backoff) and `sab_nzo_id` (SABnzbd handle).

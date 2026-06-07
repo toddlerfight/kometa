@@ -120,7 +120,7 @@ function fmtNum(n) {
 
 function issueStatus(issue) {
   const today = _localToday();
-  if (issue.in_komga) return 'owned';
+  if (issue.owned) return 'owned';
   if (!issue.store_date) return 'unknown';
   return issue.store_date > today ? 'upcoming' : 'missing';
 }
@@ -1027,7 +1027,7 @@ async function doDelete(id) {
 
 function _pullStatus(e) {
   const today = _localToday();
-  if (e.in_komga) return `<span class="pull-status pull-status-owned">✓</span>`;
+  if (e.owned) return `<span class="pull-status pull-status-owned">✓</span>`;
   if (e.store_date < today) return `<span class="pull-status pull-status-missing">Missing</span>`;
   if (e.store_date === today) return `<span class="pull-status pull-status-today">Today</span>`;
   return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;

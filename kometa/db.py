@@ -28,7 +28,7 @@ def init_db(path=DB_PATH):
                 tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
                 number            REAL NOT NULL,
                 store_date        TEXT,
-                in_komga          INTEGER NOT NULL DEFAULT 0,
+                owned          INTEGER NOT NULL DEFAULT 0,
                 komga_book_id     TEXT,
                 UNIQUE(tracked_series_id, number)
             );
@@ -157,6 +157,11 @@ def _migrate(path=DB_PATH):
             conn.execute("DROP TABLE _ts_old2")
 
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
+        # Rename the old in_komga column to owned — it always meant "owned on disk",
+        # never "present in Komga". Idempotent: only fires on DBs predating the rename.
+        if "in_komga" in issue_cols and "owned" not in issue_cols:
+            conn.execute("ALTER TABLE issue_status RENAME COLUMN in_komga TO owned")
+            issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         if "metron_image" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
         if "metron_issue_id" not in issue_cols:
@@ -259,13 +264,13 @@ def get_all_series_summaries(path=DB_PATH):
         rows = conn.execute("""
             SELECT
                 tracked_series_id,
-                SUM(CASE WHEN in_komga = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN in_komga = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
-                SUM(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
-                MIN(CASE WHEN in_komga = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
+                SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
+                SUM(CASE WHEN owned = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
+                MIN(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
                 (SELECT metron_image FROM issue_status i2
                  WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.in_komga = 0
+                   AND i2.owned = 0
                    AND i2.store_date IS NOT NULL
                    AND i2.store_date >= ?
                    AND i2.store_date <= ?
@@ -283,19 +288,19 @@ def get_series_by_id(series_id, path=DB_PATH):
         return dict(row) if row else None
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, in_komga, komga_book_id=None, metron_image=None, metron_issue_id=None, locg_issue_id=None, path=DB_PATH):
+def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, metron_issue_id=None, locg_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga, komga_book_id, metron_image, metron_issue_id, locg_issue_id)
+            INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, metron_issue_id, locg_issue_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
-                in_komga        = excluded.in_komga,
+                owned        = excluded.owned,
                 komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
                 metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
-        """, (tracked_series_id, number, store_date, int(in_komga), komga_book_id, metron_image, metron_issue_id, locg_issue_id))
+        """, (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, metron_issue_id, locg_issue_id))
 
 
 def set_pull_list(series_id, on_pull_list, path=DB_PATH):
@@ -554,12 +559,12 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
                 (set_folder_path, tracked_series_id),
             )
         conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, in_komga,
+            INSERT INTO issue_status (tracked_series_id, number, store_date, owned,
                                       komga_book_id, metron_image, metron_issue_id, locg_issue_id)
             VALUES (?, ?, ?, 1, NULL, NULL, NULL, NULL)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
-                in_komga        = excluded.in_komga,
+                owned        = excluded.owned,
                 komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
                 metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
@@ -584,7 +589,7 @@ def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
             SELECT s.id, COUNT(*) as cnt
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
-            WHERE i.in_komga = 0
+            WHERE i.owned = 0
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.monitor_status = 'monitored'
               AND s.on_pull_list = 1
@@ -613,7 +618,7 @@ def get_missing_for_monitored(path=DB_PATH):
                    s.id as tracked_series_id, s.title, s.publisher
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
-            WHERE i.in_komga = 0
+            WHERE i.owned = 0
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.on_pull_list = 1
               AND NOT EXISTS (
@@ -658,7 +663,7 @@ def get_upcoming_issues(days=90, past=0, path=DB_PATH):
         lookback = "date('now', '-7 days', 'weekday 0')"
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute(f"""
-            SELECT s.id, s.title, i.number, i.store_date, i.in_komga
+            SELECT s.id, s.title, i.number, i.store_date, i.owned
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.store_date IS NOT NULL
