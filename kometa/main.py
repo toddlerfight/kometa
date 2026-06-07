@@ -32,7 +32,7 @@ import kometa.downloader as downloader
 import kometa.matcher as matcher
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
-    locg as _locg,
+    locg as _locg, comics_root as _comics_root,
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
@@ -154,6 +154,7 @@ def get_config():
     # Strip apikeys from indexer list before returning
     safe_indexers = [{"name": i["name"], "host": i["host"], "ssl": i.get("ssl", True)} for i in indexers]
     return {
+        "comics_root":         _comics_root(),
         "komga_url":           cfg.get("komga_url", ""),
         "komga_user":          cfg.get("komga_user", ""),
         "komga_pass":          "",
@@ -173,6 +174,7 @@ def get_config():
 
 
 class ConfigRequest(BaseModel):
+    comics_root:        str | None = None
     komga_url:          str | None = None
     komga_user:         str | None = None
     komga_pass:         str | None = None
@@ -331,7 +333,7 @@ def add_series(req: AddSeriesRequest):
     # the canonical new path, so the first sync reconciles owned-vs-missing correctly
     # whether or not the series is already on disk. This is what makes Komga optional.
     if not folder_path:
-        folder_path = _resolve_dir(_COMICS_ROOT, publisher or "Unknown", title)
+        folder_path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
 
     new_id = db.add_series(
         komga_series_id, metron_series_id,
@@ -825,13 +827,11 @@ def reject_match(req: RejectRequest):
 
 # --- filesystem browse ---
 
-_COMICS_ROOT = os.path.realpath(os.environ.get("COMICS_ROOT", "/comics"))
-
-
 @app.get("/api/fs/browse")
 def browse_fs(path: str = ""):
-    target = os.path.realpath(path or _COMICS_ROOT)
-    if not target.startswith(_COMICS_ROOT):
+    root = os.path.realpath(_comics_root())   # read live — Settings can change it
+    target = os.path.realpath(path or root)
+    if not target.startswith(root):
         raise HTTPException(403)
     if not os.path.isdir(target):
         raise HTTPException(404)
@@ -845,7 +845,7 @@ def browse_fs(path: str = ""):
     parent = os.path.dirname(target)
     return {
         "path": target,
-        "parent": parent if parent.startswith(_COMICS_ROOT) and parent != target else None,
+        "parent": parent if parent.startswith(root) and parent != target else None,
         "dirs": names,
     }
 
@@ -855,7 +855,7 @@ def resolve_folder(publisher: str = "", title: str = ""):
     """Preview where a series will be filed — the same publisher+title resolution
     add_series uses. Reports whether that folder already exists on disk so the UI
     can say 'existing' vs 'new'."""
-    path = _resolve_dir(_COMICS_ROOT, publisher or "Unknown", title)
+    path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
     return {"path": path, "exists": os.path.isdir(path)}
 
 

@@ -10,6 +10,7 @@ import requests
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
 from kometa.naming import _safe, _resolve_dir
+import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,6 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
 
     return len(variant_pages)
 
-STAGING = os.environ.get("KOMETA_DOWNLOADS", "/downloads")
-COMICS_ROOT = os.environ.get("COMICS_ROOT", "/comics")
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -253,7 +252,7 @@ def download_issue(
     Returns the final file path. Raises on failure.
     Pass tracked_series_id + db_path to enable automatic variant injection.
     """
-    os.makedirs(STAGING, exist_ok=True)
+    os.makedirs(sources.staging_dir(), exist_ok=True)
 
     # Pre-download: if the scraper gave us a direct filename hint (Strategy 3),
     # check its issue number before wasting bandwidth.
@@ -267,7 +266,7 @@ def download_issue(
     # Compare remote Content-Length against the previous issue's file size.
     # GetComics sometimes posts last week's file under the new issue title —
     # a size match against the previous issue is a reliable signal to skip.
-    check_dir = dest_dir or _resolve_dir(COMICS_ROOT, publisher or "Unknown", title)
+    check_dir = dest_dir or _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
     remote_size = _remote_content_length(url)
     if remote_size and remote_size > 1024:
         prev_size = _prev_issue_size(check_dir, issue_number)
@@ -300,7 +299,7 @@ def download_issue(
 
     # Strip any path components the server may have embedded — stage flat
     filename = _safe(os.path.basename(filename))
-    staging_path = os.path.join(STAGING, filename)
+    staging_path = os.path.join(sources.staging_dir(), filename)
     total = int(r.headers.get("content-length", 0))
     done = 0
     with open(staging_path, "wb") as f:
@@ -334,7 +333,7 @@ def download_issue(
         )
 
     if not dest_dir:
-        dest_dir = _resolve_dir(COMICS_ROOT, publisher or "Unknown", title)
+        dest_dir = _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, _safe(filename))
     if os.path.exists(dest_path):

@@ -205,6 +205,7 @@ def _migrate(path=DB_PATH):
 # INSERT OR IGNORE (below), so it's first-run only — the UI stays the source of
 # truth after that, and changing the env later won't clobber UI edits.
 _ENV_SEEDED_CONFIG = {
+    "comics_root":      "COMICS_ROOT",
     "cv_api_key":       "CV_API_KEY",
     "komga_url":        "KOMGA_URL",
     "komga_user":       "KOMGA_USER",

@@ -18,7 +18,7 @@ def _wire(monkeypatch, tmp_path, comics_root):
     dbp = str(tmp_path / "k.db")
     db.init_db(dbp)
     monkeypatch.setattr(main, "DB_PATH", dbp)
-    monkeypatch.setattr(main, "_COMICS_ROOT", str(comics_root))
+    monkeypatch.setattr(main, "_comics_root", lambda: str(comics_root))
     monkeypatch.setattr(main, "_komga", lambda: None)          # no Komga
     monkeypatch.setattr(main, "_metron", lambda: _FakeMetron())
     monkeypatch.setattr(main, "_sync_one", lambda s: None)      # neutralize bg thread
@@ -89,6 +89,7 @@ class TestIndexerManagement:
         dbp = str(tmp_path / "k.db")
         db.init_db(dbp)
         monkeypatch.setattr(main, "DB_PATH", dbp)
+        monkeypatch.setattr(main, "_comics_root", lambda: "/comics")  # get_config resolves it
 
         main.add_indexer(IndexerRequest(name="Geek", host="api.geek.info", apikey="s3cret", ssl=True))
         main.add_indexer(IndexerRequest(name="Two", host="h2", apikey="k2", ssl=False))
@@ -122,7 +123,7 @@ class TestResolveFolderPreview:
     def test_existing_folder_reports_exists(self, tmp_path, monkeypatch):
         root = tmp_path / "comics"
         (root / "Image Comics" / "Saga").mkdir(parents=True)
-        monkeypatch.setattr(main, "_COMICS_ROOT", str(root))
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
 
         res = main.resolve_folder(publisher="Image", title="Saga")
         assert res["path"] == str(root / "Image Comics" / "Saga")
@@ -131,7 +132,7 @@ class TestResolveFolderPreview:
     def test_new_series_reports_not_exists(self, tmp_path, monkeypatch):
         root = tmp_path / "comics"
         root.mkdir()
-        monkeypatch.setattr(main, "_COMICS_ROOT", str(root))
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
 
         res = main.resolve_folder(publisher="Oni Press", title="Nimona")
         assert res["path"] == str(root / "Oni Press" / "Nimona")
