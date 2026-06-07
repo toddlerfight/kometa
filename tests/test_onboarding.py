@@ -63,6 +63,23 @@ def test_explicit_folder_path_is_respected(tmp_path, monkeypatch):
     assert added["folder_path"] == "/custom/path"
 
 
+def test_locg_add_skips_metron_autolink_when_unconfigured(tmp_path, monkeypatch):
+    """A keyless LOCG add must not fire the Metron auto-link (a guaranteed 401)."""
+    root = tmp_path / "comics"
+    root.mkdir()
+    _wire(monkeypatch, tmp_path, root)  # fresh DB -> no metron creds
+
+    class ExplodingMetron:
+        def search_series(self, q):
+            raise AssertionError("Metron must not be queried when unconfigured")
+    monkeypatch.setattr(main, "_metron", lambda: ExplodingMetron())
+
+    added = main.add_series(AddSeriesRequest(locg_id=100002, title="Saga",
+                                             publisher_name="Image", on_pull_list=False))
+    assert added["title"] == "Saga"
+    assert added["locg_series_id"] == 100002
+
+
 class TestMetronSearchDegradesGracefully:
     """A missing/failing Metron must return [] (not 500) so the wizard reaches LOCG."""
 

@@ -1279,6 +1279,15 @@ let _matchPollTimer = null;
 let _matchPollGen  = 0;   // incremented each time we (re)enter the page
 
 async function renderMatchReview() {
+  if (!_appConfig.komga_url) {
+    document.getElementById('topbar-title').textContent = 'Match Library';
+    document.getElementById('topbar-actions').innerHTML = '';
+    setApp(`<div class="empty-state">
+      <div class="empty-state-title">Match needs Komga</div>
+      <div class="empty-state-body">Matching reconciles an existing Komga library against Metron. Configure Komga in Settings to use it — it's not required for tracking or downloading.</div>
+    </div>`);
+    return;
+  }
   document.getElementById('topbar-title').textContent = 'Match Library';
   document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-ghost btn-sm" onclick="rescoreCandidates(this)" title="Re-evaluate stored matches with current scoring (no API calls)">Rescore</button>
@@ -2418,6 +2427,11 @@ async function boot() {
   // with neither: search and track via LOCG, own via folders.
   const cfg = await api.get('/api/config');
   _appConfig = cfg;
+  // Match reconciles an existing Komga library against Metron — it's meaningless
+  // without Komga, so hide its nav entry when Komga isn't configured.
+  if (!cfg.komga_url) {
+    document.querySelector('.nav-item[data-view="match-review"]')?.remove();
+  }
   const { view, params } = _parseHash();
   navigate(view, params);
 }

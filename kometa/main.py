@@ -248,21 +248,24 @@ def add_series(req: AddSeriesRequest):
         publisher = pub.get("name") if isinstance(pub, dict) else (pub or publisher)
         year_began = ms.get("year_began") or year_began
     else:
-        # LOCG-sourced: try to auto-link to Metron by title
-        try:
-            candidates = metron.search_series(title)
-            match = next(
-                (r for r in candidates
-                 if _norm(r.get("series") or r.get("name") or "") == _norm(title)),
-                None
-            )
-            if match:
-                metron_series_id = match["id"]
-                pub = match.get("publisher")
-                publisher = pub.get("name") if isinstance(pub, dict) else (pub or publisher)
-                year_began = match.get("year_began") or year_began
-        except Exception:
-            pass
+        # LOCG-sourced: try to auto-link to Metron by title — but only if Metron
+        # is configured. Without creds this is a guaranteed 401 we'd just swallow.
+        cfg = db.get_config(DB_PATH)
+        if cfg.get("metron_user") and cfg.get("metron_pass"):
+            try:
+                candidates = metron.search_series(title)
+                match = next(
+                    (r for r in candidates
+                     if _norm(r.get("series") or r.get("name") or "") == _norm(title)),
+                    None
+                )
+                if match:
+                    metron_series_id = match["id"]
+                    pub = match.get("publisher")
+                    publisher = pub.get("name") if isinstance(pub, dict) else (pub or publisher)
+                    year_began = match.get("year_began") or year_began
+            except Exception:
+                pass
 
     komga = _komga()
     if komga_series_id and komga:
