@@ -197,6 +197,45 @@ def update_config(req: ConfigRequest):
     return get_config()
 
 
+def _load_indexers() -> list[dict]:
+    import json
+    try:
+        return json.loads(db.get_config(DB_PATH).get("newznab_indexers", "[]"))
+    except Exception:
+        return []
+
+
+def _save_indexers(indexers: list[dict]):
+    import json
+    db.set_config({"newznab_indexers": json.dumps(indexers)}, DB_PATH)
+
+
+class IndexerRequest(BaseModel):
+    name: str
+    host: str
+    apikey: str
+    ssl: bool = True
+
+
+@app.post("/api/config/indexers", status_code=201)
+def add_indexer(req: IndexerRequest):
+    # Add/remove operate on individual entries (not a whole-list re-save) so the
+    # stored apikeys are never round-tripped through the browser and blanked.
+    indexers = _load_indexers()
+    indexers.append({"name": req.name, "host": req.host, "apikey": req.apikey, "ssl": req.ssl})
+    _save_indexers(indexers)
+    return {"ok": True, "count": len(indexers)}
+
+
+@app.delete("/api/config/indexers/{idx}", status_code=204)
+def remove_indexer(idx: int):
+    indexers = _load_indexers()
+    if not (0 <= idx < len(indexers)):
+        raise HTTPException(404)
+    indexers.pop(idx)
+    _save_indexers(indexers)
+
+
 # --- series routes ---
 
 @app.get("/api/series")
