@@ -831,13 +831,29 @@ def reject_match(req: RejectRequest):
 
 # --- filesystem browse ---
 
+def _fs_browse_default() -> str:
+    """Where the filesystem picker should land — not the raw '/' full of OS guts.
+    Prefer an existing comics root (the mount you're likely picking), else the
+    home dir (where a desktop user keeps files), else '/'."""
+    cr = os.path.realpath(_comics_root())
+    if os.path.isdir(cr):
+        return cr
+    home = os.path.expanduser("~")
+    return home if (home != "~" and home != "/" and os.path.isdir(home)) else "/"
+
+
 @app.get("/api/fs/browse")
 def browse_fs(path: str = "", scope: str = "library"):
     # 'library' stays sandboxed to the comics root (picking a series subfolder).
-    # 'fs' browses from filesystem root — needed to pick the comics root itself,
-    # which by definition isn't inside the (maybe missing) comics root yet.
-    root = "/" if scope == "fs" else os.path.realpath(_comics_root())
-    target = os.path.realpath(path or root)
+    # 'fs' browses the whole filesystem — needed to pick the comics root itself,
+    # which by definition isn't inside the (maybe missing) comics root yet. It
+    # still lands somewhere friendly (see _fs_browse_default), not bare '/'.
+    if scope == "fs":
+        root = "/"
+        default = _fs_browse_default()
+    else:
+        root = default = os.path.realpath(_comics_root())
+    target = os.path.realpath(path or default)
     if not target.startswith(root):
         raise HTTPException(403)
     if not os.path.isdir(target):
