@@ -550,7 +550,12 @@ async function renderSeriesDetail(id) {
 
   const seriesBg = document.getElementById('series-bg');
   const seriesBgImg = document.getElementById('series-bg-img');
-  seriesBgImg.style.backgroundImage = `url('/api/series/${s.id}/thumbnail')`;
+  // Random issue cover as the backdrop — different each visit, not always the same one.
+  const _covers = (s.issues || []).map(i => i.metron_image).filter(Boolean);
+  const _bg = _covers.length
+    ? _covers[Math.floor(Math.random() * _covers.length)]
+    : `/api/series/${s.id}/thumbnail`;
+  seriesBgImg.style.backgroundImage = `url("${_bg}")`;
   seriesBg.classList.remove('hidden');
 
   setApp(`
