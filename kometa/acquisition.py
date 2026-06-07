@@ -167,10 +167,13 @@ def _poll_usenet_jobs():
         status = result["status"]
 
         if status == "queued":
-            logger.debug(f"Usenet job {nzo_id} still downloading ({result.get('pct', 0):.0f}%)")
+            # Surface SAB's % through the same progress map the UI polls, so a
+            # Kometa-initiated Usenet download is trackable like a GetComics one.
+            set_progress(qid, result.get("pct", 0), 100)
             continue
 
         if status == "completed":
+            clear_progress(qid)
             storage = result.get("storage", "")
             logger.info(f"Usenet job {nzo_id} completed — storage: {storage}")
             _finalize_usenet_download(item, qid, storage)
@@ -180,6 +183,7 @@ def _poll_usenet_jobs():
             if status == "unknown" and age < timedelta(hours=4):
                 # SABnzbd may have cleaned old queue/history entries — wait a bit
                 continue
+            clear_progress(qid)
             err = result.get("error") or f"SABnzbd status: {status}"
             logger.warning(f"Usenet job {nzo_id} failed: {err}")
             db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
