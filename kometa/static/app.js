@@ -1169,6 +1169,7 @@ function _actChip(state) {
     searching:   ['chip chip-active',  'Searching'],
     found:       ['chip chip-muted',   'Found'],
     downloading: ['chip chip-active',  'Downloading'],
+    pending_usenet: ['chip chip-active', 'Usenet'],
     processing:  ['chip chip-muted',   'Processing'],
     done:        ['chip chip-done',    'Done'],
     not_found:   ['chip chip-warn',    'Not Found'],
@@ -1179,7 +1180,7 @@ function _actChip(state) {
 }
 
 function _buildActivityHtml(queue) {
-  const inProgress = queue.filter(q => ['queued','searching','found','downloading','processing'].includes(q.state));
+  const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','processing'].includes(q.state));
   const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
 
   if (!queue.length) {
@@ -1198,12 +1199,16 @@ function _buildActivityHtml(queue) {
       const numStr = `#${fmtNum(q.issue_number)}`;
       const thumbSrc = q.tracked_series_id ? `/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail` : '';
       const thumb = thumbSrc ? `<img src="${thumbSrc}" onerror="this.src='/api/series/${q.tracked_series_id}/thumbnail'">` : '';
-      const isDownloading = q.state === 'downloading';
+      const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet';
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
+      // Usenet progress is a percentage from SAB (no byte counts); GetComics has bytes.
+      const detail = q.state === 'pending_usenet'
+        ? ' · Usenet'
+        : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
       const progress = isDownloading ? `
         <div class="act-card-progress">
           <div class="act-progress-track"><div class="act-progress-fill" style="width:${pct}%"></div></div>
-          <div class="act-progress-text">${pct}%${q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : ''}</div>
+          <div class="act-progress-text">${pct}%${detail}</div>
         </div>` : '';
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';

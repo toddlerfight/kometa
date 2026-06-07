@@ -76,6 +76,42 @@ class TestProcessQueue:
         assert q["state"] == "not_found"
 
 
+class TestUsenetProgressTracking:
+    """A Kometa-initiated SAB download should surface its % through the same
+    progress map the queue UI reads, and clear it when the job ends."""
+
+    def _make_pending(self, db_path, series):
+        db.queue_pack(series, "nzo1", "http://nzb", db_path)
+        return _qid_for(db_path, series, -1.0)
+
+    def test_queued_surfaces_pct(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._make_pending(db_path, series)
+
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "queued", "pct": 45.0}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+
+        acq._poll_usenet_jobs()
+        assert acq.get_progress(qid) == {"done": 45.0, "total": 100}
+
+    def test_failure_clears_progress(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._make_pending(db_path, series)
+        acq.set_progress(qid, 30, 100)
+
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "failed", "error": "boom"}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+
+        acq._poll_usenet_jobs()
+        assert acq.get_progress(qid) is None
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+
+
 class TestFinalizeUsenetDownload:
     """The big one — moves SABnzbd output into the library and marks it done."""
 
