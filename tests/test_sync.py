@@ -38,6 +38,46 @@ class TestGetIssuesParser:
         assert issues == []
 
 
+class TestSearchParser:
+    """LOCG search results carry the series cover — extract it so the wizard shows it."""
+
+    def test_extracts_cover_title_publisher_year(self):
+        html = (
+            '<li class="media">'
+            '<a href="/comics/series/100002/saga"></a>'
+            '<div class="title">Saga</div>'
+            '<div class="publisher">Image Comics</div>'
+            '<div class="date">2012</div>'
+            '<img src="https://s3.amazonaws.com/comicgeeks/comics/covers/medium-555.jpg">'
+            '</li>'
+        )
+        r = locg_client._parse_search_html(html)[0]
+        assert r == {
+            "id": 100002, "title": "Saga", "publisher": "Image Comics", "year": 2012,
+            "cover": "https://s3.amazonaws.com/comicgeeks/comics/covers/medium-555.jpg",
+        }
+
+    def test_drops_non_cover_placeholder_images(self):
+        html = (
+            '<li class="media">'
+            '<a href="/comics/series/1/x"></a>'
+            '<div class="title">X</div>'
+            '<img src="/assets/spacer.gif">'
+            '</li>'
+        )
+        assert locg_client._parse_search_html(html)[0]["cover"] is None
+
+    def test_prefers_lazy_data_src(self):
+        html = (
+            '<li class="media">'
+            '<a href="/comics/series/2/y"></a>'
+            '<div class="title">Y</div>'
+            '<img src="/assets/spacer.gif" data-src="https://s3.amazonaws.com/comicgeeks/comics/covers/medium-9.jpg">'
+            '</li>'
+        )
+        assert locg_client._parse_search_html(html)[0]["cover"].endswith("medium-9.jpg")
+
+
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
     monkeypatch.setattr(sync, "_komga", lambda: None)

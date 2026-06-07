@@ -787,7 +787,7 @@ function _renderWizardResults(results, q) {
     el.innerHTML = _wizardResults.length
       ? _wizardResults.map((r, i) => `
           <div class="wizard-result wizard-result-enter" style="animation-delay:${i * 80}ms" onclick="wizardPickSeries(${i})">
-            <img class="wizard-result-thumb" src="${r.source === 'locg' ? '' : `/api/metron/series/${r.id}/thumbnail`}" alt=""
+            <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
               <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
@@ -841,7 +841,7 @@ function wizardPickSeries(idx) {
   document.getElementById('modal').innerHTML = `
     <div class="modal-title">Add Series</div>
     <div class="wizard-series-preview">
-      <img class="wizard-result-thumb" src="${r.source === 'locg' ? '' : `/api/metron/series/${r.id}/thumbnail`}" alt="" onerror="this.style.opacity=0">
+      <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt="" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
         <div class="wizard-result-title">${esc(r.series || r.name || '')}</div>
         <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>

@@ -16,7 +16,7 @@ S3_LARGE = "https://s3.amazonaws.com/comicgeeks/comics/covers/large-{}.jpg"
 _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 
 def _parse_search_html(html: str) -> list[dict]:
-    """Parse LOCG search AJAX response HTML into [{id, title, publisher, year}]."""
+    """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}]."""
     soup = BeautifulSoup(html, "lxml")
     results, seen = [], set()
     # Series results live in <li class="media"> with /comics/series/ links.
@@ -32,13 +32,17 @@ def _parse_search_html(html: str) -> list[dict]:
         if sid in seen:
             continue
         seen.add(sid)
+        img = li.find("img")
         title_el = li.find(class_="title")
         title_text = title_el.get_text(strip=True) if title_el else ""
         if not title_text:
-            img = li.find("img")
             title_text = img.get("alt", "").strip() if img else ""
         if not title_text:
             continue
+        # Series cover — lazy-loaded into data-src on some pages, plain src on others.
+        cover = (img.get("data-src") or img.get("src")) if img else None
+        if cover and "covers/" not in cover:  # skip spacers/placeholders
+            cover = None
         pub_el = li.find(class_=re.compile(r"\bpublisher\b"))
         date_el = li.find(class_=re.compile(r"\bdate\b"))
         year = None
@@ -51,6 +55,7 @@ def _parse_search_html(html: str) -> list[dict]:
             "title": title_text,
             "publisher": pub_el.get_text(strip=True) if pub_el else "",
             "year": year,
+            "cover": cover,
         })
     return results
 
