@@ -15,6 +15,7 @@ from kometa.sources import (
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
 )
+from kometa.locg_client import get_issues_anon
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
@@ -105,17 +106,21 @@ def sync_one(series: dict):
             logger.warning(f"CV supplement failed for '{series['title']}': {e}")
 
     # --- Supplement from LoCG (best for upcoming solicitations) ---
+    # Auth buys series-id lookup; but if we already have a locg_series_id (e.g.
+    # the series was added via the LOCG wizard) we can pull its issues with no
+    # login at all. That anon path is what makes keyless onboarding actually work.
     locg = _locg()
-    if locg:
+    locg_id = series.get("locg_series_id")
+    if locg or locg_id:
         try:
-            locg_id = series.get("locg_series_id")
-            if not locg_id:
+            if locg and not locg_id:
                 locg_id = locg.find_series_id(series["title"], series.get("year_began"))
                 if locg_id:
                     db.set_locg_series_id(series["id"], locg_id, DB_PATH)
                     series = dict(series, locg_series_id=locg_id)
             if locg_id:
-                for li in locg.get_issues(locg_id):
+                locg_issues = locg.get_issues(locg_id) if locg else get_issues_anon(locg_id)
+                for li in locg_issues:
                     num = li["number"]
                     if num not in issue_map:
                         issue_map[num] = {"store_date": li["store_date"], "image": li["cover"], "locg_issue_id": li.get("locg_issue_id")}

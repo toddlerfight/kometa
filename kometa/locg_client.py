@@ -172,55 +172,77 @@ class LOCGClient:
 
     def get_issues(self, series_id: int) -> list[dict]:
         """Get all issues for a LoCG series. Returns [{number, store_date, cover}]."""
-        try:
-            r = self._get(
-                f"{BASE}/comic/get_comics",
-                params={
-                    "list": "series",
-                    "series_id": series_id,
-                    "view": "thumbs",
-                    "format[]": 1,
-                    "order": "asc",
-                },
-            )
-            data = r.json()
-            soup = BeautifulSoup(data["list"], "lxml")
-            issues = []
-            for li in soup.find_all("li"):
-                title_el = li.find(class_="title")
-                date_el = li.find(class_="date")
-                img_el = li.find("img")
-                if not title_el:
-                    continue
-                num = _parse_num(title_el.text.strip())
-                if num is None:
-                    continue
-                store_date = None
-                if date_el:
-                    ts = date_el.get("data-date")
-                    if ts:
-                        try:
-                            store_date = datetime.fromtimestamp(
-                                int(ts), tz=timezone.utc
-                            ).strftime("%Y-%m-%d")
-                        except (ValueError, OverflowError, OSError):
-                            pass
-                cover = img_el.get("data-src") if img_el else None
-                locg_issue_id = None
-                if cover:
-                    m = _COVER_ID_RE.search(cover)
-                    if m:
-                        locg_issue_id = m.group(1)
-                issues.append({"number": num, "store_date": store_date, "cover": cover, "locg_issue_id": locg_issue_id})
-            time.sleep(0.3)
-            return issues
-        except Exception as e:
-            logger.warning(f"LoCG get_issues({series_id}) failed: {e}")
-            return []
+        return _get_issues_with_get(series_id, self._get)
 
     def fetch_variants(self, locg_issue_id: str) -> dict:
         """Fetch variant covers for an issue using the authenticated session."""
         return _fetch_variants_with_get(locg_issue_id, self._get)
+
+
+def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
+    """Shared issue-list scraping. get_fn(url, **kwargs) must return a requests-like
+    Response. Works with both the authed session and an anonymous cloudscraper."""
+    try:
+        r = get_fn(
+            f"{BASE}/comic/get_comics",
+            params={
+                "list": "series",
+                "series_id": series_id,
+                "view": "thumbs",
+                "format[]": 1,
+                "order": "asc",
+            },
+        )
+        data = r.json()
+        soup = BeautifulSoup(data["list"], "lxml")
+        issues = []
+        for li in soup.find_all("li"):
+            title_el = li.find(class_="title")
+            date_el = li.find(class_="date")
+            img_el = li.find("img")
+            if not title_el:
+                continue
+            num = _parse_num(title_el.text.strip())
+            if num is None:
+                continue
+            store_date = None
+            if date_el:
+                ts = date_el.get("data-date")
+                if ts:
+                    try:
+                        store_date = datetime.fromtimestamp(
+                            int(ts), tz=timezone.utc
+                        ).strftime("%Y-%m-%d")
+                    except (ValueError, OverflowError, OSError):
+                        pass
+            cover = img_el.get("data-src") if img_el else None
+            locg_issue_id = None
+            if cover:
+                m = _COVER_ID_RE.search(cover)
+                if m:
+                    locg_issue_id = m.group(1)
+            issues.append({"number": num, "store_date": store_date, "cover": cover, "locg_issue_id": locg_issue_id})
+        time.sleep(0.3)
+        return issues
+    except Exception as e:
+        logger.warning(f"LoCG get_issues({series_id}) failed: {e}")
+        return []
+
+
+def get_issues_anon(series_id: int) -> list[dict]:
+    """Fetch a series' issue list with no login, via cloudscraper. This is what
+    lets sync build an issue list — and therefore detect missing issues — for a
+    keyless, Komga-less install. Mirrors search_series_anon / fetch_variants."""
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
+        )
+    except ImportError:
+        raise RuntimeError("cloudscraper not installed") from None
+
+    scraper.get(BASE + '/')
+    return _get_issues_with_get(series_id, scraper.get)
 
 
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
