@@ -29,7 +29,6 @@ from kometa.locg_client import search_series_anon as _locg_search_anon
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 import kometa.downloader as downloader
-import kometa.matcher as matcher
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
     locg as _locg, comics_root as _comics_root,
@@ -384,50 +383,7 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
     return db.get_series_by_id(series_id, DB_PATH)
 
 
-# --- library browse ---
-
-@app.get("/api/library/komga")
-def browse_komga(page: int = 0, size: int = 48, search: str = ""):
-    komga = _komga()
-    if not komga:
-        raise HTTPException(503, "Komga not configured")
-    params = {"page": page, "size": size, "sort": "metadata.titleSort,asc"}
-    if search:
-        params["search"] = search
-    data = komga._get("/api/v1/series", params=params)
-
-    tracked_map = {s["komga_series_id"]: s["id"] for s in db.get_all_series(DB_PATH)}
-
-    items = [
-        {
-            "id": s["id"],
-            "name": s["name"],
-            "publisher": s.get("metadata", {}).get("publisher"),
-            "year": s.get("metadata", {}).get("startYear"),
-            "tracked": s["id"] in tracked_map,
-            "tracked_id": tracked_map.get(s["id"]),
-        }
-        for s in data["content"]
-    ]
-
-    return {
-        "items": items,
-        "total": data["totalElements"],
-        "page": data["number"],
-        "pages": data["totalPages"],
-        "last": data["last"],
-    }
-
-
 # --- search ---
-
-@app.get("/api/search/komga")
-def search_komga(q: str):
-    komga = _komga()
-    if not komga:
-        raise HTTPException(503, "Komga not configured")
-    return komga.search_series(q)
-
 
 _STOP_WORDS = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "is", "it",
                "as", "by", "be", "or", "and", "but", "from", "with", "this", "that",
@@ -605,31 +561,6 @@ def book_thumbnail(book_id: str):
         raise HTTPException(504) from e
 
 
-@app.get("/api/komga/series/{komga_series_id}/books")
-def komga_series_books(komga_series_id: str):
-    komga = _komga()
-    books = komga.get_books(komga_series_id)
-    return [
-        {
-            "id": b["id"],
-            "number": b["metadata"].get("numberSort"),
-            "number_display": b["metadata"].get("number") or b["metadata"].get("numberSort"),
-        }
-        for b in books
-    ]
-
-
-@app.get("/api/komga/series/{komga_series_id}/thumbnail")
-def komga_series_thumbnail(komga_series_id: str):
-    komga = _komga()
-    if not komga:
-        raise HTTPException(503, "Komga not configured")
-    r = komga.session.get(f"{komga.base_url}/api/v1/series/{komga_series_id}/thumbnail")
-    if not r.ok:
-        raise HTTPException(r.status_code)
-    return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
-
-
 # --- metron thumbnails ---
 
 @app.get("/api/metron/series/{metron_id}/thumbnail")
@@ -672,161 +603,6 @@ def metron_series_info(metron_id: int):
         }
     except Exception as e:
         raise HTTPException(404) from e
-
-
-# --- match / scan ---
-
-@app.post("/api/match/scan")
-def start_scan():
-    if not _komga():
-        raise HTTPException(503, "Komga not configured")
-    if matcher.get_state()["running"]:
-        return {"ok": False, "message": "Scan already running"}
-    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job, locg_factory=_locg)
-    return {"ok": started, "state": matcher.get_state()}
-
-
-@app.post("/api/match/retry-empty")
-def retry_empty_scan():
-    """Re-scan none-confidence candidates that got no API results (rate-limit victims)."""
-    if not _komga():
-        raise HTTPException(503, "Komga not configured")
-    if matcher.get_state()["running"]:
-        return {"ok": False, "message": "Scan already running"}
-    started = matcher.start(_komga, _metron, DB_PATH, sync_callback=_sync_all_job,
-                            retry_empty=True, locg_factory=_locg)
-    return {"ok": started, "state": matcher.get_state()}
-
-
-@app.post("/api/match/rescore")
-def rescore_candidates():
-    """Re-evaluate stored medium/low candidates with current thresholds. No API calls."""
-    result = matcher.rescore_candidates(DB_PATH)
-    if result["promoted"]:
-        threading.Thread(target=_sync_all_job, daemon=True).start()
-    return result
-
-
-@app.get("/api/match/status")
-def scan_status():
-    state = matcher.get_state()
-    summary = db.get_candidates_summary(DB_PATH)
-    counts = {"high": 0, "medium": 0, "low": 0, "none": 0, "skipped": 0}
-    for row in summary:
-        conf = row["confidence"]
-        if conf in counts:
-            counts[conf] += row["cnt"]
-    return {**state, "counts": counts}
-
-
-@app.get("/api/match/candidates")
-def get_candidates():
-    rows = db.get_pending_candidates(DB_PATH)
-    groups: dict[str, list] = {"high": [], "medium": [], "low": [], "none": []}
-    for r in rows:
-        conf = r.get("confidence", "none")
-        if conf in groups:
-            groups[conf].append(r)
-    return groups
-
-
-@app.get("/api/match/candidates/{komga_series_id}")
-def get_candidate_detail(komga_series_id: str):
-    row = db.get_candidate_detail(komga_series_id, DB_PATH)
-    if not row:
-        raise HTTPException(404)
-    c = dict(row)
-    c["candidates"] = json.loads(c["candidates_json"]) if c.get("candidates_json") else []
-    del c["candidates_json"]
-    return c
-
-
-class ConfirmRequest(BaseModel):
-    komga_series_id: str
-    metron_id: int
-
-
-@app.post("/api/match/confirm")
-def confirm_match(req: ConfirmRequest):
-    existing = {s["komga_series_id"] for s in db.get_all_series(DB_PATH)}
-    if req.komga_series_id not in existing:
-        komga  = _komga()
-        if not komga:
-            raise HTTPException(503, "Komga not configured")
-        metron = _metron()
-        ks = komga.get_series(req.komga_series_id)
-        ms = metron.get_series(req.metron_id)
-        db.add_series(
-            req.komga_series_id, req.metron_id,
-            title       = ks["name"],
-            publisher   = ks.get("metadata", {}).get("publisher"),
-            year_began  = ms.get("year_began"),
-            folder_path = ks.get("url"),
-            path        = DB_PATH,
-        )
-        added = next(s for s in db.get_all_series(DB_PATH) if s["komga_series_id"] == req.komga_series_id)
-        threading.Thread(target=_sync_one, args=(added,), daemon=True).start()
-    db.confirm_candidate(req.komga_series_id, req.metron_id, DB_PATH)
-    return {"ok": True}
-
-
-class BulkItem(BaseModel):
-    komga_series_id: str
-    metron_id: int
-
-class BulkConfirmRequest(BaseModel):
-    items: list[BulkItem]
-
-
-@app.post("/api/match/confirm-bulk")
-def confirm_bulk(req: BulkConfirmRequest):
-    komga = _komga()
-    if not komga:
-        raise HTTPException(503, "Komga not configured")
-    metron = _metron()
-    existing = {s["komga_series_id"] for s in db.get_all_series(DB_PATH)}
-    confirmed, errors = 0, []
-
-    for item in req.items:
-        if item.komga_series_id in existing:
-            db.confirm_candidate(item.komga_series_id, item.metron_id, DB_PATH)
-            confirmed += 1
-            continue
-        try:
-            ks = komga.get_series(item.komga_series_id)
-            ms = metron.get_series(item.metron_id)
-            db.add_series(
-                item.komga_series_id, item.metron_id,
-                title       = ks["name"],
-                publisher   = ks.get("metadata", {}).get("publisher"),
-                year_began  = ms.get("year_began"),
-                folder_path = ks.get("url"),
-                path        = DB_PATH,
-            )
-            db.confirm_candidate(item.komga_series_id, item.metron_id, DB_PATH)
-            confirmed += 1
-        except Exception as e:
-            errors.append({"id": item.komga_series_id, "error": str(e)})
-
-    def _bg_sync():
-        for s in db.get_all_series(DB_PATH):
-            try:
-                _sync_one(s)
-            except Exception as e:
-                logger.warning(f"Background sync failed for series {s.get('id')} ({s.get('title')!r}): {e}")
-
-    threading.Thread(target=_bg_sync, daemon=True).start()
-    return {"confirmed": confirmed, "errors": errors}
-
-
-class RejectRequest(BaseModel):
-    komga_series_id: str
-
-
-@app.post("/api/match/reject")
-def reject_match(req: RejectRequest):
-    db.reject_candidate(req.komga_series_id, DB_PATH)
-    return {"ok": True}
 
 
 # --- filesystem browse ---

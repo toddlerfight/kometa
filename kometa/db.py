@@ -38,22 +38,6 @@ def init_db(path=DB_PATH):
                 value TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS match_candidates (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                komga_series_id   TEXT NOT NULL UNIQUE,
-                komga_title       TEXT NOT NULL,
-                komga_publisher   TEXT,
-                komga_year        INTEGER,
-                metron_id         INTEGER,
-                metron_title      TEXT,
-                metron_publisher  TEXT,
-                metron_year       INTEGER,
-                score             REAL NOT NULL DEFAULT 0,
-                confidence        TEXT NOT NULL DEFAULT 'none',
-                candidates_json   TEXT,
-                status            TEXT NOT NULL DEFAULT 'pending',
-                created_at        TEXT DEFAULT (datetime('now'))
-            );
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -177,7 +161,6 @@ def _migrate(path=DB_PATH):
                 UNIQUE(tracked_series_id, number)
             )
         """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_mc_status ON match_candidates(status)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS download_queue (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,85 +325,6 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH):
         return [dict(r) for r in conn.execute("""
             SELECT * FROM issue_status WHERE tracked_series_id = ? ORDER BY number
         """, (tracked_series_id,))]
-
-
-# --- Match candidates ---
-
-def upsert_candidate(komga_series_id, komga_title, komga_publisher, komga_year,
-                     metron_id=None, metron_title=None, metron_publisher=None,
-                     metron_year=None, score=0, confidence='none',
-                     candidates_json=None, status='pending', path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute("""
-            INSERT INTO match_candidates
-              (komga_series_id, komga_title, komga_publisher, komga_year,
-               metron_id, metron_title, metron_publisher, metron_year,
-               score, confidence, candidates_json, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(komga_series_id) DO UPDATE SET
-              metron_id        = excluded.metron_id,
-              metron_title     = excluded.metron_title,
-              metron_publisher = excluded.metron_publisher,
-              metron_year      = excluded.metron_year,
-              score            = excluded.score,
-              confidence       = excluded.confidence,
-              candidates_json  = excluded.candidates_json,
-              status           = excluded.status
-        """, (komga_series_id, komga_title, komga_publisher, komga_year,
-              metron_id, metron_title, metron_publisher, metron_year,
-              score, confidence, candidates_json, status))
-
-
-def get_pending_candidates(path=DB_PATH):
-    """Returns all pending candidates without candidates_json — list view only."""
-    with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
-            SELECT komga_series_id, komga_title, komga_publisher, komga_year,
-                   metron_id, metron_title, metron_publisher, metron_year,
-                   score, confidence, status
-            FROM match_candidates WHERE status = 'pending' ORDER BY score DESC, komga_title
-        """)]
-
-
-def get_candidate_detail(komga_series_id, path=DB_PATH):
-    """Returns a single candidate with full candidates_json for the match modal."""
-    with _connect(path) as conn:
-        row = conn.execute(
-            "SELECT * FROM match_candidates WHERE komga_series_id = ?",
-            (komga_series_id,)
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def get_candidate_komga_ids(path=DB_PATH):
-    with _connect(path) as conn:
-        rows = conn.execute("SELECT komga_series_id FROM match_candidates").fetchall()
-        return {r[0] for r in rows}
-
-
-def confirm_candidate(komga_series_id, metron_id, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute("""
-            UPDATE match_candidates SET status = 'confirmed', metron_id = ?
-            WHERE komga_series_id = ?
-        """, (metron_id, komga_series_id))
-
-
-def reject_candidate(komga_series_id, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE match_candidates SET status = 'rejected' WHERE komga_series_id = ?",
-            (komga_series_id,)
-        )
-
-
-def get_candidates_summary(path=DB_PATH):
-    with _connect(path) as conn:
-        rows = conn.execute("""
-            SELECT confidence, status, COUNT(*) as cnt
-            FROM match_candidates GROUP BY confidence, status
-        """).fetchall()
-        return [dict(r) for r in rows]
 
 
 def set_folder_path(series_id, folder_path, path=DB_PATH):
@@ -647,32 +551,6 @@ def get_missing_for_monitored(path=DB_PATH):
                     AND q.state NOT IN ('failed', 'not_found')
               )
         """)]
-
-
-def get_rescorable_candidates(path=DB_PATH):
-    """Return medium/low candidates with stored match data that aren't already tracked."""
-    with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
-            SELECT mc.komga_series_id, mc.komga_title, mc.komga_publisher, mc.komga_year,
-                   mc.metron_id, mc.metron_title, mc.metron_publisher, mc.metron_year,
-                   mc.confidence, mc.candidates_json
-            FROM match_candidates mc
-            WHERE mc.confidence IN ('medium', 'low')
-              AND mc.candidates_json IS NOT NULL
-              AND mc.candidates_json NOT IN ('', '[]')
-              AND NOT EXISTS (
-                  SELECT 1 FROM tracked_series ts
-                  WHERE ts.komga_series_id = mc.komga_series_id
-              )
-        """)]
-
-
-def update_candidate_confidence(komga_series_id, confidence, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE match_candidates SET confidence = ? WHERE komga_series_id = ?",
-            (confidence, komga_series_id),
-        )
 
 
 def get_upcoming_issues(days=90, past=0, path=DB_PATH):
