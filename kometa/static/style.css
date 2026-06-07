@@ -1080,6 +1080,7 @@ select.settings-input {
 .settings-card-header {
   font-family: 'Space Mono', monospace;
   font-size: 10px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--tq);
