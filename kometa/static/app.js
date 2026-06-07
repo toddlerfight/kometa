@@ -796,12 +796,29 @@ function browseComicsRoot() {
   // Pick the comics root by browsing the whole filesystem (scope='fs') — it's not
   // inside the comics root yet, so the sandboxed library browse can't reach it.
   _fbScope = 'fs';
-  _fbCallback = (path) => {
+  _fbCallback = async (path) => {
+    // Selecting a folder IS the choice — commit and continue, no second click.
+    try {
+      if (await _commitComicsRoot(path)) { showAddWizard(); return; }
+    } catch (e) { console.error(e); }
+    // not usable (e.g. read-only mount) — fall back to the form with it filled in
     _showComicsRootSetup();
-    setTimeout(() => { const i = document.getElementById('setup-comics-root'); if (i) i.value = path; }, 20);
+    setTimeout(() => {
+      const i = document.getElementById('setup-comics-root');
+      if (i) i.value = path;
+      const err = document.getElementById('setup-root-err');
+      if (err) err.textContent = "That folder isn't writable — pick another or check permissions.";
+    }, 20);
   };
   showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
   _fbNav('');
+}
+
+// PATCH the comics root and refresh health. Returns true if it's now usable.
+async function _commitComicsRoot(path) {
+  await api.patch('/api/config', { comics_root: path });
+  _appConfig = await api.get('/api/config');
+  return _appConfig.comics_root_ok;
 }
 
 async function saveComicsRoot(btn) {
@@ -810,14 +827,9 @@ async function saveComicsRoot(btn) {
   if (!path) { err.textContent = 'Enter a path.'; return; }
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    await api.patch('/api/config', { comics_root: path });
-    _appConfig = await api.get('/api/config');   // re-check health
-    if (!_appConfig.comics_root_ok) {
-      err.textContent = "That path doesn't exist or isn't writable — check the mount/permissions.";
-      btn.disabled = false; btn.textContent = 'Save & Continue';
-      return;
-    }
-    showAddWizard();   // now passes the guard → search
+    if (await _commitComicsRoot(path)) { showAddWizard(); return; }
+    err.textContent = "That path doesn't exist or isn't writable — check the mount/permissions.";
+    btn.disabled = false; btn.textContent = 'Save & Continue';
   } catch (e) {
     err.textContent = 'Save failed — check console.';
     btn.disabled = false; btn.textContent = 'Save & Continue';
