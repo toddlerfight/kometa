@@ -1083,11 +1083,9 @@ select.settings-input {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--tq);
-  background: var(--su1);
-  border: 1px solid var(--bd);
-  border-radius: 2px;
-  padding: 7px 12px;
-  margin-bottom: 16px;
+  padding: 0 0 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--bd);
 }
 
 .settings-field { margin-bottom: 14px; }
