@@ -1024,6 +1024,7 @@ async function _fbNav(path) {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       ${data.parent ? `<button class="btn btn-ghost btn-sm" data-up="${esc(data.parent)}" id="fb-up">↑ Up</button>` : ''}
+      <button class="btn btn-ghost btn-sm" onclick="_fbMkdir()">＋ New Folder</button>
       <button class="btn btn-primary" onclick="_fbSelect()">Select This Folder</button>
     </div>
   `;
@@ -1033,6 +1034,18 @@ async function _fbNav(path) {
   );
   const upBtn = document.getElementById('fb-up');
   if (upBtn) upBtn.addEventListener('click', () => _fbNav(upBtn.dataset.up));
+}
+
+async function _fbMkdir() {
+  const name = prompt('New folder name:');
+  if (!name || !name.trim()) return;
+  try {
+    const res = await api.post('/api/fs/mkdir', { path: _fbPath, name: name.trim(), scope: _fbScope });
+    _fbNav(res.path);   // step into the folder you just made, ready to Select it
+  } catch (e) {
+    alert('Could not create folder — check the name and permissions.');
+    console.error(e);
+  }
 }
 
 async function _fbSelect() {

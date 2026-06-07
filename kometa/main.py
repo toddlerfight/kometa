@@ -873,6 +873,35 @@ def browse_fs(path: str = "", scope: str = "library"):
     }
 
 
+class MkdirRequest(BaseModel):
+    path: str          # the directory to create the new folder inside
+    name: str          # new folder name (single level, no separators)
+    scope: str = "library"
+
+
+@app.post("/api/fs/mkdir", status_code=201)
+def fs_mkdir(req: MkdirRequest):
+    """Create a subfolder while browsing — the 'New Folder' button. Same scope
+    sandbox as browse; one level only (no separators/traversal)."""
+    root = "/" if req.scope == "fs" else os.path.realpath(_comics_root())
+    parent = os.path.realpath(req.path or root)
+    if not parent.startswith(root):
+        raise HTTPException(403)
+    if not os.path.isdir(parent):
+        raise HTTPException(404, "Parent folder not found")
+    if not os.access(parent, os.W_OK):
+        raise HTTPException(403, "That folder isn't writable")
+    name = req.name.strip().strip("/")
+    if not name or "/" in name or name in (".", ".."):
+        raise HTTPException(422, "Invalid folder name")
+    target = os.path.join(parent, name)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(500, f"Could not create folder: {e}") from e
+    return {"path": target}
+
+
 @app.get("/api/fs/resolve")
 def resolve_folder(publisher: str = "", title: str = ""):
     """Preview where a series will be filed — the same publisher+title resolution
