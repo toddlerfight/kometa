@@ -117,6 +117,26 @@ class TestIndexerManagement:
             main.remove_indexer(5)
 
 
+class TestBrowseScope:
+    """fs scope browses outside the comics root (to pick the root itself);
+    library scope stays sandboxed."""
+
+    def test_fs_scope_reaches_outside_comics_root(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(main, "_comics_root", lambda: "/nonexistent-root")
+        (tmp_path / "sub").mkdir()
+        res = main.browse_fs(path=str(tmp_path), scope="fs")
+        assert "sub" in res["dirs"]
+
+    def test_library_scope_blocks_outside_root(self, tmp_path, monkeypatch):
+        import pytest
+        from fastapi import HTTPException
+        root = tmp_path / "root"
+        root.mkdir()
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
+        with pytest.raises(HTTPException):
+            main.browse_fs(path="/etc", scope="library")
+
+
 class TestComicsRootHealth:
     """config.comics_root_ok drives the just-in-time folder prompt."""
 
