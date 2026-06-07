@@ -6,6 +6,7 @@ Each accessor reads current config straight from the DB and rebuilds its client
 when credentials change, so callers never touch credentials or worry about
 caching. This is the seam between Kometa's logic and the outside world.
 """
+import os
 import logging
 
 from kometa.komga_client import KomgaClient
@@ -17,6 +18,21 @@ import kometa.db as db
 logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
+
+
+def comics_root() -> str:
+    """The comics library root — the one path that actually has to be set.
+    DB config (Settings) wins, then the COMICS_ROOT env (first-boot provisioning),
+    then a sane container default. Read live so a Settings change takes effect."""
+    return db.get_config(DB_PATH).get("comics_root") or os.environ.get("COMICS_ROOT") or "/comics"
+
+
+def staging_dir() -> str:
+    """Where downloads land for validation before being filed into the library.
+    Derived as a hidden child of the comics root so it shares a filesystem (moves
+    are atomic, not cross-mount copies) and stays out of the scanned library.
+    KOMETA_DOWNLOADS overrides for anyone who wants a separate location."""
+    return os.environ.get("KOMETA_DOWNLOADS") or os.path.join(comics_root(), ".kometa-staging")
 
 # Cached clients — rebuilt only when the relevant config key changes.
 _komga_instance: "KomgaClient | None" = None

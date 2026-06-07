@@ -1993,7 +1993,16 @@ async function renderSettings() {
   setApp(`
     <div class="page-title">Settings</div>
     <div class="settings-grid">
+      <div>
       <div class="settings-card">
+        <div class="settings-card-header">Comics Library <span style="font-weight:400;font-size:11px;color:var(--tq)">(required)</span></div>
+        <div class="settings-field">
+          <div class="settings-field-label">Library path</div>
+          <input class="settings-input" id="s-comics-root" value="${esc(cfg.comics_root || '')}" placeholder="/comics">
+        </div>
+        <div style="font-size:10px;color:var(--tq);margin-top:2px">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
+      </div>
+      <div class="settings-card" style="margin-top:24px">
         <div class="settings-card-header">Komga</div>
         <div class="settings-field">
           <div class="settings-field-label">Server URL</div>
@@ -2011,6 +2020,7 @@ async function renderSettings() {
           <div class="settings-field-label">Library ID</div>
           <input class="settings-input" id="s-komga-lib" value="${esc(cfg.komga_library_id)}">
         </div>
+      </div>
       </div>
       <div>
         <div class="settings-card">
@@ -2120,6 +2130,7 @@ async function removeIndexer(idx) {
 async function saveSettings(btn) {
   btn.disabled = true; btn.textContent = 'Saving…';
   const updates = {
+    comics_root:      document.getElementById('s-comics-root').value.trim(),
     komga_url:        document.getElementById('s-komga-url').value.trim(),
     komga_user:       document.getElementById('s-komga-user').value.trim(),
     komga_library_id: document.getElementById('s-komga-lib').value.trim(),

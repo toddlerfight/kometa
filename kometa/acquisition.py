@@ -11,7 +11,10 @@ from datetime import date
 
 import kometa.db as db
 import kometa.downloader as downloader
-from kometa.sources import komga as _komga, sabnzbd as _sabnzbd, usenet_indexers as _usenet_indexers
+from kometa.sources import (
+    komga as _komga, sabnzbd as _sabnzbd, usenet_indexers as _usenet_indexers,
+    comics_root as _comics_root,
+)
 from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
 from kometa.downloader import DuplicateIssueError
@@ -193,12 +196,12 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
     """Move a SABnzbd-completed download into the library and mark it done."""
     import shutil as _shutil
     from kometa.downloader import (
-        _issue_num_from_file, _safe, _resolve_dir, COMICS_ROOT, _fix_extension,
+        _issue_num_from_file, _safe, _resolve_dir, _fix_extension,
     )
     issue_number = item["issue_number"]
     title = item["title"]
     publisher = item.get("publisher")
-    dest_dir = item.get("folder_path") or _resolve_dir(COMICS_ROOT, publisher or "Unknown", title)
+    dest_dir = item.get("folder_path") or _resolve_dir(_comics_root(), publisher or "Unknown", title)
 
     # Pack sentinel — move every comic in storage to dest_dir, let next sync mark issues
     if issue_number == -1:
