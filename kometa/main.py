@@ -29,7 +29,6 @@ from kometa.locg_client import search_series_anon as _locg_search_anon, get_issu
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 import kometa.downloader as downloader
-import kometa.recommend as recommend
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
     locg as _locg, comics_root as _comics_root,
@@ -850,8 +849,8 @@ def get_issue_metron(series_id: int, number: float):
 
 @app.get("/api/series/{series_id}/issues/{number}/locg-details")
 def get_issue_locg_details(series_id: int, number: float):
-    """Description + credits from LOCG (keyless). Cached per locg_issue_id — the
-    cache doubles as the creator signal for recommendations."""
+    """Description + credits from LOCG (keyless). Cached per locg_issue_id; the
+    external kometa-recommend project also consumes this cache."""
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
     if not issue or not issue.get("locg_issue_id"):
@@ -866,29 +865,6 @@ def get_issue_locg_details(series_id: int, number: float):
         raise HTTPException(502, "LOCG details fetch failed") from e
     db.set_issue_details_cache(lid, detail, DB_PATH)
     return detail
-
-
-@app.get("/api/taste")
-def get_taste():
-    """Your top creators, derived from the pull list — the recommendation profile."""
-    return recommend.taste_profile(DB_PATH)
-
-
-@app.get("/api/recommendations")
-def get_recommendations():
-    """Series you don't track, by the creators you collect most — with the 'because'."""
-    return recommend.recommendations(DB_PATH)
-
-
-@app.post("/api/recommendations/enrich")
-def enrich_recommendations():
-    """Background: cache tracked-series creators, then top creators' catalogs. Hits
-    LOCG only for what's missing."""
-    def _job():
-        recommend.enrich_library(DB_PATH)
-        recommend.enrich_creators(DB_PATH)
-    threading.Thread(target=_job, daemon=True).start()
-    return {"ok": True, "started": True}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")

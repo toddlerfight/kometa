@@ -44,12 +44,6 @@ def init_db(path=DB_PATH):
                 fetched_at    TEXT DEFAULT (datetime('now'))
             );
 
-            CREATE TABLE IF NOT EXISTS creator_works_cache (
-                people_id  TEXT PRIMARY KEY,
-                data_json  TEXT NOT NULL,
-                fetched_at TEXT DEFAULT (datetime('now'))
-            );
-
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -244,7 +238,8 @@ def set_config(updates: dict, path=DB_PATH):
             )
 
 
-# --- Issue details cache (LOCG desc + credits; also the recommendation signal) ---
+# --- Issue details cache (LOCG desc + credits for the Details tab; the external
+#     kometa-recommend project also reads this cache) ---
 
 def get_issue_details_cache(locg_issue_id, path=DB_PATH):
     import json
@@ -263,26 +258,6 @@ def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
             "INSERT OR REPLACE INTO issue_details_cache (locg_issue_id, data_json, fetched_at) "
             "VALUES (?, ?, datetime('now'))",
             (str(locg_issue_id), json.dumps(data)),
-        )
-
-
-def get_creator_works_cache(people_id, path=DB_PATH):
-    import json
-    with _connect(path) as conn:
-        row = conn.execute(
-            "SELECT data_json FROM creator_works_cache WHERE people_id = ?",
-            (str(people_id),),
-        ).fetchone()
-        return json.loads(row["data_json"]) if row else None
-
-
-def set_creator_works_cache(people_id, data, path=DB_PATH):
-    import json
-    with _connect(path) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO creator_works_cache (people_id, data_json, fetched_at) "
-            "VALUES (?, ?, datetime('now'))",
-            (str(people_id), json.dumps(data)),
         )
 
 
