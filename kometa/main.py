@@ -385,9 +385,7 @@ _STOP_WORDS = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "is", "it"
                "as", "by", "be", "or", "and", "but", "from", "with", "this", "that",
                "not", "are", "was", "were", "has", "have", "had", "its", "here", "there"}
 
-@app.get("/api/search/metron")
-def search_metron(q: str):
-    metron = _metron()
+def _metron_search_ranked(metron, q: str) -> list[dict]:
     results = metron.search_series(q)
     if results:
         return [dict(r, source="metron") for r in results]
@@ -411,6 +409,21 @@ def search_metron(q: str):
             if good:
                 return [dict(r, source="metron") for r in good]
     return []
+
+
+@app.get("/api/search/metron")
+def search_metron(q: str):
+    # Metron is optional. Not configured (no creds) or a transient failure both
+    # return [] rather than 500, so the wizard falls through to LOCG cleanly
+    # instead of dying on the Metron call. This is what makes key-free onboarding work.
+    cfg = db.get_config(DB_PATH)
+    if not (cfg.get("metron_user") and cfg.get("metron_pass")):
+        return []
+    try:
+        return _metron_search_ranked(_metron(), q)
+    except Exception as e:
+        logger.warning(f"Metron search failed for {q!r}: {e}")
+        return []
 
 
 @app.get("/api/search/locg")
