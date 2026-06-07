@@ -28,8 +28,6 @@ Komga merely reflects it on its next scan.
 - **download_queue** — issues being acquired. State machine:
   `queued → searching → downloading → done | not_found | failed | pending_usenet`.
   Carries `retry_after` (release-day/duplicate backoff) and `sab_nzo_id` (SABnzbd handle).
-- **match_candidates** — output of reconciling a Komga series against Metron metadata:
-  `score`, `confidence` (none/low/medium/high), `candidates_json`, `status`.
 - **variant_prefs** — selected variant covers per issue (queued for unowned issues,
   injected into the CBZ once owned).
 - **config** — key/value store for credentials and settings.
@@ -38,7 +36,7 @@ Komga merely reflects it on its next scan.
 
 | Source | Role | Module |
 |---|---|---|
-| **Komga** | The library being mirrored; series origin; scan trigger | komga_client.py |
+| **Komga** | Optional reader + cover source; scan trigger after filing | komga_client.py |
 | **Metron** | Primary metadata: series, issue lists, store dates | metron_client.py |
 | **ComicVine (CV)** | Alternate metadata + cover images | comicvine_client.py |
 | **LOCG** (League of Comic Geeks) | Series/issue data + variant covers | locg_client.py |
@@ -48,11 +46,10 @@ Komga merely reflects it on its next scan.
 
 ## Core workflows
 
-1. **Match** (matcher.py) — reconcile Komga library series with Metron metadata.
-   Scores candidates, assigns confidence, corroborates against LOCG. Writes
-   `match_candidates` for user review.
-2. **Sync** — for tracked series, pull issue lists from Metron, update `issue_status`,
-   detect which issues are missing relative to Komga.
+1. **Add** — find a series (Metron or anonymous LOCG search), derive its folder from
+   publisher+title, and track it. No Komga required.
+2. **Sync** — for tracked series, pull issue lists (Metron → CV → LOCG, anon if no
+   creds), update `issue_status`, and detect missing by scanning the folder on disk.
 3. **Queue + download** — missing issues enter `download_queue`. `_process_queue` tries
    GetComics first, falls back to Usenet (newznab search → SABnzbd submit → poll).
    Archives are extracted (rarfile/bsdtar), filed under `folder_path`, then Komga scans.
@@ -68,8 +65,9 @@ Komga merely reflects it on its next scan.
 - **sources.py** — the seam to every external system. Configured-client accessors
   (`komga`, `metron`, `comicvine`, `sabnzbd`, `locg`, `usenet_indexers`) that read config
   from the DB and cache where it makes sense. Callers never touch credentials.
-- **sync.py** — `sync_one`: per-series reconciliation against Komga + metadata sources
-  (Metron primary, CV/LOCG supplements), then upsert the merged issue list.
+- **sync.py** — `sync_one`: build the issue list from metadata sources (Metron primary,
+  CV/LOCG supplements; LOCG works anonymously), reconcile ownership against the disk
+  folder, then upsert the merged issue list. Komga book IDs are folded in when available.
 - **acquisition.py** — the download state machine (`_process_queue`, `_sweep_missing`,
   `_poll_usenet_jobs`, `_finalize_usenet_download`, `_release_day_retry`, `_komga_scan`).
   Owns `_dl_progress`, the live progress map the UI polls.
@@ -77,7 +75,6 @@ Komga merely reflects it on its next scan.
   `find_issue_file`, `normalize_url`, `norm`). No state; unit-testable in isolation.
 - **db.py** — all SQLite access; every query lives here behind plain functions. Owns the
   schema/migrations and atomic operations like `complete_download`.
-- **matcher.py** — Komga↔Metron matching: normalization, scoring, confidence, corroboration.
 - **downloader.py** — download, archive extraction, filename/dir resolution, duplicate
   detection, cover injection into CBZ.
 - **scheduler.py** — APScheduler job registration.
@@ -92,4 +89,3 @@ No cycles. Logic modules import the source seam, never `main`.
 - **Monitor status** — whether Kometa actively acquires for a series (`monitored`/unmonitored).
 - **Pack** — a multi-issue NZB bundle (submitted when a series has many gaps).
 - **Store date** — an issue's retail release date.
-- **Corroboration** — cross-checking a Metron match against LOCG to raise confidence.
