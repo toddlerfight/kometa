@@ -200,13 +200,31 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE download_queue ADD COLUMN sab_nzo_id TEXT")
 
 
+# config key -> env var for first-boot provisioning. Lets a deployer configure
+# entirely from compose/env instead of clicking through Settings. Seeded with
+# INSERT OR IGNORE (below), so it's first-run only — the UI stays the source of
+# truth after that, and changing the env later won't clobber UI edits.
+_ENV_SEEDED_CONFIG = {
+    "cv_api_key":       "CV_API_KEY",
+    "komga_url":        "KOMGA_URL",
+    "komga_user":       "KOMGA_USER",
+    "komga_pass":       "KOMGA_PASS",
+    "komga_library_id": "KOMGA_LIBRARY_ID",
+    "metron_user":      "METRON_USER",
+    "metron_pass":      "METRON_PASS",
+}
+
+
 def _seed_defaults(path=DB_PATH):
-    # Only seed non-secret defaults — credentials come from onboarding
     defaults = {
         "sync_hours": os.environ.get("KOMETA_SYNC_HOURS", "5,12,17"),
     }
-    if os.environ.get("CV_API_KEY"):
-        defaults["cv_api_key"] = os.environ["CV_API_KEY"]
+    # Seed optional integrations from env only when actually provided, so we don't
+    # write empty rows that masquerade as "configured".
+    for cfg_key, env_var in _ENV_SEEDED_CONFIG.items():
+        val = os.environ.get(env_var)
+        if val:
+            defaults[cfg_key] = val
     with _connect(path) as conn:
         for key, value in defaults.items():
             conn.execute(
