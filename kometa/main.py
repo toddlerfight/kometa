@@ -7,15 +7,6 @@ from contextlib import asynccontextmanager
 
 import requests as _requests
 
-logger = logging.getLogger(__name__)
-
-# Auth-free session for fetching CDN images (S3 rejects Basic auth headers)
-_img_session = _requests.Session()
-_img_session.headers["User-Agent"] = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +35,16 @@ from kometa.acquisition import (
     _poll_usenet_jobs, _release_day_retry,
 )
 
+logger = logging.getLogger(__name__)
+
 DB_PATH = db.DB_PATH
+
+# Auth-free session for fetching CDN images (S3 rejects Basic auth headers)
+_img_session = _requests.Session()
+_img_session.headers["User-Agent"] = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def _sync_all_job():
@@ -96,7 +96,7 @@ def test_komga(req: TestKomgaRequest):
         r.raise_for_status()
         raw = r.json()
         libs = raw if isinstance(raw, list) else raw.get("content", [])
-        return {"ok": True, "libraries": [{"id": l["id"], "name": l["name"]} for l in libs]}
+        return {"ok": True, "libraries": [{"id": lib["id"], "name": lib["name"]} for lib in libs]}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -143,7 +143,6 @@ def test_comicvine(req: TestCVRequest):
 
 @app.get("/api/config")
 def get_config():
-    import json
     cfg = db.get_config(DB_PATH)
     indexers_raw = cfg.get("newznab_indexers", "[]")
     try:
@@ -203,7 +202,6 @@ def update_config(req: ConfigRequest):
 
 
 def _load_indexers() -> list[dict]:
-    import json
     try:
         return json.loads(db.get_config(DB_PATH).get("newznab_indexers", "[]"))
     except Exception:
@@ -211,7 +209,6 @@ def _load_indexers() -> list[dict]:
 
 
 def _save_indexers(indexers: list[dict]):
-    import json
     db.set_config({"newznab_indexers": json.dumps(indexers)}, DB_PATH)
 
 
@@ -515,8 +512,8 @@ def issue_thumbnail(series_id: int, number: float):
     if not book_id:
         series = db.get_series_by_id(series_id, DB_PATH)
         komga_series_id = series.get("komga_series_id") if series else None
-        if komga_series_id:
-            komga = _komga()
+        komga = _komga()
+        if komga_series_id and komga:
             try:
                 for b in komga.get_books(komga_series_id):
                     n = b["metadata"].get("numberSort")
@@ -527,8 +524,8 @@ def issue_thumbnail(series_id: int, number: float):
             except Exception:
                 pass
 
-    if book_id:
-        komga = _komga()
+    komga = _komga()
+    if book_id and komga:
         try:
             r = komga.session.get(
                 f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
@@ -547,6 +544,8 @@ def issue_thumbnail(series_id: int, number: float):
 @app.get("/api/book/{book_id}/thumbnail")
 def book_thumbnail(book_id: str):
     komga = _komga()
+    if not komga:
+        raise HTTPException(404)
     try:
         r = komga.session.get(
             f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
