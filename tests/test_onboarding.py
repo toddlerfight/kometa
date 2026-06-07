@@ -117,6 +117,26 @@ class TestIndexerManagement:
             main.remove_indexer(5)
 
 
+class TestComicsRootHealth:
+    """config.comics_root_ok drives the just-in-time folder prompt."""
+
+    def test_reports_ok_when_writable(self, tmp_path, monkeypatch):
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+        good = tmp_path / "lib"
+        good.mkdir()
+        monkeypatch.setattr(main, "_comics_root", lambda: str(good))
+        assert main.get_config()["comics_root_ok"] is True
+
+    def test_reports_not_ok_when_missing(self, tmp_path, monkeypatch):
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+        monkeypatch.setattr(main, "_comics_root", lambda: str(tmp_path / "nope"))
+        assert main.get_config()["comics_root_ok"] is False
+
+
 class TestResolveFolderPreview:
     """The wizard previews where a series will land — same logic add_series uses."""
 

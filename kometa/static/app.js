@@ -395,11 +395,14 @@ function _renderBrowseResults() {
   }
 
   if (!filtered.length) {
+    const needsFolder = _appConfig && !_appConfig.comics_root_ok;
     const empty = all.length === 0
       ? `<div class="empty-state">
-           <div class="empty-state-title">Nothing tracked yet</div>
+           <div class="empty-state-title">${needsFolder ? 'Set your comics folder' : 'Nothing tracked yet'}</div>
            <div style="margin-top:8px;color:var(--tq);font-size:13px">
-             Use <strong>+ Add Series</strong> to start tracking a series.
+             ${needsFolder
+               ? 'Kometa needs a place to file comics. <button class="btn btn-primary btn-sm" style="margin-left:6px" onclick="_showComicsRootSetup()">Set folder</button>'
+               : 'Use <strong>+ Add Series</strong> to start tracking a series.'}
            </div>
          </div>`
       : `<div class="state-msg">No series match.</div>`;
@@ -741,6 +744,9 @@ let _wizardSearchTimer = null;
 let _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
 
 function showAddWizard() {
+  // Can't track or file a series with nowhere to put it. If the comics folder
+  // isn't usable, channel the user to set it first — just-in-time, not a gate.
+  if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
   _wizardResults = [];
   _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
   showModal(`
@@ -758,6 +764,49 @@ function showAddWizard() {
     </div>
   `);
   setTimeout(() => document.getElementById('wizard-search')?.focus(), 50);
+}
+
+function _showComicsRootSetup() {
+  showModal(`
+    <div class="modal-title">Set your comics folder</div>
+    <div style="font-size:12px;color:var(--tq);margin:8px 0 14px;line-height:1.5">
+      Kometa needs somewhere to file comics before it can track or download them.
+      It's the one thing it needs — everything else is optional.
+    </div>
+    <div class="settings-field">
+      <div class="settings-field-label">Comics library path</div>
+      <input class="search-input" id="setup-comics-root" value="${esc(_appConfig.comics_root || '')}"
+        placeholder="/comics" style="width:100%;box-sizing:border-box"
+        onkeydown="if(event.key==='Enter')saveComicsRoot(document.getElementById('setup-root-btn'))">
+    </div>
+    <div id="setup-root-err" style="font-size:11px;color:var(--amb);margin-top:6px;min-height:14px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="setup-root-btn" onclick="saveComicsRoot(this)">Save &amp; Continue</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('setup-comics-root')?.focus(), 50);
+}
+
+async function saveComicsRoot(btn) {
+  const path = document.getElementById('setup-comics-root').value.trim();
+  const err = document.getElementById('setup-root-err');
+  if (!path) { err.textContent = 'Enter a path.'; return; }
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api.patch('/api/config', { comics_root: path });
+    _appConfig = await api.get('/api/config');   // re-check health
+    if (!_appConfig.comics_root_ok) {
+      err.textContent = "That path doesn't exist or isn't writable — check the mount/permissions.";
+      btn.disabled = false; btn.textContent = 'Save & Continue';
+      return;
+    }
+    showAddWizard();   // now passes the guard → search
+  } catch (e) {
+    err.textContent = 'Save failed — check console.';
+    btn.disabled = false; btn.textContent = 'Save & Continue';
+    console.error(e);
+  }
 }
 
 function _wizardStatus(text) {
