@@ -29,6 +29,7 @@ from kometa.locg_client import search_series_anon as _locg_search_anon, get_issu
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 import kometa.downloader as downloader
+import kometa.recommend as recommend
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
     locg as _locg, comics_root as _comics_root,
@@ -865,6 +866,19 @@ def get_issue_locg_details(series_id: int, number: float):
         raise HTTPException(502, "LOCG details fetch failed") from e
     db.set_issue_details_cache(lid, detail, DB_PATH)
     return detail
+
+
+@app.get("/api/taste")
+def get_taste():
+    """Your top creators, derived from the pull list — the recommendation profile."""
+    return recommend.taste_profile(DB_PATH)
+
+
+@app.post("/api/recommendations/enrich")
+def enrich_recommendations():
+    """Cache creators for tracked series (background — hits LOCG for what's missing)."""
+    threading.Thread(target=recommend.enrich_library, args=(DB_PATH,), daemon=True).start()
+    return {"ok": True, "started": True}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
