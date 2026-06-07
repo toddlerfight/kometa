@@ -136,6 +136,20 @@ class TestBrowseScope:
         with pytest.raises(HTTPException):
             main.browse_fs(path="/etc", scope="library")
 
+    def test_fs_scope_lands_at_home_not_bare_root(self, tmp_path, monkeypatch):
+        import os
+        monkeypatch.setattr(main, "_comics_root", lambda: "/nonexistent-root")
+        res = main.browse_fs(scope="fs")  # empty path -> friendly default
+        assert res["path"] == os.path.realpath(os.path.expanduser("~"))
+
+    def test_fs_scope_lands_at_comics_root_when_it_exists(self, tmp_path, monkeypatch):
+        import os
+        root = tmp_path / "lib"
+        root.mkdir()
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
+        res = main.browse_fs(scope="fs")
+        assert res["path"] == os.path.realpath(str(root))
+
 
 class TestComicsRootHealth:
     """config.comics_root_ok drives the just-in-time folder prompt."""
