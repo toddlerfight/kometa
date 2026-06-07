@@ -595,6 +595,8 @@ function flipIssueSort(id) {
   }
 }
 
+const _autoSynced = new Set();   // series auto-synced this session — fire once each
+
 async function renderSeriesDetail(id) {
   // Untracked series — show preview with Track CTA
   if (!id && currentParams.komgaId) {
@@ -606,6 +608,17 @@ async function renderSeriesDetail(id) {
 
   const s = await api.get(`/api/series/${id}`);
   _detailSeries = s;
+
+  // Self-healing: a never-synced or stale (>1h) series refreshes itself on view,
+  // in the background — no manual Sync button needed. Fires at most once per
+  // series per session so a persistently-failing sync can't loop. A successful
+  // sync updates last_synced (no longer stale) and re-renders.
+  const _lastMs = s.last_synced ? Date.parse(s.last_synced.replace(' ', 'T') + 'Z') : 0;
+  if ((Date.now() - _lastMs) > 3600000 && !_autoSynced.has(id)) {
+    _autoSynced.add(id);
+    syncSeries(id, null);
+  }
+
   const meta = [s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
   const total = s.owned + s.missing + s.upcoming;
   const released = s.owned + s.missing;
@@ -647,7 +660,6 @@ async function renderSeriesDetail(id) {
       <div class="detail-folder-actions">
         ${pullBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="syncSeries(${s.id}, this)">Sync</button>
         <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id}, '${esc(s.title)}')">Remove</button>
       </div>
     </div>
