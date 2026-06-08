@@ -145,31 +145,31 @@ def sync_one(series: dict):
             path=DB_PATH,
         )
 
-    # Folder is the source of truth for ownership. Reconcile owned on every issue
-    # already in the DB — covers the case where the metadata fetch (Metron/CV/LOCG)
-    # was empty or blocked, so ownership never depends on the network.
-    if folder and os.path.isdir(folder):
-        for iss in db.get_issues_for_series(series["id"], DB_PATH):
-            on = iss["number"] in owned_numbers
-            if bool(iss["owned"]) != on:
-                db.set_owned(series["id"], iss["number"], on, DB_PATH)
+    # Folder is the source of truth for ownership — reconcile from disk (this also
+    # CREATES issues for files that aren't in the metadata list, e.g. when LOCG/
+    # Metron is unavailable), so ownership never depends on the network.
+    rescan_owned(series)
 
     db.mark_synced(series["id"], DB_PATH)
 
 
 def rescan_owned(series: dict) -> dict:
-    """Scan a series' folder and update owned on its existing issues — pure disk,
-    no Metron/CV/LOCG. Called when a folder is set so ownership reflects the files
-    immediately. Returns {scanned, owned}."""
+    """Folder is the source of truth for ownership. Scan it and reconcile owned:
+    CREATE an owned issue for each file not yet tracked, mark found ones owned, and
+    clear ones whose file is gone. Pure disk — no Metron/CV/LOCG — so it works even
+    when those are blocked. Returns {scanned, owned}."""
     folder = series.get("folder_path")
     if not folder or not os.path.isdir(folder):
         return {"scanned": False, "owned": 0}
     owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
-    owned = 0
-    for iss in db.get_issues_for_series(series["id"], DB_PATH):
-        on = iss["number"] in owned_numbers
-        if bool(iss["owned"]) != on:
-            db.set_owned(series["id"], iss["number"], on, DB_PATH)
-        if on:
-            owned += 1
-    return {"scanned": True, "owned": owned}
+    existing = {i["number"]: i for i in db.get_issues_for_series(series["id"], DB_PATH)}
+    for num in owned_numbers:
+        if num in existing:
+            if not existing[num]["owned"]:
+                db.set_owned(series["id"], num, True, DB_PATH)
+        else:
+            db.upsert_issue_status(series["id"], num, None, owned=True, path=DB_PATH)  # straight from disk
+    for num, iss in existing.items():
+        if num not in owned_numbers and iss["owned"]:
+            db.set_owned(series["id"], num, False, DB_PATH)
+    return {"scanned": True, "owned": len(owned_numbers)}
