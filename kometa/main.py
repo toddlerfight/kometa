@@ -1,5 +1,6 @@
 import os
 import json
+import hashlib
 import logging
 import threading
 from datetime import date
@@ -45,6 +46,53 @@ _img_session.headers["User-Agent"] = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+
+# Cover image cache — lives on the same volume as the DB (persistent on the NAS).
+_COVER_CACHE_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "cover-cache")
+
+
+def _img_ct(data: bytes) -> str:
+    if data[:8].startswith(b"\x89PNG"):
+        return "image/png"
+    if data[:3] == b"GIF":
+        return "image/gif"
+    if data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _cached_image_response(url: str, max_age: int = 2592000):
+    """Serve a cover image, caching the bytes on disk so each external cover is
+    fetched at most once. Cache-Control lets the browser keep it too, so flipping
+    pages doesn't re-hit this endpoint at all."""
+    if not url:
+        raise HTTPException(404)
+    headers = {"Cache-Control": f"public, max-age={max_age}"}
+    path = os.path.join(_COVER_CACHE_DIR, hashlib.sha1(url.encode("utf-8")).hexdigest())
+    if os.path.exists(path):                       # cache hit — serve from disk
+        try:
+            data = open(path, "rb").read()
+            if data:
+                return Response(content=data, media_type=_img_ct(data), headers=headers)
+        except OSError:
+            pass
+    try:                                            # miss — fetch once, store, serve
+        r = _img_session.get(url, timeout=8)
+        if r.ok and r.content:
+            try:
+                os.makedirs(_COVER_CACHE_DIR, exist_ok=True)
+                tmp = f"{path}.{os.getpid()}.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(r.content)
+                os.replace(tmp, path)
+            except OSError:
+                pass
+            return Response(content=r.content,
+                            media_type=r.headers.get("content-type", "image/jpeg"),
+                            headers=headers)
+    except Exception:
+        pass
+    raise HTTPException(404)
 
 
 def _sync_all_job():
@@ -491,18 +539,12 @@ def series_thumbnail(series_id: int):
         None
     )
     if img_url:
-        try:
-            r2 = _img_session.get(img_url, timeout=8)
-            if r2.ok:
-                return Response(content=r2.content, media_type=r2.headers.get("content-type", "image/jpeg"))
-        except Exception:
-            pass
+        return _cached_image_response(img_url)
     raise HTTPException(404)
 
 
 @app.get("/api/series/{series_id}/issues/{number}/thumbnail")
 def issue_thumbnail(series_id: int, number: float):
-    from fastapi.responses import RedirectResponse
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
 
@@ -537,7 +579,7 @@ def issue_thumbnail(series_id: int, number: float):
             pass
 
     if issue and issue.get("metron_image"):
-        return RedirectResponse(issue["metron_image"])
+        return _cached_image_response(issue["metron_image"])
     raise HTTPException(404)
 
 
@@ -580,9 +622,7 @@ def metron_series_thumbnail(metron_id: int):
         if not img_url:
             raise HTTPException(404)
 
-        r = _img_session.get(img_url, timeout=10)
-        r.raise_for_status()
-        return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+        return _cached_image_response(img_url)
     except HTTPException:
         raise
     except Exception as e:
