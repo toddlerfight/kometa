@@ -49,6 +49,7 @@ _img_session.headers["User-Agent"] = (
 
 # Cover image cache — lives on the same volume as the DB (persistent on the NAS).
 _COVER_CACHE_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "cover-cache")
+_IMG_HEADERS = {"Cache-Control": "public, max-age=2592000"}   # browser keeps covers ~30d
 
 
 def _img_ct(data: bytes) -> str:
@@ -528,7 +529,7 @@ def series_thumbnail(series_id: int):
                 timeout=5,
             )
             if r.ok:
-                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
         except Exception:
             pass
     # Use cached issue image URLs from DB — avoids live Metron API calls under concurrent grid load
@@ -574,7 +575,7 @@ def issue_thumbnail(series_id: int, number: float):
                 timeout=5,
             )
             if r.ok:
-                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
         except Exception:
             pass
 
@@ -594,7 +595,7 @@ def book_thumbnail(book_id: str):
             timeout=5,
         )
         if r.ok:
-            return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"))
+            return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
         raise HTTPException(r.status_code)
     except HTTPException:
         raise

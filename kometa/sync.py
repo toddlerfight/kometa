@@ -23,9 +23,34 @@ logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 
 
+def _best_komga_match(results, title):
+    """Pick the Komga series matching title — only when there's exactly ONE exact
+    (normalised) title match, so ambiguous names (e.g. multiple Batman runs) don't
+    mis-link. Returns the komga series id or None."""
+    import re
+    def norm(s):
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    tn = norm(title)
+    if not tn:
+        return None
+    exact = [r.get("id") for r in (results or [])
+             if norm((r.get("metadata") or {}).get("title") or r.get("name") or "") == tn]
+    return exact[0] if len(exact) == 1 else None
+
+
 def sync_one(series: dict):
     komga = _komga()
     metron = _metron()
+
+    # Auto-link to a Komga series by title when Komga is connected but this series
+    # isn't linked yet (replaces the old Match step). Single exact match only.
+    if not series.get("komga_series_id") and komga:
+        try:
+            kid = _best_komga_match(komga.search_series(series["title"]), series["title"])
+            if kid and db.set_komga_series_id(series["id"], kid, DB_PATH):
+                series = dict(series, komga_series_id=kid)
+        except Exception as e:
+            logger.warning(f"Komga auto-link failed for {series.get('title')!r}: {e}")
 
     # Lazily populate folder_path from Komga on first sync (only if linked)
     if not series.get("folder_path") and series.get("komga_series_id") and komga:
