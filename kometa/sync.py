@@ -144,4 +144,32 @@ def sync_one(series: dict):
             locg_issue_id=data.get("locg_issue_id"),
             path=DB_PATH,
         )
+
+    # Folder is the source of truth for ownership. Reconcile owned on every issue
+    # already in the DB — covers the case where the metadata fetch (Metron/CV/LOCG)
+    # was empty or blocked, so ownership never depends on the network.
+    if folder and os.path.isdir(folder):
+        for iss in db.get_issues_for_series(series["id"], DB_PATH):
+            on = iss["number"] in owned_numbers
+            if bool(iss["owned"]) != on:
+                db.set_owned(series["id"], iss["number"], on, DB_PATH)
+
     db.mark_synced(series["id"], DB_PATH)
+
+
+def rescan_owned(series: dict) -> dict:
+    """Scan a series' folder and update owned on its existing issues — pure disk,
+    no Metron/CV/LOCG. Called when a folder is set so ownership reflects the files
+    immediately. Returns {scanned, owned}."""
+    folder = series.get("folder_path")
+    if not folder or not os.path.isdir(folder):
+        return {"scanned": False, "owned": 0}
+    owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
+    owned = 0
+    for iss in db.get_issues_for_series(series["id"], DB_PATH):
+        on = iss["number"] in owned_numbers
+        if bool(iss["owned"]) != on:
+            db.set_owned(series["id"], iss["number"], on, DB_PATH)
+        if on:
+            owned += 1
+    return {"scanned": True, "owned": owned}
