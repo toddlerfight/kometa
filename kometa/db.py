@@ -319,6 +319,16 @@ def get_series_by_id(series_id, path=DB_PATH):
         return dict(row) if row else None
 
 
+def set_owned(tracked_series_id, number, owned, path=DB_PATH):
+    """Flip just the owned flag on an existing issue — used by folder scanning,
+    which is the source of truth for ownership (no metadata touched)."""
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE issue_status SET owned = ? WHERE tracked_series_id = ? AND number = ?",
+            (int(owned), tracked_series_id, number),
+        )
+
+
 def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, metron_issue_id=None, locg_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""

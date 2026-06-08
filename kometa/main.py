@@ -28,7 +28,7 @@ from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
     _resolve_dir,
 )
-from kometa.sync import sync_one as _sync_one
+from kometa.sync import sync_one as _sync_one, rescan_owned as _rescan_owned
 from kometa.acquisition import (
     set_progress, clear_progress, get_progress,
     _komga_scan, _process_queue, _sweep_missing,
@@ -698,6 +698,8 @@ def set_folder(series_id: int, req: FolderRequest):
     if not s:
         raise HTTPException(404)
     db.set_folder_path(series_id, req.folder_path or None, DB_PATH)
+    s = db.get_series_by_id(series_id, DB_PATH)
+    _rescan_owned(s)   # scan the just-set folder → mark which issues are owned
     return db.get_series_by_id(series_id, DB_PATH)
 
 
