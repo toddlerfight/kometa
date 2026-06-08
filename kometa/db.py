@@ -390,6 +390,21 @@ def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
         )
 
 
+def set_komga_series_id(series_id, komga_series_id, path=DB_PATH) -> bool:
+    """Link a series to its Komga counterpart. komga_series_id is UNIQUE, so this
+    returns False (no-op) if that Komga series is already linked to another series."""
+    import sqlite3
+    with _connect(path) as conn:
+        try:
+            conn.execute(
+                "UPDATE tracked_series SET komga_series_id = ? WHERE id = ?",
+                (str(komga_series_id), series_id),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
 def set_monitor_status(series_id, status, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(
