@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Space+Grotesk:wght@700&family=Space+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css?v=52">
 </head>
 <body>
@@ -36,8 +36,23 @@
     </div>
   </div>
 
-  <div id="modal-backdrop" class="hidden" onclick="closeModal()"></div>
-  <div id="modal" class="hidden"></div>
+  <div id="modal-backdrop" class="hidden" onclick="closeModal()">
+    <div id="modal" class="hidden" onclick="event.stopPropagation()"></div>
+  </div>
+
+  <div id="variant-lightbox" class="hidden" onclick="_lbClose()">
+    <button class="vlb-close" onclick="_lbClose(event)">✕</button>
+    <button class="vlb-nav vlb-prev" onclick="_lbStep(event,-1)">‹</button>
+    <button class="vlb-nav vlb-next" onclick="_lbStep(event,1)">›</button>
+    <div class="vlb-stage" onclick="event.stopPropagation()">
+      <img class="vlb-img" id="vlb-img" alt="">
+      <div><div class="vlb-name" id="vlb-name"></div><div class="vlb-count" id="vlb-count"></div></div>
+      <div class="vlb-actions">
+        <button class="vlb-btn" id="vlb-include" onclick="_lbToggleInclude()">Include</button>
+        <button class="vlb-btn vlb-star" id="vlb-star" onclick="_lbSetCover()">★ Set as cover</button>
+      </div>
+    </div>
+  </div>
   <div id="toast" class="toast-hidden"></div>
 
   <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>

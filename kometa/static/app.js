@@ -3,6 +3,10 @@
 let _appConfig = {};
 let _issueModalPollTimer = null;
 
+// Per-item stagger for cascading grid/list entrances (ms). One value so cascades
+// feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
+const STAGGER_MS = 40;
+
 const api = {
   get(url) {
     return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -155,14 +159,14 @@ function pullGroup(isoDate) {
 function barColor(owned, total) {
   if (!total) return 'var(--su3)';
   const pct = owned / total;
-  if (pct >= 1)   return 'var(--grn)';
+  if (pct >= 1)   return 'var(--pri)';
   if (pct >= 0.9) return 'var(--pri)';
   return 'var(--amb)';
 }
 
 function countColor(owned, total) {
   if (!total) return 'var(--tq)';
-  return owned >= total ? 'var(--grn)' : 'var(--tm)';
+  return owned >= total ? 'var(--pri)' : 'var(--tm)';
 }
 
 // --- Series List ---
@@ -185,14 +189,14 @@ async function renderSeries() {
     return;
   }
 
-  const cards = series.map(s => {
+  const cards = series.map((s, i) => {
     const total = s.owned + s.missing;
     const pct = total > 0 ? (s.owned / total) * 100 : 0;
     const color = barColor(s.owned, total);
     const cc = countColor(s.owned, total);
     const pub = s.publisher ? s.publisher.toUpperCase() : '';
     return `
-      <div class="series-card" tabindex="0" role="button"
+      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="series-card-img-wrap">
@@ -409,17 +413,17 @@ function _renderBrowseResults() {
     return;
   }
 
-  const cards = filtered.map(s => {
+  const cards = filtered.map((s, i) => {
     const pub   = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
     const total = (s.owned ?? 0) + (s.missing ?? 0);
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
-    const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--grn)' : 'var(--tq)');
+    const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
     const nextRelease = s.next_release
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.next_release)}</div>` : '';
     const thumbSrc  = s.next_release_image || `/api/series/${s.id}/thumbnail`;
     const thumbFall = s.next_release_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
     return `
-      <div class="series-card" tabindex="0" role="button"
+      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="series-card-img-wrap">
@@ -754,7 +758,7 @@ function _renderWizardResults(results, q) {
     if (!el) return;
     el.innerHTML = _wizardResults.length
       ? _wizardResults.map((r, i) => `
-          <div class="wizard-result wizard-result-enter" style="animation-delay:${i * 80}ms" onclick="wizardPickSeries(${i})">
+          <div class="wizard-result wizard-result-enter" style="animation-delay:${i * STAGGER_MS}ms" onclick="wizardPickSeries(${i})">
             <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
@@ -824,7 +828,7 @@ function wizardPickSeries(idx) {
     <div id="wizard-folder-hint" style="margin-top:6px;font-size:10px;color:var(--tq)">&nbsp;</div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;user-select:none">
       <input type="checkbox" id="wizard-pull" checked style="accent-color:var(--pri);width:14px;height:14px">
-      <span style="font-family:'Space Mono',monospace;font-size:10px;color:var(--tp)">Add to Pull List</span>
+      <span style="font-family:var(--font);font-size:10px;color:var(--tp)">Add to Pull List</span>
       <span style="font-size:10px;color:var(--tq)">— queue download of all missing issues now</span>
     </label>
     <div class="modal-footer">
@@ -847,7 +851,7 @@ async function _previewFolder(r) {
     if (!input.value) input.value = res.path;   // pre-fill, still editable
     if (hint) {
       hint.textContent = res.exists ? '✓ Existing folder — owned issues will be detected' : 'New folder — will be created on first download';
-      hint.style.color = res.exists ? 'var(--grn)' : 'var(--tq)';
+      hint.style.color = res.exists ? 'var(--pri)' : 'var(--tq)';
     }
   } catch (e) {
     const input = document.getElementById('wizard-folder');
@@ -1115,7 +1119,7 @@ const QUEUE_STATE_LABEL = {
 const QUEUE_STATE_COLOR = {
   queued: 'var(--tq)', searching: 'var(--pri)', found: 'var(--pri)',
   not_found: 'var(--su3)', downloading: 'var(--pri)', processing: 'var(--pri)',
-  done: 'var(--grn)', failed: 'var(--red, var(--amb))',
+  done: 'var(--pri)', failed: 'var(--pink)',
 };
 
 let _activityPollTimer = null;
@@ -1484,17 +1488,24 @@ function showModal(html) {
   const modal = document.getElementById('modal');
   modal.innerHTML = html;
   modal.classList.remove('hidden');
-  document.getElementById('modal-backdrop').classList.remove('hidden');
+  document.getElementById('modal-backdrop').classList.remove('hidden', 'closing');
   const first = modal.querySelector('button, input, [tabindex]');
   if (first) setTimeout(() => first.focus(), 30);
 }
 
 function closeModal() {
-  clearTimeout(_issueModalPollTimer);
   const modal = document.getElementById('modal');
-  modal.classList.add('hidden');
-  modal.classList.remove('modal-wide');
-  document.getElementById('modal-backdrop').classList.add('hidden');
+  const backdrop = document.getElementById('modal-backdrop');
+  if (modal.classList.contains('hidden') || backdrop.classList.contains('closing')) return;
+  clearTimeout(_issueModalPollTimer);
+  document.getElementById('variant-lightbox')?.classList.add('hidden');  // ensure lightbox closes with the modal
+  backdrop.classList.add('closing');          // plays scrim-out + modal-out
+  setTimeout(() => {
+    modal.classList.add('hidden');
+    modal.classList.remove('modal-wide');
+    backdrop.classList.add('hidden');
+    backdrop.classList.remove('closing');
+  }, 200);                                     // match exit duration
 }
 
 // --- Issue Detail Modal ---
@@ -1505,6 +1516,31 @@ let _issueVariantPrimary  = null;
 let _issueVariantFetched  = false;
 let _issueVariantSeriesId = null;
 let _issueVariantNumber   = null;
+
+// Tween the issue modal's height around a DOM change so async content (details,
+// variants) eases in instead of popping. Measures before/after, animates between.
+function _animateModalHeight(mutate) {
+  const modal = document.getElementById('modal');
+  if (!modal || modal.classList.contains('hidden')) { mutate(); return; }
+  const from = modal.getBoundingClientRect().height;
+  mutate();
+  const to = modal.getBoundingClientRect().height;
+  if (from === to || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // Duration scales with the size of the change: a small grow (details) stays snappy,
+  // a big grow (variants grid) eases over more time so it doesn't feel like a snap.
+  const dur = Math.min(0.55, Math.max(0.22, Math.abs(to - from) / 850));
+  modal.style.height = from + 'px';
+  void modal.offsetHeight;                              // commit start height
+  modal.style.transition = `height ${dur}s var(--ease-out)`;
+  modal.style.height = to + 'px';
+  const done = (e) => {
+    if (e.propertyName !== 'height') return;
+    modal.style.height = '';                            // release back to natural height
+    modal.style.transition = '';
+    modal.removeEventListener('transitionend', done);
+  };
+  modal.addEventListener('transitionend', done);
+}
 
 function _renderIssueDetails(desc, credits) {
   const el = document.getElementById('issue-modal-details');
@@ -1523,7 +1559,11 @@ function _renderIssueDetails(desc, credits) {
           <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
         </div>`).join('') + '</div>';
   }
-  el.innerHTML = html || '<div class="state-msg" style="font-size:11px;padding:8px 0;color:var(--tq)">No details available.</div>';
+  _animateModalHeight(() => {
+    el.innerHTML = html || '<div class="state-msg" style="font-size:11px;padding:8px 0;color:var(--tq)">No details available.</div>';
+    el.style.animation = 'none'; void el.offsetWidth;   // restart the fade
+    el.style.animation = 'fade-in var(--t-slow) var(--ease-out)';
+  });
 }
 
 async function showIssueModal(seriesId, number) {
@@ -1641,9 +1681,11 @@ async function showIssueModal(seriesId, number) {
 }
 
 function _imSwitchTab(name) {
-  ['details', 'variants'].forEach(t => {
-    document.getElementById(`imtab-${t}`)?.classList.toggle('active', t === name);
-    document.getElementById(`impanel-${t}`)?.classList.toggle('active', t === name);
+  _animateModalHeight(() => {
+    ['details', 'variants'].forEach(t => {
+      document.getElementById(`imtab-${t}`)?.classList.toggle('active', t === name);
+      document.getElementById(`impanel-${t}`)?.classList.toggle('active', t === name);
+    });
   });
 }
 
@@ -1664,26 +1706,27 @@ function _imRenderVariants() {
   const area = document.getElementById('variant-area');
   if (!area) return;
   if (!_issueVariantCovers.length) {
-    area.innerHTML = '<div class="variant-empty">No variants found.</div>';
+    _animateModalHeight(() => { area.innerHTML = '<div class="variant-empty">No variants found.</div>'; });
     return;
   }
+  _animateModalHeight(() => {
   area.className = '';
   area.innerHTML = `<div class="variant-grid">${
     _issueVariantCovers.map((c, i) => `
-      <div class="v-card" id="vc-${c.id}" style="animation-delay:${i*25}ms" onclick="_imToggleVariant('${c.id}')">
+      <div class="v-card" id="vc-${c.id}" style="animation-delay:${i*STAGGER_MS}ms" onclick="_imToggleVariant('${c.id}')">
         <div class="v-cover">
           <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy"
             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
           <div class="no-img" style="display:none">No image</div>
-          <div class="v-tick">✓</div>
           <button class="v-star" onclick="_imSetPrimary(event,'${c.id}')" title="Set as cover">★</button>
-          <div class="v-primary-label">COVER</div>
+          <button class="v-mag" onclick="_imOpenLightbox('${c.id}',event)" title="View larger"><svg viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
         </div>
         <div class="v-name">${esc(c.name)}</div>
       </div>`).join('')
   }</div>`;
   const footer = document.getElementById('variant-footer');
   if (footer) footer.style.display = 'flex';
+  });
 }
 
 function _imToggleVariant(id) {
@@ -1729,6 +1772,56 @@ function _imUpdateHint() {
   const primary = _issueVariantCovers.find(c => c.id === _issueVariantPrimary);
   const pName = primary ? `<strong>${esc(primary.name)}</strong>` : '—';
   hint.innerHTML = `${n} variant${n > 1 ? 's' : ''} · Cover: ${pName}`;
+}
+
+// --- Variant lightbox (click ⌕ on a card → big preview, browse + select from here) ---
+let _lbIndex = 0;
+
+function _imOpenLightbox(id, e) {
+  if (e) e.stopPropagation();
+  _lbIndex = _issueVariantCovers.findIndex(c => c.id === id);
+  if (_lbIndex < 0) _lbIndex = 0;
+  _lbRender();
+  document.getElementById('variant-lightbox').classList.remove('hidden');
+}
+function _lbClose(e) {
+  if (e) e.stopPropagation();
+  document.getElementById('variant-lightbox').classList.add('hidden');
+}
+function _lbStep(e, d) {
+  if (e) e.stopPropagation();
+  const n = _issueVariantCovers.length;
+  if (!n) return;
+  _lbIndex = (_lbIndex + d + n) % n;
+  _lbRender();
+}
+function _lbRender() {              // image changed — replay the cover-in reveal
+  const c = _issueVariantCovers[_lbIndex];
+  if (!c) return;
+  const img = document.getElementById('vlb-img');
+  img.classList.remove('loaded');  // reset so the global cover-in animation replays on load
+  img.src = c.large || c.thumb;
+  img.alt = c.name || '';
+  document.getElementById('vlb-name').textContent = c.name || '';
+  document.getElementById('vlb-count').textContent = `${_lbIndex + 1} / ${_issueVariantCovers.length}`;
+  _lbControls();
+}
+function _lbControls() {            // button state only — no image re-animation (avoids the pulse)
+  const c = _issueVariantCovers[_lbIndex];
+  if (!c) return;
+  const inc = document.getElementById('vlb-include');
+  const on = _issueVariantSelected.has(c.id);
+  inc.classList.toggle('on', on);
+  inc.textContent = on ? '✓ Included' : 'Include';
+  document.getElementById('vlb-star').classList.toggle('on', _issueVariantPrimary === c.id);
+}
+function _lbToggleInclude() {
+  const c = _issueVariantCovers[_lbIndex];
+  if (c) { _imToggleVariant(c.id); _lbControls(); }   // _imToggleVariant keeps the grid + footer in sync
+}
+function _lbSetCover() {
+  const c = _issueVariantCovers[_lbIndex];
+  if (c) { _imSetPrimary({ stopPropagation() {} }, c.id); _lbControls(); }
 }
 
 async function _imApplyVariants(seriesId, number, isOwned) {
@@ -1781,7 +1874,7 @@ function _updateIssueDlBtn(seriesId, number, qs) {
   }
   if (state === 'done') {
     btn.disabled = true; btn.textContent = 'Done ✓';
-    btn.style.cssText += ';background:var(--grn);border-color:var(--grn)';
+    btn.style.cssText += ';background:var(--pri);border-color:var(--pri)';
     return;
   }
   btn.disabled = false;
@@ -1801,10 +1894,27 @@ async function issueDownload(seriesId, number) {
 }
 
 document.addEventListener('keydown', e => {
+  // Lightbox is on top — it gets Esc / arrows first.
+  if (!document.getElementById('variant-lightbox').classList.contains('hidden')) {
+    if (e.key === 'Escape') _lbClose();
+    else if (e.key === 'ArrowLeft') _lbStep(e, -1);
+    else if (e.key === 'ArrowRight') _lbStep(e, 1);
+    return;
+  }
   if (e.key === 'Escape' && !document.getElementById('modal').classList.contains('hidden')) {
     closeModal();
   }
 });
+
+// Fade covers in once they load (or fail) instead of popping. Delegated in the
+// capture phase because the load/error events don't bubble — covers all imgs
+// rendered dynamically.
+document.addEventListener('load', e => {
+  if (e.target.tagName === 'IMG') e.target.classList.add('loaded');
+}, true);
+document.addEventListener('error', e => {
+  if (e.target.tagName === 'IMG') e.target.classList.add('loaded');
+}, true);
 
 // --- Boot ---
 
