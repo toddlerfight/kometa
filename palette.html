@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kometa — Palette</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#000;--su1:#111;--su2:#1a1a1a;--su3:#2a2a2a;--su4:#353535;--bd:#2a2a2a;--bd-l:#3a3a3a;
+    --pri:#91fc4e;--pri-d:#1a2e0d;--pri-l:#a5fc6e;--amb:#fddd57;--pink:#ff0097;
+    --blu:#00d3ff;--tp:#fafafa;--tm:#d2d2d2;--tq:#666;--td:#444;--ink:#000;
+    --scrim:rgba(0,0,0,.75);--hairline:rgba(255,255,255,.2);--shadow:rgba(0,0,0,.5);
+    --ease-out:cubic-bezier(.22,.61,.36,1);--ease-in:cubic-bezier(.4,0,1,1);--ease-in-out:cubic-bezier(.65,0,.35,1);
+    --t-fast:.15s;--t-mid:.2s;--t-slow:.28s;--t-scrim:.38s;
+    --blur:12px;--zoom:1.06;--zoom-lg:1.18;--rise:6px;--drop:-32px;--sink:16px;
+    --font:'Victor Mono',monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tp);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:32px}
+  h1{font-size:1.5rem;margin:0 0 4px}
+  .sub{color:var(--tq);margin:0 0 28px;font-size:.85rem}
+  h2{font-size:1rem;margin:34px 0 14px;color:var(--pri);
+    border-bottom:1px solid var(--bd);padding-bottom:8px;font-weight:700}
+  h2 span{color:var(--tq);font-weight:400;font-size:.8rem;margin-left:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+  .sw{background:var(--su2);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+  .chip{height:84px;display:flex;align-items:flex-end;justify-content:space-between;padding:8px;position:relative}
+  .chip .uses{font-size:.68rem;background:rgba(0,0,0,.45);color:#fff;padding:1px 6px;border-radius:10px}
+  .meta{padding:9px 11px 11px}
+  .var{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;color:var(--tp);font-weight:600}
+  .hex{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.74rem;color:var(--tq);float:right}
+  .role{font-size:.74rem;color:var(--tm);margin-top:4px}
+  .checker{background-image:linear-gradient(45deg,#333 25%,transparent 25%),linear-gradient(-45deg,#333 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#333 75%),linear-gradient(-45deg,transparent 75%,#333 75%);background-size:14px 14px;background-position:0 0,0 7px,7px -7px,-7px 0}
+  /* text-on-surface demo cells */
+  .textrow{display:flex;flex-wrap:wrap;gap:14px}
+  .textcard{background:var(--su2);border:1px solid var(--bd);border-radius:8px;padding:16px 18px;min-width:240px}
+  .textcard .big{font-size:1.15rem;font-weight:600}
+  .textcard .lbl{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--tq);margin-top:8px}
+  .warn{background:#2e0a12;border:1px solid var(--pink);border-radius:8px;padding:14px 16px;margin-top:8px}
+  .warn b{color:var(--pink)}
+  code{font-family:ui-monospace,monospace;background:var(--su3);padding:1px 5px;border-radius:4px;font-size:.82rem}
+  h3{font-size:.85rem;margin:22px 0 10px;color:var(--tm);font-weight:700}
+  h3 span{color:var(--tq);font-weight:400;font-size:.74rem;margin-left:6px}
+  .proposed{background:var(--su1);border:1px solid var(--pri);border-radius:10px;padding:6px 22px 22px;margin-bottom:34px}
+  .demo{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end}
+  .d-row{background:var(--su2);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;min-width:180px;transition:background .12s,border-color .12s;cursor:pointer}
+  .d-row:hover{background:var(--su3)}
+  .d-sub{font-size:.7rem;color:var(--tq);margin-top:6px;font-family:ui-monospace,monospace}
+  .d-btn{border:none;border-radius:7px;padding:9px 18px;font-weight:600;cursor:pointer;font-size:.85rem;transition:background .12s,border-color .12s,color .12s}
+  .d-btn.pri{background:var(--pri);color:#000}
+  .d-btn.pri:hover{background:var(--pri-l)}
+  .d-btn.ghost{background:transparent;border:1px solid var(--bd);color:var(--tm)}
+  .d-btn.ghost:hover{border-color:var(--bd-l);color:var(--tp)}
+  .d-card{width:104px;aspect-ratio:2/3;background:var(--su2);border:2px solid var(--bd);border-radius:8px;transition:border-color .12s;cursor:pointer;display:flex;align-items:flex-end;justify-content:center;padding-bottom:8px;color:var(--td);font-size:.68rem}
+  .d-card:hover{border-color:var(--bd-l)}
+  .replay-btn{background:var(--pri);color:var(--ink);border:none;border-radius:7px;padding:8px 16px;font-weight:600;cursor:pointer;font-size:.82rem;margin-bottom:6px}
+  .m-sub{color:var(--tq);font-size:.78rem;margin:14px 0 4px}
+  .m-row{display:flex;align-items:center;gap:14px;margin:9px 0}
+  .m-label{width:180px;font-family:ui-monospace,monospace;font-size:.76rem;color:var(--tm)}
+  .m-label b{color:var(--tp);font-weight:600}
+  .m-track{flex:1;height:12px;background:var(--su3);border-radius:6px;position:relative}
+  .m-dot{position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%;background:var(--pri)}
+  #motion.go .m-dot{left:calc(100% - 10px)}
+  .m-dot.d-fast{transition:left var(--t-fast) linear}
+  .m-dot.d-mid{transition:left var(--t-mid) linear}
+  .m-dot.d-slow{transition:left var(--t-slow) linear}
+  .m-dot.d-scrim{transition:left var(--t-scrim) linear}
+  .m-dot.e-out{transition:left var(--t-scrim) var(--ease-out)}
+  .m-dot.e-in{transition:left var(--t-scrim) var(--ease-in)}
+  .m-dot.e-inout{transition:left var(--t-scrim) var(--ease-in-out)}
+  .m-mags{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;font-family:ui-monospace,monospace;font-size:.76rem;color:var(--tm);margin-top:6px}
+  .m-mags b{color:var(--tp)}
+  .type-fam{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:10px}
+  .tf{background:var(--su2);border:1px solid var(--bd);border-radius:8px;padding:16px 18px}
+  .tf-sample{font-size:26px;color:var(--tp);line-height:1.1;margin-bottom:10px}
+  .tf-meta{font-family:ui-monospace,monospace;font-size:.74rem;color:var(--tq);line-height:1.5}
+  .tf-meta b{color:var(--tm)}
+  .ts-row{display:flex;align-items:baseline;gap:16px;border-bottom:1px solid var(--bd);padding:7px 0}
+  .ts-px{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--tq);width:50px;flex:none}
+  .ts-use{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--tq);margin-left:auto;flex:none}
+  .ts-sample{color:var(--tp);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font)}
+  .type-notes{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;font-family:ui-monospace,monospace;font-size:.76rem;color:var(--tm);margin-top:6px}
+  .type-notes b{color:var(--tp)}
+</style>
+</head>
+<body>
+  <h1>Kometa — Colour Palette</h1>
+  <p class="sub">Every colour in <code>style.css</code>, grouped by role. Usage counts in the corner of each chip.</p>
+
+  <div class="proposed">
+    <h2 style="border:none;margin-top:8px">✅ Hover convention — applied <span>live in style.css</span></h2>
+    <p class="sub" style="margin-bottom:14px">Hover = one step lighter on the shared ramp. Mouse over:</p>
+    <div class="demo">
+      <button class="d-btn pri">Primary → pri-l</button>
+      <button class="d-btn ghost">Ghost → bd-l</button>
+      <div class="d-row">Row / list item<div class="d-sub">su2 → su3</div></div>
+      <div class="d-card">card → bd-l</div>
+    </div>
+  </div>
+
+  <h2>Surfaces <span>layered dark, background to foreground</span></h2>
+  <div class="grid" id="surfaces"></div>
+
+  <h2>Brand accent <span>lime — the primary identity colour</span></h2>
+  <div class="grid" id="accent"></div>
+
+  <h2>Semantic status <span>meaning-carrying colours</span></h2>
+  <div class="grid" id="status"></div>
+
+  <h2>Text <span>three weights</span></h2>
+  <div class="textrow" id="text"></div>
+
+  <h2>✅ Off-palette one-offs <span>none — every colour now flows through a token</span></h2>
+
+  <h2>Overlay <span>one scrim — the app's only dimming layer</span></h2>
+  <div class="grid" id="overlay"></div>
+
+  <h2>Effects <span>tokenized — border highlight + shadow (not overlays)</span></h2>
+  <div class="grid" id="effects"></div>
+
+  <h2>Motion <span>durations + easing — click Replay to compare</span></h2>
+  <button class="replay-btn" onclick="document.getElementById('motion').classList.toggle('go')">▶ Replay</button>
+  <div id="motion">
+    <div class="m-sub">Durations <span>— linear, so speed is the only variable</span></div>
+    <div class="m-row"><div class="m-label"><b>--t-fast</b> · .15s · hovers</div><div class="m-track"><div class="m-dot d-fast"></div></div></div>
+    <div class="m-row"><div class="m-label"><b>--t-mid</b> · .2s · exits</div><div class="m-track"><div class="m-dot d-mid"></div></div></div>
+    <div class="m-row"><div class="m-label"><b>--t-slow</b> · .28s · entrances</div><div class="m-track"><div class="m-dot d-slow"></div></div></div>
+    <div class="m-row"><div class="m-label"><b>--t-scrim</b> · .38s · backdrop</div><div class="m-track"><div class="m-dot d-scrim"></div></div></div>
+    <div class="m-sub">Easing <span>— same duration, different curve</span></div>
+    <div class="m-row"><div class="m-label"><b>--ease-out</b> · entries</div><div class="m-track"><div class="m-dot e-out"></div></div></div>
+    <div class="m-row"><div class="m-label"><b>--ease-in</b> · exits</div><div class="m-track"><div class="m-dot e-in"></div></div></div>
+    <div class="m-row"><div class="m-label"><b>--ease-in-out</b> · moves</div><div class="m-track"><div class="m-dot e-inout"></div></div></div>
+    <div class="m-sub">Magnitudes <span>— blur / zoom / entrance offsets</span></div>
+    <div class="m-mags">
+      <div><b>--blur</b> 12px · cover focus-in</div>
+      <div><b>--zoom</b> 1.06 · hover + settle</div>
+      <div><b>--zoom-lg</b> 1.18 · activity-card hover</div>
+      <div><b>--rise</b> 6px · card / result entrance</div>
+      <div><b>--drop</b> -32px · modal in</div>
+      <div><b>--sink</b> 16px · modal out</div>
+    </div>
+  </div>
+
+  <h2>Typography <span>one family — Victor Mono, via <code>--font</code></span></h2>
+  <div class="type-fam">
+    <div class="tf">
+      <div class="tf-sample" style="font-family:var(--font);font-weight:700">Absolute Batman</div>
+      <div class="tf-meta"><b>Victor Mono</b> · 700<br>headings · titles · display</div>
+    </div>
+    <div class="tf">
+      <div class="tf-sample" style="font-family:var(--font);font-weight:500">The quick brown fox</div>
+      <div class="tf-meta"><b>Victor Mono</b> · 500<br>body · UI text</div>
+    </div>
+    <div class="tf">
+      <div class="tf-sample" style="font-family:var(--font);font-size:20px">12 / 24 · ONGOING</div>
+      <div class="tf-meta"><b>Victor Mono</b> · 400<br>labels · counts · meta</div>
+    </div>
+  </div>
+  <h3>Size scale <span>px · rendered in the body font</span></h3>
+  <div id="type-scale"></div>
+  <h3>Weights · line-height · letter-spacing</h3>
+  <div class="type-notes">
+    <div><b>400</b> · Inter / Mono regular</div>
+    <div><b>500</b> · Inter medium</div>
+    <div><b>700</b> · Space Grotesk bold</div>
+    <div><b>line-height</b> · 1 · 1.1 · 1.3 · 1.4 · 1.6</div>
+    <div><b>letter-spacing</b> · .04–.12em (mono caps)</div>
+  </div>
+
+
+<script>
+const surfaces=[
+  ["--bg","#000000","page background (pure black)","1"],
+  ["--su1","#111111","surface 1 · variant cover bg","8"],
+  ["--su2","#1a1a1a","surface 2 — cards · default row","30"],
+  ["--su3","#2a2a2a","surface 3 — inputs · row-hover lift","17"],
+  ["--su4","#353535","hover surface","1"],
+  ["--bd","#2a2a2a","default border (= su3)","41"],
+  ["--bd-l","#3a3a3a","border on hover","1"],
+];
+const accent=[
+  ["--pri","#91fc4e","accent + success/owned: buttons, selected, active nav, owned","56"],
+  ["--pri-d","#1a2e0d","dark tint — active states + done-chip bg (was --prih/--grn-d)","6"],
+  ["--pri-l","#a5fc6e","hover brighten","1"],
+  ["--ink","#000000","dark text on bright fills (--pri/--pink); aliases --bg","2"],
+];
+const status=[
+  ["--amb","#fddd57","missing / warning (a yellow)","16"],
+  ["--amb-d","#2e2200","dark tint — chip-warn bg","1"],
+  ["--pink","#ff0097","error / danger (magenta)","8"],
+  ["--pink-d","#2e0a12","dark tint — chip-fail bg","1"],
+  ["--blu","#00d3ff","upcoming + new-issue events (cyan)","5"],
+];
+const text=[
+  ["--tp","#fafafa","primary text (also white-on-fill, was #fff)","42"],
+  ["--tm","#d2d2d2","muted text","21"],
+  ["--tq","#666666","quiet / tertiary text (absorbs old #888)","72"],
+  ["--td","#444444","dim / placeholder","1"],
+];
+const overlay=[
+  ["--scrim","rgba(0,0,0,.75)","modal backdrop + variant-star dim","2"],
+];
+const effects=[
+  ["--hairline","rgba(255,255,255,.2)","translucent border highlight (variant star)","1"],
+  ["--shadow","rgba(0,0,0,.5)","drop-shadow colour","1"],
+];
+function chip([name,hex,role,uses],checker){
+  const pill = !uses ? "" : (/^\d+$/.test(uses) ? `${uses} use${uses==="1"?"":"s"}` : uses);
+  return `<div class="sw">
+    <div class="chip ${checker?'checker':''}" style="background:${hex}">
+      ${pill?`<span class="uses">${pill}</span>`:""}
+    </div>
+    <div class="meta">
+      <span class="var">${name}</span><span class="hex">${hex}</span>
+      <div class="role">${role}</div>
+    </div>
+  </div>`;
+}
+const put=(id,arr,checker)=>document.getElementById(id).innerHTML=arr.map(a=>chip(a,checker)).join("");
+put("surfaces",surfaces);
+put("accent",accent);
+put("status",status);
+put("overlay",overlay,true);
+put("effects",effects,true);
+document.getElementById("text").innerHTML=text.map(([n,h,r,u])=>
+  `<div class="textcard">
+     <div class="big" style="color:${h}">Absolute Batman #1</div>
+     <div style="color:${h};font-size:.85rem">The quick brown fox jumps over the lazy dog.</div>
+     <div class="lbl">${n} · ${h} · ${u} uses</div>
+   </div>`).join("");
+
+// --- Typography size scale ---
+const typeSizes=[
+  [36,'page hero / big numbers'],[28,'section display'],[24,'modal / detail title'],
+  [22,'sub-display'],[18,'card title'],[15,'subhead'],[14,'body'],[13,'body / UI'],
+  [12,'meta'],[11,'label'],[10,'small label'],[9,'micro label'],[8,'tiny tag'],
+];
+document.getElementById("type-scale").innerHTML = typeSizes.map(([px,use])=>
+  `<div class="ts-row"><span class="ts-px">${px}px</span><span class="ts-sample" style="font-size:${px}px">Absolute Batman #1</span><span class="ts-use">${use}</span></div>`
+).join("");
+</script>
+</body>
+</html>

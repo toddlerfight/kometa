@@ -73,3 +73,20 @@ piecemeal `cat >` deploy.sh, which silently reverts on container recreate):
   foo as _foo`) so call sites don't change, then verify (compile + boot + a functional
   test) before committing. One slice per commit.
 - Architecture/module map lives in `CONTEXT.md`. Keep it current.
+
+## Styling / design tokens
+
+- All design tokens are CSS variables in `:root` at the top of
+  `kometa/static/style.css` — colours, motion (durations `--t-*`, easing
+  `--ease-*`, magnitudes `--blur/--zoom/--rise/...`), and type (`--font`, currently
+  Victor Mono — one family everywhere). Use the variables everywhere; never hardcode
+  a hex, duration, easing curve, or font-family (this applies to inline styles set
+  from `app.js` too).
+- `palette.html` (repo root) is a living visual reference of every token — colours
+  (hex, role, usage count), the overlay/effects, and a Motion section with live
+  duration/easing demos. **Whenever a token changes in `style.css`, update
+  `palette.html` in the same pass** so the reference never drifts. Open it with
+  `open palette.html`.
+- Motion convention: hover = one step lighter; `--t-fast` hovers, `--t-slow`
+  entrances, `--t-mid` exits (snappier than entrances), `--t-scrim` backdrop.
+- Don't change existing styles/tokens without asking first.
