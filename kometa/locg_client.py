@@ -15,6 +15,23 @@ S3_THUMB = "https://s3.amazonaws.com/comicgeeks/comics/covers/medium-{}.jpg"
 S3_LARGE = "https://s3.amazonaws.com/comicgeeks/comics/covers/large-{}.jpg"
 _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 
+
+def _anon_get_fn():
+    """A get(url, **kw) callable that gets past Cloudflare without login. cloudscraper's
+    TLS fingerprint is blocked from some hosts (e.g. the NAS container — 403 even on the
+    homepage); curl_cffi impersonates a real Chrome TLS handshake, which CF accepts.
+    Warms the homepage once for the ci_session cookie."""
+    from curl_cffi import requests as _cffi
+    s = _cffi.Session(impersonate="chrome")
+    try:
+        s.get(BASE + "/", timeout=20)
+    except Exception:
+        pass
+    def _get(url, **kw):
+        kw.setdefault("timeout", 25)
+        return s.get(url, **kw)
+    return _get
+
 def _parse_search_html(html: str) -> list[dict]:
     """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}]."""
     soup = BeautifulSoup(html, "lxml")
@@ -63,15 +80,10 @@ def _parse_search_html(html: str) -> list[dict]:
 def search_series_anon(title: str) -> list[dict]:
     """Search LOCG without credentials — the search endpoint works without auth."""
     try:
-        r = requests.get(
+        r = _anon_get_fn()(
             f"{BASE}/search/ajax_issues",
             params={"query": title},
-            headers={
-                "User-Agent": _UA,
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": BASE + "/",
-            },
-            timeout=10,
+            headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
         )
         r.raise_for_status()
         return _parse_search_html(r.text)
@@ -238,16 +250,7 @@ def get_issues_anon(series_id: int) -> list[dict]:
     """Fetch a series' issue list with no login, via cloudscraper. This is what
     lets sync build an issue list — and therefore detect missing issues — for a
     keyless, Komga-less install. Mirrors search_series_anon / fetch_variants."""
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
-        )
-    except ImportError:
-        raise RuntimeError("cloudscraper not installed") from None
-
-    scraper.get(BASE + '/')
-    return _get_issues_with_get(series_id, scraper.get)
+    return _get_issues_with_get(series_id, _anon_get_fn())
 
 
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
@@ -288,17 +291,8 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
 
 
 def fetch_variants(locg_issue_id: str) -> dict:
-    """Fetch variants anonymously via cloudscraper. Prefer LOCGClient.fetch_variants() when auth is available."""
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
-        )
-    except ImportError:
-        raise RuntimeError("cloudscraper not installed") from None
-
-    scraper.get(BASE + '/')
-    return _fetch_variants_with_get(locg_issue_id, scraper.get)
+    """Fetch variants anonymously. Prefer LOCGClient.fetch_variants() when auth is available."""
+    return _fetch_variants_with_get(locg_issue_id, _anon_get_fn())
 
 
 def _parse_issue_details(html: str) -> dict:
@@ -340,15 +334,8 @@ def _parse_issue_details(html: str) -> dict:
 def get_issue_details_anon(comic_id) -> dict:
     """Fetch an issue's description + credits from LOCG with no login. Same /comic/
     {id}/comic page the variant scraper uses. Keyless — works for any install."""
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
-        )
-    except ImportError:
-        raise RuntimeError("cloudscraper not installed") from None
-    scraper.get(BASE + '/')
-    r = scraper.get(f"{BASE}/comic/{comic_id}/comic",
-                    headers={'Referer': BASE + '/', 'Accept': 'text/html'})
+    g = _anon_get_fn()
+    r = g(f"{BASE}/comic/{comic_id}/comic",
+          headers={'Referer': BASE + '/', 'Accept': 'text/html'})
     r.raise_for_status()
     return _parse_issue_details(r.text)

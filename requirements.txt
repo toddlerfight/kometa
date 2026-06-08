@@ -9,3 +9,4 @@ lxml==6.1.0
 cloudscraper==1.2.71
 rarfile==4.2
 defusedxml==0.7.1
+curl_cffi==0.15.0
