@@ -489,15 +489,19 @@ function buildIssueTiles(s) {
       inner = `<div class="issue-tile-img">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
       </div>`;
-    } else if (issue.variant_cover || issue.metron_image) {
+    } else {
       // variant_cover = your saved variant pick (not-yet-downloaded issues) — show it
       // here too so the grid tile matches the modal, falling back to the solicit cover.
+      // No client-side art at all? Ask the server — its thumbnail route walks the
+      // whole fallback chain (metron → LOCG main → variant art). An issue with
+      // genuinely zero art anywhere 404s and the img removes itself, same blank as before.
+      const thumbSrc = issue.variant_cover
+        || issue.metron_image
+        || `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
       inner = `<div class="issue-tile-img ${st}">
-        <img src="${esc(issue.variant_cover || issue.metron_image)}" alt="${num}" loading="lazy"
+        <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy"
           onerror="this.remove()">${dateBadge}
       </div>`;
-    } else {
-      inner = `<div class="issue-tile-img ${st}">${dateBadge}</div>`;
     }
     const searchBtn = (st === 'missing' || st === 'today')
       ? `<button class="issue-tile-search" title="Search for this issue"
@@ -1663,7 +1667,10 @@ async function showIssueModal(seriesId, number) {
     ? issue.variant_cover
     : issue.komga_book_id
       ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
-      : (issue.metron_image || '');
+      : (issue.metron_image
+          // same server-side fallback chain the grid tiles use — never show the
+          // no-cover void when LOCG has variant art for an artless upcoming issue
+          || `/api/series/${seriesId}/issues/${issue.number}/thumbnail`);
 
   const chipMap = {
     owned:   `<span class="chip chip-complete">Owned</span>`,
