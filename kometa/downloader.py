@@ -1,4 +1,3 @@
-import io
 import os
 import re
 import time
@@ -6,6 +5,7 @@ import shutil
 import logging
 import zipfile
 import requests
+from concurrent.futures import ThreadPoolExecutor
 
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
@@ -35,27 +35,30 @@ def _patch_comic_info(xml_bytes: bytes, added_covers: int) -> bytes:
         return xml_bytes
 
 
+def _download_cover(cover_id: str) -> bytes | None:
+    """Plain requests, no scraper — the covers sit on public S3, and there is no
+    Cloudflare bouncer guarding a bucket that never asked for one."""
+    try:
+        r = requests.get(S3_LARGE.format(cover_id), timeout=30)
+    except requests.RequestException:
+        return None
+    return r.content if r.status_code == 200 and r.content else None
+
+
 def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
     """
-    Prepend selected variant cover images to cbz_path. Writes back in place.
+    Prepend selected variant cover images to cbz_path. Writes back in place
+    (atomically — a temp file next to the target, then os.replace).
     CBR input is converted to CBZ. Returns count of images injected.
     selected: [{"id": str, "name": str}, ...]
     primary_id: id of the cover that should sort first
     """
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'darwin', 'mobile': False}
-        )
-    except ImportError:
-        raise RuntimeError("cloudscraper not installed — cannot fetch cover images") from None
-
-    variant_pages = []
-    for cover in selected:
-        url = S3_LARGE.format(cover['id'])
-        r = scraper.get(url, headers={'Referer': _LOCG_BASE + '/'})
-        if r.status_code == 200 and r.content:
-            variant_pages.append((cover['id'], cover.get('name', cover['id']), r.content))
+    # Bare requests.get per thread — no shared session state to trip over
+    ids = [c['id'] for c in selected]
+    with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
+        datas = list(ex.map(_download_cover, ids))
+    variant_pages = [(c['id'], c.get('name', c['id']), d)
+                     for c, d in zip(selected, datas) if d]
 
     variant_pages.sort(key=lambda x: (0 if x[0] == primary_id else 1, x[1]))
 
@@ -70,37 +73,45 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
     else:
         opener = zipfile.ZipFile
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_STORED) as zf:
-        cover_names = []
-        for i, (_vid, name, data) in enumerate(variant_pages):
-            safe = re.sub(r'[^\w\s\-]', '', name).strip().replace(' ', '_')
-            fname = f"{str(i).zfill(3)}_cover_{safe}.jpg"
-            zf.writestr(fname, data)
-            cover_names.append(fname)
-
-        with opener(cbz_path, 'r') as src:
-            orig_names = sorted(src.namelist())
-            comic_info_data = None
-            for name in orig_names:
-                if name.lower() == 'comicinfo.xml':
-                    comic_info_data = src.read(name)
-                elif re.match(r'\d{3}_cover_', name):
-                    # Drop covers WE injected on a previous apply — replace, don't stack.
-                    # Never matches the comic's own pages (they're not named NNN_cover_…),
-                    # so the original cover + interior pages are always preserved.
-                    continue
-                else:
-                    zf.writestr(name, src.read(name))
-
-        if comic_info_data is not None:
-            comic_info_data = _patch_comic_info(comic_info_data, len(cover_names))
-            zf.writestr('ComicInfo.xml', comic_info_data)
-
+    # Build the rebuilt archive in a temp file beside the target, then os.replace
+    # it into place. The original CBZ is bit-for-bit untouched until the swap —
+    # a crash mid-write leaves a stray .tmp, never a truncated comic.
     out_path = re.sub(r'\.cbr$', '.cbz', cbz_path, flags=re.IGNORECASE)
-    buf.seek(0)
-    with open(out_path, 'wb') as f:
-        f.write(buf.read())
+    tmp_path = out_path + '.kometa-tmp'
+    try:
+        with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_STORED) as zf:
+            cover_names = []
+            for i, (_vid, name, data) in enumerate(variant_pages):
+                safe = re.sub(r'[^\w\s\-]', '', name).strip().replace(' ', '_')
+                fname = f"{str(i).zfill(3)}_cover_{safe}.jpg"
+                zf.writestr(fname, data)
+                cover_names.append(fname)
+
+            with opener(cbz_path, 'r') as src:
+                orig_names = sorted(src.namelist())
+                comic_info_data = None
+                for name in orig_names:
+                    if name.lower() == 'comicinfo.xml':
+                        comic_info_data = src.read(name)
+                    elif re.match(r'\d{3}_cover_', name):
+                        # Drop covers WE injected on a previous apply — replace, don't stack.
+                        # Never matches the comic's own pages (they're not named NNN_cover_…),
+                        # so the original cover + interior pages are always preserved.
+                        continue
+                    else:
+                        zf.writestr(name, src.read(name))
+
+            if comic_info_data is not None:
+                comic_info_data = _patch_comic_info(comic_info_data, len(cover_names))
+                zf.writestr('ComicInfo.xml', comic_info_data)
+
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
     return len(variant_pages)
 

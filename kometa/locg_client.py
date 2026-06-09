@@ -16,21 +16,34 @@ S3_LARGE = "https://s3.amazonaws.com/comicgeeks/comics/covers/large-{}.jpg"
 _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 
 
+# One warmed anon session, rebuilt on a timer. Building a fresh impersonated
+# session — homepage warm-up and all — on EVERY anon call was paying the
+# Cloudflare toll over and over for nothing. The TTL keeps the cookies from
+# rotting under a long-running server.
+_ANON_SESSION_TTL = 1800  # seconds
+_anon_session = {"get": None, "ts": 0.0}
+
+
 def _anon_get_fn():
     """A get(url, **kw) callable that gets past Cloudflare without login. cloudscraper's
     TLS fingerprint is blocked from some hosts (e.g. the NAS container — 403 even on the
     homepage); curl_cffi impersonates a real Chrome TLS handshake, which CF accepts.
-    Warms the homepage once for the ci_session cookie."""
-    from curl_cffi import requests as _cffi
-    s = _cffi.Session(impersonate="chrome")
-    try:
-        s.get(BASE + "/", timeout=20)
-    except Exception:
-        pass
-    def _get(url, **kw):
-        kw.setdefault("timeout", 25)
-        return s.get(url, **kw)
-    return _get
+    Warms the homepage once for the ci_session cookie; the session is cached and
+    reused until _ANON_SESSION_TTL expires."""
+    now = time.time()
+    if _anon_session["get"] is None or now - _anon_session["ts"] > _ANON_SESSION_TTL:
+        from curl_cffi import requests as _cffi
+        s = _cffi.Session(impersonate="chrome")
+        try:
+            s.get(BASE + "/", timeout=20)
+        except Exception:
+            pass
+        def _get(url, **kw):
+            kw.setdefault("timeout", 25)
+            return s.get(url, **kw)
+        _anon_session["get"] = _get
+        _anon_session["ts"] = now
+    return _anon_session["get"]
 
 def _parse_search_html(html: str) -> list[dict]:
     """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}]."""
@@ -253,8 +266,20 @@ def get_issues_anon(series_id: int) -> list[dict]:
     return _get_issues_with_get(series_id, _anon_get_fn())
 
 
+# Variant lists barely change, but they DO change — fresh issues grow new
+# variants for weeks after release. Cache hard enough to make modal reopens
+# free, short enough that a new variant shows up same-day.
+_VARIANT_CACHE_TTL = 6 * 3600  # seconds
+_variant_cache: dict[str, tuple[float, dict]] = {}
+
+
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
-    """Shared variant-scraping logic. get_fn(url, **kwargs) must return a requests.Response."""
+    """Shared variant-scraping logic. get_fn(url, **kwargs) must return a
+    requests.Response. Results are cached per issue id for _VARIANT_CACHE_TTL."""
+    cached = _variant_cache.get(locg_issue_id)
+    if cached and time.time() - cached[0] < _VARIANT_CACHE_TTL:
+        return cached[1]
+
     url = f"{BASE}/comic/{locg_issue_id}/comic"
     r = get_fn(url, headers={'Referer': BASE + '/', 'Accept': 'text/html'})
     if hasattr(r, 'raise_for_status'):
@@ -287,7 +312,9 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
                            'thumb': S3_THUMB.format(vid),
                            'large': S3_LARGE.format(vid)})
 
-    return {'title': issue_title, 'covers': covers}
+    result = {'title': issue_title, 'covers': covers}
+    _variant_cache[locg_issue_id] = (time.time(), result)
+    return result
 
 
 def fetch_variants(locg_issue_id: str) -> dict:
