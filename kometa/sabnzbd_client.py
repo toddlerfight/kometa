@@ -87,17 +87,6 @@ class SABnzbdClient:
         return {"status": "unknown"}
 
 
-def find_comic_in_dir(directory: str) -> str | None:
-    """Walk directory and return path to the first comic file found."""
-    if not directory or not os.path.isdir(directory):
-        return None
-    for root, _, files in os.walk(directory):
-        for f in sorted(files):
-            if os.path.splitext(f)[1].lower() in _COMIC_EXTS:
-                return os.path.join(root, f)
-    return None
-
-
 def find_comics_in_dir(directory: str) -> list[str]:
     """Return all comic files under directory, sorted."""
     out: list[str] = []

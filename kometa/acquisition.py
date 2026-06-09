@@ -124,7 +124,16 @@ def _process_queue():
 
 
 def _sweep_missing():
-    """Queue missing issues; try a pack NZB first for series with many gaps."""
+    """Queue genuinely-missing released issues — but ONLY for series whose folder we've
+    actually inventoried (set + present on disk). That folder gate is the safety rail:
+    a series with no/absent folder has unverified ownership (every issue reads not-owned),
+    and sweeping it blind is exactly how a fresh instance once queued the entire catalog.
+    Runs after sync_one has folder-scanned each series, so `owned` is real before we sweep.
+    No folder = no sweep, full stop."""
+    # Series we've verified on disk — ownership is trustworthy for these only.
+    checked = {s["id"] for s in db.get_all_series(DB_PATH)
+               if s.get("folder_path") and os.path.isdir(s["folder_path"])}
+
     missing_counts = db.get_missing_counts_by_series(DB_PATH)
     pack_submitted: set[int] = set()
     indexers = _usenet_indexers()
@@ -132,6 +141,8 @@ def _sweep_missing():
 
     if indexers and sab:
         for series_id, count in missing_counts.items():
+            if series_id not in checked:
+                continue
             if count < PACK_THRESHOLD:
                 continue
             if db.has_active_pack(series_id, DB_PATH):
@@ -149,7 +160,7 @@ def _sweep_missing():
 
     rows = db.get_missing_for_monitored(DB_PATH)
     for row in rows:
-        if row["tracked_series_id"] not in pack_submitted:
+        if row["tracked_series_id"] in checked and row["tracked_series_id"] not in pack_submitted:
             db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
 
 
@@ -230,7 +241,11 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
             logger.warning(f"Komga scan after pack placement failed: {e}")
         return
 
-    comics = find_comics_in_dir(storage)
+    # SAB reports `storage` as the completed FILE for a single-file download, or the
+    # job DIRECTORY for multi-file. find_comics_in_dir walks a directory, so a file
+    # path would walk to nothing — scan the parent dir when storage is a file.
+    scan_dir = storage if os.path.isdir(storage) else os.path.dirname(storage)
+    comics = find_comics_in_dir(scan_dir)
     if not comics:
         db.update_queue_state(qid, "failed", error="Usenet: no comic files found in completed download", path=DB_PATH)
         return

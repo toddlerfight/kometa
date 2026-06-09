@@ -7,6 +7,8 @@ thumbnails. Metron is authoritative for the issue list; CV/LOCG fill gaps and
 add upcoming solicitations.
 """
 import os
+import re
+import time
 import logging
 
 from kometa.sources import (
@@ -22,31 +24,67 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
 
+# Full Komga library, cached briefly so a 47-series sync_all loop pulls it ONCE
+# instead of hammering Komga per series. TTL is short — a sync run is the only
+# place this gets read in bursts.
+_KOMGA_ALL_CACHE: dict = {"ts": 0.0, "data": None}
+_KOMGA_ALL_TTL = 120  # seconds
 
-def _best_komga_match(results, title):
+
+def _komga_all_series(komga):
+    """The whole Komga library (cached). Returns a list; [] on failure."""
+    now = time.time()
+    if _KOMGA_ALL_CACHE["data"] is None or now - _KOMGA_ALL_CACHE["ts"] > _KOMGA_ALL_TTL:
+        try:
+            _KOMGA_ALL_CACHE["data"] = komga.get_all_series()
+            _KOMGA_ALL_CACHE["ts"] = now
+        except Exception as e:
+            logger.warning(f"Komga get_all_series failed: {e}")
+            return _KOMGA_ALL_CACHE["data"] or []
+    return _KOMGA_ALL_CACHE["data"] or []
+
+
+def _best_komga_match(candidates, title):
     """Pick the Komga series matching title — only when there's exactly ONE exact
     (normalised) title match, so ambiguous names (e.g. multiple Batman runs) don't
-    mis-link. Returns the komga series id or None."""
-    import re
+    mis-link. Match is punctuation-insensitive (strips everything but a-z0-9), so
+    Kometa's 'Batman: Gargoyle of Gotham' links to Komga's 'Batman - Gargoyle of
+    Gotham'. Feed it the FULL library (not a Komga /search result), since Komga's
+    search itself chokes on the punctuation we're trying to ignore. Returns id or None."""
     def norm(s):
         return re.sub(r"[^a-z0-9]", "", (s or "").lower())
     tn = norm(title)
     if not tn:
         return None
-    exact = [r.get("id") for r in (results or [])
+    exact = [r.get("id") for r in (candidates or [])
              if norm((r.get("metadata") or {}).get("title") or r.get("name") or "") == tn]
     return exact[0] if len(exact) == 1 else None
+
+
+def _best_komga_match_by_path(candidates, folder_path):
+    """Match a series to its Komga counterpart by FOLDER PATH (Komga's series.url).
+    This is the unambiguous join key — same /comics mount on both sides — and it's
+    the ONLY thing that can disambiguate cases title-matching can't: three bare
+    'Batman' series in Komga (different runs) all normalise identically, but their
+    folder urls are distinct. Returns the id on a single exact path match, else None."""
+    if not folder_path:
+        return None
+    hits = [r.get("id") for r in (candidates or []) if r.get("url") == folder_path]
+    return hits[0] if len(hits) == 1 else None
 
 
 def sync_one(series: dict):
     komga = _komga()
     metron = _metron()
 
-    # Auto-link to a Komga series by title when Komga is connected but this series
-    # isn't linked yet (replaces the old Match step). Single exact match only.
+    # Auto-link to a Komga series when connected but unlinked. Folder PATH first
+    # (unambiguous — disambiguates same-titled runs like the Batman 2016/2025), then
+    # fall back to normalised title for series whose folder Komga hasn't got.
     if not series.get("komga_series_id") and komga:
         try:
-            kid = _best_komga_match(komga.search_series(series["title"]), series["title"])
+            all_komga = _komga_all_series(komga)
+            kid = (_best_komga_match_by_path(all_komga, series.get("folder_path"))
+                   or _best_komga_match(all_komga, series["title"]))
             if kid and db.set_komga_series_id(series["id"], kid, DB_PATH):
                 series = dict(series, komga_series_id=kid)
         except Exception as e:
@@ -63,38 +101,59 @@ def sync_one(series: dict):
         except Exception:
             pass
 
-    # Komga book map — used for ownership supplement and book IDs (thumbnails)
+    # Komga book map — issue number -> book id, for stamping komga_book_id (thumbnails
+    # + reader links). The FILENAME is the source of truth: Komga's numberSort is an
+    # unreliable running counter that TPBs/specials/dupes shift out of alignment (e.g.
+    # "Monstress #062" gets numberSort 83), so a numberSort-keyed map silently drops
+    # real issues. Parse the filename first; fall back to numberSort only when the name
+    # has no parseable issue number. On a clash, a filename-derived key always wins.
     book_map: dict[float, str] = {}
+    book_src: dict[float, str] = {}  # 'name' (authoritative) vs 'sort' (fallback)
     if series.get("komga_series_id") and komga:
         try:
             for b in komga.get_books(series["komga_series_id"]):
                 if b.get("media", {}).get("status") == "ERROR":
                     continue
-                n = b["metadata"]["numberSort"]
-                if n is None:
-                    continue
-                key = float(n)
-                if key in book_map:
-                    # numberSort collision = Komga metadata is wrong on at least one book.
-                    # Prefer whichever book's filename actually matches the key.
-                    fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
-                    logger.warning(
-                        "numberSort collision at %s for '%s': %s vs %s",
-                        key, series.get("title"), book_map[key], b["id"]
-                    )
-                    if fn_num == key:
-                        book_map[key] = b["id"]
+                fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
+                if fn_num is not None:
+                    key, src = fn_num, "name"
+                    # Komga's own number for this book is unreliable — push our
+                    # filename-derived number back (locked) so Komga's labels AND
+                    # ordering (it sorts by numberSort) match reality. Only when it
+                    # disagrees, so we're not re-writing on every sync. Best-effort.
+                    if komga and b["metadata"].get("numberSort") != fn_num:
+                        num_str = str(int(fn_num)) if fn_num == int(fn_num) else str(fn_num)
+                        try:
+                            komga.set_book_number(b["id"], num_str, fn_num)
+                        except Exception as e:
+                            logger.warning(f"Komga renumber failed for book {b['id']}: {e}")
                 else:
-                    book_map[key] = b["id"]
+                    n = b["metadata"].get("numberSort")
+                    if n is None:
+                        continue
+                    key, src = float(n), "sort"
+                # A filename-derived ('name') key always wins. So only overwrite an
+                # existing entry when the incumbent is a 'sort' fallback AND the new one
+                # is authoritative; otherwise keep what's already there (authoritative
+                # incumbent stays, fallback-vs-fallback keeps the first seen).
+                if key in book_map and not (book_src[key] == "sort" and src == "name"):
+                    continue
+                book_map[key] = b["id"]
+                book_src[key] = src
         except Exception:
             pass
 
-    # Ownership = what's on disk. book_map is only used to populate komga_book_id for thumbnails.
+    # Ownership = what's on disk, FULL STOP. book_map exists only to stamp
+    # komga_book_id for thumbnails — it is NOT an ownership source. No folder, or
+    # a folder that isn't there yet? Then nothing is owned until a real file lands
+    # (rescan_owned, below, is the sole authority and re-derives purely from disk).
+    # Komga's book list does NOT get a vote here — that's the rule.
     folder = series.get("folder_path")
-    if folder and os.path.isdir(folder):
-        owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
-    else:
-        owned_numbers = set(book_map.keys())
+    owned_numbers = (
+        _scan_folder_numbers(folder, series.get("title", ""))
+        if folder and os.path.isdir(folder)
+        else set()
+    )
 
     # --- Build issue map from Metron (primary) ---
     issue_map: dict[float, dict] = {}
@@ -174,6 +233,15 @@ def sync_one(series: dict):
     # CREATES issues for files that aren't in the metadata list, e.g. when LOCG/
     # Metron is unavailable), so ownership never depends on the network.
     rescan_owned(series)
+
+    # Stamp Komga book ids onto the (now reconciled) issues. The upsert loop above
+    # only reached issues that came from a metadata source; a folder-only series (no
+    # Metron/CV/LOCG — e.g. a Noir Edition) builds its issue list purely from disk via
+    # rescan_owned, which knows nothing of book_map. Without this its owned issues get
+    # no komga_book_id → no thumbnail, no read link. UPDATE is a no-op for any book
+    # number that has no matching issue row.
+    for num, bid in book_map.items():
+        db.set_komga_book_id(series["id"], num, bid, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
 

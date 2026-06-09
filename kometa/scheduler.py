@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 _raw = os.environ.get("KOMETA_SYNC_HOURS", "5,12,17")
 SYNC_HOURS = [int(h.strip()) for h in _raw.split(",")]
 
+# How often to poll SABnzbd for in-flight usenet downloads. Lower = smoother progress
+# bar (SAB's the source of truth for %, the UI only sees what we last polled). It's a
+# local API and the poll no-ops when nothing's pending, so a tight interval is cheap.
+USENET_POLL_SECONDS = int(os.environ.get("KOMETA_USENET_POLL_SECONDS", "5"))
+
 
 def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None):
     scheduler = BackgroundScheduler(timezone="Australia/Sydney")
@@ -29,11 +34,11 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         replace_existing=True,
     )
 
-    # Poll SABnzbd for pending usenet jobs every 60 seconds
+    # Poll SABnzbd for pending usenet jobs (interval configurable — default 5s)
     if poll_usenet_fn:
         scheduler.add_job(
             poll_usenet_fn,
-            IntervalTrigger(seconds=60),
+            IntervalTrigger(seconds=USENET_POLL_SECONDS),
             id="usenet_poller",
             replace_existing=True,
         )
@@ -48,5 +53,5 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         )
 
     scheduler.start()
-    logger.info(f"Scheduler started — syncing+sweeping at {SYNC_HOURS} AEST, queue every 5min, usenet poll every 60s, release-day retry daily 15/17/19/21/23 AEST")
+    logger.info(f"Scheduler started — syncing+sweeping at {SYNC_HOURS} AEST, queue every 5min, usenet poll every {USENET_POLL_SECONDS}s, release-day retry daily 15/17/19/21/23 AEST")
     return scheduler
