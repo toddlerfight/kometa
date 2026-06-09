@@ -3,6 +3,7 @@ import json
 import hashlib
 import logging
 import threading
+import time
 from datetime import date
 from contextlib import asynccontextmanager
 
@@ -16,23 +17,24 @@ from pydantic import BaseModel
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
-from kometa.getcomics_client import GetComicsClient
 from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details
 from kometa.scheduler import start_scheduler
 import kometa.db as db
-import kometa.downloader as downloader
 from kometa.sources import (
     komga as _komga, metron as _metron, comicvine as _comicvine,
     locg as _locg, comics_root as _comics_root,
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
-    _resolve_dir,
+    _resolve_dir, parse_issue_number as _parse_issue_number,
 )
-from kometa.sync import sync_one as _sync_one, rescan_owned as _rescan_owned
+from kometa.sync import (
+    sync_one as _sync_one, rescan_owned as _rescan_owned,
+    _best_komga_match, _komga_all_series,
+)
 from kometa.acquisition import (
-    set_progress, clear_progress, get_progress,
-    _komga_scan, _process_queue, _sweep_missing,
+    get_progress,
+    _process_queue, _sweep_missing,
     _poll_usenet_jobs, _release_day_retry,
 )
 
@@ -49,7 +51,6 @@ _img_session.headers["User-Agent"] = (
 
 # Cover image cache — lives on the same volume as the DB (persistent on the NAS).
 _COVER_CACHE_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "cover-cache")
-_IMG_HEADERS = {"Cache-Control": "public, max-age=2592000"}   # browser keeps covers ~30d
 
 
 def _img_ct(data: bytes) -> str:
@@ -62,6 +63,34 @@ def _img_ct(data: bytes) -> str:
     return "image/jpeg"
 
 
+def _cache_path(cache_key: str) -> str:
+    return os.path.join(_COVER_CACHE_DIR, hashlib.sha1(cache_key.encode("utf-8")).hexdigest())
+
+
+def _read_cached(path: str) -> bytes | None:
+    """Read cached bytes off disk, or None on miss/empty/unreadable."""
+    if not os.path.exists(path):
+        return None
+    try:
+        data = open(path, "rb").read()
+        return data or None
+    except OSError:
+        return None
+
+
+def _write_cached(path: str, data: bytes) -> None:
+    """Atomically stash bytes on disk (temp + rename). Best-effort — a failed
+    write just means we re-fetch next time, no reason to blow up the request."""
+    try:
+        os.makedirs(_COVER_CACHE_DIR, exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def _cached_image_response(url: str, max_age: int = 2592000):
     """Serve a cover image, caching the bytes on disk so each external cover is
     fetched at most once. Cache-Control lets the browser keep it too, so flipping
@@ -69,25 +98,14 @@ def _cached_image_response(url: str, max_age: int = 2592000):
     if not url:
         raise HTTPException(404)
     headers = {"Cache-Control": f"public, max-age={max_age}"}
-    path = os.path.join(_COVER_CACHE_DIR, hashlib.sha1(url.encode("utf-8")).hexdigest())
-    if os.path.exists(path):                       # cache hit — serve from disk
-        try:
-            data = open(path, "rb").read()
-            if data:
-                return Response(content=data, media_type=_img_ct(data), headers=headers)
-        except OSError:
-            pass
+    path = _cache_path(url)
+    cached = _read_cached(path)
+    if cached:                                      # cache hit — serve from disk
+        return Response(content=cached, media_type=_img_ct(cached), headers=headers)
     try:                                            # miss — fetch once, store, serve
         r = _img_session.get(url, timeout=8)
         if r.ok and r.content:
-            try:
-                os.makedirs(_COVER_CACHE_DIR, exist_ok=True)
-                tmp = f"{path}.{os.getpid()}.tmp"
-                with open(tmp, "wb") as f:
-                    f.write(r.content)
-                os.replace(tmp, path)
-            except OSError:
-                pass
+            _write_cached(path, r.content)
             return Response(content=r.content,
                             media_type=r.headers.get("content-type", "image/jpeg"),
                             headers=headers)
@@ -96,9 +114,86 @@ def _cached_image_response(url: str, max_age: int = 2592000):
     raise HTTPException(404)
 
 
+def _cached_bytes(cache_key: str, fetch, max_age: int = 2592000):
+    """Disk-cache image bytes under a stable key (not a URL). `fetch` is a
+    zero-arg callable returning (bytes, content_type) or None. This is what lets
+    Komga thumbnails be pulled ONCE and then served off disk forever — without it
+    every grid render fires a live Komga round-trip per cover and the threadpool
+    drowns. Returns a Response or None (caller decides the fallback)."""
+    headers = {"Cache-Control": f"public, max-age={max_age}"}
+    path = _cache_path(cache_key)
+    cached = _read_cached(path)
+    if cached:                                      # cache hit — serve from disk
+        return Response(content=cached, media_type=_img_ct(cached), headers=headers)
+    try:                                            # miss — fetch once, store, serve
+        got = fetch()
+        if got:
+            data, ct = got
+            if data:
+                _write_cached(path, data)
+                return Response(content=data, media_type=ct or _img_ct(data), headers=headers)
+    except Exception:
+        pass
+    return None
+
+
+def _komga_thumb(komga, url: str, cache_key: str):
+    """Fetch a Komga thumbnail through the disk cache. Returns a Response or None."""
+    def fetch():
+        r = komga.session.get(url, timeout=8)
+        if r.ok and r.content:
+            return r.content, r.headers.get("content-type", "image/jpeg")
+        return None
+    return _cached_bytes(cache_key, fetch)
+
+
+# numberSort -> book_id maps, cached per Komga series with a short TTL. WITHOUT this,
+# issue_thumbnail fired a FULL get_books() against Komga for every issue that lacked a
+# komga_book_id — so a 20-cover grid where covers haven't been linked yet meant 20 full
+# book-list fetches, and issues with no Komga match re-fetched on every single render
+# forever. One fetch per series per TTL window now, shared across the whole grid.
+_BOOK_MAP_CACHE: "dict[str, tuple[float, dict]]" = {}
+_BOOK_MAP_TTL = 300  # seconds
+
+
+def _komga_book_map(komga, komga_series_id: str, title: str = "") -> dict:
+    now = time.time()
+    hit = _BOOK_MAP_CACHE.get(komga_series_id)
+    if hit and now - hit[0] < _BOOK_MAP_TTL:
+        return hit[1]
+    try:
+        # Filename is truth; Komga's numberSort lies (e.g. a lone "Noir #003" gets
+        # numberSort 1.0, which would mis-map issue #1 onto it). Mirror sync.py's map:
+        # parse the filename first, numberSort only as fallback, filename wins clashes.
+        m, src = {}, {}
+        for b in komga.get_books(komga_series_id):
+            if b.get("media", {}).get("status") == "ERROR":
+                continue
+            fn = _parse_issue_number(b.get("name", ""), title)
+            if fn is not None:
+                key, s = fn, "name"
+            else:
+                n = b.get("metadata", {}).get("numberSort")
+                if n is None:
+                    continue
+                key, s = float(n), "sort"
+            if key in m and not (src[key] == "sort" and s == "name"):
+                continue
+            m[key], src[key] = b["id"], s
+        _BOOK_MAP_CACHE[komga_series_id] = (now, m)
+        return m
+    except Exception:
+        return hit[1] if hit else {}
+
+
 def _sync_all_job():
     for s in db.get_all_series(DB_PATH):
         _sync_one(s)
+    # Sweep AFTER every series has been folder-scanned above, so `owned` reflects
+    # disk before we decide what's missing. _sweep_missing is folder-gated — it only
+    # touches series whose folder we've actually inventoried, so the old "fresh
+    # instance with no folders → sweep the entire catalog" blowup can't recur. Genuine
+    # gaps in collections we've verified get queued; everything else is left alone.
     _sweep_missing()
 
 
@@ -368,12 +463,11 @@ def add_series(req: AddSeriesRequest):
         except Exception:
             pass
     elif not komga_series_id and komga:
-        # Try to auto-link to Komga by exact title match
+        # Auto-link to Komga via the SAME single-exact-match rule sync uses
+        # (_best_komga_match) — refuses ambiguous titles (e.g. multiple Batman runs)
+        # instead of grabbing the first loose lowercase hit.
         try:
-            results = komga.search_series(title)
-            match = next((r for r in results if (r.get("name") or "").lower() == title.lower()), None)
-            if match:
-                komga_series_id = match["id"]
+            komga_series_id = _best_komga_match(_komga_all_series(komga), title)
         except Exception:
             pass
 
@@ -524,12 +618,13 @@ def series_thumbnail(series_id: int):
     komga = _komga()
     if s.get("komga_series_id") and komga:
         try:
-            r = komga.session.get(
+            resp = _komga_thumb(
+                komga,
                 f"{komga.base_url}/api/v1/series/{s['komga_series_id']}/thumbnail",
-                timeout=5,
+                f"komga:series:{s['komga_series_id']}",
             )
-            if r.ok:
-                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
+            if resp:
+                return resp
         except Exception:
             pass
     # Use cached issue image URLs from DB — avoids live Metron API calls under concurrent grid load
@@ -550,32 +645,32 @@ def issue_thumbnail(series_id: int, number: float):
     issue = next((i for i in issues if i["number"] == number), None)
 
     book_id = issue.get("komga_book_id") if issue else None
+    komga = _komga()
 
-    # Stale cache — live-lookup from Komga and write back so future calls are instant
-    if not book_id:
+    # Stale cache — live-lookup from Komga (via the TTL'd book map, so a grid of
+    # un-linked covers shares ONE get_books instead of one per cover) and write back
+    # so future calls hit the DB directly.
+    if not book_id and komga:
         series = db.get_series_by_id(series_id, DB_PATH)
         komga_series_id = series.get("komga_series_id") if series else None
-        komga = _komga()
-        if komga_series_id and komga:
-            try:
-                for b in komga.get_books(komga_series_id):
-                    n = b["metadata"].get("numberSort")
-                    if n is not None and float(n) == number:
-                        book_id = b["id"]
-                        db.upsert_issue_status(series_id, number, None, True, book_id, path=DB_PATH)
-                        break
-            except Exception:
-                pass
+        if komga_series_id:
+            title = series.get("title", "") if series else ""
+            book_id = _komga_book_map(komga, komga_series_id, title).get(number)
+            if book_id:
+                # Stamp ONLY the book id. Finding a Komga book does NOT mean the issue
+                # is owned on disk — ownership is folder-truth. (The old code set
+                # owned=True here, which falsely marked un-downloaded issues as owned.)
+                db.set_komga_book_id(series_id, number, book_id, DB_PATH)
 
-    komga = _komga()
     if book_id and komga:
         try:
-            r = komga.session.get(
+            resp = _komga_thumb(
+                komga,
                 f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-                timeout=5,
+                f"komga:book:{book_id}",
             )
-            if r.ok:
-                return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
+            if resp:
+                return resp
         except Exception:
             pass
 
@@ -590,13 +685,14 @@ def book_thumbnail(book_id: str):
     if not komga:
         raise HTTPException(404)
     try:
-        r = komga.session.get(
+        resp = _komga_thumb(
+            komga,
             f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-            timeout=5,
+            f"komga:book:{book_id}",
         )
-        if r.ok:
-            return Response(content=r.content, media_type=r.headers.get("content-type", "image/jpeg"), headers=_IMG_HEADERS)
-        raise HTTPException(r.status_code)
+        if resp:
+            return resp
+        raise HTTPException(404)
     except HTTPException:
         raise
     except Exception as e:
@@ -796,60 +892,6 @@ def search_issue(series_id: int, number: float):
     return {"ok": True}
 
 
-class DownloadFromUrlRequest(BaseModel):
-    page_url: str
-
-
-@app.post("/api/series/{series_id}/issues/{number}/download-from")
-def download_from_url(series_id: int, number: float, req: DownloadFromUrlRequest):
-    s = db.get_series_by_id(series_id, DB_PATH)
-    if not s:
-        raise HTTPException(404)
-    issues = db.get_issues_for_series(series_id, DB_PATH)
-    issue_row = next((i for i in issues if i["number"] == number), None)
-    store_date = issue_row["store_date"] if issue_row else None
-
-    gc = GetComicsClient()
-    dl_url, hint_filename = gc._extract_download(req.page_url)
-    if not dl_url:
-        raise HTTPException(422, detail="No download link found on that page")
-
-    db.queue_issue(series_id, number, DB_PATH)
-    queue = db.get_queue(DB_PATH)
-    item = next((q for q in queue if q["tracked_series_id"] == series_id and q["issue_number"] == number), None)
-    if not item:
-        raise HTTPException(500, detail="Queue item not found after insert")
-    qid = item["id"]
-    db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
-
-    def _do_download():
-        try:
-            dest = downloader.download_issue(
-                url=dl_url,
-                title=s["title"],
-                publisher=s.get("publisher"),
-                issue_number=number,
-                store_date=store_date,
-                hint_filename=hint_filename,
-                komga_scan_fn=_komga_scan,
-                progress_fn=lambda done, total: set_progress(qid, done, total),
-                dest_dir=s.get("folder_path") or None,
-                tracked_series_id=series_id,
-                db_path=DB_PATH,
-            )
-            clear_progress(qid)
-            db.update_queue_state(qid, "done", filename=dest, path=DB_PATH)
-            if not s.get("folder_path"):
-                db.set_folder_path(series_id, os.path.dirname(dest), DB_PATH)
-            db.upsert_issue_status(series_id, number, store_date, owned=True, path=DB_PATH)
-        except Exception as e:
-            clear_progress(qid)
-            db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
-
-    threading.Thread(target=_do_download, daemon=True).start()
-    return {"ok": True, "download_url": dl_url}
-
-
 @app.post("/api/queue/sweep")
 def manual_sweep():
     def _sweep_and_process():
@@ -928,9 +970,15 @@ def get_issue_variants(series_id: int, number: float):
     issue = next((i for i in issues if i["number"] == number), None)
     if not issue:
         raise HTTPException(404)
+    # Saved pick (if any) so the Variants tab reflects what was chosen last time
+    # instead of resetting to a blank slate on every reopen.
+    prefs = db.get_variant_prefs(series_id, number, DB_PATH)
+    sel_ids = [c.get("id") for c in prefs["selected"]] if prefs else []
+    primary = prefs["primary_id"] if prefs else None
+
     locg_issue_id = issue.get("locg_issue_id")
     if not locg_issue_id:
-        return {"covers": [], "locg_issue_id": None}
+        return {"covers": [], "locg_issue_id": None, "selected_ids": sel_ids, "primary_id": primary}
     try:
         locg = _locg()
         if locg:
@@ -938,7 +986,8 @@ def get_issue_variants(series_id: int, number: float):
         else:
             from kometa.locg_client import fetch_variants
             data = fetch_variants(locg_issue_id)
-        return {"covers": data["covers"], "locg_issue_id": locg_issue_id}
+        return {"covers": data["covers"], "locg_issue_id": locg_issue_id,
+                "selected_ids": sel_ids, "primary_id": primary}
     except Exception as e:
         raise HTTPException(502, detail=str(e)) from e
 
@@ -969,6 +1018,20 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
         try:
             from kometa.downloader import inject_covers
             added = inject_covers(file_path, req.selected, req.primary_id)
+            # Persist the pick as a display override too. The CBZ now has the cover,
+            # but Komga's thumbnail (what we display) is frozen until it re-scans — so
+            # stamp variant_cover so Kometa shows YOUR pick immediately regardless.
+            db.set_variant_prefs(series_id, number, req.selected, req.primary_id, DB_PATH)
+            # Nudge Komga to re-extract the cover from the rewritten file so ITS
+            # thumbnail + reader catch up to the new page 1 too. Best-effort — the file
+            # and our own display are already correct whether or not this succeeds.
+            book_id = issue.get("komga_book_id")
+            komga = _komga()
+            if book_id and komga:
+                try:
+                    komga.analyze_book(book_id)
+                except Exception as e:
+                    logger.warning(f"Komga re-analyze failed for book {book_id}: {e}")
             return {"ok": True, "added": added}
         except Exception as e:
             raise HTTPException(500, detail=str(e)) from e

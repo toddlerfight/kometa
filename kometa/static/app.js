@@ -105,13 +105,24 @@ function esc(str) {
 }
 
 function _localToday() {
+  // The VIEWER's own calendar date. Drives the "today/upcoming" line and the TODAY
+  // label, so a release shows TODAY on YOUR date — not a day late because the US clock
+  // hasn't caught up. The missing flip uses _usToday (below), so it still won't go
+  // "missing" before the US release has actually passed.
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+function _usToday() {
+  // US (Pacific) date — used ONLY for the "missing" boundary. Comic store_dates are US
+  // release dates; Pacific is the most forgiving US zone, so an issue won't flip to
+  // "missing" until the date has fully passed across the States (your AEST date runs
+  // ahead, so using it alone would mark things missing before they've even dropped).
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+}
+
 function _fmtReleaseDate(dateStr) {
-  const today = _localToday();
-  if (dateStr === today) return 'TODAY';
+  if (dateStr === _localToday()) return 'TODAY';
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
 }
@@ -122,26 +133,17 @@ function fmtNum(n) {
 }
 
 function issueStatus(issue) {
-  const today = _localToday();
+  const lt = _localToday(), ut = _usToday();
   if (issue.owned) return 'owned';
   if (!issue.store_date) return 'unknown';
-  return issue.store_date > today ? 'upcoming' : 'missing';
+  if (issue.store_date > lt) return 'upcoming';   // future on YOUR calendar
+  if (issue.store_date >= ut) return 'today';      // out today (your date) — or still dropping in the US
+  return 'missing';                                 // only once it's passed in the US too
 }
 
 function fmtDayDate(iso) {
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('en-AU', { weekday: 'long', month: 'short', day: 'numeric' });
-}
-
-function relativeTime(iso) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 2) return 'just now';
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hr ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days} day${days > 1 ? 's' : ''} ago`;
 }
 
 function pullGroup(isoDate) {
@@ -463,37 +465,45 @@ function buildIssueTiles(s) {
     const st = issueStatus(i);
     if (detailTab === 'owned')    return st === 'owned';
     if (detailTab === 'missing')  return st === 'missing';
-    if (detailTab === 'upcoming') return st === 'upcoming';
+    if (detailTab === 'upcoming') return st === 'upcoming' || st === 'today';
     return true;
   }).sort((a, b) => detailSortDesc ? b.number - a.number : a.number - b.number);
 
   return filtered.map(issue => {
     const st = issueStatus(issue);
     const num = `#${fmtNum(issue.number)}`;
-    const dateBadge = st === 'upcoming' && issue.store_date
-      ? `<div class="series-card-next-release">${issue.store_date.replace(/-/g, '/')}</div>`
-      : '';
+    const dateBadge = st === 'today'
+      ? `<div class="series-card-next-release">TODAY</div>`
+      : (st === 'upcoming' && issue.store_date
+          ? `<div class="series-card-next-release">${issue.store_date.replace(/-/g, '/')}</div>`
+          : '');
     let inner = '';
     if (st === 'owned') {
-      const thumbSrc = issue.komga_book_id
-        ? `/api/book/${issue.komga_book_id}/thumbnail`
-        : `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
+      // variant_cover (your chosen cover) wins — Komga's thumbnail is frozen until
+      // it re-scans the modified CBZ, so show the pick directly.
+      const thumbSrc = issue.variant_cover
+        ? issue.variant_cover
+        : issue.komga_book_id
+          ? `/api/book/${issue.komga_book_id}/thumbnail`
+          : `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
       inner = `<div class="issue-tile-img">
-        <img src="${thumbSrc}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
+        <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
       </div>`;
-    } else if (issue.metron_image) {
+    } else if (issue.variant_cover || issue.metron_image) {
+      // variant_cover = your saved variant pick (not-yet-downloaded issues) — show it
+      // here too so the grid tile matches the modal, falling back to the solicit cover.
       inner = `<div class="issue-tile-img ${st}">
-        <img src="${esc(issue.metron_image)}" alt="${num}" loading="lazy"
+        <img src="${esc(issue.variant_cover || issue.metron_image)}" alt="${num}" loading="lazy"
           onerror="this.remove()">${dateBadge}
       </div>`;
     } else {
       inner = `<div class="issue-tile-img ${st}">${dateBadge}</div>`;
     }
-    const searchBtn = st === 'missing'
+    const searchBtn = (st === 'missing' || st === 'today')
       ? `<button class="issue-tile-search" title="Search for this issue"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
-    return `<div class="issue-tile" title="${esc(s.title)} ${num}"
+    return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}"
       onclick="showIssueModal(${s.id}, ${issue.number})">
       ${inner}
       <div class="issue-tile-num">${num}</div>
@@ -988,17 +998,6 @@ async function saveFolderPath(id) {
 }
 
 
-async function searchAllMissing(id, btn) {
-  btn.disabled = true; btn.textContent = 'Queuing…';
-  try {
-    const res = await api.post(`/api/series/${id}/search-missing`, {});
-    btn.textContent = `${res.queued} queued`;
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Search Missing'; }, 2000);
-  } catch {
-    btn.disabled = false; btn.textContent = 'Search Missing';
-  }
-}
-
 async function searchIssue(seriesId, issueNumber, btn) {
   btn.disabled = true; btn.textContent = '…';
   try {
@@ -1034,11 +1033,11 @@ async function doDelete(id) {
 // --- Pull List ---
 
 function _pullStatus(e) {
-  const today = _localToday();
+  const lt = _localToday(), ut = _usToday();
   if (e.owned) return `<span class="pull-status pull-status-owned">✓</span>`;
-  if (e.store_date < today) return `<span class="pull-status pull-status-missing">Missing</span>`;
-  if (e.store_date === today) return `<span class="pull-status pull-status-today">Today</span>`;
-  return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
+  if (e.store_date > lt) return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
+  if (e.store_date >= ut) return `<span class="pull-status pull-status-today">Today</span>`;
+  return `<span class="pull-status pull-status-missing">Missing</span>`;
 }
 
 let _pullShowPast = false;
@@ -1130,8 +1129,12 @@ function _fmtBytes(n) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+let _activitySig = null;
+let _activityRemoving = false;   // true while a row/card is animating out
+
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
+  _activitySig = null;   // force a full rebuild when entering the view
   setTopbar(`
     <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
     <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
@@ -1143,9 +1146,34 @@ async function renderActivity() {
 
 async function _refreshActivity() {
   if (currentView !== 'activity') return;
+  // A removal animation is mid-flight — don't rebuild the list out from under it
+  // (a full rebuild here is the flash we're trying to kill). The remover re-polls
+  // when it's finished collapsing.
+  if (_activityRemoving) return;
   const queue = await api.get('/api/queue');
-  _buildActivityHtml(queue);
-  const hasActive = queue.some(q => ['searching','found','downloading','processing'].includes(q.state));
+  // Only the progress %/bytes change between polls; the items + their states usually
+  // don't. Rebuilding the whole list every 2s recreated every <img>, which reloaded
+  // and replayed the cover-in (blur/fade) animation → the cover "flashed". So: rebuild
+  // ONLY when the item set or a state changes; otherwise just patch the bars in place.
+  const sig = queue.map(q => `${q.id}:${q.state}`).join('|');
+  if (sig === _activitySig) {
+    queue.forEach(q => {
+      const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
+      const fill = document.getElementById(`actfill-${q.id}`);
+      const text = document.getElementById(`acttext-${q.id}`);
+      if (fill) fill.style.width = `${pct}%`;
+      if (text) {
+        const detail = q.state === 'pending_usenet'
+          ? ' · Usenet'
+          : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
+        text.textContent = `${pct}%${detail}`;
+      }
+    });
+  } else {
+    _activitySig = sig;
+    _buildActivityHtml(queue);
+  }
+  const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet'].includes(q.state));
   if (hasActive) _activityPollTimer = setTimeout(_refreshActivity, 2000);
 }
 
@@ -1193,8 +1221,8 @@ function _buildActivityHtml(queue) {
         : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
       const progress = isDownloading ? `
         <div class="act-card-progress">
-          <div class="act-progress-track"><div class="act-progress-fill" style="width:${pct}%"></div></div>
-          <div class="act-progress-text">${pct}%${detail}</div>
+          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
+          <div class="act-progress-text" id="acttext-${q.id}">${pct}%${detail}</div>
         </div>` : '';
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
@@ -1267,9 +1295,43 @@ async function forceQueueStart(btn) {
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Start Queue'; _refreshActivity(); }, 1000);
 }
 
+// Fade + collapse an element out, THEN remove it from the DOM — no instant yank,
+// no full-list rebuild (rebuilding is what flashed every cover). Returns a promise
+// that resolves once the node is gone. Under reduced-motion we skip the show and bail.
+function _animateRowOut(el) {
+  return new Promise(resolve => {
+    if (!el) { resolve(); return; }
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { el.remove(); resolve(); return; }
+    // Pin the current height so max-height has something to collapse FROM.
+    el.style.maxHeight = `${el.offsetHeight}px`;
+    // Force a reflow so the starting max-height sticks before we transition.
+    void el.offsetHeight;
+    el.classList.add('act-removing');
+    let done = false;
+    const finish = () => { if (done) return; done = true; el.remove(); resolve(); };
+    el.addEventListener('transitionend', finish, { once: true });
+    // Belt-and-suspenders: if transitionend never fires, fall back to the timeout.
+    setTimeout(finish, 360);
+  });
+}
+
 async function clearHistory(btn) {
   btn.disabled = true; btn.textContent = 'Clearing…';
   await api.post('/api/queue/clear-history', {});
+  // Fade the completed rows out in place — don't rebuild the whole list (the in-progress
+  // section would flash). Stagger them a touch for a tidy cascade, then drop the sig so
+  // the next poll reconciles cleanly.
+  _activityRemoving = true;
+  const rows = Array.from(document.querySelectorAll('.act-row'));
+  rows.forEach((row, i) => { row.style.transitionDelay = `${i * 30}ms`; });
+  await Promise.all(rows.map(_animateRowOut));
+  // The Completed section header is now stranded with no rows — yank it too.
+  document.querySelectorAll('.act-section').forEach(sec => {
+    if (!sec.querySelector('.act-row, .act-card')) sec.remove();
+  });
+  _activitySig = null;
+  _activityRemoving = false;
   btn.disabled = false; btn.textContent = 'Clear History';
   _refreshActivity();
 }
@@ -1283,7 +1345,19 @@ async function retryQueue(id, btn) {
 async function removeQueue(id, btn) {
   btn.disabled = true;
   await api.del(`/api/queue/${id}`);
-  renderActivity();
+  // Animate ONLY this row/card out — don't rebuild the list (that flashes every cover).
+  // Drop the sig so the next poll rebuilds from scratch without trying to re-add the
+  // row we just collapsed.
+  const el = btn.closest('.act-row, .act-card');
+  _activitySig = null;
+  _activityRemoving = true;
+  await _animateRowOut(el);
+  // If that emptied a section (header left dangling), clear the stragglers.
+  document.querySelectorAll('.act-section').forEach(sec => {
+    if (!sec.querySelector('.act-row, .act-card')) sec.remove();
+  });
+  _activityRemoving = false;
+  if (!document.querySelector('.act-row, .act-card')) _refreshActivity();
 }
 
 // --- Settings ---
@@ -1582,14 +1656,20 @@ async function showIssueModal(seriesId, number) {
   const st = issueStatus(issue);
   const num = `#${fmtNum(number)}`;
 
-  const imgSrc = issue.komga_book_id
-    ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
-    : (issue.metron_image || '');
+  // variant_cover = your saved variant pick (only present on not-yet-downloaded
+  // issues); show it so an upcoming issue reflects the cover you chose. Owned issues
+  // carry no pref (it's baked into the CBZ already) and fall through to Komga.
+  const imgSrc = issue.variant_cover
+    ? issue.variant_cover
+    : issue.komga_book_id
+      ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
+      : (issue.metron_image || '');
 
   const chipMap = {
     owned:   `<span class="chip chip-complete">Owned</span>`,
     missing: `<span class="chip chip-missing">Missing</span>`,
     upcoming:`<span class="chip chip-upcoming">Upcoming</span>`,
+    today:   `<span class="chip chip-today">Today</span>`,
     unknown: `<span class="chip" style="color:var(--tq);border-color:var(--tq)">Unknown</span>`,
   };
 
@@ -1601,6 +1681,9 @@ async function showIssueModal(seriesId, number) {
       const daysAway = Math.max(0, Math.round((d - Date.now()) / 86400000));
       dateHtml = `<div class="issue-modal-date">${fmtDate}</div>
                   <div class="issue-modal-days">${daysAway} day${daysAway !== 1 ? 's' : ''} away</div>`;
+    } else if (st === 'today') {
+      dateHtml = `<div class="issue-modal-date">${fmtDate}</div>
+                  <div class="issue-modal-days">Out today</div>`;
     } else {
       dateHtml = `<div class="issue-modal-release-label">Released ${fmtDate}</div>`;
     }
@@ -1610,7 +1693,7 @@ async function showIssueModal(seriesId, number) {
   if (st === 'owned' && issue.komga_book_id && _appConfig.komga_url) {
     const readerUrl = `${_appConfig.komga_url}/book/${esc(issue.komga_book_id)}/read`;
     footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
-  } else if (st === 'missing') {
+  } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
   }
 
@@ -1677,7 +1760,7 @@ async function showIssueModal(seriesId, number) {
   // Fetch variants in background
   if (hasLocgId) _imFetchVariants(seriesId, number);
 
-  if (st === 'missing') _pollIssueQueue(seriesId, number);
+  if (st === 'missing' || st === 'today') _pollIssueQueue(seriesId, number);
 }
 
 function _imSwitchTab(name) {
@@ -1694,6 +1777,12 @@ async function _imFetchVariants(seriesId, number) {
     const data = await api.get(`/api/series/${seriesId}/issues/${number}/variants`);
     if (seriesId !== _issueVariantSeriesId || number !== _issueVariantNumber) return;
     _issueVariantCovers  = data.covers || [];
+    // Rehydrate the previous pick so reopening reflects it (★ + included), instead
+    // of resetting to blank.
+    if (data.selected_ids && data.selected_ids.length) {
+      _issueVariantSelected = new Set(data.selected_ids);
+      _issueVariantPrimary  = data.primary_id || data.selected_ids[0];
+    }
     _issueVariantFetched = true;
     _imRenderVariants();
   } catch(e) {
@@ -1726,6 +1815,8 @@ function _imRenderVariants() {
   }</div>`;
   const footer = document.getElementById('variant-footer');
   if (footer) footer.style.display = 'flex';
+  _imRefreshCards();   // apply any rehydrated ★/included state to the new cards
+  _imUpdateHint();
   });
 }
 
@@ -1815,14 +1906,6 @@ function _lbControls() {            // button state only — no image re-animati
   inc.textContent = on ? '✓ Included' : 'Include';
   document.getElementById('vlb-star').classList.toggle('on', _issueVariantPrimary === c.id);
 }
-function _lbToggleInclude() {
-  const c = _issueVariantCovers[_lbIndex];
-  if (c) { _imToggleVariant(c.id); _lbControls(); }   // _imToggleVariant keeps the grid + footer in sync
-}
-function _lbSetCover() {
-  const c = _issueVariantCovers[_lbIndex];
-  if (c) { _imSetPrimary({ stopPropagation() {} }, c.id); _lbControls(); }
-}
 
 async function _imApplyVariants(seriesId, number, isOwned) {
   if (!_issueVariantSelected.size) return;
@@ -1840,10 +1923,39 @@ async function _imApplyVariants(seriesId, number, isOwned) {
       showToast(`${selected.length} variant${selected.length > 1 ? 's' : ''} queued for download`);
     }
     closeModal();
+    // Reflect the pick immediately: update the cached issue + crossfade just the
+    // changed tile (no full-grid repaint, no hard snap). Works for owned + upcoming —
+    // both now carry variant_cover as the display cover.
+    const prim = selected.find(c => c.id === _issueVariantPrimary);
+    const newSrc = prim ? (prim.large || prim.thumb) : null;
+    const obj = _detailSeries?.issues?.find(i => i.number === number);
+    if (obj) obj.variant_cover = newSrc;
+    if (newSrc) _crossfadeTileCover(number, newSrc);
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
     showToast(`Error: ${e.message || 'failed'}`, 'error');
   }
+}
+
+// Crossfade a single tile's cover to a new image — overlay the new one, let the
+// existing cover-in animation (blur→focus+fade) bring it in over the old, then drop
+// the old. Inserted right after the old img so any date badge stays on top.
+function _crossfadeTileCover(number, newSrc) {
+  const wrap = document.querySelector(`.issue-tile[data-num="${number}"] .issue-tile-img`);
+  if (!wrap) return;
+  const old = wrap.querySelector('img');
+  const next = document.createElement('img');
+  next.alt = '';
+  next.style.position = 'absolute';
+  next.style.inset = '0';
+  next.addEventListener('load', () => {
+    next.classList.add('loaded');                 // fires cover-in (blur+zoom+fade)
+    setTimeout(() => { if (old) old.remove(); }, 340);
+  }, { once: true });
+  next.addEventListener('error', () => next.remove(), { once: true });
+  if (old) old.after(next); else wrap.appendChild(next);
+  wrap.classList.remove('unknown');
+  next.src = newSrc;
 }
 
 function _pollIssueQueue(seriesId, number) {

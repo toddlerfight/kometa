@@ -26,6 +26,20 @@ class KomgaClient:
     def search_series(self, query):
         return self._get("/api/v1/series", params={"search": query, "size": 50})["content"]
 
+    def get_all_series(self):
+        """Every series in the library, paginated. Used for punctuation-proof
+        local title matching — Komga's own /search is fussy about ':' vs '-' etc,
+        so we pull the lot once and match normalised on our side instead."""
+        series, page = [], 0
+        while True:
+            data = self._get("/api/v1/series",
+                             params={"page": page, "size": 500, "sort": "metadata.titleSort,asc"})
+            series.extend(data["content"])
+            if data["last"]:
+                break
+            page += 1
+        return series
+
     def get_series(self, series_id):
         return self._get(f"/api/v1/series/{series_id}")
 
@@ -40,16 +54,27 @@ class KomgaClient:
             page += 1
         return books
 
-    def get_thumbnail_url(self, series_id):
-        return f"{self.base_url}/api/v1/series/{series_id}/thumbnail"
-
     def scan_library(self):
         r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan")
         r.raise_for_status()
 
-    def set_series_links(self, series_id, links):
+    def analyze_book(self, book_id):
+        """Re-analyze a single book so Komga re-extracts its cover/pages from the file
+        on disk — needed after we rewrite a CBZ (variant cover inject), or Komga keeps
+        serving the thumbnail it cached on its last scan."""
+        r = self.session.post(f"{self.base_url}/api/v1/books/{book_id}/analyze")
+        r.raise_for_status()
+
+    def set_book_number(self, book_id, number, number_sort):
+        """Correct a book's issue number IN Komga (and lock it, so a rescan can't revert).
+        Komga's own filename/metadata number parsing is unreliable; Kometa derives the true
+        number from the filename and pushes it here so Komga's labels AND ordering (which
+        sorts by numberSort) are right."""
         r = self.session.patch(
-            f"{self.base_url}/api/v1/series/{series_id}/metadata",
-            json={"links": links, "linksLock": False},
+            f"{self.base_url}/api/v1/books/{book_id}/metadata",
+            json={
+                "number": str(number), "numberLock": True,
+                "numberSort": float(number_sort), "numberSortLock": True,
+            },
         )
         r.raise_for_status()

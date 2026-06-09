@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -59,10 +60,6 @@ def _connect(path=DB_PATH):
         conn.commit()
     finally:
         conn.close()
-
-
-def get_connection(path=DB_PATH):
-    return _connect(path)
 
 
 def _migrate(path=DB_PATH):
@@ -344,6 +341,17 @@ def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book
         """, (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, metron_issue_id, locg_issue_id))
 
 
+def set_komga_book_id(series_id, number, book_id, path=DB_PATH):
+    """Stamp just the komga_book_id on an existing issue (no-op if the row doesn't
+    exist). Used to apply the Komga book map to disk-derived owned issues without
+    clobbering their other fields the way a full upsert would."""
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE issue_status SET komga_book_id = ? WHERE tracked_series_id = ? AND number = ?",
+            (book_id, series_id, number),
+        )
+
+
 def set_pull_list(series_id, on_pull_list, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(
@@ -361,9 +369,28 @@ def mark_synced(series_id, path=DB_PATH):
 
 def get_issues_for_series(tracked_series_id, path=DB_PATH):
     with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
+        rows = [dict(r) for r in conn.execute("""
             SELECT * FROM issue_status WHERE tracked_series_id = ? ORDER BY number
         """, (tracked_series_id,))]
+        prefs = {r["number"]: r for r in conn.execute(
+            "SELECT number, selected, primary_id FROM variant_prefs WHERE tracked_series_id = ?",
+            (tracked_series_id,)
+        )}
+    # Stamp variant_cover = the chosen variant's image on issues that have a saved pref.
+    # Lets the modal header show YOUR pick for an upcoming/not-yet-downloaded issue
+    # (owned issues get their cover from the injected CBZ via Komga, no pref kept).
+    for row in rows:
+        p = prefs.get(row["number"])
+        if not p:
+            continue
+        try:
+            sel = json.loads(p["selected"])
+            prim = next((c for c in sel if c.get("id") == p["primary_id"]), None)
+            if prim:
+                row["variant_cover"] = prim.get("large") or prim.get("thumb")
+        except (ValueError, TypeError):
+            pass
+    return rows
 
 
 def set_folder_path(series_id, folder_path, path=DB_PATH):
@@ -403,14 +430,6 @@ def set_komga_series_id(series_id, komga_series_id, path=DB_PATH) -> bool:
             return True
         except sqlite3.IntegrityError:
             return False
-
-
-def set_monitor_status(series_id, status, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE tracked_series SET monitor_status = ? WHERE id = ?",
-            (status, series_id),
-        )
 
 
 # --- Download queue ---
@@ -626,7 +645,6 @@ def get_upcoming_issues(days=90, past=0, path=DB_PATH):
 
 
 def set_variant_prefs(tracked_series_id, number, selected: list, primary_id: str, path=DB_PATH):
-    import json
     with _connect(path) as conn:
         conn.execute("""
             INSERT INTO variant_prefs (tracked_series_id, number, selected, primary_id)
@@ -638,7 +656,6 @@ def set_variant_prefs(tracked_series_id, number, selected: list, primary_id: str
 
 
 def get_variant_prefs(tracked_series_id, number, path=DB_PATH):
-    import json
     with _connect(path) as conn:
         row = conn.execute(
             "SELECT selected, primary_id FROM variant_prefs WHERE tracked_series_id = ? AND number = ?",

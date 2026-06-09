@@ -17,6 +17,17 @@ its files exist under a `folder_path`. Komga is a metadata and thumbnail source 
 the source of truth for ownership. Deleting/moving files on disk is the real mutation;
 Komga merely reflects it on its next scan.
 
+## Komga numberSort is a lie (load-bearing gotcha)
+
+Komga's per-book `number`/`numberSort` is an unreliable running counter — TPBs, specials,
+duplicate printings and mixed filenames shift it (e.g. "Monstress #062" lands at
+`numberSort 83`; a lone noir #3 lands at `1`). So: **the FILENAME is the source of truth
+for issue number.** `parse_issue_number` (naming.py) derives it; the Komga book map keys on
+that, not `numberSort`. And `sync_one` pushes the filename-derived number back into Komga
+(`set_book_number`, locked) so Komga's own labels and ordering get corrected over time.
+Series are linked to Komga by **folder path** (`series.url`), not title — the only key that
+disambiguates same-titled runs (three bare "Batman" series) and alternate printings.
+
 ## Core entities (SQLite — see db.py)
 
 - **tracked_series** — a series under management. Bridges identities across sources:
@@ -36,7 +47,7 @@ Komga merely reflects it on its next scan.
 
 | Source | Role | Module |
 |---|---|---|
-| **Komga** | Optional reader + cover source; scan trigger after filing | komga_client.py |
+| **Komga** | Reader + cover source; linked per-series by FOLDER PATH (`series.url`); scan + per-book `analyze` triggers; Kometa pushes correct issue numbers back (its `numberSort` is unreliable) | komga_client.py |
 | **Metron** | Primary metadata: series, issue lists, store dates | metron_client.py |
 | **ComicVine (CV)** | Alternate metadata + cover images | comicvine_client.py |
 | **LOCG** (League of Comic Geeks) | Series/issue data + variant covers | locg_client.py |
@@ -54,8 +65,10 @@ Komga merely reflects it on its next scan.
    GetComics first, falls back to Usenet (newznab search → SABnzbd submit → poll).
    Archives are extracted (rarfile/bsdtar), filed under `folder_path`, then Komga scans.
 4. **Variant covers** — scrape variant covers from LOCG, inject into the issue's CBZ.
-5. **Scheduling** (scheduler.py) — APScheduler: periodic full sync, weekly missing sweep,
-   60s SABnzbd poller, release-day retry windows.
+5. **Scheduling** (scheduler.py) — APScheduler: periodic full sync (which folder-gated-sweeps at
+   the end), SABnzbd poller (interval configurable via `KOMETA_USENET_POLL_SECONDS`, default 5s),
+   release-day retry windows. Downloads from a sweep go to GetComics→Usenet; usenet finalize needs
+   Kometa's `/downloads` mounted at SAB's shared folder (arr-stack convention — see INSTRUCTIONS.md).
 
 ## Module map
 
@@ -65,12 +78,17 @@ Komga merely reflects it on its next scan.
 - **sources.py** — the seam to every external system. Configured-client accessors
   (`komga`, `metron`, `comicvine`, `sabnzbd`, `locg`, `usenet_indexers`) that read config
   from the DB and cache where it makes sense. Callers never touch credentials.
-- **sync.py** — `sync_one`: build the issue list from metadata sources (Metron primary,
-  CV/LOCG supplements; LOCG works anonymously), reconcile ownership against the disk
-  folder, then upsert the merged issue list. Komga book IDs are folded in when available.
+- **sync.py** — `sync_one`: auto-link to Komga (folder-path first via `_best_komga_match_by_path`,
+  then normalised-title `_best_komga_match` against the full library `_komga_all_series`); build
+  the issue list from metadata sources (Metron primary, CV/LOCG supplements; LOCG anon), reconcile
+  ownership against the disk folder, upsert. The Komga book map keys on the parsed FILENAME (not
+  numberSort) and pushes number corrections back to Komga; book IDs are stamped onto owned issues
+  (`db.set_komga_book_id`) even for folder-only series.
 - **acquisition.py** — the download state machine (`_process_queue`, `_sweep_missing`,
   `_poll_usenet_jobs`, `_finalize_usenet_download`, `_release_day_retry`, `_komga_scan`).
-  Owns `_dl_progress`, the live progress map the UI polls.
+  `_sweep_missing` is **folder-gated** (only sweeps series whose folder it has actually inventoried
+  — no sweeping into the void). `_finalize_usenet_download` scans `dirname(storage)` when SAB
+  reports a single grab's storage as a file. Owns `_dl_progress`, the live progress map the UI polls.
 - **naming.py** — pure parsing helpers (`parse_issue_number`, `scan_folder_numbers`,
   `find_issue_file`, `normalize_url`, `norm`). No state; unit-testable in isolation.
 - **db.py** — all SQLite access; every query lives here behind plain functions. Owns the

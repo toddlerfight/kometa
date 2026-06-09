@@ -85,6 +85,11 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
             for name in orig_names:
                 if name.lower() == 'comicinfo.xml':
                     comic_info_data = src.read(name)
+                elif re.match(r'\d{3}_cover_', name):
+                    # Drop covers WE injected on a previous apply — replace, don't stack.
+                    # Never matches the comic's own pages (they're not named NNN_cover_…),
+                    # so the original cover + interior pages are always preserved.
+                    continue
                 else:
                     zf.writestr(name, src.read(name))
 
@@ -124,15 +129,6 @@ def _fix_extension(path: str) -> str:
         logger.info(f"Extension fix: {os.path.basename(path)} → .cbz")
         return correct
     return path
-
-
-def _issue_year(store_date: str | None) -> int | None:
-    if store_date and len(store_date) >= 4:
-        try:
-            return int(store_date[:4])
-        except ValueError:
-            pass
-    return None
 
 
 def _remote_content_length(url: str) -> int | None:

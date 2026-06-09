@@ -6,7 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 def _norm(s: str) -> str:
-    return re.sub(r'[^a-z0-9]', ' ', s.lower()).strip()
+    # Collapse RUNS of non-alphanumerics to a single space (the `+`). Without it,
+    # ": " becomes 2 spaces and " - " becomes 3, so "Batman: Gargoyle … - Noir Edition"
+    # and a release named "Batman - Gargoyle … Noir Edition" normalise to DIFFERENT
+    # spacing → the series-name substring match silently fails → valid NZBs score too
+    # low and get skipped. Collapsing makes the match punctuation/spacing-insensitive.
+    return re.sub(r'[^a-z0-9]+', ' ', s.lower()).strip()
 
 
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:

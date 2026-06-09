@@ -57,15 +57,60 @@ the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._kom
 
 ## Deploy to the NAS (only when explicitly approved)
 
-Live runs as a Docker container on the NAS. Deploy is a **full rebuild** (not the old
-piecemeal `cat >` deploy.sh, which silently reverts on container recreate):
+Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
+NAS access: `ssh -p 42069 -i ~/.ssh/id_ed25519 marcusg@192.168.1.166`. Docker binary:
+`/var/packages/ContainerManager/target/usr/bin/docker`. No rsync/scp — use `tar`-pipe.
 
-1. Safety: tag the running image as a rollback point, snapshot `data/kometa.db`.
-2. `tar`-pipe the full source (`kometa/`, `requirements.txt`, `Dockerfile`,
-   `docker-compose.yml`) to `/volume1/docker/kometa/` (no rsync on the NAS).
-3. `docker compose build && docker compose up -d` (recreates container; the DB volume
-   at `/volume1/docker/kometa/data` persists).
-4. Verify: container logs show clean startup, `curl :6969` returns 200.
+**The source is now BIND-MOUNTED** (`/volume1/docker/kometa/kometa:/app/kometa` in
+`docker-compose.yml`), so code is NOT baked into the image. This makes deploys a
+**few-second restart, not a rebuild** (the old rebuild caused ~1-2 min downtime — see
+the 2026-06-09 git history of frustration). Pick the path by what changed:
+
+- **Python change** → tar-sync the changed file(s) into the live mount, then restart:
+  ```bash
+  tar czf - kometa/sync.py kometa/main.py | ssh -p 42069 -i ~/.ssh/id_ed25519 \
+    marcusg@192.168.1.166 'cd /volume1/docker/kometa && tar xzf -'
+  ssh -p 42069 -i ~/.ssh/id_ed25519 marcusg@192.168.1.166 \
+    'cd /volume1/docker/kometa && /var/packages/ContainerManager/target/usr/bin/docker compose restart kometa'
+  ```
+- **Static change** (`static/app.js`, `style.css`, `index.html`) → tar-sync only;
+  it's served live, **no restart needed**. Tell the user to hard-refresh (Cmd+Shift+R)
+  — the SPA is browser-cached (`Cache-Control` on assets), so a stale cached app.js is
+  what makes "old UI / wrong behaviour persists after a fix" appear.
+- **requirements.txt / Dockerfile / docker-compose.yml change** → still a real
+  recreate: `docker compose up -d` (compose change) or `... build && ... up -d` (deps).
+- **NEVER** `rm -rf /volume1/docker/kometa/kometa` while the container is up — it's the
+  live mount; deleting it yanks the code out from under the running app. Sync files in
+  place (tar extract overwrites). `compose restart` needs `cd /volume1/docker/kometa`
+  first (or `-f`), or you get "no configuration file provided".
+
+Always: after, `curl http://192.168.1.166:6969/api/series` → 200, and confirm the new
+code is actually live, e.g. `docker exec kometa grep -c <new-symbol> /app/kometa/<file>`.
+Validate locally first (`ruff check kometa/`, `pytest -q` = 78 tests, `node --check
+kometa/static/app.js` for JS). The `.venv` has no git → snapshot files to `/tmp` before
+risky edits.
+
+## NAS runtime integrations
+
+- **Komga** (reader + cover source): `http://192.168.1.166:8585`. Creds in
+  `/volume1/docker/kometa/.env`. Linked per-series via folder-path match (Komga's
+  `series.url` == Kometa `folder_path`) — unambiguous, unlike title matching.
+- **Komga numberSort lies**: Komga's own issue-number parsing is unreliable (counts
+  TPBs/dupes, mis-parses mixed naming). Kometa derives the true number from the FILENAME
+  and (a) keys its book map on it, (b) pushes it back to Komga on every sync via
+  `KomgaClient.set_book_number` (locked `numberLock`/`numberSortLock`) so Komga's own
+  labels AND ordering are correct. After re-writing a CBZ (variant cover inject), call
+  `analyze_book` so Komga re-extracts the cover.
+- **SABnzbd**: `http://192.168.1.166:8080`, api_key in `/volume1/docker/config/sabnzbd/sabnzbd.ini`.
+- **Prowlarr** (indexer proxy): `http://192.168.1.166:9696`, ApiKey in
+  `/volume1/docker/config/prowlarr/config.xml`. Usenet indexers are NZBFinder (id 9) +
+  NZBGeek (id 18). Kometa's `newznab_indexers` config = `[{name, host:"192.168.1.166:9696/<id>",
+  apikey:<prowlarr key>, ssl:false}]` (the client appends `/api`).
+- **Shared downloads (arr-stack convention)**: Kometa's `/downloads` MUST mount the SAME
+  host folder SAB uses (`/volume1/docker/media/downloads`), so SAB's reported
+  `/downloads/complete/…` path resolves in Kometa for usenet finalize. SAB reports a
+  single grab's `storage` as the FILE path (not a dir), so finalize scans
+  `dirname(storage)` when it's a file.
 
 ## Conventions
 
