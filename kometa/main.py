@@ -91,12 +91,13 @@ def _write_cached(path: str, data: bytes) -> None:
         pass
 
 
-def _cached_image_response(url: str, max_age: int = 2592000):
+def _image_or_none(url: str, max_age: int = 2592000):
     """Serve a cover image, caching the bytes on disk so each external cover is
     fetched at most once. Cache-Control lets the browser keep it too, so flipping
-    pages doesn't re-hit this endpoint at all."""
+    pages doesn't re-hit this endpoint at all. Returns None instead of raising —
+    callers chain fallback sources."""
     if not url:
-        raise HTTPException(404)
+        return None
     headers = {"Cache-Control": f"public, max-age={max_age}"}
     path = _cache_path(url)
     cached = _read_cached(path)
@@ -111,6 +112,13 @@ def _cached_image_response(url: str, max_age: int = 2592000):
                             headers=headers)
     except Exception:
         pass
+    return None
+
+
+def _cached_image_response(url: str, max_age: int = 2592000):
+    resp = _image_or_none(url, max_age)
+    if resp:
+        return resp
     raise HTTPException(404)
 
 
@@ -674,8 +682,33 @@ def issue_thumbnail(series_id: int, number: float):
         except Exception:
             pass
 
-    if issue and issue.get("metron_image"):
-        return _cached_image_response(issue["metron_image"])
+    # Metron/LOCG list art — skip the 'no cover' placeholders some rows carry
+    # (relative paths that can never load; older syncs stored them as-is)
+    mi = issue.get("metron_image") if issue else None
+    if mi and mi.startswith("http") and "no-cover" not in mi:
+        resp = _image_or_none(mi)
+        if resp:
+            return resp
+
+    # Last resort: artless issues often have variant art on LOCG before the main
+    # cover is posted (looking at you, upcoming issues). covers[0] is the main, so
+    # it gets first shot; otherwise the first variant with real art wins. The
+    # variant fetch is cached (6h) and each found image is disk-cached by URL.
+    locg_iid = issue.get("locg_issue_id") if issue else None
+    if locg_iid:
+        try:
+            locg = _locg()
+            if locg:
+                data = locg.fetch_variants(locg_iid)
+            else:
+                from kometa.locg_client import fetch_variants
+                data = fetch_variants(locg_iid)
+            for c in data.get("covers", [])[:6]:
+                resp = _image_or_none(c.get("thumb"))
+                if resp:
+                    return resp
+        except Exception:
+            pass
     raise HTTPException(404)
 
 

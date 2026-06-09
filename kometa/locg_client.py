@@ -246,8 +246,21 @@ def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
                     except (ValueError, OverflowError, OSError):
                         pass
             cover = img_el.get("data-src") if img_el else None
+            if cover and "covers/" not in cover:
+                # LOCG's no-art placeholder (/assets/images/no-cover-*.jpg) — storing
+                # it poisons metron_image with a relative URL that can never load
+                cover = None
+            # The issue id lives in the <a href="/comic/{id}/{slug}"> on every row,
+            # art or no art. The old cover-URL parse silently dropped the id for any
+            # issue whose cover wasn't posted yet — which is exactly the issues
+            # (upcoming) where the variants tab matters most. Keep it as fallback.
             locg_issue_id = None
-            if cover:
+            a_el = li.find("a", href=re.compile(r"/comic/(\d+)/"))
+            if a_el:
+                m = re.search(r"/comic/(\d+)/", a_el["href"])
+                if m:
+                    locg_issue_id = m.group(1)
+            if not locg_issue_id and cover:
                 m = _COVER_ID_RE.search(cover)
                 if m:
                     locg_issue_id = m.group(1)
