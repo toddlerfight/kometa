@@ -55,7 +55,15 @@ Pattern for new tests: use the `db_path`/`series` fixtures, `monkeypatch.setattr
 the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._komga_scan`,
 `acq.GetComicsClient`), call the function, assert DB/disk state.
 
-## Deploy to the NAS (only when explicitly approved)
+## Deploy to the NAS (commit-then-deploy — no per-change approval needed)
+
+Deploys do not require per-change approval while the NAS is the active test
+environment (rule changed 2026-06-10). The non-negotiable safety net: **every
+deploy is preceded by a commit pushed to Gitea** (`origin` =
+`ssh://git@$NAS_HOST:2222/<nas-user>/kometa.git`, branch `arch-cleanup`), so
+there is always a point-in-time to roll back to. Rollback = `git checkout
+<commit> -- <files>`, re-sync, restart. Destructive operations (anything that
+touches library files or the DB schema) still need explicit approval.
 
 Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
 NAS access: `ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST`. Docker binary:

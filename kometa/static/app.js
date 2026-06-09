@@ -1834,7 +1834,7 @@ function _imToggleVariant(id) {
 }
 
 function _imSetPrimary(e, id) {
-  e.stopPropagation();
+  if (e) e.stopPropagation();   // null when called from the lightbox — no card click to contain
   if (!_issueVariantSelected.has(id)) {
     _issueVariantSelected.add(id);
     if (!_issueVariantPrimary) _issueVariantPrimary = id;
@@ -1905,6 +1905,23 @@ function _lbControls() {            // button state only — no image re-animati
   inc.classList.toggle('on', on);
   inc.textContent = on ? '✓ Included' : 'Include';
   document.getElementById('vlb-star').classList.toggle('on', _issueVariantPrimary === c.id);
+}
+
+// The two buttons index.html had been pointing at since the lightbox shipped.
+// They never existed — every click was a silent ReferenceError while the buttons
+// sat there looking employable. Both just drive the card-grid state machine, so
+// the grid, hint, and Apply button behind the lightbox stay in sync for free.
+function _lbToggleInclude() {
+  const c = _issueVariantCovers[_lbIndex];
+  if (!c) return;
+  _imToggleVariant(c.id);
+  _lbControls();
+}
+function _lbSetCover() {
+  const c = _issueVariantCovers[_lbIndex];
+  if (!c) return;
+  _imSetPrimary(null, c.id);
+  _lbControls();
 }
 
 async function _imApplyVariants(seriesId, number, isOwned) {
