@@ -956,7 +956,7 @@ select.settings-input {
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  gap: 40px;
   align-items: start;
 }
 
@@ -969,8 +969,8 @@ select.settings-input {
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--tp);
-  padding: 0 0 8px;
-  margin-bottom: 14px;
+  padding: 0 0 10px;
+  margin-bottom: 20px;
   border-bottom: 1px solid var(--bd);
   display: flex;
   justify-content: space-between;
@@ -1027,7 +1027,7 @@ select.settings-input {
   color: var(--tq);
 }
 
-.settings-field { margin-bottom: 14px; }
+.settings-field { margin-bottom: 22px; }
 
 .settings-field-label {
   font-family: var(--font);
@@ -1035,7 +1035,7 @@ select.settings-input {
   color: var(--tq);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-bottom: 5px;
+  margin-bottom: 7px;
 }
 
 .settings-input {
