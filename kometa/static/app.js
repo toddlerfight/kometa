@@ -38,6 +38,12 @@ function showToast(msg, type = '') {
 
 let currentView = 'series';
 let currentParams = {};
+
+// Rows synced before 2026-06-10 can carry LOCG's no-cover placeholder as
+// metron_image — a RELATIVE path that 404s against our origin every render.
+// Treat anything that isn't an absolute real-art URL as no art at all.
+const _metronArt = i => (i.metron_image && i.metron_image.startsWith('http')
+  && !i.metron_image.includes('no-cover')) ? i.metron_image : null;
 let detailTab = 'all';
 let detailSortDesc = true;
 
@@ -251,10 +257,17 @@ async function syncSeries(id, btn) {
       const s = await api.get(`/api/series/${id}`);
       if (s.last_synced !== preSynced || Date.now() > deadline) {
         clearInterval(poll);
+        // Only repaint if the user is STILL on this series — and only when the
+        // sync changed something visible. The old else-branch here painted
+        // renderSeries() (a dead, router-unreachable page) over WHATEVER view
+        // you were on whenever a background sync landed — the infamous
+        // "page keeps bouncing to the library by itself" poltergeist.
         if (currentView === 'series-detail' && currentParams.id === id) {
-          await renderSeriesDetail(id);
-        } else {
-          await renderSeries();
+          const changed = !before
+            || s.owned !== before.owned || s.missing !== before.missing
+            || s.upcoming !== before.upcoming || s.next_release !== before.next_release
+            || (s.issues || []).length !== (before.issues || []).length;
+          if (changed) await renderSeriesDetail(id);
         }
         if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
       }
@@ -496,7 +509,7 @@ function buildIssueTiles(s) {
       // whole fallback chain (metron → LOCG main → variant art). An issue with
       // genuinely zero art anywhere 404s and the img removes itself, same blank as before.
       const thumbSrc = issue.variant_cover
-        || issue.metron_image
+        || _metronArt(issue)
         || `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
       inner = `<div class="issue-tile-img ${st}">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy"
@@ -1667,7 +1680,7 @@ async function showIssueModal(seriesId, number) {
     ? issue.variant_cover
     : issue.komga_book_id
       ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
-      : (issue.metron_image
+      : (_metronArt(issue)
           // same server-side fallback chain the grid tiles use — never show the
           // no-cover void when LOCG has variant art for an artless upcoming issue
           || `/api/series/${seriesId}/issues/${issue.number}/thumbnail`);
