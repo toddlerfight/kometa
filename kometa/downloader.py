@@ -4,6 +4,8 @@ import time
 import shutil
 import logging
 import zipfile
+import tempfile
+import subprocess
 import requests
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,11 +47,45 @@ def _download_cover(cover_id: str) -> bytes | None:
     return r.content if r.status_code == 200 and r.content else None
 
 
+def _read_archive_pages(path: str):
+    """Yield (name, bytes) for every entry, sorted by name.
+
+    CBZ reads member-by-member via zipfile. RAR (detected by magic bytes, not
+    extension — mislabeled files walk among us) gets ONE sequential bsdtar
+    extract to a temp dir first: solid RAR archives are compressed as a single
+    stream, so member-at-a-time access (what rarfile does with any backend that
+    can't seek) dies with 'Failed the read enough data', while a front-to-back
+    full extract sails through. Proven against the exact file that failed."""
+    with open(path, 'rb') as fh:
+        is_rar = fh.read(4) == b'Rar!'
+    if is_rar:
+        tmpdir = tempfile.mkdtemp(prefix='kometa-cbr-')
+        try:
+            subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
+                           check=True, capture_output=True)
+            entries = []
+            for root, _dirs, files in os.walk(tmpdir):
+                for f in files:
+                    full = os.path.join(root, f)
+                    rel = os.path.relpath(full, tmpdir).replace(os.sep, '/')
+                    entries.append((rel, full))
+            for rel, full in sorted(entries):
+                with open(full, 'rb') as fh:
+                    yield rel, fh.read()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+    else:
+        with zipfile.ZipFile(path, 'r') as src:
+            for name in sorted(src.namelist()):
+                yield name, src.read(name)
+
+
 def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
     """
     Prepend selected variant cover images to cbz_path. Writes back in place
     (atomically — a temp file next to the target, then os.replace).
-    CBR input is converted to CBZ. Returns count of images injected.
+    CBR input is converted to CBZ and the source .cbr is removed once the
+    rebuilt archive verifies. Returns count of images injected.
     selected: [{"id": str, "name": str}, ...]
     primary_id: id of the cover that should sort first
     """
@@ -62,19 +98,8 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
 
     variant_pages.sort(key=lambda x: (0 if x[0] == primary_id else 1, x[1]))
 
-    is_rar = cbz_path.lower().endswith('.cbr')
-    if is_rar:
-        try:
-            import rarfile
-            rarfile.UNRAR_TOOL = 'bsdtar'
-            opener = rarfile.RarFile
-        except ImportError:
-            raise RuntimeError("rarfile not installed — cannot read CBR") from None
-    else:
-        opener = zipfile.ZipFile
-
     # Build the rebuilt archive in a temp file beside the target, then os.replace
-    # it into place. The original CBZ is bit-for-bit untouched until the swap —
+    # it into place. The original is bit-for-bit untouched until the swap —
     # a crash mid-write leaves a stray .tmp, never a truncated comic.
     out_path = re.sub(r'\.cbr$', '.cbz', cbz_path, flags=re.IGNORECASE)
     tmp_path = out_path + '.kometa-tmp'
@@ -87,23 +112,29 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
                 zf.writestr(fname, data)
                 cover_names.append(fname)
 
-            with opener(cbz_path, 'r') as src:
-                orig_names = sorted(src.namelist())
-                comic_info_data = None
-                for name in orig_names:
-                    if name.lower() == 'comicinfo.xml':
-                        comic_info_data = src.read(name)
-                    elif re.match(r'\d{3}_cover_', name):
-                        # Drop covers WE injected on a previous apply — replace, don't stack.
-                        # Never matches the comic's own pages (they're not named NNN_cover_…),
-                        # so the original cover + interior pages are always preserved.
-                        continue
-                    else:
-                        zf.writestr(name, src.read(name))
+            comic_info_data = None
+            for name, data in _read_archive_pages(cbz_path):
+                if name.lower() == 'comicinfo.xml':
+                    comic_info_data = data
+                elif re.match(r'\d{3}_cover_', name):
+                    # Drop covers WE injected on a previous apply — replace, don't stack.
+                    # Never matches the comic's own pages (they're not named NNN_cover_…),
+                    # so the original cover + interior pages are always preserved.
+                    continue
+                else:
+                    zf.writestr(name, data)
 
             if comic_info_data is not None:
                 comic_info_data = _patch_comic_info(comic_info_data, len(cover_names))
                 zf.writestr('ComicInfo.xml', comic_info_data)
+            entry_count = len(zf.namelist())
+
+        # Verify the rebuild BEFORE it replaces anything (and long before the
+        # source .cbr is allowed to die). Paranoia is free; re-downloading a
+        # comic that got eaten is not.
+        with zipfile.ZipFile(tmp_path, 'r') as chk:
+            if chk.testzip() is not None or len(chk.namelist()) != entry_count:
+                raise RuntimeError("rebuilt archive failed verification")
 
         os.replace(tmp_path, out_path)
     except BaseException:
@@ -112,6 +143,16 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
         except OSError:
             pass
         raise
+
+    # CBR→CBZ conversion: the verified replacement is on disk, so the source
+    # .cbr is now a 180MB duplicate that makes Komga see two books for one
+    # issue. Remove it — failure here is logged, never fatal.
+    if out_path != cbz_path:
+        try:
+            os.remove(cbz_path)
+            logger.info(f"inject_covers: converted CBR→CBZ, removed source {cbz_path}")
+        except OSError as e:
+            logger.warning(f"inject_covers: could not remove source CBR {cbz_path}: {e}")
 
     return len(variant_pages)
 
