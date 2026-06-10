@@ -721,11 +721,17 @@ def issue_thumbnail(series_id: int, number: float):
                 resp = _image_or_none(c.get("thumb"))
                 if resp:
                     return resp
-        except Exception:
-            pass
+        except Exception as e:
+            # Transient failure (LOCG hiccup, CF challenge, timeout) is NOT a
+            # verdict on whether art exists — return a plain uncached 404 so the
+            # next render gets a fresh attempt. Caching an exception as "no art"
+            # is how a one-off blip becomes a 6-hour blank tile.
+            logger.warning(f"thumbnail fallback failed for series {series_id} #{number}: {e}")
+            return Response(status_code=404)
 
-    # Whole chain came up empty — remember that so the next render doesn't pay
-    # for the same expedition. New art gets another chance after the TTL.
+    # Clean determination: every source genuinely has no art right now. Remember
+    # that so the next render doesn't pay for the same expedition; new art gets
+    # another chance after the TTL.
     _thumb_misses[miss_key] = time.time() + _THUMB_MISS_TTL
     return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
 
