@@ -1715,3 +1715,17 @@ select.settings-input {
 #toast.toast-show { transform: translateX(-50%) translateY(0); }
 #toast.toast-hidden { transform: translateX(-50%) translateY(80px); }
 #toast.toast-error { border-color: var(--pink); color: var(--pink); }
+
+/* --- busy button: spinner so a 10-second CBR rebuild doesn't look like a hang --- */
+.btn-working::before {
+  content: '';
+  display: inline-block;
+  width: .85em; height: .85em;
+  border: 2px solid rgba(255,255,255,.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  margin-right: .5em;
+  vertical-align: -.12em;
+  animation: btn-spin .7s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
