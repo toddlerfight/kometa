@@ -1401,7 +1401,7 @@ async function renderSettings() {
         <div style="font-size:10px;color:var(--tq);margin-top:2px">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
       </div>
       <div class="settings-card" style="margin-top:24px">
-        <div class="settings-card-header">Komga</div>
+        <div class="settings-card-header">Komga <span class="settings-opt">(optional)</span></div>
         <div class="settings-field">
           <div class="settings-field-label">Server URL</div>
           <input class="settings-input" id="s-komga-url" value="${esc(cfg.komga_url)}">
@@ -1422,7 +1422,7 @@ async function renderSettings() {
       </div>
       <div>
         <div class="settings-card">
-          <div class="settings-card-header">Metron</div>
+          <div class="settings-card-header">Metron <span class="settings-opt">(optional)</span></div>
           <div class="settings-field">
             <div class="settings-field-label">Username</div>
             <input class="settings-input" id="s-metron-user" value="${esc(cfg.metron_user)}">
@@ -1433,7 +1433,7 @@ async function renderSettings() {
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">Comic Vine</div>
+          <div class="settings-card-header">Comic Vine <span class="settings-opt">(optional)</span></div>
           <div class="settings-field">
             <div class="settings-field-label">API Key ${cfg.cv_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
             <input class="settings-input" id="s-cv-key" type="password" placeholder="${cfg.cv_configured ? 'Leave blank to keep current' : 'Enter API key'}">
@@ -1443,7 +1443,7 @@ async function renderSettings() {
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">League of Comic Geeks <span style="font-weight:400;font-size:11px;color:var(--tq)">(optional)</span></div>
+          <div class="settings-card-header">League of Comic Geeks <span class="settings-opt">(optional)</span></div>
           <div class="settings-field">
             <div class="settings-field-label">Username ${cfg.locg_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
             <input class="settings-input" id="s-locg-user" value="${esc(cfg.locg_user || '')}">
@@ -1461,7 +1461,7 @@ async function renderSettings() {
           </div>
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">SABnzbd <span style="font-weight:400;font-size:11px;color:var(--tq)">(optional — Usenet downloads)</span></div>
+          <div class="settings-card-header">SABnzbd <span class="settings-opt">(optional — Usenet downloads)</span></div>
           <div class="settings-field">
             <div class="settings-field-label">Server URL ${cfg.sab_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
             <input class="settings-input" id="s-sab-url" value="${esc(cfg.sab_url || '')}" placeholder="http://host:8080">
