@@ -1389,7 +1389,6 @@ async function renderSettings() {
 
   setApp(`
     <div class="page-title">Settings</div>
-    <div class="settings-note">Every field saves itself when you leave it. No save button, nothing to forget.</div>
     <div class="settings-grid">
       <div>
         <div class="settings-card">
@@ -1405,13 +1404,12 @@ async function renderSettings() {
             </div>
           </div>
           <div class="settings-help" id="root-status"></div>
-          <div class="settings-help">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
         </div>
-        <div class="settings-card" style="margin-top:24px">
+        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
-        <div class="settings-card" style="margin-top:24px">
+        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('Komga', 'optional', 'komga', true, komgaCfg)}
           ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url)}
           ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
@@ -1425,16 +1423,16 @@ async function renderSettings() {
           ${_settingsField('f-metron-user', 'Username', cfg.metron_user)}
           ${_settingsField('f-metron-pass', 'Password', '', { set: metronCfg })}
         </div>
-        <div class="settings-card" style="margin-top:24px">
+        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('Comic Vine', 'optional', 'comicvine', true, cfg.cv_configured)}
           ${_settingsField('f-cv-key', 'API Key', '', { set: cfg.cv_configured, ph: 'Enter API key' })}
         </div>
-        <div class="settings-card" style="margin-top:24px">
+        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('League of Comic Geeks', 'optional', 'locg', true, cfg.locg_configured)}
           ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
           ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
         </div>
-        <div class="settings-card" style="margin-top:24px">
+        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('SABnzbd', 'optional — Usenet downloads', 'sabnzbd', true, cfg.sab_configured)}
           ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
           ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
