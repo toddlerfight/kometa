@@ -703,12 +703,12 @@ function _showComicsRootSetup() {
 
 function browseSettingsRoot() {
   // Same filesystem browser (with New Folder), but for the Settings field:
-  // selecting just fills the input — Settings has its own Save button.
+  // selecting fills the input and autosaves it like any other edit.
   _fbScope = 'fs';
   _fbCallback = (path) => {
     closeModal();
-    const i = document.getElementById('s-comics-root');
-    if (i) i.value = path;
+    const i = document.getElementById('f-comics-root');
+    if (i) { i.value = path; _settingsChanged(i); }
   };
   showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
   _fbNav('');
@@ -1384,101 +1384,207 @@ async function renderSettings() {
   setApp('<div class="state-msg">Loading...</div>');
 
   const cfg = await api.get('/api/config');
+  const komgaCfg  = !!(cfg.komga_url && cfg.komga_user);
+  const metronCfg = !!cfg.metron_user;
 
   setApp(`
     <div class="page-title">Settings</div>
+    <div class="settings-note">Every field saves itself when you leave it. No save button, nothing to forget.</div>
     <div class="settings-grid">
       <div>
-      <div class="settings-card">
-        <div class="settings-card-header">Comics Library <span class="settings-opt">required</span></div>
-        <div class="settings-field">
-          <div class="settings-field-label">Library path</div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input class="settings-input" id="s-comics-root" value="${esc(cfg.comics_root || '')}" placeholder="/comics" style="flex:1;margin:0">
-            <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
+        <div class="settings-card">
+          ${_settingsHeader('Comics Library', 'required', 'library')}
+          <div class="settings-field">
+            <label class="settings-field-label" for="f-comics-root">Library path</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="settings-input" id="f-comics-root" value="${esc(cfg.comics_root || '')}"
+                data-last="${esc(cfg.comics_root || '')}" placeholder="/comics"
+                autocomplete="off" spellcheck="false" style="flex:1;margin:0"
+                onchange="_settingsChanged(this)">
+              <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
+            </div>
           </div>
+          <div class="settings-help" id="root-status"></div>
+          <div class="settings-help">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
         </div>
-        <div style="font-size:10px;color:var(--tq);margin-top:2px">Where comics live and get filed. Downloads stage in a hidden subfolder of this path.</div>
-      </div>
-      <div class="settings-card" style="margin-top:24px">
-        <div class="settings-card-header">Komga <span class="settings-opt">optional</span></div>
-        <div class="settings-field">
-          <div class="settings-field-label">Server URL</div>
-          <input class="settings-input" id="s-komga-url" value="${esc(cfg.komga_url)}">
+        <div class="settings-card" style="margin-top:24px">
+          ${_settingsHeader('Sync Schedule', '', 'schedule')}
+          ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Username</div>
-          <input class="settings-input" id="s-komga-user" value="${esc(cfg.komga_user)}">
+        <div class="settings-card" style="margin-top:24px">
+          ${_settingsHeader('Komga', 'optional', 'komga', true, komgaCfg)}
+          ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url)}
+          ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
+          ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
+          ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
         </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Password</div>
-          <input class="settings-input" id="s-komga-pass" type="password" placeholder="Leave blank to keep current">
-        </div>
-        <div class="settings-field">
-          <div class="settings-field-label">Library ID</div>
-          <input class="settings-input" id="s-komga-lib" value="${esc(cfg.komga_library_id)}">
-        </div>
-      </div>
       </div>
       <div>
         <div class="settings-card">
-          <div class="settings-card-header">Metron <span class="settings-opt">optional</span></div>
-          <div class="settings-field">
-            <div class="settings-field-label">Username</div>
-            <input class="settings-input" id="s-metron-user" value="${esc(cfg.metron_user)}">
-          </div>
-          <div class="settings-field">
-            <div class="settings-field-label">Password</div>
-            <input class="settings-input" id="s-metron-pass" type="password" placeholder="Leave blank to keep current">
-          </div>
+          ${_settingsHeader('Metron', 'optional', 'metron', true, metronCfg)}
+          ${_settingsField('f-metron-user', 'Username', cfg.metron_user)}
+          ${_settingsField('f-metron-pass', 'Password', '', { set: metronCfg })}
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">Comic Vine <span class="settings-opt">optional</span></div>
-          <div class="settings-field">
-            <div class="settings-field-label">API Key ${cfg.cv_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
-            <input class="settings-input" id="s-cv-key" type="password" placeholder="${cfg.cv_configured ? 'Leave blank to keep current' : 'Enter API key'}">
-          </div>
-          <div style="margin-top:8px">
-            <button class="btn btn-ghost" onclick="testCV(this)">Test Connection</button>
-          </div>
+          ${_settingsHeader('Comic Vine', 'optional', 'comicvine', true, cfg.cv_configured)}
+          ${_settingsField('f-cv-key', 'API Key', '', { set: cfg.cv_configured, ph: 'Enter API key' })}
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">League of Comic Geeks <span class="settings-opt">optional</span></div>
-          <div class="settings-field">
-            <div class="settings-field-label">Username ${cfg.locg_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
-            <input class="settings-input" id="s-locg-user" value="${esc(cfg.locg_user || '')}">
-          </div>
-          <div class="settings-field">
-            <div class="settings-field-label">Password</div>
-            <input class="settings-input" id="s-locg-pass" type="password" placeholder="${cfg.locg_configured ? 'Leave blank to keep current' : 'Enter password'}">
-          </div>
+          ${_settingsHeader('League of Comic Geeks', 'optional', 'locg', true, cfg.locg_configured)}
+          ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
+          ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
         </div>
         <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">Sync Schedule</div>
-          <div class="settings-field">
-            <div class="settings-field-label">Hours (24h, comma-separated)</div>
-            <input class="settings-input" id="s-sync-hours" value="${esc(cfg.sync_hours)}">
-          </div>
-        </div>
-        <div class="settings-card" style="margin-top:24px">
-          <div class="settings-card-header">SABnzbd <span class="settings-opt">optional — Usenet downloads</span></div>
-          <div class="settings-field">
-            <div class="settings-field-label">Server URL ${cfg.sab_configured ? '<span style="color:var(--tq);font-size:11px">● connected</span>' : ''}</div>
-            <input class="settings-input" id="s-sab-url" value="${esc(cfg.sab_url || '')}" placeholder="http://host:8080">
-          </div>
-          <div class="settings-field">
-            <div class="settings-field-label">API Key</div>
-            <input class="settings-input" id="s-sab-apikey" type="password" placeholder="${cfg.sab_configured ? 'Leave blank to keep current' : 'Enter API key'}">
-          </div>
+          ${_settingsHeader('SABnzbd', 'optional — Usenet downloads', 'sabnzbd', true, cfg.sab_configured)}
+          ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
+          ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
           <div id="indexers-section"></div>
         </div>
-      </div>
-      <div class="settings-footer">
-        <button class="btn btn-primary" onclick="saveSettings(this)">Save Settings</button>
       </div>
     </div>
   `);
   _renderIndexers(cfg.newznab_indexers);
+  _updateRootStatus(cfg.comics_root_ok);
+}
+
+// Autosave architecture: every field persists itself on change — no Save
+// button to forget, no dirty form to lose to a stray navigation. Secrets save
+// on blur and never round-trip back into the DOM.
+// input id → config key, owning card (for the 'saved' whisper), and which
+// integration to re-verify after the value changes.
+const _SETTINGS_FIELDS = {
+  'f-comics-root': { card: 'library',   key: 'comics_root' },
+  'f-komga-url':   { card: 'komga',     key: 'komga_url',        test: 'komga' },
+  'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
+  'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
+  'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
+  'f-metron-user': { card: 'metron',    key: 'metron_user',      test: 'metron' },
+  'f-metron-pass': { card: 'metron',    key: 'metron_pass',      test: 'metron', secret: true },
+  'f-cv-key':      { card: 'comicvine', key: 'cv_api_key',       test: 'comicvine', secret: true },
+  'f-locg-user':   { card: 'locg',      key: 'locg_user',        test: 'locg' },
+  'f-locg-pass':   { card: 'locg',      key: 'locg_pass',        test: 'locg', secret: true },
+  'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
+  'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
+  'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
+};
+
+const _TEST_ENDPOINTS = { komga: 'komga', metron: 'metron', comicvine: 'comicvine', locg: 'locg', sabnzbd: 'sab' };
+
+function _settingsField(id, label, value, opts = {}) {
+  const f = _SETTINGS_FIELDS[id] || {};
+  const secret = !!f.secret;
+  const ph = secret
+    ? (opts.set ? 'Leave blank to keep current' : (opts.ph || ''))
+    : (opts.ph || '');
+  return `
+    <div class="settings-field">
+      <label class="settings-field-label" for="${id}">${label}</label>
+      <input class="settings-input" id="${id}"
+        type="${secret ? 'password' : 'text'}"
+        value="${esc(value || '')}" data-last="${esc(value || '')}"
+        placeholder="${esc(ph)}"
+        autocomplete="${secret ? 'new-password' : 'off'}" spellcheck="false"
+        onchange="_settingsChanged(this)">
+    </div>`;
+}
+
+function _settingsHeader(title, tag, cardId, integ = false, configured = false) {
+  return `
+    <div class="settings-card-header">
+      <span>${title}${tag ? ` <span class="settings-opt">${tag}</span>` : ''}</span>
+      <span class="settings-head-right">
+        <span class="settings-whisper" id="sw-${cardId}"></span>
+        ${integ ? `
+          <span class="settings-dot ${configured ? 'cfg' : ''}" id="dot-${cardId}"
+            title="${configured ? 'configured — not yet verified' : 'not configured'}">${configured ? '○' : ''}</span>
+          <button class="btn-link" onclick="testIntegration('${cardId}')">test</button>
+          <button class="btn-link" id="dc-${cardId}" style="${configured ? '' : 'display:none'}"
+            onclick="disconnectIntegration('${cardId}', this)">disconnect</button>` : ''}
+      </span>
+    </div>`;
+}
+
+let _whisperTimers = {};
+function _whisper(cardId, msg, err = false) {
+  const el = document.getElementById(`sw-${cardId}`);
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('err', err);
+  clearTimeout(_whisperTimers[cardId]);
+  _whisperTimers[cardId] = setTimeout(() => { el.textContent = ''; }, err ? 4000 : 1800);
+}
+
+function _validSyncHours(v) {
+  return /^\d{1,2}(\s*,\s*\d{1,2})*$/.test(v) && v.split(',').every(h => +h >= 0 && +h <= 23);
+}
+
+async function _settingsChanged(el) {
+  const f = _SETTINGS_FIELDS[el.id];
+  if (!f) return;
+  const val = el.value.trim();
+  if (f.secret && !val) return;                      // blank secret = keep current
+  if (!f.secret && val === el.dataset.last) return;  // nothing actually changed
+
+  if (f.key === 'sync_hours' && !_validSyncHours(val)) {
+    el.classList.add('input-bad');
+    _whisper(f.card, 'hours are 0–23, comma-separated', true);
+    return;
+  }
+  el.classList.remove('input-bad');
+
+  try {
+    const cfg = await api.patch('/api/config', { [f.key]: val });
+    el.dataset.last = val;
+    if (f.secret) { el.value = ''; el.placeholder = 'Leave blank to keep current'; }
+    _whisper(f.card, 'saved');
+    if (f.key === 'comics_root') _updateRootStatus(cfg.comics_root_ok);
+    if (f.test) testIntegration(f.test);             // re-verify after cred change
+  } catch (e) {
+    _whisper(f.card, 'save failed', true);
+    showToast(`Save failed: ${e.message || f.key}`, 'error');
+  }
+}
+
+function _updateRootStatus(ok) {
+  const el = document.getElementById('root-status');
+  if (!el) return;
+  el.textContent = ok ? '✓ path exists and is writable' : '✗ path missing or read-only';
+  el.className = `settings-help ${ok ? 'ok' : 'bad'}`;
+}
+
+async function testIntegration(integ) {
+  const dot = document.getElementById(`dot-${integ}`);
+  if (dot) { dot.textContent = '◌'; dot.className = 'settings-dot cfg'; dot.title = 'testing…'; }
+  try {
+    const res = await api.post(`/api/test/${_TEST_ENDPOINTS[integ]}`, {});
+    if (res.ok) {
+      if (dot) { dot.textContent = '●'; dot.className = 'settings-dot ok'; dot.title = 'verified'; }
+      const dc = document.getElementById(`dc-${integ}`);
+      if (dc) dc.style.display = '';
+    } else {
+      if (dot) { dot.textContent = '✗'; dot.className = 'settings-dot bad'; dot.title = res.error || 'failed'; }
+      showToast(`${integ}: ${res.error || 'connection failed'}`, 'error');
+    }
+  } catch (e) {
+    if (dot) { dot.textContent = '✗'; dot.className = 'settings-dot bad'; dot.title = 'failed'; }
+    showToast(`${integ}: test failed`, 'error');
+  }
+}
+
+async function disconnectIntegration(integ, btn) {
+  if (btn.dataset.armed !== '1') {       // two-click confirm — destructive, but no alert() boxes
+    btn.dataset.armed = '1';
+    btn.textContent = 'sure?';
+    setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'disconnect'; }, 3000);
+    return;
+  }
+  try {
+    await api.post(`/api/config/disconnect/${integ}`, {});
+    showToast(`${integ} disconnected`);
+    renderSettings();
+  } catch (e) {
+    showToast(`Disconnect failed: ${e.message || integ}`, 'error');
+  }
 }
 
 function _renderIndexers(list) {
@@ -1490,12 +1596,12 @@ function _renderIndexers(list) {
       <button class="btn btn-ghost btn-sm" onclick="removeIndexer(${i})">Remove</button>
     </div>`).join('') || '<div style="color:var(--tq);font-size:11px;padding:3px 0">No indexers yet.</div>';
   el.innerHTML = `
-    <div class="settings-field-label" style="margin-top:16px">Newznab Indexers <span style="color:var(--tq);font-weight:400">(saved immediately)</span></div>
+    <div class="settings-field-label" style="margin-top:16px">Newznab Indexers</div>
     ${rows}
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-      <input class="settings-input" id="ix-name" placeholder="Name" style="flex:1;min-width:70px">
-      <input class="settings-input" id="ix-host" placeholder="api.example.info" style="flex:2;min-width:130px">
-      <input class="settings-input" id="ix-apikey" type="password" placeholder="API key" style="flex:1;min-width:70px">
+      <input class="settings-input" id="ix-name" placeholder="Name" autocomplete="off" spellcheck="false" style="flex:1;min-width:70px">
+      <input class="settings-input" id="ix-host" placeholder="api.example.info" autocomplete="off" spellcheck="false" style="flex:2;min-width:130px">
+      <input class="settings-input" id="ix-apikey" type="password" autocomplete="new-password" placeholder="API key" style="flex:1;min-width:70px">
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--tp);cursor:pointer"><input type="checkbox" id="ix-ssl" checked> SSL</label>
@@ -1508,13 +1614,16 @@ async function addIndexer(btn) {
   const host = document.getElementById('ix-host').value.trim();
   const apikey = document.getElementById('ix-apikey').value.trim();
   const ssl = document.getElementById('ix-ssl').checked;
-  if (!name || !host || !apikey) { alert('Name, host, and API key are all required.'); return; }
-  btn.disabled = true; btn.textContent = 'Adding…';
+  if (!name || !host || !apikey) { showToast('Name, host, and API key are all required.', 'error'); return; }
+  btn.disabled = true; btn.textContent = 'Adding…'; btn.classList.add('btn-working');
   try {
     await api.post('/api/config/indexers', { name, host, apikey, ssl });
     const cfg = await api.get('/api/config');
     _renderIndexers(cfg.newznab_indexers);  // re-renders cleared inputs too
-  } catch (e) { btn.disabled = false; btn.textContent = 'Add Indexer'; alert('Add failed — check console.'); console.error(e); }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Add Indexer'; btn.classList.remove('btn-working');
+    showToast(`Add failed: ${e.message || 'unknown error'}`, 'error');
+  }
 }
 
 async function removeIndexer(idx) {
@@ -1522,54 +1631,8 @@ async function removeIndexer(idx) {
     await api.del(`/api/config/indexers/${idx}`);
     const cfg = await api.get('/api/config');
     _renderIndexers(cfg.newznab_indexers);
-  } catch (e) { alert('Remove failed — check console.'); console.error(e); }
-}
-
-async function saveSettings(btn) {
-  btn.disabled = true; btn.textContent = 'Saving…';
-  const updates = {
-    comics_root:      document.getElementById('s-comics-root').value.trim(),
-    komga_url:        document.getElementById('s-komga-url').value.trim(),
-    komga_user:       document.getElementById('s-komga-user').value.trim(),
-    komga_library_id: document.getElementById('s-komga-lib').value.trim(),
-    metron_user:      document.getElementById('s-metron-user').value.trim(),
-    locg_user:        document.getElementById('s-locg-user').value.trim(),
-    sync_hours:       document.getElementById('s-sync-hours').value.trim(),
-    sab_url:          document.getElementById('s-sab-url').value.trim(),
-  };
-  const pass      = document.getElementById('s-komga-pass').value;
-  const mpass     = document.getElementById('s-metron-pass').value;
-  const cvkey     = document.getElementById('s-cv-key').value;
-  const locgpass  = document.getElementById('s-locg-pass').value;
-  const sabkey    = document.getElementById('s-sab-apikey').value;
-  if (pass)     updates.komga_pass  = pass;
-  if (mpass)    updates.metron_pass = mpass;
-  if (cvkey)    updates.cv_api_key  = cvkey;
-  if (locgpass) updates.locg_pass   = locgpass;
-  if (sabkey)   updates.sab_apikey  = sabkey;
-
-  try {
-    await api.patch('/api/config', updates);
-    btn.textContent = 'Saved ✓';
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Save Settings'; }, 1500);
   } catch (e) {
-    btn.disabled = false; btn.textContent = 'Save Settings';
-    alert('Save failed — check console.');
-    console.error(e);
-  }
-}
-
-async function testCV(btn) {
-  const key = document.getElementById('s-cv-key').value.trim();
-  if (!key) { alert('Enter an API key first.'); return; }
-  btn.disabled = true; btn.textContent = 'Testing…';
-  try {
-    const res = await api.post('/api/test/comicvine', { api_key: key });
-    btn.textContent = res.ok ? 'Connected ✓' : `Failed: ${res.error}`;
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Test Connection'; }, 2000);
-  } catch {
-    btn.textContent = 'Error';
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Test Connection'; }, 2000);
+    showToast(`Remove failed: ${e.message || 'unknown error'}`, 'error');
   }
 }
 
