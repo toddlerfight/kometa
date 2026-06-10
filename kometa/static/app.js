@@ -1817,11 +1817,35 @@ async function showIssueModal(seriesId, number) {
         </div>` : ''}
       </div>
     </div>
-    <div class="modal-footer">
+    <div class="modal-footer" id="issue-modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       ${footerAction}
     </div>
   `);
+
+  // Owned but no Komga book id? The id is stamped lazily server-side (the
+  // thumbnail route's self-heal, or Komga just finished scanning a fresh
+  // download) — often AFTER this page's issue list was fetched, so the cached
+  // copy is one render behind. Refetch once and patch the reader link in
+  // place instead of making the user reload to get what they already own.
+  if (st === 'owned' && !issue.komga_book_id && _appConfig.komga_url) {
+    api.get(`/api/series/${seriesId}`).then(fresh => {
+      const fi = fresh.issues?.find(i => i.number === number);
+      if (!fi?.komga_book_id) return;
+      issue.komga_book_id = fi.komga_book_id;   // heal the cached copy too
+      if (_issueVariantSeriesId !== seriesId || _issueVariantNumber !== number) return;
+      const footer = document.getElementById('issue-modal-footer');
+      if (footer && !footer.querySelector('.komga-read-link')) {
+        const a = document.createElement('a');
+        a.className = 'btn btn-primary komga-read-link';
+        a.href = `${_appConfig.komga_url}/book/${fi.komga_book_id}/read`;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = 'Open in Komga';
+        footer.appendChild(a);
+      }
+    }).catch(() => {});
+  }
 
   // Fetch issue details async — Metron when configured, else LOCG (keyless).
   // Both normalise to flat [{role, name}] credits for _renderIssueDetails.
