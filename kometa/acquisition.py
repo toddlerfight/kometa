@@ -111,9 +111,28 @@ def _process_queue():
                 set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
                 path=DB_PATH,
             )
-        except GCRateLimitError:
-            db.update_queue_state(qid, "failed", error="Rate limited by GetComics — wait a few minutes before retrying", path=DB_PATH)
-            break  # stop processing the rest of the queue too, we're blocked
+        except GCRateLimitError as e:
+            from datetime import datetime, timedelta
+            # A rate limit is "not yet", not "failed" — park the job and let the
+            # 5-minute queue worker pick it back up after the cooldown. Real 429s
+            # bump the attempt counter; gate refusals (no HTTP ever happened)
+            # don't — punishing a job for the pipeline being closed is just mean.
+            attempts = 0 if e.from_gate else db.bump_rl_attempts(qid, path=DB_PATH)
+            if attempts >= 6:
+                db.update_queue_state(
+                    qid, "failed",
+                    error=f"GetComics rate limit persisted across {attempts} retries — giving up",
+                    path=DB_PATH)
+                logger.warning(f"Queue item {qid}: rate-limit retry cap hit — failed for real")
+            else:
+                cooldown = max(int(e.retry_after or 0), 15 * 60)
+                retry_at = (datetime.utcnow() + timedelta(seconds=cooldown)).strftime("%Y-%m-%d %H:%M:%S")
+                db.update_queue_state(
+                    qid, "queued",
+                    error="Rate limited by GetComics — parked, will retry automatically",
+                    retry_after=retry_at, path=DB_PATH)
+                logger.info(f"Queue item {qid}: rate limited — parked until {retry_at} UTC")
+            break  # we're blocked either way — stop hammering with the rest of the queue
         except DuplicateIssueError as e:
             from datetime import datetime, timedelta
             retry_at = (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")

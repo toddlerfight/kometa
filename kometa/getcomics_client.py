@@ -78,13 +78,51 @@ def _series_matches(title_norm: str, post_norm: str) -> bool:
 
 
 class GCRateLimitError(Exception):
-    pass
+    """GetComics said slow down — or we're still inside the cooldown from the
+    last time it did. retry_after = seconds the caller should park the job."""
+    def __init__(self, msg, retry_after=None, from_gate=False):
+        super().__init__(msg)
+        self.retry_after = retry_after
+        self.from_gate = from_gate   # gate refusal = no HTTP was actually made
+
+
+# Be a polite guest. Space every GetComics request, and after a real 429 shut
+# the whole pipeline up for a cooldown instead of letting the next queue item
+# walk face-first into the same wall. Module-level on purpose: one gate for
+# every client instance in the process.
+_MIN_REQUEST_GAP = 3.0      # seconds between any two GetComics requests
+_RL_COOLDOWN = 15 * 60      # default cooldown after a real 429 (Retry-After wins)
+_last_request = 0.0
+_cooldown_until = 0.0
 
 
 class GetComicsClient:
     def __init__(self):
         self.session = cloudscraper.create_scraper()
         self.session.headers.update(HEADERS)
+
+    def _get(self, url, **kw):
+        """Every GetComics request goes through here: cooldown gate first,
+        polite spacing second, and a real 429 arms the gate for everyone."""
+        global _last_request, _cooldown_until
+        remaining = _cooldown_until - time.time()
+        if remaining > 0:
+            raise GCRateLimitError("GetComics cooling down after rate limit",
+                                   retry_after=int(remaining), from_gate=True)
+        wait = _last_request + _MIN_REQUEST_GAP - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request = time.time()
+        r = self.session.get(url, timeout=15, **kw)
+        if r.status_code == 429:
+            try:
+                cooldown = max(int(r.headers.get("Retry-After") or _RL_COOLDOWN), 60)
+            except ValueError:
+                cooldown = _RL_COOLDOWN
+            _cooldown_until = time.time() + cooldown
+            logger.warning(f"GetComics 429 — pipeline cooling down for {cooldown}s")
+            raise GCRateLimitError("Rate limited by GetComics", retry_after=cooldown)
+        return r
 
     def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None) -> tuple[str | None, str | None]:
         """
@@ -112,7 +150,6 @@ class GetComicsClient:
             logger.info(f"GetComics search: {query!r}")
             post_url = self._search_page(query, title, issue_number)
             if post_url:
-                time.sleep(0.75)
                 url, fname = self._extract_download(post_url)
                 if url:
                     return url, fname
@@ -121,9 +158,7 @@ class GetComicsClient:
 
     def _search_page(self, query: str, title: str, issue_number: float) -> str | None:
         try:
-            r = self.session.get(BASE, params={"s": query}, timeout=15)
-            if r.status_code == 429:
-                raise GCRateLimitError("Rate limited by GetComics")
+            r = self._get(BASE, params={"s": query})
             r.raise_for_status()
         except GCRateLimitError:
             raise
@@ -177,8 +212,10 @@ class GetComicsClient:
 
     def _extract_download(self, post_url: str) -> tuple[str | None, str | None]:
         try:
-            r = self.session.get(post_url, timeout=15)
+            r = self._get(post_url)
             r.raise_for_status()
+        except GCRateLimitError:
+            raise
         except Exception as e:
             logger.warning(f"GetComics post fetch failed: {e}")
             return None, None

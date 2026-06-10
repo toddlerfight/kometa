@@ -996,6 +996,7 @@ def delete_queue_item(queue_id: int):
 @app.post("/api/queue/{queue_id}/retry", status_code=200)
 def retry_queue_item(queue_id: int):
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
+    db.reset_rl_attempts(queue_id, path=DB_PATH)
     threading.Thread(target=_process_queue, daemon=True).start()
     return {"ok": True}
 

@@ -184,6 +184,10 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE download_queue ADD COLUMN retry_after TEXT")
         if "sab_nzo_id" not in dq_cols:
             conn.execute("ALTER TABLE download_queue ADD COLUMN sab_nzo_id TEXT")
+        if "rl_attempts" not in dq_cols:
+            # consecutive rate-limit hits for this job — caps auto-retry so a
+            # hard ban eventually fails for real instead of looping forever
+            conn.execute("ALTER TABLE download_queue ADD COLUMN rl_attempts INTEGER DEFAULT 0")
 
 
 # config key -> env var for first-boot provisioning. Lets a deployer configure
@@ -525,6 +529,23 @@ def update_queue_state(queue_id, state, source_url=None, filename=None, error=No
                 updated_at  = datetime('now')
             WHERE id = ?
         """, (state, source_url, filename, error, retry_after, queue_id))
+
+
+def reset_rl_attempts(queue_id, path=DB_PATH):
+    """Manual retry = human says go — give the job a fresh rate-limit budget."""
+    with _connect(path) as conn:
+        conn.execute("UPDATE download_queue SET rl_attempts = 0 WHERE id = ?", (queue_id,))
+
+
+def bump_rl_attempts(queue_id, path=DB_PATH) -> int:
+    """Increment and return this job's consecutive rate-limit counter."""
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE download_queue SET rl_attempts = COALESCE(rl_attempts, 0) + 1 WHERE id = ?",
+            (queue_id,),
+        )
+        row = conn.execute("SELECT rl_attempts FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+        return row[0] if row else 0
 
 
 def complete_download(queue_id, tracked_series_id, issue_number, store_date,
