@@ -1947,7 +1947,11 @@ function _lbSetCover() {
 async function _imApplyVariants(seriesId, number, isOwned) {
   if (!_issueVariantSelected.size) return;
   const btn = document.getElementById('variant-apply-btn');
-  if (btn) { btn.disabled = true; btn.textContent = isOwned ? 'Building…' : 'Saving…'; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = isOwned ? 'Building…' : 'Saving…';
+    btn.classList.add('btn-working');   // spinner — rebuilds take 2-10s, look alive
+  }
   const selected = _issueVariantCovers.filter(c => _issueVariantSelected.has(c.id));
   try {
     const res = await api.post(`/api/series/${seriesId}/issues/${number}/variants/apply`, {
@@ -1969,7 +1973,7 @@ async function _imApplyVariants(seriesId, number, isOwned) {
     if (obj) obj.variant_cover = newSrc;
     if (newSrc) _crossfadeTileCover(number, newSrc);
   } catch(e) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; btn.classList.remove('btn-working'); }
     showToast(`Error: ${e.message || 'failed'}`, 'error');
   }
 }
@@ -2033,12 +2037,12 @@ function _updateIssueDlBtn(seriesId, number, qs) {
 
 async function issueDownload(seriesId, number) {
   const btn = document.getElementById('issue-dl-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Queuing…'; btn.classList.add('btn-working'); }
   try {
     await api.post(`/api/series/${seriesId}/issues/${number}/search`, {});
     _pollIssueQueue(seriesId, number);
   } catch {
-    if (btn) { btn.disabled = false; btn.textContent = 'Download'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Download'; btn.classList.remove('btn-working'); }
   }
 }
 
