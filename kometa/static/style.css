@@ -1030,6 +1030,9 @@ select.settings-input {
 .settings-field { margin-bottom: 22px; }
 
 .settings-field-label {
+  /* <label> is inline by default — without this, margin-bottom is a no-op
+     and the label welds itself to the input no matter what you set */
+  display: block;
   font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
