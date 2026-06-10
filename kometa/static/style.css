@@ -974,6 +974,18 @@ select.settings-input {
   border-bottom: 1px solid var(--bd);
 }
 
+/* the 'relax, you can skip this' whisper — cursive on purpose, a human aside
+   in a wall of terminal mono. text-transform reset or the script goes ALL-CAPS
+   and looks like a ransom note from a calligrapher. */
+.settings-card-header .settings-opt {
+  font-family: 'Snell Roundhand', 'Savoye LET', 'Brush Script MT', cursive;
+  font-size: 14px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: .03em;
+  color: var(--tq);
+}
+
 .settings-field { margin-bottom: 14px; }
 
 .settings-field-label {
