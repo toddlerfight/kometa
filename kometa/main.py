@@ -122,6 +122,13 @@ def _cached_image_response(url: str, max_age: int = 2592000):
     raise HTTPException(404)
 
 
+# Issues whose entire cover-fallback chain struck out: (series_id, number) →
+# don't-retry-before timestamp. Keeps artless tiles from re-running LOCG/S3
+# lookups on every grid render.
+_THUMB_MISS_TTL = 6 * 3600  # seconds
+_thumb_misses: dict = {}
+
+
 def _cached_bytes(cache_key: str, fetch, max_age: int = 2592000):
     """Disk-cache image bytes under a stable key (not a URL). `fetch` is a
     zero-arg callable returning (bytes, content_type) or None. This is what lets
@@ -682,6 +689,13 @@ def issue_thumbnail(series_id: int, number: float):
         except Exception:
             pass
 
+    # Known-artless issue: 404 immediately (with browser caching) instead of
+    # re-running the whole metron/LOCG chain on every grid render. Without this,
+    # each scroll past an artless tile re-fires S3 misses and LOCG lookups.
+    miss_key = (series_id, number)
+    if _thumb_misses.get(miss_key, 0) > time.time():
+        return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
+
     # Metron/LOCG list art — skip the 'no cover' placeholders some rows carry
     # (relative paths that can never load; older syncs stored them as-is)
     mi = issue.get("metron_image") if issue else None
@@ -709,7 +723,11 @@ def issue_thumbnail(series_id: int, number: float):
                     return resp
         except Exception:
             pass
-    raise HTTPException(404)
+
+    # Whole chain came up empty — remember that so the next render doesn't pay
+    # for the same expedition. New art gets another chance after the TTL.
+    _thumb_misses[miss_key] = time.time() + _THUMB_MISS_TTL
+    return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/api/book/{book_id}/thumbnail")

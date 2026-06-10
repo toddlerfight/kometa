@@ -1,6 +1,7 @@
 import re
 import time
 import logging
+import threading
 from datetime import datetime, timezone
 
 import requests
@@ -22,6 +23,10 @@ _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 # rotting under a long-running server.
 _ANON_SESSION_TTL = 1800  # seconds
 _anon_session = {"get": None, "ts": 0.0}
+# One session shared by every anon caller — and grid renders now fire thumbnail
+# fallbacks in PARALLEL. curl_cffi sessions make no thread-safety promises, and
+# CF gets twitchy about request bursts anyway. Serialize; politeness is cheap.
+_anon_lock = threading.Lock()
 
 
 def _anon_get_fn():
@@ -40,7 +45,8 @@ def _anon_get_fn():
             pass
         def _get(url, **kw):
             kw.setdefault("timeout", 25)
-            return s.get(url, **kw)
+            with _anon_lock:
+                return s.get(url, **kw)
         _anon_session["get"] = _get
         _anon_session["ts"] = now
     return _anon_session["get"]
