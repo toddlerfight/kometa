@@ -241,16 +241,27 @@ def _summary(issues):
 
 # --- connection tests ---
 
+# Test endpoints accept creds in-body but fall back to STORED config — secrets
+# never round-trip through the browser, so 'Test' must work against what's saved.
+def _stored(key: str) -> str:
+    return db.get_config(DB_PATH).get(key, "")
+
+
 class TestKomgaRequest(BaseModel):
-    url: str
-    user: str
-    password: str
+    url: str | None = None
+    user: str | None = None
+    password: str | None = None
 
 
 @app.post("/api/test/komga")
 def test_komga(req: TestKomgaRequest):
+    url = req.url or _stored("komga_url")
+    user = req.user or _stored("komga_user")
+    password = req.password or _stored("komga_pass")
+    if not (url and user and password):
+        return {"ok": False, "error": "Not configured"}
     try:
-        client = KomgaClient(base_url=_normalize_url(req.url), auth=(req.user, req.password))
+        client = KomgaClient(base_url=_normalize_url(url), auth=(user, password))
         r = client.session.get(f"{client.base_url}/api/v1/libraries", timeout=8)
         r.raise_for_status()
         raw = r.json()
@@ -261,14 +272,18 @@ def test_komga(req: TestKomgaRequest):
 
 
 class TestMetronRequest(BaseModel):
-    user: str
-    password: str
+    user: str | None = None
+    password: str | None = None
 
 
 @app.post("/api/test/metron")
 def test_metron(req: TestMetronRequest):
+    user = req.user or _stored("metron_user")
+    password = req.password or _stored("metron_pass")
+    if not (user and password):
+        return {"ok": False, "error": "Not configured"}
     try:
-        client = MetronClient(auth=(req.user, req.password))
+        client = MetronClient(auth=(user, password))
         r = client.session.get(f"{client.base_url}/series/", params={"name": "batman", "page": 1}, timeout=10)
         r.raise_for_status()
         return {"ok": True}
@@ -277,13 +292,16 @@ def test_metron(req: TestMetronRequest):
 
 
 class TestCVRequest(BaseModel):
-    api_key: str
+    api_key: str | None = None
 
 
 @app.post("/api/test/comicvine")
 def test_comicvine(req: TestCVRequest):
+    api_key = req.api_key or _stored("cv_api_key")
+    if not api_key:
+        return {"ok": False, "error": "Not configured"}
     try:
-        client = ComicVineClient(req.api_key)
+        client = ComicVineClient(api_key)
         r = client.session.get(
             f"{CV_BASE_URL}/search/",
             params=client._params({"resources": "volume", "query": "batman", "limit": 1, "field_list": "id,name"}),
@@ -296,6 +314,66 @@ def test_comicvine(req: TestCVRequest):
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+class TestLocgRequest(BaseModel):
+    user: str | None = None
+    password: str | None = None
+
+
+@app.post("/api/test/locg")
+def test_locg(req: TestLocgRequest):
+    user = req.user or _stored("locg_user")
+    password = req.password or _stored("locg_pass")
+    if not (user and password):
+        return {"ok": False, "error": "Not configured"}
+    try:
+        from kometa.locg_client import LOCGClient
+        LOCGClient(user, password)  # constructor logs in; raises on bad creds
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class TestSabRequest(BaseModel):
+    url: str | None = None
+    apikey: str | None = None
+
+
+@app.post("/api/test/sab")
+def test_sab(req: TestSabRequest):
+    url = req.url or _stored("sab_url")
+    apikey = req.apikey or _stored("sab_apikey")
+    if not (url and apikey):
+        return {"ok": False, "error": "Not configured"}
+    try:
+        from kometa.sabnzbd_client import SABnzbdClient
+        data = SABnzbdClient(url, apikey)._api(mode="queue")
+        if data.get("status") is False:
+            return {"ok": False, "error": data.get("error", "API rejected")}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# Integration → config keys it owns. Drives 'Disconnect': blank password fields
+# mean 'keep current', so without this there is NO path to remove a credential.
+_INTEGRATION_KEYS = {
+    "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
+    "metron":    ["metron_user", "metron_pass"],
+    "comicvine": ["cv_api_key"],
+    "locg":      ["locg_user", "locg_pass"],
+    "sabnzbd":   ["sab_url", "sab_apikey"],
+}
+
+
+@app.post("/api/config/disconnect/{integration}")
+def disconnect_integration(integration: str):
+    keys = _INTEGRATION_KEYS.get(integration)
+    if not keys:
+        raise HTTPException(404)
+    db.set_config({k: "" for k in keys}, DB_PATH)
+    return get_config()
 
 
 # --- config ---

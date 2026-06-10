@@ -972,6 +972,46 @@ select.settings-input {
   padding: 0 0 8px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--bd);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.settings-head-right {
+  display: inline-flex;
+  gap: 10px;
+  align-items: baseline;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* per-card autosave feedback — a whisper, not a dialog */
+.settings-whisper { font-size: 10px; font-style: italic; text-transform: none; color: var(--pri); }
+.settings-whisper.err { color: var(--pink); font-style: normal; }
+
+/* integration status: ● verified · ○ configured-unverified · ✗ test failed */
+.settings-dot { font-size: 11px; }
+.settings-dot.ok  { color: var(--pri); }
+.settings-dot.cfg { color: var(--tq); }
+.settings-dot.bad { color: var(--pink); }
+
+.btn-link {
+  background: none; border: none; padding: 0;
+  color: var(--tq); font-family: var(--font);
+  font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+  cursor: pointer;
+}
+.btn-link:hover { color: var(--tp); }
+
+.settings-note { font-size: 11px; color: var(--tq); margin: -8px 0 16px; font-style: italic; }
+.settings-help { font-size: 11px; color: var(--tq); margin-top: 2px; }
+.settings-help.ok  { color: var(--pri); }
+.settings-help.bad { color: var(--pink); }
+.settings-input.input-bad { border-color: var(--pink); }
+
+@media (max-width: 760px) {
+  .settings-grid { grid-template-columns: 1fr; }
 }
 
 /* the 'relax, you can skip this' whisper. Victor Mono's italics ARE the script
