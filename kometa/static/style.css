@@ -974,12 +974,13 @@ select.settings-input {
   border-bottom: 1px solid var(--bd);
 }
 
-/* the 'relax, you can skip this' whisper — cursive on purpose, a human aside
-   in a wall of terminal mono. text-transform reset or the script goes ALL-CAPS
-   and looks like a ransom note from a calligrapher. */
+/* the 'relax, you can skip this' whisper. Victor Mono's italics ARE the script
+   face — same family as everything else, it just starts writing in cursive.
+   text-transform reset or the script goes ALL-CAPS and loses the charm. */
 .settings-card-header .settings-opt {
-  font-family: 'Snell Roundhand', 'Savoye LET', 'Brush Script MT', cursive;
-  font-size: 14px;
+  font-family: var(--font);
+  font-style: italic;
+  font-size: 12px;
   font-weight: 400;
   text-transform: none;
   letter-spacing: .03em;
