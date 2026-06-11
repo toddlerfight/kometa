@@ -25,13 +25,18 @@ const api = {
 };
 
 let _toastTimer = null;
+let _toastStickyUntil = 0;
 function showToast(msg, type = '') {
   const el = document.getElementById('toast');
   if (!el) return;
+  const now = Date.now();
+  // errors hold the slot for 5s — a routine toast can't clobber a fresh failure
+  if (type !== 'error' && now < _toastStickyUntil) return;
   el.textContent = msg;
   el.className = `toast-show${type === 'error' ? ' toast-error' : ''}`;
+  _toastStickyUntil = type === 'error' ? now + 5000 : 0;
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, 3000);
+  _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, type === 'error' ? 5000 : 3000);
 }
 
 // --- Router ---
@@ -469,7 +474,7 @@ function _issueTileHtml(s, issue) {
       </div>`;
     }
     const searchBtn = (st === 'missing' || st === 'today')
-      ? `<button class="issue-tile-search" title="Search for this issue"
+      ? `<button class="issue-tile-search" title="Search for this issue" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
     return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}"
@@ -602,6 +607,25 @@ let _fbScope = 'library';   // 'library' = sandboxed to comics root, 'fs' = whol
 
 let _wizardResults = [];
 let _wizardSearchTimer = null;
+let _wizardHi = -1;   // keyboard-highlighted result index
+
+function _wizardKey(e) {
+  const n = _wizardResults.length;
+  if (e.key === 'ArrowDown' && n) {
+    e.preventDefault(); _wizardHi = (_wizardHi + 1) % n; _wizardPaintHi();
+  } else if (e.key === 'ArrowUp' && n) {
+    e.preventDefault(); _wizardHi = (_wizardHi - 1 + n) % n; _wizardPaintHi();
+  } else if (e.key === 'Enter') {
+    if (_wizardHi >= 0 && n) wizardPickSeries(_wizardHi);
+    else wizardSearch();
+  }
+}
+
+function _wizardPaintHi() {
+  document.querySelectorAll('.wizard-result').forEach((el, i) =>
+    el.classList.toggle('kbd-hi', i === _wizardHi));
+  document.querySelector('.wizard-result.kbd-hi')?.scrollIntoView({ block: 'nearest' });
+}
 let _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
 
 function showAddWizard() {
@@ -614,7 +638,7 @@ function showAddWizard() {
     <div class="modal-title">Add Series</div>
     <div class="wizard-search-row">
       <input class="search-input" id="wizard-search" placeholder="Search for a series…" autocomplete="off"
-        onkeydown="if(event.key==='Enter')wizardSearch()">
+        onkeydown="_wizardKey(event)">
       <button class="btn btn-primary" onclick="wizardSearch()">Search</button>
     </div>
     <div class="wizard-results" id="wizard-results">
@@ -730,6 +754,7 @@ function _renderWizardResults(results, q) {
     return 0;
   });
   _wizardResults = results.slice(0, 15);
+  _wizardHi = -1;   // fresh results, fresh keyboard cursor
 
   const paint = () => {
     const el = document.getElementById('wizard-results');
@@ -974,8 +999,9 @@ async function saveFolderPath(id) {
 // repaints its tile as owned in place.
 const _tilePolls = new Set();   // "seriesId:number" keys with an active poller
 
-function _tileBtn(number) {
-  return document.querySelector(`.issue-tile[data-num="${number}"] .issue-tile-search`);
+function _dlBtn(seriesId, number) {
+  // any live download button for this issue — issue tile or pull-list row
+  return document.querySelector(`[data-dl="${seriesId}:${number}"]`);
 }
 
 function _trackTileDownload(seriesId, number, title) {
@@ -989,7 +1015,7 @@ function _trackTileDownload(seriesId, number, title) {
     catch { _tilePolls.delete(key); return; }
 
     const onView = currentView === 'series-detail' && currentParams.id === seriesId;
-    const btn = onView ? _tileBtn(number) : null;
+    const btn = _dlBtn(seriesId, number);
     const st = qs.state;
 
     if (st && !['done', 'failed', 'not_found'].includes(st)) {
@@ -1065,11 +1091,25 @@ function _pullStatus(e) {
 }
 
 let _pullShowPast = false;
+let _pullItems = [];
+
+async function pullDownload(seriesId, number, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    await api.post(`/api/series/${seriesId}/issues/${number}/search`, {});
+    const item = _pullItems.find(i => i.id === seriesId && i.number === number);
+    showToast(`#${fmtNum(number)} queued`);
+    _trackTileDownload(seriesId, number, item?.title || '');
+  } catch {
+    showToast('Could not queue download', 'error');
+    btn.textContent = '↓'; btn.disabled = false;
+  }
+}
 
 async function renderPullList() {
   setTopbar(`
     <button class="btn btn-sm ${_pullShowPast ? 'btn-primary' : 'btn-ghost'}"
-      onclick="_togglePullPast(this)">Last 4 Weeks</button>
+      onclick="_togglePullPast(this)">+ Past 4 Weeks</button>
   `);
   setApp('<div class="state-msg">Loading...</div>');
   await _renderPullListContent();
@@ -1086,6 +1126,7 @@ async function _togglePullPast(btn) {
 async function _renderPullListContent() {
   const url = _pullShowPast ? '/api/pull-list?days=180&past=28' : '/api/pull-list?days=180';
   const items = await api.get(url);
+  _pullItems = items;
 
   if (!items.length) {
     setApp('<div class="page-title">Pull List</div><div class="state-msg">Nothing on your pull list.</div>');
@@ -1123,6 +1164,10 @@ async function _renderPullListContent() {
               <div class="pull-series">${esc(e.title)}</div>
               <div class="pull-issue">#${fmtNum(e.number)}</div>
               ${_pullStatus(e)}
+              <span class="pull-act">${(!e.owned && e.store_date < _usToday())
+                ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue"
+                     onclick="event.stopPropagation(); pullDownload(${sid}, ${e.number}, this)">↓</button>`
+                : ''}</span>
             </div>
           `;
         }).join('')}
@@ -1139,12 +1184,6 @@ const QUEUE_STATE_LABEL = {
   not_found: 'Not found', downloading: 'Downloading',
   processing: 'Processing', done: 'Done', failed: 'Failed',
 };
-const QUEUE_STATE_COLOR = {
-  queued: 'var(--tq)', searching: 'var(--pri)', found: 'var(--pri)',
-  not_found: 'var(--su3)', downloading: 'var(--pri)', processing: 'var(--pri)',
-  done: 'var(--pri)', failed: 'var(--pink)',
-};
-
 let _activityPollTimer = null;
 
 function _fmtBytes(n) {

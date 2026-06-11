@@ -903,13 +903,31 @@ select.settings-input {
 
 .pull-row {
   display: grid;
-  grid-template-columns: 28px 1fr 60px 90px;
+  grid-template-columns: 28px 1fr 60px 90px 28px;
   align-items: center;
   gap: 16px;
   padding: 14px 0;
   border-bottom: 1px solid var(--su2);
   cursor: pointer;
 }
+
+/* missing rows get a download button — no more navigating to the series just to act */
+.pull-dl {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  color: var(--tp);
+  font-family: var(--font);
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+}
+.pull-dl:hover { border-color: var(--pri); color: var(--pri); }
+.pull-dl:disabled { opacity: .6; cursor: default; }
+
+/* wizard keyboard cursor (↑/↓ + Enter) */
+.wizard-result.kbd-hi { background: var(--su2); }
 
 .pull-row:hover .pull-series { color: var(--pri); }
 
