@@ -179,59 +179,6 @@ function countColor(owned, total) {
 
 // --- Series List ---
 
-async function renderSeries() {
-  setTopbar(`<button class="btn btn-ghost" onclick="syncAll(this)">Sync All</button>
-    <button class="btn btn-primary" onclick="showAddWizard()">+ Add Series</button>`);
-  setApp('<div class="state-msg">Loading...</div>');
-
-  const series = await api.get('/api/series');
-
-  if (!series.length) {
-    setApp(`
-      <div class="empty-state">
-        <div class="empty-state-title">No series tracked yet</div>
-        <div class="empty-state-body">Search for a series to start tracking.</div>
-        <button class="btn btn-primary" onclick="showAddWizard()">Add Series</button>
-      </div>
-    `);
-    return;
-  }
-
-  const cards = series.map((s, i) => {
-    const total = s.owned + s.missing;
-    const pct = total > 0 ? (s.owned / total) * 100 : 0;
-    const color = barColor(s.owned, total);
-    const cc = countColor(s.owned, total);
-    const pub = s.publisher ? s.publisher.toUpperCase() : '';
-    return `
-      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
-        onclick="navigate('series-detail', {id: ${s.id}})"
-        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
-        <div class="series-card-img-wrap">
-          <img class="series-card-cover" src="/api/series/${s.id}/thumbnail" alt="${esc(s.title)}"
-            onerror="this.style.opacity='0.15'">
-        </div>
-        <div class="series-card-bar-track">
-          <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
-        </div>
-        <div class="series-card-footer">
-          <div class="series-card-title">${esc(s.title)}</div>
-          <div class="series-card-count" style="color:${cc}">${s.owned}/${total}</div>
-        </div>
-        <div class="series-card-publisher">${esc(pub)}</div>
-      </div>
-    `;
-  }).join('');
-
-  setApp(`<div class="series-grid">${cards}</div>`);
-}
-
-async function syncAll(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Sync started'; }
-  api.post('/api/sync', {});
-  if (btn) setTimeout(() => { btn.disabled = false; btn.textContent = 'Sync All'; }, 3000);
-}
-
 async function sweepSeries(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
@@ -284,8 +231,10 @@ let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, 
 
 async function renderLibraryBrowse() {
   document.getElementById('topbar-title').textContent = 'Library';
+  // No Sync All button — the scheduler syncs everything at 5/12/17, stale series
+  // self-sync on view, and series detail has its own Sync. The machine does the
+  // work; a global button here was a comfort blanket with no feedback.
   document.getElementById('topbar-actions').innerHTML = `
-    <button class="btn btn-ghost btn-sm" onclick="syncAll(this)">Sync All</button>
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
