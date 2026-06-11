@@ -2264,8 +2264,21 @@ const _PTR_VIEWS = new Set(['library', 'series-detail', 'pull-list', 'activity']
 let _ptrStartY = 0, _ptrPulling = false;
 
 function _ptrRefresh() {
-  if (currentView === 'library')       return _loadBrowsePage();
-  if (currentView === 'series-detail') return renderSeriesDetail(currentParams.id);
+  // The gesture means "make it FRESH", not just "repaint the cache" — where
+  // the data is born (library, series detail), a pull also kicks a real sync
+  // (LOCG/Komga/folder rescan). Repaint is instant; the sync lands behind it.
+  if (currentView === 'library') {
+    api.post('/api/sync', {}).catch(() => {});
+    showToast('Refreshing — full sync started');
+    return _loadBrowsePage();
+  }
+  if (currentView === 'series-detail') {
+    const id = currentParams.id;
+    _autoSynced.add(id);          // we're syncing right now — don't double-fire
+    syncSeries(id, null);         // background; re-renders again if it changed anything
+    showToast('Syncing series…');
+    return renderSeriesDetail(id);
+  }
   if (currentView === 'pull-list')     return _renderPullListContent();
   if (currentView === 'activity')      return _refreshActivity();
 }
