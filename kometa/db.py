@@ -531,6 +531,20 @@ def update_queue_state(queue_id, state, source_url=None, filename=None, error=No
         """, (state, source_url, filename, error, retry_after, queue_id))
 
 
+def requeue_not_found(path=DB_PATH) -> int:
+    """Re-arm every not_found job: fresh search, fresh rate-limit budget.
+    Returns how many were re-queued. failed jobs are NOT touched — those
+    usually need a human, and they have their own Retry button."""
+    with _connect(path) as conn:
+        cur = conn.execute("""
+            UPDATE download_queue
+            SET state = 'queued', error = NULL, retry_after = NULL,
+                rl_attempts = 0, updated_at = datetime('now')
+            WHERE state = 'not_found'
+        """)
+        return cur.rowcount
+
+
 def reset_rl_attempts(queue_id, path=DB_PATH):
     """Manual retry = human says go — give the job a fresh rate-limit budget."""
     with _connect(path) as conn:

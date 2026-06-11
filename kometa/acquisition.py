@@ -7,6 +7,7 @@ main imports it back for the progress routes.
 """
 import os
 import logging
+import threading
 from datetime import date
 
 import kometa.db as db
@@ -50,7 +51,22 @@ def _komga_scan():
         komga.scan_library()
 
 
+# Five call sites spawn this in threads (scheduler tick, manual retries, bulk
+# re-search). Two passes racing the same queue rows = double downloads — one
+# run at a time, late arrivals skip out and the next tick picks up their rows.
+_queue_run_lock = threading.Lock()
+
+
 def _process_queue():
+    if not _queue_run_lock.acquire(blocking=False):
+        return
+    try:
+        _process_queue_locked()
+    finally:
+        _queue_run_lock.release()
+
+
+def _process_queue_locked():
     items = db.get_queued_items(DB_PATH)
     if not items:
         return
