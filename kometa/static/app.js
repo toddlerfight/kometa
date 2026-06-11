@@ -2280,7 +2280,13 @@ function _ptrRefresh() {
     return renderSeriesDetail(id);
   }
   if (currentView === 'pull-list')     return _renderPullListContent();
-  if (currentView === 'activity')      return _refreshActivity();
+  if (currentView === 'activity') {
+    // fresh = give the not-founds another shot (failed stays manual — per-row Retry)
+    return api.post('/api/queue/retry-not-found', {}).then(r => {
+      if (r.requeued) showToast(`Re-searching ${r.requeued} not-found issue${r.requeued > 1 ? 's' : ''}`);
+      return _refreshActivity();
+    }).catch(() => _refreshActivity());
+  }
 }
 
 document.addEventListener('touchstart', e => {

@@ -993,6 +993,16 @@ def delete_queue_item(queue_id: int):
     db.remove_queue_item(queue_id, DB_PATH)
 
 
+@app.post("/api/queue/retry-not-found")
+def retry_not_found():
+    """Bulk re-search of everything that came up empty — pull-to-refresh on
+    Activity. failed items are excluded; they have per-row Retry."""
+    n = db.requeue_not_found(DB_PATH)
+    if n:
+        threading.Thread(target=_process_queue, daemon=True).start()
+    return {"requeued": n}
+
+
 @app.post("/api/queue/{queue_id}/retry", status_code=200)
 def retry_queue_item(queue_id: int):
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
