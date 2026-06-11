@@ -1275,8 +1275,29 @@ async function _refreshActivity() {
       }
     });
   } else {
+    const firstBuild = _activitySig === null;
     _activitySig = sig;
-    _buildActivityHtml(queue);
+    const wrap = document.querySelector('.act-wrap, .act-empty');
+    if (!firstBuild && wrap) {
+      // State changes relocate rows between sections, so a rebuild is
+      // unavoidable — but a bare DOM swap reads as a hard snap. Crossfade it
+      // like every other transition in this app: fade out, swap, fade in.
+      _activityRemoving = true;   // hold off re-entrant polls mid-fade
+      wrap.style.transition = 'opacity .16s ease';
+      wrap.style.opacity = '0';
+      setTimeout(() => {
+        _buildActivityHtml(queue);
+        const fresh = document.querySelector('.act-wrap, .act-empty');
+        if (fresh) {
+          fresh.style.opacity = '0';
+          fresh.style.transition = 'opacity .28s ease';
+          requestAnimationFrame(() => requestAnimationFrame(() => { fresh.style.opacity = '1'; }));
+        }
+        _activityRemoving = false;
+      }, 170);
+    } else {
+      _buildActivityHtml(queue);
+    }
   }
   const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet'].includes(q.state));
   if (hasActive) _activityPollTimer = setTimeout(_refreshActivity, 2000);
