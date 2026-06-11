@@ -2289,9 +2289,16 @@ function _ptrRefresh() {
   }
 }
 
+// #app is the real scroll container (body is overflow:hidden) — window.scrollY
+// is ALWAYS 0 here, so it must never be the "are we at the top?" check.
+function _appScrollTop() {
+  const el = document.getElementById('app');
+  return el ? el.scrollTop : 0;
+}
+
 document.addEventListener('touchstart', e => {
   _ptrPulling = false;
-  if (!_PTR_VIEWS.has(currentView) || window.scrollY > 0) return;
+  if (!_PTR_VIEWS.has(currentView) || _appScrollTop() > 0) return;
   const modal = document.getElementById('modal');
   const lb = document.getElementById('variant-lightbox');
   if (modal && !modal.classList.contains('hidden')) return;
@@ -2300,27 +2307,37 @@ document.addEventListener('touchstart', e => {
   _ptrPulling = true;
 }, { passive: true });
 
+// NOT passive, on purpose: iOS converts an un-prevented downward pull into its
+// native rubber-band scroll and fires touchcancel instead of touchend — the
+// release handler never runs and the gesture silently dies (the iPad bug).
+// preventDefault while actively pulling at the top keeps the gesture ours;
+// normal scrolling is untouched because we only prevent when pulling down
+// with the scroller already at 0.
 document.addEventListener('touchmove', e => {
   if (!_ptrPulling) return;
   const el = document.getElementById('ptr');
   if (!el) return;
   const dist = e.touches[0].clientY - _ptrStartY;
-  if (dist <= 0 || window.scrollY > 0) { el.style.transform = ''; el.classList.remove('ready'); return; }
+  if (dist <= 0 || _appScrollTop() > 0) { el.style.transform = ''; el.classList.remove('ready'); return; }
+  e.preventDefault();
   const d = Math.min(dist * 0.4, 64);   // rubber-band: drag feels heavier than the finger
   el.style.transform = `translateY(${d + 40}px)`;
   el.classList.toggle('ready', d >= 56);
-}, { passive: true });
+}, { passive: false });
 
-document.addEventListener('touchend', () => {
+function _ptrFinish(fire) {
   if (!_ptrPulling) return;
   _ptrPulling = false;
   const el = document.getElementById('ptr');
   if (!el) return;
-  const go = el.classList.contains('ready');
+  const go = fire && el.classList.contains('ready');
   el.classList.remove('ready');
   el.style.transform = '';
   if (go) _ptrRefresh();
-});
+}
+
+document.addEventListener('touchend', () => _ptrFinish(true));
+document.addEventListener('touchcancel', () => _ptrFinish(false));
 
 async function boot() {
   // Always land on the library. Komga and Metron are optional integrations,
