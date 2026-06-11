@@ -929,6 +929,48 @@ select.settings-input {
 /* wizard keyboard cursor (↑/↓ + Enter) */
 .wizard-result.kbd-hi { background: var(--su2); }
 
+/* --- activity nav badge: red failed · amber not-found · green completed --- */
+.nav-badge { display: none; }
+.nav-badge.green, .nav-badge.amber, .nav-badge.red {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 7px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.nav-badge.green { background: var(--pri);  color: var(--ink); }
+.nav-badge.amber { background: var(--amb);  color: var(--ink); }
+.nav-badge.red   { background: var(--pink); color: #fff; }
+
+/* --- pull-to-refresh indicator --- */
+#ptr {
+  position: fixed;
+  top: -40px;
+  left: 50%;
+  margin-left: -16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--su2);
+  border: 1px solid var(--bd);
+  color: var(--tq);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-family: var(--font);
+  z-index: 300;
+  transition: transform .15s ease, color .1s, border-color .1s;
+  pointer-events: none;
+}
+#ptr.ready { color: var(--pri); border-color: var(--pri); }
+
 .pull-row:hover .pull-series { color: var(--pri); }
 
 .pull-thumb {

@@ -1030,6 +1030,7 @@ function _trackTileDownload(seriesId, number, title) {
     }
 
     _tilePolls.delete(key);
+    _updateActivityBadge();   // terminal state — badge reflects it immediately
     const label = `${title ? title + ' ' : ''}#${fmtNum(number)}`;
     if (st === 'done') {
       showToast(`${label} downloaded ✓`);
@@ -1053,6 +1054,7 @@ async function searchIssue(seriesId, issueNumber, btn) {
     await api.post(`/api/series/${seriesId}/issues/${issueNumber}/search`, {});
     showToast(`#${fmtNum(issueNumber)} queued`);
     _trackTileDownload(seriesId, issueNumber, _detailSeries?.title || '');
+    _updateActivityBadge();
   } catch {
     showToast('Could not queue download', 'error');
     btn.textContent = '↓';
@@ -1100,6 +1102,7 @@ async function pullDownload(seriesId, number, btn) {
     const item = _pullItems.find(i => i.id === seriesId && i.number === number);
     showToast(`#${fmtNum(number)} queued`);
     _trackTileDownload(seriesId, number, item?.title || '');
+    _updateActivityBadge();
   } catch {
     showToast('Could not queue download', 'error');
     btn.textContent = '↓'; btn.disabled = false;
@@ -1186,6 +1189,44 @@ const QUEUE_STATE_LABEL = {
 };
 let _activityPollTimer = null;
 
+// --- activity nav badge ---
+// "What happened since you last looked": counts terminal outcomes NEWER than
+// your last Activity visit. Worst state wins — red = failed, amber = not
+// found, green = completed. Visiting Activity acknowledges everything.
+let _badgeTimer = null;
+
+function _actSeen() { return localStorage.getItem('actSeenAt') || ''; }
+
+function _applyBadge(queue) {
+  const el = document.getElementById('activity-badge');
+  if (!el) return;
+  const seen = _actSeen();
+  const fresh = q => (q.updated_at || '') > seen;
+  const failed = queue.filter(q => q.state === 'failed' && fresh(q)).length;
+  const warn   = queue.filter(q => q.state === 'not_found' && fresh(q)).length;
+  const done   = queue.filter(q => q.state === 'done' && fresh(q)).length;
+  const [n, cls] = failed ? [failed, 'red'] : warn ? [warn, 'amber'] : done ? [done, 'green'] : [0, ''];
+  el.textContent = n || '';
+  el.className = `nav-badge${n ? ' ' + cls : ''}`;
+}
+
+function _ackActivity(queue) {
+  // High-water mark from the server's own timestamps — no client-clock games
+  const maxTs = queue.reduce((m, q) => (q.updated_at || '') > m ? q.updated_at : m, _actSeen());
+  if (maxTs) localStorage.setItem('actSeenAt', maxTs);
+  _applyBadge(queue);   // recompute → badge clears
+}
+
+async function _updateActivityBadge() {
+  try { _applyBadge(await api.get('/api/queue')); } catch {}
+}
+
+function _startBadgePolling() {
+  clearInterval(_badgeTimer);
+  _updateActivityBadge();
+  _badgeTimer = setInterval(_updateActivityBadge, 25000);
+}
+
 function _fmtBytes(n) {
   if (!n) return '';
   if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
@@ -1214,6 +1255,7 @@ async function _refreshActivity() {
   // when it's finished collapsing.
   if (_activityRemoving) return;
   const queue = await api.get('/api/queue');
+  _ackActivity(queue);   // you're looking at it — acknowledge + clear the badge
   // Only the progress %/bytes change between polls; the items + their states usually
   // don't. Rebuilding the whole list every 2s recreated every <img>, which reloaded
   // and replayed the cover-in (blur/fade) animation → the cover "flashed". So: rebuild
@@ -2216,6 +2258,51 @@ function _parseHash() {
   return { view: view || 'library', params };
 }
 
+// --- pull-to-refresh (touch only) ---
+// Re-fetches the current view's DATA without resetting filters/search state.
+const _PTR_VIEWS = new Set(['library', 'series-detail', 'pull-list', 'activity']);
+let _ptrStartY = 0, _ptrPulling = false;
+
+function _ptrRefresh() {
+  if (currentView === 'library')       return _loadBrowsePage();
+  if (currentView === 'series-detail') return renderSeriesDetail(currentParams.id);
+  if (currentView === 'pull-list')     return _renderPullListContent();
+  if (currentView === 'activity')      return _refreshActivity();
+}
+
+document.addEventListener('touchstart', e => {
+  _ptrPulling = false;
+  if (!_PTR_VIEWS.has(currentView) || window.scrollY > 0) return;
+  const modal = document.getElementById('modal');
+  const lb = document.getElementById('variant-lightbox');
+  if (modal && !modal.classList.contains('hidden')) return;
+  if (lb && !lb.classList.contains('hidden')) return;
+  _ptrStartY = e.touches[0].clientY;
+  _ptrPulling = true;
+}, { passive: true });
+
+document.addEventListener('touchmove', e => {
+  if (!_ptrPulling) return;
+  const el = document.getElementById('ptr');
+  if (!el) return;
+  const dist = e.touches[0].clientY - _ptrStartY;
+  if (dist <= 0 || window.scrollY > 0) { el.style.transform = ''; el.classList.remove('ready'); return; }
+  const d = Math.min(dist * 0.4, 64);   // rubber-band: drag feels heavier than the finger
+  el.style.transform = `translateY(${d + 40}px)`;
+  el.classList.toggle('ready', d >= 56);
+}, { passive: true });
+
+document.addEventListener('touchend', () => {
+  if (!_ptrPulling) return;
+  _ptrPulling = false;
+  const el = document.getElementById('ptr');
+  if (!el) return;
+  const go = el.classList.contains('ready');
+  el.classList.remove('ready');
+  el.style.transform = '';
+  if (go) _ptrRefresh();
+});
+
 async function boot() {
   // Always land on the library. Komga and Metron are optional integrations,
   // configured in Settings — never a blocking welcome gate. Kometa runs fine
@@ -2224,6 +2311,7 @@ async function boot() {
   _appConfig = cfg;
   const { view, params } = _parseHash();
   navigate(view, params);
+  _startBadgePolling();
 }
 
 boot();
