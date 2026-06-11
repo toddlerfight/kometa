@@ -431,7 +431,10 @@ function buildIssueTiles(s) {
     return true;
   }).sort((a, b) => detailSortDesc ? b.number - a.number : a.number - b.number);
 
-  return filtered.map(issue => {
+  return filtered.map(issue => _issueTileHtml(s, issue)).join('');
+}
+
+function _issueTileHtml(s, issue) {
     const st = issueStatus(issue);
     const num = `#${fmtNum(issue.number)}`;
     const dateBadge = st === 'today'
@@ -475,7 +478,6 @@ function buildIssueTiles(s) {
       <div class="issue-tile-num">${num}</div>
       ${searchBtn}
     </div>`;
-  }).join('');
 }
 
 function flipIssueSort(id) {
@@ -964,13 +966,69 @@ async function saveFolderPath(id) {
 }
 
 
+// --- tile download tracking ---
+// The old ↓ button showed '✓' the moment a job was QUEUED and then went mute —
+// rate limits, not-founds, and failures were invisible unless you happened to
+// visit Activity. Now the outcome lands where you clicked: the tile button
+// tracks the queue state live, terminal states toast, and a finished download
+// repaints its tile as owned in place.
+const _tilePolls = new Set();   // "seriesId:number" keys with an active poller
+
+function _tileBtn(number) {
+  return document.querySelector(`.issue-tile[data-num="${number}"] .issue-tile-search`);
+}
+
+function _trackTileDownload(seriesId, number, title) {
+  const key = `${seriesId}:${number}`;
+  if (_tilePolls.has(key)) return;
+  _tilePolls.add(key);
+
+  const tick = async () => {
+    let qs;
+    try { qs = await api.get(`/api/series/${seriesId}/issues/${number}/queue-status`); }
+    catch { _tilePolls.delete(key); return; }
+
+    const onView = currentView === 'series-detail' && currentParams.id === seriesId;
+    const btn = onView ? _tileBtn(number) : null;
+    const st = qs.state;
+
+    if (st && !['done', 'failed', 'not_found'].includes(st)) {
+      if (btn) {
+        const pct = qs.progress?.total ? Math.round(qs.progress.done / qs.progress.total * 100) : null;
+        btn.textContent = (st === 'downloading' && pct != null) ? String(pct) : '…';
+        btn.title = QUEUE_STATE_LABEL[st] || st;
+        btn.disabled = true;
+      }
+      setTimeout(tick, 2500);
+      return;
+    }
+
+    _tilePolls.delete(key);
+    const label = `${title ? title + ' ' : ''}#${fmtNum(number)}`;
+    if (st === 'done') {
+      showToast(`${label} downloaded ✓`);
+      const obj = _detailSeries?.issues?.find(i => i.number === number);
+      if (obj) obj.owned = 1;
+      const tile = onView ? document.querySelector(`.issue-tile[data-num="${number}"]`) : null;
+      if (tile && obj && _detailSeries) tile.outerHTML = _issueTileHtml(_detailSeries, obj);
+    } else if (st === 'failed' || st === 'not_found') {
+      const why = qs.error ? ` — ${qs.error}` : '';
+      showToast(`${label}: ${st === 'failed' ? 'failed' : 'not found'}${why}`, 'error');
+      if (btn) { btn.textContent = '↓'; btn.title = 'Search for this issue'; btn.disabled = false; }
+    }
+    // st === null → job left the queue (cleared/parked away); stop quietly
+  };
+  setTimeout(tick, 2000);
+}
+
 async function searchIssue(seriesId, issueNumber, btn) {
   btn.disabled = true; btn.textContent = '…';
   try {
     await api.post(`/api/series/${seriesId}/issues/${issueNumber}/search`, {});
-    btn.textContent = '✓';
-    btn.style.opacity = '0.5';
+    showToast(`#${fmtNum(issueNumber)} queued`);
+    _trackTileDownload(seriesId, issueNumber, _detailSeries?.title || '');
   } catch {
+    showToast('Could not queue download', 'error');
     btn.textContent = '↓';
     btn.disabled = false;
   }
