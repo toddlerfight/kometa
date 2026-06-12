@@ -151,7 +151,8 @@ body {
 }
 
 .logo-text {
-  font-family: var(--font);
+  /* Victor Mono has no kana — give the logo a clean JP fallback chain */
+  font-family: 'Victor Mono', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', monospace;
   font-weight: 700;
   font-size: 13px;
   color: var(--tp);
