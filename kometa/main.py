@@ -33,7 +33,7 @@ from kometa.sync import (
     _best_komga_match, _komga_all_series,
 )
 from kometa.acquisition import (
-    get_progress,
+    get_progress, get_search_status,
     _process_queue, _sweep_missing,
     _poll_usenet_jobs, _release_day_retry,
 )
@@ -985,6 +985,10 @@ def get_queue():
         prog = get_progress(item["id"])
         if prog:
             item["progress"] = prog
+        if item["state"] == "searching":
+            ss = get_search_status(item["id"])
+            if ss:
+                item["search_status"] = ss
     return items
 
 

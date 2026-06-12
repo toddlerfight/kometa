@@ -1275,6 +1275,8 @@ async function _refreshActivity() {
           : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
         text.textContent = `${pct}%${detail}`;
       }
+      const ss = document.getElementById(`actsearch-${q.id}`);
+      if (ss && q.search_status) ss.textContent = q.search_status;
     });
   } else {
     const firstBuild = _activitySig === null;
@@ -1356,7 +1358,10 @@ function _buildActivityHtml(queue) {
       const detail = q.state === 'pending_usenet'
         ? ' · Usenet'
         : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
-      const progress = isDownloading ? `
+      const progress = q.state === 'searching' ? `
+        <div class="act-card-progress">
+          <div class="act-progress-text" id="actsearch-${q.id}">${esc(q.search_status || 'Searching…')}</div>
+        </div>` : isDownloading ? `
         <div class="act-card-progress">
           <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
           <div class="act-progress-text" id="acttext-${q.id}">${pct}%${detail}</div>
