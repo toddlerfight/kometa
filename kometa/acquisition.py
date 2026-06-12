@@ -41,6 +41,24 @@ def clear_progress(qid: int) -> None:
     _dl_progress.pop(qid, None)
 
 
+# Live "where is the search right now" line per queue item — same in-memory
+# pattern as _dl_progress. The UI polls it; a 'searching' chip with no detail
+# is just a spinner with better posture.
+_search_status: dict[int, str] = {}
+
+
+def set_search_status(qid: int, text: str) -> None:
+    _search_status[qid] = text
+
+
+def get_search_status(qid: int) -> str | None:
+    return _search_status.get(qid)
+
+
+def clear_search_status(qid: int) -> None:
+    _search_status.pop(qid, None)
+
+
 def get_progress(qid: int) -> dict | None:
     return _dl_progress.get(qid)
 
@@ -80,12 +98,15 @@ def _process_queue_locked():
             issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
             store_date = issue_row["store_date"] if issue_row else None
 
-            dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"))
+            set_search_status(qid, "GetComics…")
+            dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
+                                              status_fn=lambda s, qid=qid: set_search_status(qid, s))
             if not dl_url:
                 # GetComics failed — try Usenet indexers before giving up
                 indexers = _usenet_indexers()
                 sab = _sabnzbd()
                 if indexers and sab:
+                    set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
                     nzb_url = search_usenet(indexers, item["title"], item["issue_number"])
                     if nzb_url:
                         nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
@@ -156,6 +177,8 @@ def _process_queue_locked():
             logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
         except Exception as e:
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
+        finally:
+            clear_search_status(qid)
 
 
 def _sweep_missing():

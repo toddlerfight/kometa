@@ -124,7 +124,7 @@ class GetComicsClient:
             raise GCRateLimitError("Rate limited by GetComics", retry_after=cooldown)
         return r
 
-    def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None) -> tuple[str | None, str | None]:
+    def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None, status_fn=None) -> tuple[str | None, str | None]:
         """
         Returns (download_url, hint_filename) or (None, None).
         Tries progressively looser queries until a match is found.
@@ -148,6 +148,8 @@ class GetComicsClient:
 
         for query in queries:
             logger.info(f"GetComics search: {query!r}")
+            if status_fn:
+                status_fn(f"GetComics: “{query}”")
             post_url = self._search_page(query, title, issue_number)
             if post_url:
                 url, fname = self._extract_download(post_url)
