@@ -28,6 +28,9 @@
   --ink:   var(--bg);
   /* type */
   --font:  'Victor Mono', monospace;
+  /* #app gutter — full-bleed elements derive their negative margins from this,
+     so responsive padding changes can't strand them overhanging the clip edge */
+  --app-pad: 24px;
   /* overlays & effects */
   --scrim:    rgba(0,0,0,.75);
   --hairline: rgba(255,255,255,.2);
@@ -123,7 +126,7 @@ body {
 #app {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: var(--app-pad);
   position: relative;
   z-index: 1;
 }
@@ -573,7 +576,7 @@ select.settings-input {
   position: relative;
   height: 150px;
   flex-shrink: 0;
-  margin: -24px -24px 0 -24px;
+  margin: calc(-1 * var(--app-pad)) calc(-1 * var(--app-pad)) 0;
   z-index: 1;
 }
 
@@ -616,10 +619,10 @@ select.settings-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 24px;
+  padding: 0 var(--app-pad);
   height: 40px;
   border-bottom: 1px solid var(--bd);
-  margin: 0 -24px;
+  margin: 0 calc(-1 * var(--app-pad));
   position: relative;
   z-index: 1;
 }
@@ -788,9 +791,9 @@ select.settings-input {
 .issue-tabs-row {
   display: flex;
   align-items: center;
-  margin: 0 -24px;
+  margin: 0 calc(-1 * var(--app-pad));
   border-bottom: 1px solid var(--bd);
-  padding: 0 24px;
+  padding: 0 var(--app-pad);
   position: relative;
   z-index: 1;
 }
@@ -897,8 +900,8 @@ select.settings-input {
   padding: 7px 0;
   border-top: 1px solid var(--bd);
   border-bottom: 1px solid var(--bd);
-  margin: 0 -24px;
-  padding-left: 24px;
+  margin: 0 calc(-1 * var(--app-pad));
+  padding-left: var(--app-pad);
 }
 
 .pull-row {
@@ -983,7 +986,7 @@ select.settings-input {
 
 /* --- narrow desktop / iPad landscape --- */
 @media (max-width: 1100px) {
-  #app { padding: 20px; }
+  :root { --app-pad: 20px; }
   .series-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 24px 18px; }
   .series-card, .series-card-img-wrap { width: auto; }
 }
@@ -1007,7 +1010,7 @@ select.settings-input {
   .nav-item { height: 44px; padding: 0 12px; white-space: nowrap; }
 
   #topbar { padding: 8px 14px; }
-  #app { padding: 14px; }
+  :root { --app-pad: 14px; }
 
   .browse-header { flex-wrap: wrap; }
   .browse-search { width: 100%; order: -1; }
@@ -1039,7 +1042,7 @@ select.settings-input {
 
 /* --- phone --- */
 @media (max-width: 480px) {
-  #app { padding: 10px; }
+  :root { --app-pad: 10px; }
   .series-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 16px 10px; }
   .issue-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px 8px; }
   .issue-modal-layout { grid-template-columns: minmax(0, 1fr); }
