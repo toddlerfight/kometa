@@ -1006,8 +1006,15 @@ select.settings-input {
     overflow-x: auto;
   }
   .logo { height: 44px; flex-shrink: 0; }
-  .nav-items { flex-direction: row; padding-top: 0; }
-  .nav-item { height: 44px; padding: 0 12px; white-space: nowrap; }
+  .nav-items { flex-direction: row; padding-top: 0; align-items: center; }
+  .nav-item { height: 44px; padding: 0 12px; white-space: nowrap; margin-bottom: 0; }
+  /* desktop's left-edge active bar + tint reads as a misaligned block in a
+     horizontal bar — active becomes a clean bottom underline instead */
+  .nav-item.active { background: none; }
+  .nav-item.active::before {
+    left: 12px; right: 12px; top: auto; bottom: 6px;
+    width: auto; height: 2px;
+  }
 
   #topbar { padding: 8px 14px; }
   :root { --app-pad: 14px; }
