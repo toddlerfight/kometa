@@ -1234,11 +1234,13 @@ function _fmtBytes(n) {
 }
 
 let _activitySig = null;
+let _activityPrevStates = null;  // id → state from the last build; drives per-item fades
 let _activityRemoving = false;   // true while a row/card is animating out
 
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
-  _activitySig = null;   // force a full rebuild when entering the view
+  _activitySig = null;          // force a full rebuild when entering the view
+  _activityPrevStates = null;   // fresh entry = no per-item fades on first paint
   setTopbar(`
     <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
     <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
@@ -1277,24 +1279,33 @@ async function _refreshActivity() {
   } else {
     const firstBuild = _activitySig === null;
     _activitySig = sig;
-    const wrap = document.querySelector('.act-wrap, .act-empty');
-    if (!firstBuild && wrap) {
-      // State changes relocate rows between sections, so a rebuild is
-      // unavoidable — but a bare DOM swap reads as a hard snap. Crossfade it
-      // like every other transition in this app: fade out, swap, fade in.
+    const newStates = {};
+    queue.forEach(q => { newStates[q.id] = q.state; });
+    const prev = _activityPrevStates;
+    _activityPrevStates = newStates;
+    const changed = (!firstBuild && prev) ? queue.filter(q => prev[q.id] !== q.state).map(q => q.id) : [];
+    const removed = (!firstBuild && prev) ? Object.keys(prev).filter(id => !(id in newStates)) : [];
+    if ((changed.length || removed.length) && document.querySelector('.act-wrap')) {
+      // Only the items whose state actually changed get the fade — everything
+      // else rebuilds in place without so much as a blink. Fading the whole
+      // list punished 20 innocent rows for one row's state change.
       _activityRemoving = true;   // hold off re-entrant polls mid-fade
-      wrap.style.transition = 'opacity .16s ease';
-      wrap.style.opacity = '0';
+      for (const id of [...changed, ...removed]) {
+        const el = document.querySelector(`[data-qid="${id}"]`);
+        if (el) { el.style.transition = 'opacity .18s ease'; el.style.opacity = '0'; }
+      }
       setTimeout(() => {
         _buildActivityHtml(queue);
-        const fresh = document.querySelector('.act-wrap, .act-empty');
-        if (fresh) {
-          fresh.style.opacity = '0';
-          fresh.style.transition = 'opacity .28s ease';
-          requestAnimationFrame(() => requestAnimationFrame(() => { fresh.style.opacity = '1'; }));
+        for (const id of changed) {
+          const el = document.querySelector(`[data-qid="${id}"]`);
+          if (el) {
+            el.style.opacity = '0';
+            el.style.transition = 'opacity .3s ease';
+            requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = '1'; }));
+          }
         }
         _activityRemoving = false;
-      }, 170);
+      }, 190);
     } else {
       _buildActivityHtml(queue);
     }
@@ -1358,7 +1369,7 @@ function _buildActivityHtml(queue) {
             <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue">✕</button>` : '';
       return `
-        <div class="act-card${isDownloading ? '' : ' compact'}"${errTip}>
+        <div class="act-card${isDownloading ? '' : ' compact'}" data-qid="${q.id}"${errTip}>
           <div class="act-card-cover">${thumb}</div>
           <div class="act-card-body"${nav}>
             <div class="act-card-title">${esc(q.title)}</div>
@@ -1384,7 +1395,7 @@ function _buildActivityHtml(queue) {
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
       const retry = !isDone ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
       return `
-        <div class="act-row${isDone ? ' done' : ''}"${errTip}>
+        <div class="act-row${isDone ? ' done' : ''}" data-qid="${q.id}"${errTip}>
           <div class="act-row-cover">${thumb}</div>
           <div class="act-row-meta"${nav}>
             <div class="act-row-title">${esc(q.title)}</div>
