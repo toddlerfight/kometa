@@ -436,6 +436,82 @@ def download_issue(
     return dest_path
 
 
+def download_trade(
+    url: str,
+    dest_dir: str,
+    hint_filename: str | None = None,
+    fallback_name: str | None = None,
+    progress_fn=None,
+    komga_scan_fn=None,
+) -> list[str]:
+    """Download a collected edition (TPB/HC) into dest_dir. The 'dumb' path: NO
+    issue-number validation (a trade has no single number; a 'Vol 1-6' bundle
+    holds many), NO variant injection, NO reconcile. Just fetch, place, and let
+    Komga scan. Returns the placed file path(s) — a pack expands to several."""
+    os.makedirs(sources.staging_dir(), exist_ok=True)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    last_exc = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5 * attempt)
+        try:
+            r = requests.get(url, stream=True, timeout=120, headers=HEADERS, allow_redirects=True)
+            r.raise_for_status()
+            break
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            logger.warning(f"Trade download attempt {attempt + 1} failed ({e}), retrying...")
+    else:
+        raise last_exc or RuntimeError(f"Trade download failed after retries: {url[:80]}")
+
+    filename = _server_filename(r, hint_filename, url)
+    if not filename:
+        # GetComics gave no Content-Disposition — name it from the trade itself so
+        # Komga reads something sane, not "trade.cbz".
+        base = fallback_name or "trade"
+        filename = f"{_safe(base)}{_detect_ext(r, hint_filename, url)}"
+    filename = _safe(os.path.basename(filename))
+    staging_path = os.path.join(sources.staging_dir(), filename)
+    total = int(r.headers.get("content-length", 0))
+    done = 0
+    with open(staging_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=65536):
+            f.write(chunk)
+            done += len(chunk)
+            if progress_fn:
+                progress_fn(done, total)
+
+    size = os.path.getsize(staging_path)
+    if size < 1024:
+        os.remove(staging_path)
+        raise ValueError(f"Downloaded file too small ({size} bytes) — likely an error page")
+
+    dest_path = os.path.join(dest_dir, _safe(filename))
+    if os.path.exists(dest_path):
+        os.remove(staging_path)
+        raise DuplicateIssueError(f"{filename} already exists in library")
+    shutil.move(staging_path, dest_path)
+    dest_path = _fix_extension(dest_path)
+    logger.info(f"Placed trade: {dest_path}")
+
+    # A bundled trade ('Vol 1-6') often arrives as a ZIP of CBZs — keep ALL of
+    # them (no issue-targeting, unlike download_issue's pack handling).
+    placed = [dest_path]
+    extracted = _extract_pack(dest_path, dest_dir)
+    if extracted:
+        os.remove(dest_path)
+        placed = extracted
+        logger.info(f"Trade pack: {len(extracted)} file(s) from {os.path.basename(dest_path)}")
+
+    if komga_scan_fn:
+        try:
+            komga_scan_fn()
+        except Exception as e:
+            logger.warning(f"Komga scan after trade failed: {e}")
+    return placed
+
+
 def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
     """If zip_path is a ZIP of comic files, extract new ones. Returns paths of extracted files."""
     try:

@@ -77,6 +77,29 @@ def _series_matches(title_norm: str, post_norm: str) -> bool:
     return len(extra) == 0
 
 
+def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None) -> bool:
+    """Trade-aware post matcher — the mirror image of _series_matches, which
+    REJECTS format editions. Here we REQUIRE one: the post must name the series,
+    look like a collected edition, and (when we know it) cover the volume we want.
+    Note _normalize already turned every dash into a space, so a ranged trade
+    reads as 'vol 1 6', not 'vol 1-6'."""
+    if title_norm not in post_norm:
+        return False
+    if not (_FORMAT_WORDS & set(post_norm.split())):
+        return False
+    if vol is not None:
+        # Bundled range "vol 1 6" — two small numbers right after vol (guard the
+        # second against being a year so "vol 1 2015" isn't read as 1..2015).
+        m = re.search(r'vol(?:ume)?\s*(\d+)\s+(\d+)\b', post_norm)
+        if m and int(m.group(2)) < 100 and int(m.group(1)) <= vol <= int(m.group(2)):
+            return True
+        return bool(re.search(rf'vol(?:ume)?\s*{vol}\b', post_norm))
+    if vol_range is not None:
+        nums = {int(n) for n in re.findall(r'\b(\d+)\b', post_norm) if int(n) < 100}
+        return vol_range[0] in nums or vol_range[1] in nums
+    return True
+
+
 class GCRateLimitError(Exception):
     """GetComics said slow down — or we're still inside the cooldown from the
     last time it did. retry_after = seconds the caller should park the job."""
@@ -157,6 +180,55 @@ class GetComicsClient:
                     return url, fname
 
         return None, None
+
+    def search_trade(self, title: str, vol=None, vol_range=None, status_fn=None) -> tuple[str | None, str | None]:
+        """Find a collected edition on GetComics. Returns (download_url, filename)
+        or (None, None). 'TPB' is the magic word — 'Volume' returns nothing — and a
+        single 'Vol 1 – 6' post can be the jackpot covering many volumes at once."""
+        title = re.sub(r'\s*\(\d{4}\)\s*$', '', title).strip()
+        queries = []
+        if vol is not None:
+            queries += [f"{title} TPB Vol {vol}", f"{title} Vol {vol}"]
+        if vol_range is not None:
+            queries.append(f"{title} Vol {vol_range[0]}-{vol_range[1]}")
+        queries += [f"{title} TPB", title]
+
+        title_norm = _normalize(title)
+        seen = set()
+        for query in queries:
+            if query in seen:
+                continue
+            seen.add(query)
+            logger.info(f"GetComics trade search: {query!r}")
+            if status_fn:
+                status_fn(f"GetComics: “{query}”")
+            post_url = self._search_trade_page(query, title_norm, vol, vol_range)
+            if post_url:
+                url, fname = self._extract_download(post_url)
+                if url:
+                    return url, fname
+        return None, None
+
+    def _search_trade_page(self, query: str, title_norm: str, vol, vol_range) -> str | None:
+        try:
+            r = self._get(BASE, params={"s": query})
+            r.raise_for_status()
+        except GCRateLimitError:
+            raise
+        except Exception as e:
+            logger.warning(f"GetComics trade search request failed: {e}")
+            return None
+        soup = BeautifulSoup(r.text, "lxml")
+        for article in soup.find_all("article", {"class": "post"}):
+            h1 = article.find("h1", {"class": "post-title"})
+            a = h1.find("a") if h1 else None
+            if not a:
+                continue
+            text = a.get_text(strip=True)
+            if _trade_post_matches(title_norm, _normalize(text), vol, vol_range):
+                logger.info(f"GetComics: matched trade post {text!r}")
+                return a.get("href", "")
+        return None
 
     def _search_page(self, query: str, title: str, issue_number: float) -> str | None:
         try:

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
@@ -31,6 +31,7 @@ from kometa.naming import (
 from kometa.sync import (
     sync_one as _sync_one, rescan_owned as _rescan_owned,
     _best_komga_match, _komga_all_series,
+    enrich_trades as _enrich_trades,
 )
 from kometa.acquisition import (
     get_progress, get_search_status,
@@ -485,13 +486,92 @@ def list_series():
     return [dict(s, **summaries.get(s["id"], empty)) for s in series]
 
 
+def _cached_trades(series: dict) -> list[dict] | None:
+    """Read the enriched trade cache (owned + komga_book_id stamped at sync time).
+    Self-heals a pre-enrichment cache once, so reads stay fold-scan-free after."""
+    cached = db.get_trades(series["id"], DB_PATH)
+    if not cached:
+        return None
+    trades = cached["trades"]
+    if trades and "owned" not in trades[0]:
+        _enrich_trades(series, trades)
+        db.set_trades(series["id"], trades, DB_PATH)
+    return trades
+
+
 @app.get("/api/series/{series_id}")
 def get_series(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
     issues = db.get_issues_for_series(series_id, DB_PATH)
-    return dict(s, issues=issues, **_summary(issues))
+    # Badge = UNOWNED trades, read from the stored owned flag (no per-request scan).
+    # None until first sync populates the cache, so it stays hidden vs flashing 0.
+    trades = _cached_trades(s)
+    trade_count = sum(1 for t in trades if not t["owned"]) if trades else None
+    return dict(s, issues=issues, trade_count=trade_count, **_summary(issues))
+
+
+@app.get("/api/series/{series_id}/trades")
+def get_series_trades(series_id: int):
+    """Collected editions (TPB/HC) available for this series, from LOCG. Discovery
+    only — LOCG carries the trade's name, not the issues it collects, so there's no
+    range here yet (that's a later confirm step). Variant printings are folded out
+    by default; pass ?variants=1 to see them."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    locg_id = s["locg_series_id"]
+    if not locg_id:
+        return {"trades": [], "reason": "no_locg_id"}
+    # Read the cache sync populated; only hit LOCG live when it's missing or stale
+    # (>24h). Trades drift slowly — new editions get solicited over weeks, not hours.
+    cached = db.get_trades(series_id, DB_PATH)
+    if cached and cached["age"] < 24 * 3600:
+        return {"trades": _cached_trades(s), "cached": True}
+    # Cold/stale — fetch, enrich (owned + komga) once, store. The enrich here is the
+    # periodic scan, not a per-request one; warm reads above never touch the disk.
+    trades = [t for t in _locg_trades(locg_id) if not t["is_variant"]]
+    _enrich_trades(s, trades)
+    db.set_trades(series_id, trades, DB_PATH)
+    return {"trades": trades, "cached": False}
+
+
+@app.get("/api/trade/{locg_id}/details")
+def get_trade_details(locg_id: str):
+    """Description + credits for a collected edition — same LOCG page scrape the
+    issue modal uses, just addressed by the trade's own comic id."""
+    try:
+        return _locg_issue_details(locg_id)
+    except Exception as e:
+        raise HTTPException(502, f"LOCG details failed: {e}")
+
+
+class TradeDownloadRequest(BaseModel):
+    locg_id: str
+    title: str
+    vol: int | None = None
+    vol_range: list[int] | None = None
+    cover: str | None = None
+    edition_title: str | None = None
+
+
+@app.post("/api/series/{series_id}/trades/download")
+def download_trade(series_id: int, req: TradeDownloadRequest):
+    """Queue a collected edition — exactly like queueing an issue, kind='trade'.
+    It flows through the same worker (GetComics + usenet, civility, parking) and
+    shows up in Activity. The file lands and Komga scans it; issues are not
+    reconciled (folder is truth)."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    if not s["folder_path"]:
+        return {"queued": False, "reason": "no_folder"}
+    db.queue_trade(series_id, req.locg_id, req.title, vol=req.vol,
+                   vol_range=req.vol_range, cover=req.cover,
+                   edition_title=req.edition_title, path=DB_PATH)
+    threading.Thread(target=_process_queue, daemon=True).start()
+    return {"queued": True}
 
 
 class AddSeriesRequest(BaseModel):

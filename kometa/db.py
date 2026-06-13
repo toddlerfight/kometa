@@ -45,6 +45,12 @@ def init_db(path=DB_PATH):
                 fetched_at    TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS trades_cache (
+                tracked_series_id INTEGER PRIMARY KEY REFERENCES tracked_series(id),
+                data_json         TEXT NOT NULL,
+                fetched_at        TEXT DEFAULT (datetime('now'))
+            );
+
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -188,6 +194,44 @@ def _migrate(path=DB_PATH):
             # consecutive rate-limit hits for this job — caps auto-retry so a
             # hard ban eventually fails for real instead of looping forever
             conn.execute("ALTER TABLE download_queue ADD COLUMN rl_attempts INTEGER DEFAULT 0")
+        if "kind" not in dq_cols:
+            # Generalize the queue: a row is a Kometa acquisition, not just an issue.
+            # issue_number becomes nullable, kind/locg_id/meta_json carry the trade
+            # case, and the unique key goes kind-aware (partial indexes). One-time
+            # rebuild — old rows copy straight over as kind='issue'.
+            conn.executescript("""
+                CREATE TABLE download_queue_new (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
+                    kind              TEXT NOT NULL DEFAULT 'issue',
+                    issue_number      REAL,
+                    locg_id           TEXT,
+                    meta_json         TEXT,
+                    state             TEXT NOT NULL DEFAULT 'queued',
+                    source_url        TEXT,
+                    filename          TEXT,
+                    error             TEXT,
+                    retry_after       TEXT,
+                    sab_nzo_id        TEXT,
+                    rl_attempts       INTEGER DEFAULT 0,
+                    created_at        TEXT DEFAULT (datetime('now')),
+                    updated_at        TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO download_queue_new
+                    (id, tracked_series_id, kind, issue_number, state, source_url,
+                     filename, error, retry_after, sab_nzo_id, rl_attempts, created_at, updated_at)
+                    SELECT id, tracked_series_id, 'issue', issue_number, state, source_url,
+                     filename, error, retry_after, sab_nzo_id, rl_attempts, created_at, updated_at
+                    FROM download_queue;
+                DROP TABLE download_queue;
+                ALTER TABLE download_queue_new RENAME TO download_queue;
+                -- Full (non-partial) unique indexes so the ON CONFLICT upserts in
+                -- queue_issue/queue_trade match them. NULLs are distinct in SQLite,
+                -- so an issue (locg_id NULL) and a trade (issue_number NULL) never
+                -- collide, and many trades per series each keep a NULL issue_number.
+                CREATE UNIQUE INDEX idx_dq_issue ON download_queue(tracked_series_id, issue_number);
+                CREATE UNIQUE INDEX idx_dq_trade ON download_queue(tracked_series_id, locg_id);
+            """)
 
 
 # config key -> env var for first-boot provisioning. Lets a deployer configure
@@ -371,6 +415,32 @@ def mark_synced(series_id, path=DB_PATH):
         """, (series_id,))
 
 
+def set_trades(tracked_series_id, trades, path=DB_PATH):
+    """Cache a series' collected-edition list (already variant-folded). Stamps
+    fetched_at so the read side can decide when it's stale."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO trades_cache (tracked_series_id, data_json, fetched_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(tracked_series_id) DO UPDATE SET
+                data_json = excluded.data_json,
+                fetched_at = excluded.fetched_at
+        """, (tracked_series_id, json.dumps(trades)))
+
+
+def get_trades(tracked_series_id, path=DB_PATH):
+    """Cached trades + age in seconds, or None if never fetched.
+    Returns {'trades': [...], 'age': float}."""
+    with _connect(path) as conn:
+        row = conn.execute("""
+            SELECT data_json, (julianday('now') - julianday(fetched_at)) * 86400 AS age
+            FROM trades_cache WHERE tracked_series_id = ?
+        """, (tracked_series_id,)).fetchone()
+    if not row:
+        return None
+    return {"trades": json.loads(row["data_json"]), "age": row["age"]}
+
+
 def get_issues_for_series(tracked_series_id, path=DB_PATH):
     with _connect(path) as conn:
         rows = [dict(r) for r in conn.execute("""
@@ -449,6 +519,35 @@ def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
                 error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
                 updated_at = datetime('now')
         """, (tracked_series_id, issue_number))
+
+
+def queue_trade(tracked_series_id, locg_id, title, vol=None, vol_range=None, cover=None,
+                edition_title=None, path=DB_PATH):
+    """Queue a collected edition — same table, kind='trade'. meta_json carries the
+    series title (for search), the edition's own title (for naming no-volume editions
+    so they don't all collapse to one filename), vol info, and the cover for Activity.
+    Re-queues a failed/not_found trade."""
+    meta = json.dumps({"title": title, "vol": vol, "vol_range": vol_range,
+                       "cover": cover, "edition_title": edition_title})
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO download_queue (tracked_series_id, kind, locg_id, meta_json, state)
+            VALUES (?, 'trade', ?, ?, 'queued')
+            ON CONFLICT(tracked_series_id, locg_id) DO UPDATE SET
+                state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
+                error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
+                meta_json  = excluded.meta_json,
+                updated_at = datetime('now')
+        """, (tracked_series_id, locg_id, meta))
+
+
+def complete_trade(qid, path=DB_PATH):
+    """Mark a trade download done. Unlike complete_download there's no issue_status
+    to reconcile — ownership is read from the folder (the file we just placed)."""
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE download_queue SET state='done', error=NULL, updated_at=datetime('now') WHERE id=?",
+            (qid,))
 
 
 def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):

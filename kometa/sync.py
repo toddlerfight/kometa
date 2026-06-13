@@ -16,8 +16,9 @@ from kometa.sources import (
 )
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
+    scan_folder_volumes as _scan_folder_volumes, parse_volume_number as _parse_volume_number,
 )
-from kometa.locg_client import get_issues_anon
+from kometa.locg_client import get_issues_anon, get_trades_anon
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,19 @@ def sync_one(series: dict):
         except Exception as e:
             logger.warning(f"LoCG supplement failed for '{series['title']}': {e}")
 
+        # Cache available collected editions while we're here — same anon LOCG
+        # path, so the Trades tab reads instantly instead of searching live every
+        # open. Enrich with the two stored facts (owned from the folder, komga_book_id
+        # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
+        # never fail an issue sync.
+        if locg_id:
+            try:
+                trades = [t for t in get_trades_anon(locg_id) if not t["is_variant"]]
+                enrich_trades(series, trades)
+                db.set_trades(series["id"], trades, DB_PATH)
+            except Exception as e:
+                logger.warning(f"Trades cache failed for '{series['title']}': {e}")
+
     # --- Upsert merged issue list ---
     for num, data in issue_map.items():
         db.upsert_issue_status(
@@ -244,6 +258,54 @@ def sync_one(series: dict):
         db.set_komga_book_id(series["id"], num, bid, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
+
+
+def enrich_trades(series: dict, trades: list[dict]) -> list[dict]:
+    """Stamp the two stored facts onto each trade: `owned` (file in the folder) and
+    `komga_book_id` (the matching Komga book, for the read link). Computed at sync
+    time and cached so request handlers never fold-scan. The two are independent —
+    the folder answers 'do I have it', Komga answers 'can I read it'; Komga is never
+    an ownership source."""
+    folder = series.get("folder_path")
+    owned_vols = _scan_folder_volumes(folder) if folder else set()
+
+    kbook_by_vol = {}
+    komga = _komga()
+    if komga and series.get("komga_series_id"):
+        try:
+            for b in komga.get_books(series["komga_series_id"]):
+                v = _parse_volume_number(b.get("name", ""))
+                if v is not None:
+                    kbook_by_vol[v] = b["id"]
+        except Exception as e:
+            logger.warning(f"Komga trade-book map failed for '{series.get('title')}': {e}")
+
+    for t in trades:
+        if t.get("vol") is not None:
+            t["owned"] = t["vol"] in owned_vols
+            t["komga_book_id"] = kbook_by_vol.get(t["vol"])
+        elif t.get("vol_range"):
+            lo, hi = t["vol_range"]
+            t["owned"] = all(v in owned_vols for v in range(lo, hi + 1))
+            t["komga_book_id"] = None  # a range spans multiple books — no single link
+        else:
+            t["owned"] = False
+            t["komga_book_id"] = None
+    return trades
+
+
+def refresh_trades_owned(series_id: int) -> None:
+    """Re-stamp owned/komga on a series' cached trades without re-hitting LOCG —
+    used right after a trade download so the tile flips to owned immediately
+    instead of waiting for the next sync."""
+    cached = db.get_trades(series_id, DB_PATH)
+    if not cached:
+        return
+    series = db.get_series_by_id(series_id, DB_PATH)
+    if not series:
+        return
+    enrich_trades(series, cached["trades"])
+    db.set_trades(series_id, cached["trades"], DB_PATH)
 
 
 def rescan_owned(series: dict) -> dict:

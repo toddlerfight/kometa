@@ -545,11 +545,14 @@ async function renderSeriesDetail(id) {
   const pullBtn = `<button class="btn btn-sm ${s.on_pull_list ? 'btn-primary' : 'btn-ghost'}"
     onclick="togglePullList(${s.id}, ${!s.on_pull_list})">Pull</button>`;
 
-  const tabs = ['all','owned','missing','upcoming'].map(t => `
-    <div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}</div>
-  `).join('');
+  const tabs = ['all','owned','missing','upcoming','trades'].map(t => {
+    // Trades tab carries a count badge when collected editions exist (from cache).
+    const badge = (t === 'trades' && s.trade_count)
+      ? `<span class="tab-badge">${s.trade_count}</span>` : '';
+    return `<div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}${badge}</div>`;
+  }).join('');
 
-  const tiles = buildIssueTiles(s);
+  const tiles = detailTab === 'trades' ? '' : buildIssueTiles(s);
 
   const seriesBg = document.getElementById('series-bg');
   const seriesBgImg = document.getElementById('series-bg-img');
@@ -589,10 +592,14 @@ async function renderSeriesDetail(id) {
         ${detailSortDesc ? '↓ #' : '↑ #'}
       </button>
     </div>
-    <div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${s.metron_series_id && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>
+    ${detailTab === 'trades'
+      ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`
+      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${s.metron_series_id && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>`}
   `);
 
-  if (s.metron_series_id && total === 0) {
+  if (detailTab === 'trades') _loadTradesPanel(id);
+
+  if (s.metron_series_id && total === 0 && detailTab !== 'trades') {
     const _pollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
       const fresh = await api.get(`/api/series/${id}`).catch(() => null);
@@ -606,6 +613,150 @@ async function renderSeriesDetail(id) {
 function setDetailTab(tab, id) {
   detailTab = tab;
   renderSeriesDetail(id);
+}
+
+async function _loadTradesPanel(id) {
+  let data;
+  try {
+    data = await api.get(`/api/series/${id}/trades`);
+  } catch (e) {
+    const b = document.getElementById('trades-panel');
+    if (b) b.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px;color:var(--amb)">Lookup failed: ${esc(String(e))}</div>`;
+    return;
+  }
+  const body = document.getElementById('trades-panel');
+  // Bail if the user switched tabs / left while LOCG was answering.
+  if (!body || detailTab !== 'trades' || currentParams.id !== id) return;
+  const trades = data.trades || [];
+  if (!trades.length) {
+    body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">${
+      data.reason === 'no_locg_id' ? 'No LOCG link for this series — can\'t look up trades.' : 'No collected editions found.'}</div>`;
+    return;
+  }
+  // TPBs first (the common case), then HCs. Volume order within each.
+  const ordered = trades.slice().sort((a, b) =>
+    (a.format === b.format ? 0 : a.format === 'TPB' ? -1 : 1) ||
+    ((a.vol ?? a.vol_range?.[0] ?? 999) - (b.vol ?? b.vol_range?.[0] ?? 999)));
+  // Cache by locg_id so the tile's click can recover the full trade object.
+  _tradesByLocg = {};
+  for (const t of ordered) if (t.locg_id) _tradesByLocg[t.locg_id] = t;
+  body.innerHTML = `<div class="issue-grid">${ordered.map(_tradeTileHtml).join('')}</div>`;
+}
+
+let _tradesByLocg = {};
+
+function _tradeTileHtml(t) {
+  const tag = t.vol_range ? `Vol ${t.vol_range[0]}–${t.vol_range[1]}`
+            : t.vol ? `Vol ${t.vol}` : t.format;
+  // Same tile skeleton as issues so the grid stays visually identical. The format
+  // (TPB/HC) rides in the corner badge slot; the volume is the bottom label.
+  const cover = t.cover ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : '';
+  const click = t.locg_id ? ` onclick="showTradeModal('${t.locg_id}')"` : '';
+  // Owned (file on disk) → no download arrow, owned styling. Otherwise the same
+  // ↓ arrow missing singles get; stopPropagation so the tile click doesn't fire.
+  const dlBtn = (t.locg_id && !t.owned)
+    ? `<button class="issue-tile-search" title="Download this trade" data-dl="trade:${t.locg_id}"
+         onclick="event.stopPropagation(); tradeDownload('${t.locg_id}', this)">↓</button>`
+    : '';
+  const ownedBadge = t.owned ? `<div class="trade-owned-check" title="On disk">✓</div>` : '';
+  // Unowned → amber 'missing' outline, exactly like a missing issue.
+  const stateCls = t.owned ? '' : ' missing';
+  return `<div class="issue-tile trade-tile${t.owned ? ' owned' : ''}" title="${esc(t.title)}"${click}>
+    <div class="issue-tile-img${stateCls}${t.cover ? '' : ' unknown'}">
+      ${cover}
+      <div class="series-card-next-release trade-fmt-${t.format.toLowerCase()}">${t.format}</div>
+      ${ownedBadge}
+    </div>
+    <div class="issue-tile-num">${tag}</div>
+    ${dlBtn}
+  </div>`;
+}
+
+function _tradeFooterAction(t, locgId) {
+  if (t.owned) {
+    // Two separate facts: owned (on disk) and whether Komga can read it.
+    if (t.komga_book_id && _appConfig.komga_url) {
+      const url = `${_appConfig.komga_url}/book/${esc(t.komga_book_id)}/read`;
+      return `<a class="btn btn-primary" href="${url}" target="_blank" rel="noopener">Open in Komga</a>`;
+    }
+    return `<span class="trade-owned-note">On disk${_appConfig.komga_url ? ' · not yet in Komga' : ''}</span>`;
+  }
+  return `<button class="btn btn-primary" id="trade-dl-btn" onclick="tradeDownload('${esc(locgId)}')">Download</button>`;
+}
+
+async function showTradeModal(locgId) {
+  const t = _tradesByLocg[locgId];
+  if (!t) return;
+  const s = _detailSeries;
+  const tag = t.vol_range ? `Vols ${t.vol_range[0]}–${t.vol_range[1]}`
+            : t.vol ? `Vol ${t.vol}` : t.format;
+  document.getElementById('modal').classList.add('modal-wide');
+  showModal(`
+    <div class="issue-modal-layout">
+      <div class="issue-modal-cover">
+        ${t.cover
+          ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" onerror="this.style.opacity='0.1'">`
+          : `<div class="issue-modal-no-cover"></div>`}
+      </div>
+      <div class="issue-modal-info">
+        <div class="issue-modal-num">${esc(tag)}</div>
+        <div class="issue-modal-series">${esc(s.title)}</div>
+        <div class="issue-modal-meta">${esc([s.publisher, s.year_began].filter(Boolean).join(' · '))}</div>
+        <div style="margin:8px 0"><span class="chip trade-chip-${t.format.toLowerCase()}">${t.format}</span></div>
+        <div class="issue-modal-panel active">
+          <div class="issue-modal-details" id="issue-modal-details">
+            <div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" id="trade-modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${_tradeFooterAction(t, locgId)}
+    </div>
+  `);
+  try {
+    const d = await api.get(`/api/trade/${encodeURIComponent(locgId)}/details`);
+    _renderIssueDetails(d.desc, d.credits || []);
+  } catch { _renderIssueDetails('', []); }
+}
+
+async function tradeDownload(locgId, btn) {
+  const t = _tradesByLocg[locgId];
+  if (!t) return;
+  // btn omitted → came from the modal's Download button.
+  btn = btn || document.getElementById('trade-dl-btn');
+  const isArrow = btn?.classList.contains('issue-tile-search');
+  const label = t.vol_range ? `Vols ${t.vol_range[0]}–${t.vol_range[1]}`
+              : t.vol ? `Vol ${t.vol}` : t.format;
+  if (btn) {
+    btn.disabled = true;
+    if (isArrow) btn.textContent = '⋯';
+    else { btn.classList.add('btn-working'); btn.textContent = 'Queuing…'; }
+  }
+  try {
+    // Just enqueue — it's a Kometa acquisition now. Progress lives in Activity,
+    // same as an issue download.
+    const r = await api.post(`/api/series/${_detailSeries.id}/trades/download`,
+      { locg_id: locgId, title: _detailSeries.title, vol: t.vol, vol_range: t.vol_range,
+        cover: t.cover, edition_title: t.title });
+    if (btn) btn.classList.remove('btn-working');
+    if (r.reason === 'no_folder') {
+      _tradeBtnReset(btn, isArrow); showToast('Set a folder for this series first'); return;
+    }
+    if (btn) { if (isArrow) { btn.textContent = '✓'; btn.classList.add('found'); } else btn.textContent = '✓ Queued'; }
+    showToast(`${label} queued — track it in Activity`);
+  } catch (e) {
+    _tradeBtnReset(btn, isArrow);
+    showToast(`Queue failed: ${esc(String(e))}`);
+  }
+}
+
+function _tradeBtnReset(btn, isArrow) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.classList.remove('btn-working');
+  btn.textContent = isArrow ? '↓' : 'Download';
 }
 
 async function togglePullList(id, on) {
@@ -1374,6 +1525,28 @@ function _actChip(state) {
   return `<span class="${cls}">${label}</span>`;
 }
 
+// Activity rows are kind-agnostic: a trade shows "Vol N" and the series cover
+// (no per-issue thumbnail), an issue shows "#N" and its own.
+function _actLabel(q) {
+  if (q.kind === 'trade') {
+    let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
+    if (m.vol_range) return `Vol ${m.vol_range[0]}–${m.vol_range[1]}`;
+    if (m.vol != null) return `Vol ${m.vol}`;
+    return 'Trade';
+  }
+  return `#${fmtNum(q.issue_number)}`;
+}
+function _actThumb(q) {
+  if (!q.tracked_series_id) return '';
+  const seriesThumb = `/api/series/${q.tracked_series_id}/thumbnail`;
+  if (q.kind === 'trade') {
+    // The trade's own LOCG cover (stashed in meta), falling back to the series.
+    let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
+    return `<img src="${esc(m.cover || seriesThumb)}" onerror="this.src='${seriesThumb}'">`;
+  }
+  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" onerror="this.src='${seriesThumb}'">`;
+}
+
 function _buildActivityHtml(queue) {
   const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','processing'].includes(q.state));
   const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
@@ -1391,9 +1564,8 @@ function _buildActivityHtml(queue) {
 
   if (inProgress.length) {
     const cards = inProgress.map(q => {
-      const numStr = `#${fmtNum(q.issue_number)}`;
-      const thumbSrc = q.tracked_series_id ? `/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail` : '';
-      const thumb = thumbSrc ? `<img src="${thumbSrc}" onerror="this.src='/api/series/${q.tracked_series_id}/thumbnail'">` : '';
+      const numStr = _actLabel(q);
+      const thumb = _actThumb(q);
       const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet';
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
       // Usenet progress is a percentage from SAB (no byte counts); GetComics has bytes.
@@ -1434,9 +1606,8 @@ function _buildActivityHtml(queue) {
 
   if (completed.length) {
     const rows = completed.map(q => {
-      const numStr = `#${fmtNum(q.issue_number)}`;
-      const thumbSrc = q.tracked_series_id ? `/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail` : '';
-      const thumb = thumbSrc ? `<img src="${thumbSrc}" onerror="this.src='/api/series/${q.tracked_series_id}/thumbnail'">` : '';
+      const numStr = _actLabel(q);
+      const thumb = _actThumb(q);
       const isDone = q.state === 'done';
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
