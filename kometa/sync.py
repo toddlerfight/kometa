@@ -1,6 +1,6 @@
 """Per-series sync — reconcile one tracked series against Komga (ownership +
-book IDs) and the metadata sources (Metron primary, ComicVine and LOCG as
-supplements), then upsert the merged issue list.
+book IDs) and the metadata sources (Metron primary, LOCG as
+supplement), then upsert the merged issue list.
 
 Ownership is what's on disk; the Komga book map only supplies book IDs for
 thumbnails. Metron is authoritative for the issue list; CV/LOCG fill gaps and
@@ -12,7 +12,7 @@ import time
 import logging
 
 from kometa.sources import (
-    komga as _komga, metron as _metron, comicvine as _comicvine, locg as _locg,
+    komga as _komga, metron as _metron, locg as _locg,
 )
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
@@ -165,30 +165,6 @@ def sync_one(series: dict):
             except (ValueError, TypeError):
                 continue
             issue_map[num] = {"store_date": issue.get("store_date"), "image": issue.get("image"), "metron_issue_id": issue.get("id")}
-
-    # --- Supplement from ComicVine ---
-    cv = _comicvine()
-    if cv:
-        try:
-            cv_vol_id = series.get("cv_volume_id")
-            if not cv_vol_id and series.get("year_began"):
-                # Require year_began for CV lookup — title-only matching is too ambiguous
-                cv_vol_id = cv.get_volume_id(series["title"], series.get("year_began"))
-                if cv_vol_id:
-                    db.set_cv_volume_id(series["id"], cv_vol_id, DB_PATH)
-                    series = dict(series, cv_volume_id=str(cv_vol_id))
-            if cv_vol_id:
-                for ci in cv.get_issues(int(cv_vol_id)):
-                    num = ci["number"]
-                    if num not in issue_map:
-                        issue_map[num] = {"store_date": ci["store_date"], "image": ci["cover"]}
-                    else:
-                        if not issue_map[num]["store_date"]:
-                            issue_map[num]["store_date"] = ci["store_date"]
-                        if not issue_map[num]["image"]:
-                            issue_map[num]["image"] = ci["cover"]
-        except Exception as e:
-            logger.warning(f"CV supplement failed for '{series['title']}': {e}")
 
     # --- Supplement from LoCG (best for upcoming solicitations) ---
     # Auth buys series-id lookup; but if we already have a locg_series_id (e.g.

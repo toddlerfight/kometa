@@ -16,12 +16,11 @@ from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
-from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
 from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
-    komga as _komga, metron as _metron, comicvine as _comicvine,
+    komga as _komga, metron as _metron,
     locg as _locg, comics_root as _comics_root,
 )
 from kometa.naming import (
@@ -292,31 +291,6 @@ def test_metron(req: TestMetronRequest):
         return {"ok": False, "error": str(e)}
 
 
-class TestCVRequest(BaseModel):
-    api_key: str | None = None
-
-
-@app.post("/api/test/comicvine")
-def test_comicvine(req: TestCVRequest):
-    api_key = req.api_key or _stored("cv_api_key")
-    if not api_key:
-        return {"ok": False, "error": "Not configured"}
-    try:
-        client = ComicVineClient(api_key)
-        r = client.session.get(
-            f"{CV_BASE_URL}/search/",
-            params=client._params({"resources": "volume", "query": "batman", "limit": 1, "field_list": "id,name"}),
-            timeout=10,
-        )
-        r.raise_for_status()
-        data = r.json()
-        if data.get("status_code") != 1:
-            return {"ok": False, "error": data.get("error", "Unknown error")}
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
 class TestLocgRequest(BaseModel):
     user: str | None = None
     password: str | None = None
@@ -362,7 +336,6 @@ def test_sab(req: TestSabRequest):
 _INTEGRATION_KEYS = {
     "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
     "metron":    ["metron_user", "metron_pass"],
-    "comicvine": ["cv_api_key"],
     "locg":      ["locg_user", "locg_pass"],
     "sabnzbd":   ["sab_url", "sab_apikey"],
 }
@@ -401,8 +374,6 @@ def get_config():
         "komga_library_id":    cfg.get("komga_library_id", ""),
         "metron_user":         cfg.get("metron_user", ""),
         "metron_pass":         "",
-        "cv_api_key":          "",
-        "cv_configured":       bool(cfg.get("cv_api_key", "")),
         "locg_user":           cfg.get("locg_user", ""),
         "locg_pass":           "",
         "locg_configured":     bool(cfg.get("locg_user", "") and cfg.get("locg_pass", "")),
@@ -421,7 +392,6 @@ class ConfigRequest(BaseModel):
     komga_library_id:   str | None = None
     metron_user:        str | None = None
     metron_pass:        str | None = None
-    cv_api_key:         str | None = None
     locg_user:          str | None = None
     locg_pass:          str | None = None
     sync_hours:         str | None = None
@@ -922,14 +892,6 @@ def metron_series_thumbnail(metron_id: int):
     try:
         detail = metron.get_series(metron_id)
         img_url = detail.get("image")
-
-        if not img_url:
-            cv = _comicvine()
-            if cv:
-                img_url = cv.find_series_image(
-                    detail.get("name", ""),
-                    detail.get("year_began"),
-                )
 
         if not img_url:
             raise HTTPException(404)

@@ -1,5 +1,5 @@
 """Source adapters — one place to get a configured client for every external
-system Kometa talks to (Komga, Metron, ComicVine, SABnzbd, LOCG, and the Usenet
+system Kometa talks to (Komga, Metron, SABnzbd, LOCG, and the Usenet
 indexer list).
 
 Each accessor reads current config straight from the DB and rebuilds its client
@@ -11,7 +11,6 @@ import logging
 
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
-from kometa.comicvine_client import ComicVineClient
 from kometa.sabnzbd_client import SABnzbdClient
 import kometa.db as db
 
@@ -66,10 +65,6 @@ def metron() -> MetronClient:
         _metron_cfg_key = key
     return _metron_instance
 
-
-def comicvine() -> ComicVineClient | None:
-    key = db.get_config(DB_PATH).get("cv_api_key", "")
-    return ComicVineClient(key) if key else None
 
 
 def sabnzbd() -> SABnzbdClient | None:

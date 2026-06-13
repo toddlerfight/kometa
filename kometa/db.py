@@ -240,7 +240,6 @@ def _migrate(path=DB_PATH):
 # truth after that, and changing the env later won't clobber UI edits.
 _ENV_SEEDED_CONFIG = {
     "comics_root":      "COMICS_ROOT",
-    "cv_api_key":       "CV_API_KEY",
     "komga_url":        "KOMGA_URL",
     "komga_user":       "KOMGA_USER",
     "komga_pass":       "KOMGA_PASS",
@@ -472,14 +471,6 @@ def set_folder_path(series_id, folder_path, path=DB_PATH):
         conn.execute(
             "UPDATE tracked_series SET folder_path = ? WHERE id = ?",
             (folder_path, series_id),
-        )
-
-
-def set_cv_volume_id(series_id, cv_volume_id, path=DB_PATH):
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE tracked_series SET cv_volume_id = ? WHERE id = ?",
-            (str(cv_volume_id), series_id),
         )
 
 

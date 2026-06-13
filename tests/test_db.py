@@ -167,21 +167,19 @@ class TestOwnedColumnMigration:
 
 
 class TestFreshInstallMigration:
-    def test_nullable_rebuild_keeps_cv_and_locg_columns(self, tmp_path):
+    def test_nullable_rebuild_keeps_locg_column(self, tmp_path):
         """Regression: the komga_series_id->nullable rebuild used to drop
-        cv_volume_id/locg_series_id, crashing fresh installs on first write."""
+        locg_series_id, crashing fresh installs on first write. (cv_volume_id is
+        a vestigial column kept after the Comic Vine removal — no setter.)"""
         p = str(tmp_path / "fresh.db")
         db.init_db(p)
 
         cols = {r[1] for r in sqlite3.connect(p).execute("PRAGMA table_info(tracked_series)")}
-        assert "cv_volume_id" in cols
         assert "locg_series_id" in cols
+        assert "cv_volume_id" in cols  # still present, just unused now
 
-        # and the setters that read/write them don't blow up
         sid = db.add_series(komga_series_id=None, metron_series_id=None,
                             title="X", publisher="Y", path=p)
-        db.set_cv_volume_id(sid, "4050-1234", p)
         db.set_locg_series_id(sid, 9999, p)
         row = db.get_series_by_id(sid, p)
-        assert row["cv_volume_id"] == "4050-1234"
         assert row["locg_series_id"] == 9999
