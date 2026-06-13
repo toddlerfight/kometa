@@ -40,7 +40,7 @@ class TestProcessQueue:
         db.queue_issue(series, 1.0, db_path)
 
         class FakeGC:
-            def search(self, title, number, store_date, series_year=None):
+            def search(self, title, number, store_date, series_year=None, status_fn=None):
                 return ("http://dl/saga-1.cbz", "saga-1.cbz")
 
         monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
