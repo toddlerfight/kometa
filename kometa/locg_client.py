@@ -332,10 +332,10 @@ def _get_trades_with_get(series_id: int, get_fn) -> list[dict]:
             if not cover and locg_id:
                 cover = S3_THUMB.format(locg_id)
             # A title with extra words after the format ("DCBS ... Variant",
-            # "Con Exc Var") is a variant printing of the same trade — fold them.
-            # No word boundaries: LOCG mashes the format in ("HCDCBS", "TPDCBS"),
-            # so \bDCBS\b would miss exactly those.
-            is_variant = bool(re.search(r"variant|dcbs|\bexc\b|exclusive", title, re.I))
+            # "Con Exc Var", "3rd Printing") is a variant printing of the same
+            # trade — fold them. No word boundaries: LOCG mashes the format in
+            # ("HCDCBS", "TP3rd"), so \bDCBS\b would miss exactly those.
+            is_variant = bool(re.search(r"variant|dcbs|\bexc\b|exclusive|printing", title, re.I))
             rng = _VOL_RANGE_RE.search(title)
             vol = _VOL_RE.search(title)
             out.append({
@@ -354,6 +354,25 @@ def _get_trades_with_get(series_id: int, get_fn) -> list[dict]:
 def get_trades_anon(series_id: int) -> list[dict]:
     """Keyless collected-edition discovery. Mirrors get_issues_anon."""
     return _get_trades_with_get(series_id, _anon_get_fn())
+
+
+def select_editions(trades: list[dict]) -> list[dict]:
+    """The editions worth showing: drop variant printings, then keep ONE per
+    (volume, format) so a vol's reprints/year-editions collapse to a single tile
+    while TP and HC of the same volume stay distinct. No-volume editions
+    (compendiums, box sets, deluxe HCs) are unique products — all kept. Order is
+    preserved, so LOCG's base printing (listed first) wins over later reprints."""
+    out, seen = [], set()
+    for t in trades:
+        if t.get("is_variant"):
+            continue
+        if t.get("vol") is not None:
+            key = (t["vol"], t["format"])
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append(t)
+    return out
 
 
 # Variant lists barely change, but they DO change — fresh issues grow new

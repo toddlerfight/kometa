@@ -18,7 +18,7 @@ from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
     scan_folder_volumes as _scan_folder_volumes, parse_volume_number as _parse_volume_number,
 )
-from kometa.locg_client import get_issues_anon, get_trades_anon
+from kometa.locg_client import get_issues_anon, get_trades_anon, select_editions
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
@@ -226,7 +226,7 @@ def sync_one(series: dict):
         # never fail an issue sync.
         if locg_id:
             try:
-                trades = [t for t in get_trades_anon(locg_id) if not t["is_variant"]]
+                trades = select_editions(get_trades_anon(locg_id))
                 enrich_trades(series, trades)
                 db.set_trades(series["id"], trades, DB_PATH)
             except Exception as e:
