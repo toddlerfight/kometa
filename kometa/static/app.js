@@ -338,6 +338,13 @@ async function _loadBrowsePage() {
 
   browseState._cache = await api.get('/api/series');
   _renderBrowseResults();
+  // Nothing tracked yet on a configured install? Open the one door they'd open
+  // anyway. Only on a genuinely empty library with a usable folder, and only when
+  // no modal's already up (don't ambush an in-progress flow or stomp a re-render).
+  if (browseState._cache.length === 0 && _appConfig.comics_root_ok
+      && document.getElementById('modal-backdrop')?.classList.contains('hidden')) {
+    showAddWizard();
+  }
 }
 
 function _renderBrowseResults() {
@@ -607,6 +614,8 @@ let _fbScope = 'library';   // 'library' = sandboxed to comics root, 'fs' = whol
 
 let _wizardResults = [];
 let _wizardSearchTimer = null;
+let _wizardLastQuery = '';   // dedupe — don't re-search a query we already answered
+let _wizardSeq = 0;          // request token — drop stale results that land out of order
 let _wizardHi = -1;   // keyboard-highlighted result index
 
 function _wizardKey(e) {
@@ -633,16 +642,17 @@ function showAddWizard() {
   // isn't usable, channel the user to set it first — just-in-time, not a gate.
   if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
   _wizardResults = [];
+  _wizardLastQuery = '';
   _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
   showModal(`
     <div class="modal-title">Add Series</div>
     <div class="wizard-search-row">
       <input class="search-input" id="wizard-search" placeholder="Search for a series…" autocomplete="off"
-        onkeydown="_wizardKey(event)">
+        oninput="_wizardInput(this.value)" onkeydown="_wizardKey(event)">
       <button class="btn btn-primary" onclick="wizardSearch()">Search</button>
     </div>
     <div class="wizard-results" id="wizard-results">
-      <div class="state-msg" style="padding:16px 0;font-size:11px">Search for a series…</div>
+      <div class="state-msg" style="padding:16px 0;font-size:11px">Start typing to search…</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -782,9 +792,30 @@ function _renderWizardResults(results, q) {
   }
 }
 
+// Type-ahead: fire one search per typing PAUSE, not per keystroke. 3-char floor +
+// 400ms debounce keeps LOCG's anonymous (rate-limited) path from getting smacked —
+// a 7-letter title is one request, not seven. Manual Search button still calls
+// wizardSearch() directly for the impatient.
+function _wizardInput(val) {
+  clearTimeout(_wizardSearchTimer);
+  const q = (val || '').trim();
+  if (q.length < 3) {
+    _wizardLastQuery = '';
+    if (!_wizardResults.length) {
+      const el = document.getElementById('wizard-results');
+      if (el) el.innerHTML = `<div class="state-msg" style="padding:16px 0;font-size:11px">Keep typing…</div>`;
+    }
+    return;
+  }
+  _wizardSearchTimer = setTimeout(() => wizardSearch(), 400);
+}
+
 async function wizardSearch() {
   const q = document.getElementById('wizard-search')?.value?.trim() || '';
   if (!document.getElementById('wizard-results') || !q) return;
+  if (q === _wizardLastQuery) return;   // already answered this exact query
+  _wizardLastQuery = q;
+  const seq = ++_wizardSeq;             // anything older than this is stale on return
   try {
     _wizardStatus('Searching…');
     // Metron is optional — if it's not configured or hiccups, don't let it kill
@@ -796,14 +827,16 @@ async function wizardSearch() {
     } catch (e) {
       console.warn('Metron search unavailable, falling back to LOCG:', e);
     }
-    if (!document.getElementById('wizard-results')) return;
+    if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     if (metronResults.length) { _renderWizardResults(metronResults, q); return; }
 
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
-    if (!document.getElementById('wizard-results')) return;
+    if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     _renderWizardResults(locgResults, q);
   } catch (err) {
     console.error('wizardSearch error:', err);
+    _wizardLastQuery = '';   // let a retry through — this query never landed
+    if (seq !== _wizardSeq) return;
     const el = document.getElementById('wizard-results');
     if (el) el.innerHTML = `<div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--amb)">Search failed: ${esc(String(err))}</div>`;
   }
