@@ -339,13 +339,22 @@ async function _loadBrowsePage() {
   browseState._cache = await api.get('/api/series');
   _renderBrowseResults();
   // Nothing tracked yet on a configured install? Open the one door they'd open
-  // anyway. Only on a genuinely empty library with a usable folder, and only when
-  // no modal's already up (don't ambush an in-progress flow or stomp a re-render).
-  if (browseState._cache.length === 0 && _appConfig.comics_root_ok
-      && document.getElementById('modal-backdrop')?.classList.contains('hidden')) {
-    showAddWizard();
+  // anyway — but give them ~5s to read the empty state and reach for it themselves
+  // first. Re-check everything when the timer fires: they may have navigated off,
+  // added a series, or opened another modal in the meantime.
+  clearTimeout(_autoWizardTimer);
+  if (browseState._cache.length === 0 && _appConfig.comics_root_ok) {
+    _autoWizardTimer = setTimeout(() => {
+      if (currentView === 'library'
+          && (browseState._cache?.length ?? 0) === 0
+          && _appConfig.comics_root_ok
+          && document.getElementById('modal-backdrop')?.classList.contains('hidden')) {
+        showAddWizard();
+      }
+    }, 5000);
   }
 }
+let _autoWizardTimer = null;
 
 function _renderBrowseResults() {
   const { filter, search, sortKey, sortDir, _cache: all } = browseState;
