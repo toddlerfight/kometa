@@ -1762,10 +1762,6 @@ async function renderSettings() {
           ${_settingsField('f-metron-pass', 'Password', '', { set: metronCfg })}
         </div>
         <div class="settings-card" style="margin-top:36px">
-          ${_settingsHeader('Comic Vine', 'optional', 'comicvine', true, cfg.cv_configured)}
-          ${_settingsField('f-cv-key', 'API Key', '', { set: cfg.cv_configured, ph: 'Enter API key' })}
-        </div>
-        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('League of Comic Geeks', 'optional', 'locg', true, cfg.locg_configured)}
           ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
           ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
@@ -1796,7 +1792,6 @@ const _SETTINGS_FIELDS = {
   'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
   'f-metron-user': { card: 'metron',    key: 'metron_user',      test: 'metron' },
   'f-metron-pass': { card: 'metron',    key: 'metron_pass',      test: 'metron', secret: true },
-  'f-cv-key':      { card: 'comicvine', key: 'cv_api_key',       test: 'comicvine', secret: true },
   'f-locg-user':   { card: 'locg',      key: 'locg_user',        test: 'locg' },
   'f-locg-pass':   { card: 'locg',      key: 'locg_pass',        test: 'locg', secret: true },
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
@@ -1804,7 +1799,7 @@ const _SETTINGS_FIELDS = {
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', metron: 'metron', comicvine: 'comicvine', locg: 'locg', sabnzbd: 'sab' };
+const _TEST_ENDPOINTS = { komga: 'komga', metron: 'metron', locg: 'locg', sabnzbd: 'sab' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};
