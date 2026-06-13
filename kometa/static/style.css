@@ -828,6 +828,19 @@ select.settings-input {
 
 .issue-tab:hover { color: var(--tm); }
 .issue-tab.active { color: var(--pri); border-bottom-color: var(--pri); }
+.tab-badge {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 8px;
+  background: var(--su3);
+  color: var(--tm);
+  vertical-align: middle;
+}
+.issue-tab.active .tab-badge { background: var(--pri); color: var(--ink); }
 
 .issue-grid {
   display: grid;
@@ -1372,6 +1385,8 @@ select.settings-input {
 
 .issue-tile:hover .issue-tile-search { opacity: 1; }
 .issue-tile-search:disabled { opacity: 0.5 !important; cursor: default; }
+/* Confirmed-available trade: keep the arrow visible (not hover-only) as a ✓. */
+.issue-tile-search.found { opacity: 1 !important; background: var(--pri); color: var(--ink); }
 
 /* --- Activity Queue --- */
 
@@ -1615,6 +1630,34 @@ select.settings-input {
   vertical-align: middle;
   margin-left: 4px;
   letter-spacing: 0.05em;
+}
+
+/* --- Trades (collected editions) — reuses .issue-tile / .issue-grid --- */
+
+.trades-note {
+  font-size: 10px; color: var(--tq); line-height: 1.5;
+  padding: 8px 10px; margin-bottom: 14px;
+  border-left: 2px solid var(--bd-l); background: var(--su1);
+}
+/* Format tag rides the badge slot but pinned to the top-left corner, recoloured
+   by edition so TPB/HC read at a glance. */
+.trade-tile .series-card-next-release {
+  bottom: auto; left: 6px; top: 6px; transform: none;
+  font-size: 8px; padding: 2px 5px;
+}
+.trade-tile .trade-fmt-tpb { background: var(--pri); color: var(--ink); }
+.trade-tile .trade-fmt-hc  { background: var(--blu); color: var(--ink); }
+.trade-chip-tpb { color: var(--pri); border: 1px solid var(--pri); }
+.trade-chip-hc  { color: var(--blu); border: 1px solid var(--blu); }
+.trade-owned-note { font-size: 11px; color: var(--tq); font-family: var(--font); align-self: center; }
+/* Owned trade (file on disk): subdue the tile, stamp a corner check. */
+.trade-tile.owned .issue-tile-img { opacity: 0.55; }
+.trade-owned-check {
+  position: absolute; top: 6px; right: 6px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--pri); color: var(--ink);
+  font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
 }
 
 /* --- Issue Detail Modal --- */

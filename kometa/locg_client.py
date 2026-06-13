@@ -285,6 +285,77 @@ def get_issues_anon(series_id: int) -> list[dict]:
     return _get_issues_with_get(series_id, _anon_get_fn())
 
 
+# LOCG format codes on the series-issue endpoint. 1=singles, 2=variants are used
+# elsewhere; 3=TPB and 4=HC are the collected editions. Verified against East of
+# West (series 102652): format 3 returned all 10 trades + the compendium, format
+# 4 the Apocalypse hardcovers.
+_FMT_TPB, _FMT_HC = 3, 4
+# "Vol. 1", "Vol 1", "Volume 1" — and ranges: "Vol. 1 - 6", "Vol 1-6"
+_VOL_RANGE_RE = re.compile(r'\bvol(?:ume|\.)?\s*(\d+)\s*[-–—]\s*(\d+)', re.I)
+_VOL_RE = re.compile(r'\bvol(?:ume|\.)?\s*(\d+)', re.I)
+
+
+def _get_trades_with_get(series_id: int, get_fn) -> list[dict]:
+    """Scrape a series' collected editions (TPB + HC). Returns rows of
+    {format, title, locg_id, vol, vol_range, is_variant}. NOTE: LOCG does not
+    publish the issue range a trade collects — only its name/volume. The caller
+    fills the actual #X-Y mapping from Metron (when keyed) or by asking the user."""
+    out = []
+    for fmt, label in ((_FMT_TPB, "TPB"), (_FMT_HC, "HC")):
+        try:
+            r = get_fn(
+                f"{BASE}/comic/get_comics",
+                params={"list": "series", "series_id": series_id,
+                        "view": "thumbs", "format[]": fmt, "order": "asc"},
+            )
+            soup = BeautifulSoup(r.json()["list"], "lxml")
+        except Exception as e:
+            logger.warning(f"LoCG get_trades({series_id}, fmt={fmt}) failed: {e}")
+            continue
+        for li in soup.find_all("li"):
+            title_el = li.find(class_="title")
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            a_el = li.find("a", href=re.compile(r"/comic/(\d+)/"))
+            locg_id = None
+            if a_el:
+                m = re.search(r"/comic/(\d+)/", a_el["href"])
+                if m:
+                    locg_id = m.group(1)
+            # Same cover handling as the issue scraper: real art lives under
+            # /covers/, anything else is LOCG's no-art placeholder.
+            img_el = li.find("img")
+            cover = img_el.get("data-src") if img_el else None
+            if cover and "covers/" not in cover:
+                cover = None
+            if not cover and locg_id:
+                cover = S3_THUMB.format(locg_id)
+            # A title with extra words after the format ("DCBS ... Variant",
+            # "Con Exc Var") is a variant printing of the same trade — fold them.
+            # No word boundaries: LOCG mashes the format in ("HCDCBS", "TPDCBS"),
+            # so \bDCBS\b would miss exactly those.
+            is_variant = bool(re.search(r"variant|dcbs|\bexc\b|exclusive", title, re.I))
+            rng = _VOL_RANGE_RE.search(title)
+            vol = _VOL_RE.search(title)
+            out.append({
+                "format": label,
+                "title": title,
+                "locg_id": locg_id,
+                "cover": cover,
+                "vol": int(vol.group(1)) if vol and not rng else None,
+                "vol_range": [int(rng.group(1)), int(rng.group(2))] if rng else None,
+                "is_variant": is_variant,
+            })
+        time.sleep(0.3)
+    return out
+
+
+def get_trades_anon(series_id: int) -> list[dict]:
+    """Keyless collected-edition discovery. Mirrors get_issues_anon."""
+    return _get_trades_with_get(series_id, _anon_get_fn())
+
+
 # Variant lists barely change, but they DO change — fresh issues grow new
 # variants for weeks after release. Cache hard enough to make modal reopens
 # free, short enough that a new variant shows up same-day.

@@ -41,6 +41,35 @@ def scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
     return numbers
 
 
+# "Vol 1", "Vol. 01", "Volume 1", "v01" — but NOT a bare issue number, so a trade
+# on disk reads as a volume and a single doesn't masquerade as one.
+_VOL_FILE_RE = re.compile(r'\b(?:vol(?:ume)?\.?\s*|v)(\d+)', re.IGNORECASE)
+
+
+def parse_volume_number(name: str) -> int | None:
+    """Volume number from a collected-edition filename or Komga book name, or None.
+    The trade analogue of parse_issue_number."""
+    m = _VOL_FILE_RE.search(os.path.splitext(name)[0])
+    return int(m.group(1)) if m else None
+
+
+def scan_folder_volumes(folder_path: str) -> set[int]:
+    """Volume numbers of collected editions present on disk — same folder-is-truth
+    model as scan_folder_numbers, just for trades. A trade counts as owned when its
+    volume turns up here."""
+    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
+    vols = set()
+    try:
+        for name in os.listdir(folder_path):
+            if os.path.splitext(name)[1].lower() in exts:
+                v = parse_volume_number(name)
+                if v is not None:
+                    vols.add(v)
+    except Exception:
+        pass
+    return vols
+
+
 def find_issue_file(folder_path: str, series_title: str, number: float) -> str | None:
     """Scan folder_path for a comic file matching issue number. Returns full path or None."""
     if not folder_path or not os.path.isdir(folder_path):

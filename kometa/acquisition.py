@@ -6,6 +6,7 @@ retries on release days. Owns dl_progress, the live progress map the UI polls;
 main imports it back for the progress routes.
 """
 import os
+import json
 import logging
 import threading
 from datetime import date
@@ -63,6 +64,14 @@ def get_progress(qid: int) -> dict | None:
     return _dl_progress.get(qid)
 
 
+def _trade_label(vol, vol_range) -> str:
+    if vol_range:
+        return f"Vol {vol_range[0]}-{vol_range[1]}"
+    if vol is not None:
+        return f"Vol {vol}"
+    return ""
+
+
 def _komga_scan():
     komga = _komga()
     if komga:
@@ -94,60 +103,13 @@ def _process_queue_locked():
         qid = item["id"]
         db.update_queue_state(qid, "searching", path=DB_PATH)
         try:
-            issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
-            issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
-            store_date = issue_row["store_date"] if issue_row else None
-
-            set_search_status(qid, "GetComics…")
-            dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
-                                              status_fn=lambda s, qid=qid: set_search_status(qid, s))
-            if not dl_url:
-                # GetComics failed — try Usenet indexers before giving up
-                indexers = _usenet_indexers()
-                sab = _sabnzbd()
-                if indexers and sab:
-                    set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
-                    nzb_url = search_usenet(indexers, item["title"], item["issue_number"])
-                    if nzb_url:
-                        nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
-                        if nzo_id:
-                            db.update_queue_state(qid, "pending_usenet",
-                                                  source_url=nzb_url, path=DB_PATH)
-                            db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
-                            logger.info(f"Usenet: submitted nzo_id={nzo_id} for {item['title']} #{int(item['issue_number'])}")
-                            continue
-                db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
-                continue
-
-            if dl_url in downloaded_urls:
-                db.update_queue_state(qid, "not_found", error="Pack already downloaded for this series", path=DB_PATH)
-                continue
-            downloaded_urls.add(dl_url)
-
-            db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
-            dest = downloader.download_issue(
-                url=dl_url,
-                title=item["title"],
-                publisher=item["publisher"],
-                issue_number=item["issue_number"],
-                store_date=store_date,
-                hint_filename=hint_filename,
-                komga_scan_fn=_komga_scan,
-                progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
-                dest_dir=item.get("folder_path") or None,
-                tracked_series_id=item["tracked_series_id"],
-                db_path=DB_PATH,
-            )
-            clear_progress(qid)
-            # Mark done + record ownership in one transaction — no crash-gap re-download.
-            # folder_path auto-populated so the next sync's folder scan finds the file.
-            # komga_book_id stays NULL until next full sync (only needed for thumbnails).
-            db.complete_download(
-                qid, item["tracked_series_id"], item["issue_number"], store_date,
-                filename=dest,
-                set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
-                path=DB_PATH,
-            )
+            # One queue, two kinds. Everything around this branch — state moves,
+            # rate-limit parking, progress, Activity — is identical; only the
+            # search/fetch differs by kind.
+            if item.get("kind") == "trade":
+                _acquire_trade(item, qid, gc, downloaded_urls)
+            else:
+                _acquire_issue(item, qid, gc, downloaded_urls)
         except GCRateLimitError as e:
             from datetime import datetime, timedelta
             # A rate limit is "not yet", not "failed" — park the job and let the
@@ -179,6 +141,130 @@ def _process_queue_locked():
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
         finally:
             clear_search_status(qid)
+
+
+def _acquire_issue(item, qid, gc, downloaded_urls):
+    """Search (GetComics → usenet) and place a single issue. Raises GCRateLimitError
+    / DuplicateIssueError up to the shared handler in the queue loop."""
+    issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
+    issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
+    store_date = issue_row["store_date"] if issue_row else None
+
+    set_search_status(qid, "GetComics…")
+    dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
+                                      status_fn=lambda s, qid=qid: set_search_status(qid, s))
+    if not dl_url:
+        indexers = _usenet_indexers()
+        sab = _sabnzbd()
+        if indexers and sab:
+            set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
+            nzb_url = search_usenet(indexers, item["title"], item["issue_number"])
+            if nzb_url:
+                nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
+                if nzo_id:
+                    db.update_queue_state(qid, "pending_usenet", source_url=nzb_url, path=DB_PATH)
+                    db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
+                    logger.info(f"Usenet: submitted nzo_id={nzo_id} for {item['title']} #{int(item['issue_number'])}")
+                    return
+        db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
+        return
+
+    if dl_url in downloaded_urls:
+        db.update_queue_state(qid, "not_found", error="Pack already downloaded for this series", path=DB_PATH)
+        return
+    downloaded_urls.add(dl_url)
+
+    db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
+    dest = downloader.download_issue(
+        url=dl_url,
+        title=item["title"],
+        publisher=item["publisher"],
+        issue_number=item["issue_number"],
+        store_date=store_date,
+        hint_filename=hint_filename,
+        komga_scan_fn=_komga_scan,
+        progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+        dest_dir=item.get("folder_path") or None,
+        tracked_series_id=item["tracked_series_id"],
+        db_path=DB_PATH,
+    )
+    clear_progress(qid)
+    # Mark done + record ownership in one transaction — no crash-gap re-download.
+    db.complete_download(
+        qid, item["tracked_series_id"], item["issue_number"], store_date,
+        filename=dest,
+        set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
+        path=DB_PATH,
+    )
+
+
+def _acquire_trade(item, qid, gc, downloaded_urls):
+    """Search (GetComics → usenet) and place a collected edition. Same shape as
+    _acquire_issue — search_trade instead of search, download_trade instead of
+    download_issue, and no issue_status to reconcile (folder is truth). Raises up
+    to the shared handler, so trades get the same parking/civility for free."""
+    meta = json.loads(item.get("meta_json") or "{}")
+    title = meta.get("title") or item["title"]
+    vol = meta.get("vol")
+    vol_range = meta.get("vol_range")
+    edition_title = meta.get("edition_title")
+    label = _trade_label(vol, vol_range)
+
+    # Filename: zero-padded "Series Vol NN" for numbered editions (clean Komga sort),
+    # the edition's own title for the no-volume ones (Compendium, year HCs) so they
+    # don't all collapse onto one name and trip the duplicate guard.
+    if vol_range:
+        fallback = f"{title} Vol {vol_range[0]:02d}-{vol_range[1]:02d}"
+    elif vol is not None:
+        fallback = f"{title} Vol {vol:02d}"
+    else:
+        fallback = edition_title or title
+
+    dest_dir = item.get("folder_path")
+    if not dest_dir:
+        db.update_queue_state(qid, "failed", error="No folder set for this series", path=DB_PATH)
+        return
+
+    set_search_status(qid, "GetComics…")
+    dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
+                                   status_fn=lambda s, qid=qid: set_search_status(qid, s))
+    if not dl_url:
+        indexers = _usenet_indexers()
+        sab = _sabnzbd()
+        if indexers and sab:
+            set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
+            query = f"{title} {label}".strip()
+            nzb_url = search_usenet_pack(indexers, query)
+            if nzb_url:
+                nzo_id = sab.add_nzb_url(nzb_url, nzb_name=query)
+                if nzo_id:
+                    db.update_queue_state(qid, "pending_usenet", source_url=nzb_url, path=DB_PATH)
+                    db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
+                    logger.info(f"Usenet: submitted nzo_id={nzo_id} for trade {query!r}")
+                    return
+        db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
+        return
+
+    if dl_url in downloaded_urls:
+        db.update_queue_state(qid, "not_found", error="Already downloaded for this series", path=DB_PATH)
+        return
+    downloaded_urls.add(dl_url)
+
+    db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
+    downloader.download_trade(
+        dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
+        progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+        komga_scan_fn=_komga_scan,
+    )
+    clear_progress(qid)
+    db.complete_trade(qid, path=DB_PATH)
+    # Re-stamp owned on the cached trades now (folder scan), so the tile flips to
+    # owned right away instead of waiting for the next sync.
+    try:
+        from kometa.sync import refresh_trades_owned
+        refresh_trades_owned(item["tracked_series_id"])
+    except Exception as e:
+        logger.warning(f"Trade owned-refresh failed: {e}")
 
 
 def _sweep_missing():
