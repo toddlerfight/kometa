@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.comicvine_client import ComicVineClient, BASE_URL as CV_BASE_URL
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
@@ -531,7 +531,7 @@ def get_series_trades(series_id: int):
         return {"trades": _cached_trades(s), "cached": True}
     # Cold/stale — fetch, enrich (owned + komga) once, store. The enrich here is the
     # periodic scan, not a per-request one; warm reads above never touch the disk.
-    trades = [t for t in _locg_trades(locg_id) if not t["is_variant"]]
+    trades = _select_editions(_locg_trades(locg_id))
     _enrich_trades(s, trades)
     db.set_trades(series_id, trades, DB_PATH)
     return {"trades": trades, "cached": False}
