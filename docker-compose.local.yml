@@ -1,0 +1,17 @@
+# Local fresh-install test rig. NOT the NAS deployment — that's docker-compose.yml.
+# Everything lives under ./local/ and starts EMPTY: no creds, no env seeding, no
+# library. You get exactly what a stranger gets when they clone this and hit go.
+services:
+  kometa:
+    build: .
+    container_name: kometa-local
+    ports:
+      - "6970:6969"
+    volumes:
+      - ./local/data:/data
+      - ./local/downloads:/downloads
+      - ./local/comics:/comics
+    environment:
+      KOMETA_DB: /data/kometa.db
+      KOMETA_DOWNLOADS: /downloads
+      COMICS_ROOT: /comics
