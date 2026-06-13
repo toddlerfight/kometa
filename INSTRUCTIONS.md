@@ -81,7 +81,7 @@ the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._kom
 Deploys do not require per-change approval while the NAS is the active test
 environment (rule changed 2026-06-10). The non-negotiable safety net: **every
 deploy is preceded by a commit pushed to Gitea** (`origin` =
-`ssh://git@192.168.1.166:2222/marcusg/kometa.git`, branch `arch-cleanup`), so
+`ssh://git@192.168.1.166:2222/marcusg/kometa.git`, branch `main`), so
 there is always a point-in-time to roll back to. Rollback = `git checkout
 <commit> -- <files>`, re-sync, restart. Destructive operations (anything that
 touches library files or the DB schema) still need explicit approval.
