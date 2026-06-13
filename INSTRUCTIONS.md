@@ -14,12 +14,18 @@ Process notes for developing Kometa locally. Read this before touching the code.
 
 ```bash
 export KOMETA_DB=/tmp/kometa_dev.db && rm -f "$KOMETA_DB"
-.venv/bin/python -m uvicorn kometa.main:app --host 127.0.0.1 --port 6970 --log-level warning
+.venv/bin/python -m uvicorn kometa.main:app --host 127.0.0.1 --port 6971 --log-level warning
 # smoke test in another shell:
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:6970/api/series   # expect 200
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:6971/api/series   # expect 200
 ```
 
 `init_db` runs on startup and builds a fresh schema cleanly (migrations are idempotent).
+
+Port 6971 on purpose — 6969 is the NAS, **6970 is reserved for the fresh-install
+Docker rig**. Never run a dev server on 6970: a long-lived dev uvicorn there once
+impersonated the fresh rig for five days (the scheduler starts with every instance
+and will sweep/search whatever DB it was given). Kill dev servers when done:
+`lsof -nP -i :6971`.
 
 ## Fresh-install test rig (local Docker)
 
