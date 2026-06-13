@@ -21,6 +21,21 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:6970/api/series   # ex
 
 `init_db` runs on startup and builds a fresh schema cleanly (migrations are idempotent).
 
+## Fresh-install test rig (local Docker)
+
+Simulates a brand-new user's day-zero install: same image as production, empty DB,
+empty comics dir, no credentials, no env seeding. Isolated from the NAS instance
+(port 6970, container `kometa-local`, compose project `kometa-local`).
+
+```bash
+./local-fresh.sh          # build + start; state persists in ./local/ between runs
+./local-fresh.sh --wipe   # delete ./local/ first — true day-zero on next start
+./local-fresh.sh --down   # stop and remove the container (state survives)
+```
+
+UI at http://localhost:6970. Drop test CBZ/CBR files into `./local/comics/` to
+exercise import flows. `./local/` is gitignored.
+
 ## Static analysis (all run from the venv)
 
 ```bash
