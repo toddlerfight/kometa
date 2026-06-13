@@ -47,9 +47,14 @@ _VOL_FILE_RE = re.compile(r'\b(?:vol(?:ume)?\.?\s*|v)(\d+)', re.IGNORECASE)
 
 
 def parse_volume_number(name: str) -> int | None:
-    """Volume number from a collected-edition filename or Komga book name, or None.
-    The trade analogue of parse_issue_number."""
-    m = _VOL_FILE_RE.search(os.path.splitext(name)[0])
+    """Volume number of a COLLECTED EDITION from a filename or Komga book name, or
+    None. The trade analogue of parse_issue_number, with a critical guard: a name
+    carrying an issue number (#001) is a single issue that merely labels its arc
+    ('Saga - Vol. 1 #001') — NOT a trade. Don't splitext: it mis-splits on the dot
+    in 'Vol.' (and these names may have no extension anyway)."""
+    if re.search(r'#\s*\d', name):
+        return None
+    m = _VOL_FILE_RE.search(name)
     return int(m.group(1)) if m else None
 
 
