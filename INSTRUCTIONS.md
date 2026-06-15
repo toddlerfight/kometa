@@ -42,6 +42,15 @@ empty comics dir, no credentials, no env seeding. Isolated from the NAS instance
 UI at http://localhost:6970. Drop test CBZ/CBR files into `./local/comics/` to
 exercise import flows. `./local/` is gitignored.
 
+## Distributable package (send to someone else)
+
+`./build-package.sh` regenerates `~/Desktop/kometa-fresh-install.tar.gz` (or pass
+an output path) — a self-contained bundle: current `kometa/` source + Dockerfile
++ `packaging/` wrappers (run.sh, compose, README). Recipient untars and runs
+`./run.sh` (builds the image locally, runs as the host user so files aren't
+root-owned on Linux). Rebuild whenever `main` moves; it refuses to ship if it
+finds private data or dead code. Edit the recipient-facing files in `packaging/`.
+
 ## Static analysis (all run from the venv)
 
 ```bash
