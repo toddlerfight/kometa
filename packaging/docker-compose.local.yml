@@ -1,0 +1,20 @@
+# Kometa — self-contained local run. Works anywhere Docker does.
+# The container runs as the host user (PUID/PGID from run.sh) so files written
+# under ./local never end up root-owned — same behaviour on macOS and Linux.
+services:
+  kometa:
+    build: .
+    container_name: kometa
+    user: "${PUID:-1000}:${PGID:-1000}"
+    restart: unless-stopped
+    ports:
+      - "6970:6969"
+    volumes:
+      - ./local/data:/data
+      - ./local/downloads:/downloads
+      - ./local/comics:/comics
+    environment:
+      KOMETA_DB: /data/kometa.db
+      KOMETA_DOWNLOADS: /downloads
+      COMICS_ROOT: /comics
+      HOME: /tmp
