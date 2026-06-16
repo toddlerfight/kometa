@@ -405,8 +405,8 @@ function _renderBrowseResults() {
     const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
     const nextRelease = s.next_release
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.next_release)}</div>` : '';
-    const thumbSrc  = s.next_release_image || `/api/series/${s.id}/thumbnail`;
-    const thumbFall = s.next_release_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
+    const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
+    const thumbFall = s.card_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
     return `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"

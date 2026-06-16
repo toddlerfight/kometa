@@ -452,7 +452,7 @@ def remove_indexer(idx: int):
 def list_series():
     series = db.get_all_series(DB_PATH)
     summaries = db.get_all_series_summaries(DB_PATH)
-    empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None}
+    empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None, "card_image": None}
     return [dict(s, **summaries.get(s["id"], empty)) for s in series]
 
 

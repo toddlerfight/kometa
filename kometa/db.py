@@ -332,7 +332,13 @@ def get_all_series(path=DB_PATH):
 
 
 def get_all_series_summaries(path=DB_PATH):
-    """Single-query bulk aggregation of issue counts for all series."""
+    """Bulk per-series aggregation: counts, next-release date, and the card cover.
+
+    card_image = the cover the library card shows. The card issue is the soonest
+    upcoming release (within 30d) or, if none, the most recently RELEASED issue;
+    its cover prefers your chosen variant (from variant_prefs) over the default
+    Metron art — so a cover you picked, owned or upcoming, surfaces on the card.
+    The up_/recent_ columns are scratch for that pick and aren't returned."""
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
     with _connect(path) as conn:
@@ -343,18 +349,49 @@ def get_all_series_summaries(path=DB_PATH):
                 SUM(CASE WHEN owned = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
                 SUM(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
                 MIN(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
-                (SELECT metron_image FROM issue_status i2
-                 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.owned = 0
-                   AND i2.store_date IS NOT NULL
-                   AND i2.store_date >= ?
-                   AND i2.store_date <= ?
-                   AND i2.metron_image IS NOT NULL
-                 ORDER BY i2.store_date ASC LIMIT 1) as next_release_image
+                (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
+                   ORDER BY i2.store_date ASC LIMIT 1) as up_number,
+                (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
+                   ORDER BY i2.store_date ASC LIMIT 1) as up_image,
+                (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_number,
+                (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_image
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (today, today, today, cutoff, today, cutoff))
-        return {r["tracked_series_id"]: dict(r) for r in rows}
+        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today))
+        rows = [dict(r) for r in rows]
+
+        # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
+        # get_issues_for_series uses — so the card can prefer your chosen cover.
+        variant_map = {}
+        for vp in conn.execute("SELECT tracked_series_id, number, selected, primary_id FROM variant_prefs"):
+            try:
+                sel = json.loads(vp["selected"])
+                prim = next((c for c in sel if c.get("id") == vp["primary_id"]), None)
+                if prim:
+                    variant_map[(vp["tracked_series_id"], vp["number"])] = prim.get("large") or prim.get("thumb")
+            except Exception:
+                pass
+
+    out = {}
+    for r in rows:
+        sid = r["tracked_series_id"]
+        # Card issue: soonest upcoming, else most recently released.
+        if r["up_number"] is not None:
+            card_num, base_img = r["up_number"], r["up_image"]
+        else:
+            card_num, base_img = r["recent_number"], r["recent_image"]
+        card_image = (variant_map.get((sid, card_num)) if card_num is not None else None) or base_img
+        out[sid] = {
+            "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
+            "next_release": r["next_release"], "card_image": card_image,
+        }
+    return out
 
 
 def get_series_by_id(series_id, path=DB_PATH):
