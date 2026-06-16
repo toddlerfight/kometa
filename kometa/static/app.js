@@ -232,7 +232,7 @@ async function syncSeries(id, btn) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'desc' } };
+let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   document.getElementById('topbar-title').textContent = 'Library';
@@ -246,7 +246,7 @@ async function renderLibraryBrowse() {
   browseState.filter  = 'monitored';
   browseState._cache  = null;
   browseState.sortKey = 'date';
-  browseState.sortDir = { date: 'desc' };
+  browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
   setApp('<div class="state-msg">Loading...</div>');
   await _loadBrowsePage();
 }
@@ -300,7 +300,7 @@ function _browseSortControls() {
 }
 
 function _isDefaultSort() {
-  return browseState.sortKey === 'date' && (browseState.sortDir.date ?? 'desc') === 'desc';
+  return browseState.sortKey === 'date' && (browseState.sortDir.date ?? 'asc') === 'asc';
 }
 
 function browseSort(key) {
@@ -373,7 +373,7 @@ function _renderBrowseResults() {
     const dir = sortDir.alpha === 'asc' ? 1 : -1;
     filtered = filtered.slice().sort((a, b) => dir * a.title.localeCompare(b.title));
   } else if (sortKey === 'date') {
-    const dir = (sortDir.date ?? 'desc') === 'asc' ? 1 : -1;
+    const dir = (sortDir.date ?? 'asc') === 'asc' ? 1 : -1;
     filtered = filtered.slice().sort((a, b) => {
       if (!a.next_release && !b.next_release) return 0;
       if (!a.next_release) return 1;
