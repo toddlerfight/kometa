@@ -381,12 +381,15 @@ def get_all_series_summaries(path=DB_PATH):
     out = {}
     for r in rows:
         sid = r["tracked_series_id"]
-        # Card issue: soonest upcoming, else most recently released.
-        if r["up_number"] is not None:
-            card_num, base_img = r["up_number"], r["up_image"]
+        # A variant YOU picked is an explicit "this is the series cover" — it wins
+        # over the automatic default no matter which issue it's on (latest-numbered
+        # pick if you've chosen several). No pick → soonest upcoming, else most
+        # recently released issue's cover.
+        picks = [(num, url) for (s2, num), url in variant_map.items() if s2 == sid]
+        if picks:
+            card_image = max(picks, key=lambda x: x[0])[1]
         else:
-            card_num, base_img = r["recent_number"], r["recent_image"]
-        card_image = (variant_map.get((sid, card_num)) if card_num is not None else None) or base_img
+            card_image = r["up_image"] if r["up_number"] is not None else r["recent_image"]
         out[sid] = {
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
