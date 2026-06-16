@@ -381,16 +381,15 @@ def get_all_series_summaries(path=DB_PATH):
     out = {}
     for r in rows:
         sid = r["tracked_series_id"]
+        # The card's subject is one issue: the soonest upcoming, or — if nothing's
+        # upcoming — the most recently released. Show YOUR variant for that issue if
+        # you picked one, else its default art. A variant on any other issue doesn't
+        # surface here (pick one for the card issue if you want it on the card).
         if r["up_number"] is not None:
-            # An upcoming release is the card's subject — show ITS cover (your
-            # variant for that issue if you picked one, else its art). A variant on
-            # some other issue doesn't hijack "what's coming next".
-            card_image = variant_map.get((sid, r["up_number"])) or r["up_image"]
+            card_num, base_img = r["up_number"], r["up_image"]
         else:
-            # Nothing upcoming → a variant you picked becomes the series cover
-            # (latest-numbered if several), else the most recently released issue.
-            nums = [num for (s2, num) in variant_map if s2 == sid]
-            card_image = (variant_map[(sid, max(nums))] if nums else None) or r["recent_image"]
+            card_num, base_img = r["recent_number"], r["recent_image"]
+        card_image = (variant_map.get((sid, card_num)) if card_num is not None else None) or base_img
         out[sid] = {
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
