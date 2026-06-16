@@ -334,11 +334,15 @@ def get_all_series(path=DB_PATH):
 def get_all_series_summaries(path=DB_PATH):
     """Bulk per-series aggregation: counts, next-release date, and the card cover.
 
-    card_image = the cover the library card shows. The card issue is the soonest
-    upcoming release (within 30d) or, if none, the most recently RELEASED issue;
-    its cover prefers your chosen variant (from variant_prefs) over the default
-    Metron art — so a cover you picked, owned or upcoming, surfaces on the card.
-    The up_/recent_ columns are scratch for that pick and aren't returned."""
+    card_image is the library card's cover, sourced exactly like the issue tile so
+    the two never disagree. The card issue is the soonest upcoming release (within
+    30d) or, if none, the most recently RELEASED issue. Its cover resolves:
+      1. your picked variant (variant_prefs), then
+      2. the Komga book thumbnail — the real cover of the file you own (a variant
+         edition shows here even if you never used the picker), then
+      3. the Metron solicit art.
+    Upcoming issues aren't owned, so they have no Komga book — variant → Metron.
+    The up_/recent_ columns are scratch and aren't returned."""
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
     with _connect(path) as conn:
@@ -356,14 +360,17 @@ def get_all_series_summaries(path=DB_PATH):
                    AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
                    ORDER BY i2.store_date ASC LIMIT 1) as up_image,
                 (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_number,
                 (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_image
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_image,
+                (SELECT komga_book_id FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today))
+        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -381,15 +388,17 @@ def get_all_series_summaries(path=DB_PATH):
     out = {}
     for r in rows:
         sid = r["tracked_series_id"]
-        # The card's subject is one issue: the soonest upcoming, or — if nothing's
-        # upcoming — the most recently released. Show YOUR variant for that issue if
-        # you picked one, else its default art. A variant on any other issue doesn't
-        # surface here (pick one for the card issue if you want it on the card).
         if r["up_number"] is not None:
-            card_num, base_img = r["up_number"], r["up_image"]
+            # Upcoming (not owned): your variant for it, else its solicit art.
+            card_image = variant_map.get((sid, r["up_number"])) or r["up_image"]
         else:
-            card_num, base_img = r["recent_number"], r["recent_image"]
-        card_image = (variant_map.get((sid, card_num)) if card_num is not None else None) or base_img
+            # Most recent released: variant → the real file cover (Komga) → solicit.
+            cn = r["recent_number"]
+            card_image = variant_map.get((sid, cn)) if cn is not None else None
+            if not card_image and r["recent_komga"]:
+                card_image = f"/api/book/{r['recent_komga']}/thumbnail"
+            if not card_image:
+                card_image = r["recent_image"]
         out[sid] = {
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
