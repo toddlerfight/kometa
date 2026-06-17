@@ -1568,6 +1568,14 @@ select.settings-input {
   margin-top: 2px;
 }
 
+.act-row-reason {
+  font-family: var(--font);
+  font-size: 10px;
+  color: var(--amb);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
 .act-row-actions {
   display: flex;
   align-items: center;
