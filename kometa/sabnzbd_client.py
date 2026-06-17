@@ -82,7 +82,14 @@ class SABnzbdClient:
             status = (slot.get("status") or "").lower()
             if status == "completed":
                 return {"status": "completed", "storage": slot.get("storage", "")}
-            return {"status": "failed", "error": slot.get("fail_message") or slot.get("status", "unknown")}
+            if status == "failed":
+                return {"status": "failed", "error": slot.get("fail_message") or "SABnzbd reported failed"}
+            # Everything else in history is a TRANSIENT post-processing stage —
+            # Extracting / Verifying / Repairing / Moving / Running-script / Fetching.
+            # The download's done; SAB is just unpacking. Treating these as terminal
+            # failures is the "FAILED · Extracting" lie — a pure poll-timing race that
+            # bails seconds before SAB flips the slot to Completed. Keep polling.
+            return {"status": "queued", "pct": 100.0}
 
         return {"status": "unknown"}
 
