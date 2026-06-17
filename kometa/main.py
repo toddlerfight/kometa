@@ -787,6 +787,15 @@ def issue_thumbnail(series_id: int, number: float):
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
 
+    # Your chosen variant wins — an explicit pick beats Komga's file cover, the
+    # same precedence the issue tile and library card use. (Also dodges a stale
+    # Komga book lingering after a file's been deleted/replaced.)
+    vc = issue.get("variant_cover") if issue else None
+    if vc and vc.startswith("http"):
+        resp = _image_or_none(vc)
+        if resp:
+            return resp
+
     book_id = issue.get("komga_book_id") if issue else None
     komga = _komga()
 
