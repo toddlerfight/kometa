@@ -2377,8 +2377,18 @@ function _lbToggleInclude() {
 function _lbSetCover() {
   const c = _issueVariantCovers[_lbIndex];
   if (!c) return;
-  _imSetPrimary(null, c.id);
+  // The ★ in the lightbox promised "Set as cover" and then quietly did nothing but
+  // stage a pick — you still had to go hunt the Apply button. No more. Include it,
+  // crown it primary, and commit right here. _imApplyVariants persists (inject for
+  // owned / save pref for upcoming), crossfades the tile, and closes modal+lightbox.
+  _issueVariantSelected.add(c.id);
+  _issueVariantPrimary = c.id;
+  _imRefreshCards();
+  _imUpdateHint();
   _lbControls();
+  const issue = _detailSeries?.issues?.find(i => i.number === _issueVariantNumber);
+  const isOwned = issue ? issueStatus(issue) === 'owned' : false;
+  _imApplyVariants(_issueVariantSeriesId, _issueVariantNumber, isOwned);
 }
 
 async function _imApplyVariants(seriesId, number, isOwned) {
