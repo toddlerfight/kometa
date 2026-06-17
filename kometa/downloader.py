@@ -282,6 +282,62 @@ def _read_cbz_number(path: str) -> float | None:
     return None
 
 
+# A single issue rarely exceeds this many image pages. A trade, an omnibus, or a
+# vertical/webtoon edition (each panel is its own "page") blows well past it — which
+# is exactly how an 80-panel webtoon release slipped in mislabeled as a print issue.
+_SINGLE_ISSUE_PAGE_MAX = 70
+
+
+_IMG_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+
+
+def _count_archive_images(path: str) -> int | None:
+    """Image-entry count of a CBZ/CBR, or None if unreadable. ZIP lists cheaply;
+    RAR needs a front-to-back extract — solid RARs can't be listed member-by-member
+    (`bsdtar -tf` dies where `-xf` works), the same reason _read_archive_pages
+    extracts rather than streams. None when we genuinely can't tell, so the page
+    guard never false-rejects an archive it couldn't read."""
+    try:
+        with open(path, 'rb') as fh:
+            magic = fh.read(4)
+        if magic[:2] == b'PK':
+            with zipfile.ZipFile(path, 'r') as zf:
+                return sum(1 for n in zf.namelist() if n.lower().endswith(_IMG_EXTS))
+        if magic[:4] == b'Rar!':
+            tmpdir = tempfile.mkdtemp(prefix='kometa-count-')
+            try:
+                subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
+                               check=True, capture_output=True, timeout=180)
+                n = 0
+                for _root, _dirs, files in os.walk(tmpdir):
+                    n += sum(1 for f in files if f.lower().endswith(_IMG_EXTS))
+                return n
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+    except Exception:
+        return None
+    return None
+
+
+def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None) -> None:
+    """Reject anything that isn't this single issue — raises WrongIssueError. Three
+    guards: the source filename's issue number, the ComicInfo number, and a page
+    count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
+    by both the GetComics and usenet paths so they accept/reject identically."""
+    name = source_name or os.path.basename(path)
+    fnum = _num_from_filename(name)
+    if fnum is not None and fnum != issue_number:
+        raise WrongIssueError(f"file is #{int(fnum)}, expected #{int(issue_number)}")
+    cnum = _read_cbz_number(path)
+    if cnum is not None and cnum != issue_number:
+        raise WrongIssueError(f"ComicInfo reports #{int(cnum)}, expected #{int(issue_number)}")
+    pages = _count_archive_images(path)
+    if pages is not None and pages > _SINGLE_ISSUE_PAGE_MAX:
+        raise WrongIssueError(
+            f"{pages} pages — looks like a collection or vertical/webtoon edition, "
+            f"not single issue #{int(issue_number)}")
+
+
 def download_issue(
     url: str,
     title: str,
@@ -362,23 +418,14 @@ def download_issue(
         os.remove(staging_path)
         raise ValueError(f"Downloaded file too small ({size} bytes) — likely an error page")
 
-    # Check 1: server filename issue number — catches CBR files and anything without
-    # ComicInfo.xml. Only fires when we got a real server name (not our fallback).
-    fname_num = _num_from_filename(filename)
-    if fname_num is not None and fname_num != issue_number:
+    # Content checks: wrong issue (server filename / ComicInfo) or a collection /
+    # webtoon edition (page count). Shared with the usenet finalize so both sources
+    # reject the same bad content. Clean up the staging file on rejection.
+    try:
+        _verify_single_issue(staging_path, issue_number, filename)
+    except WrongIssueError:
         os.remove(staging_path)
-        raise WrongIssueError(
-            f"Server filename '{filename}' is issue #{int(fname_num)}, expected #{int(issue_number)}"
-        )
-
-    # Check 2: ComicInfo.xml embedded number — definitive for CBZ and CBR.
-    found_num = _read_cbz_number(staging_path)
-    if found_num is not None and found_num != issue_number:
-        os.remove(staging_path)
-        raise WrongIssueError(
-            f"ComicInfo.xml reports issue #{int(found_num)}, expected #{int(issue_number)} — "
-            f"GetComics placeholder not yet replaced"
-        )
+        raise
 
     if not dest_dir:
         dest_dir = _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
