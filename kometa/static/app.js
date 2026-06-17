@@ -1547,6 +1547,23 @@ function _actThumb(q) {
   return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" onerror="this.src='${seriesThumb}'">`;
 }
 
+// Plain-language failure reason for an Activity row — surfaces what used to be a
+// hover-only tooltip and softens the dev-speak. Empty for done / no-error rows.
+function _actReason(q) {
+  if (q.state === 'done' || !q.error) return '';
+  const e = q.error;
+  const strip = s => s.replace(/^(Usenet|GetComics):\s*/i, '');
+  if (/\bpages\b.*(collection|webtoon)/i.test(e))     return strip(e);               // already clear + specific
+  if (/is #\d+, expected|ComicInfo reports/i.test(e)) return strip(e);               // wrong issue — keep the numbers
+  if (/No result on GetComics or Usenet/i.test(e))    return 'Not posted on GetComics or usenet yet';
+  if (/rate limit.*(retries|giving up)/i.test(e))     return 'Gave up after repeated rate-limits';
+  if (/rate limited/i.test(e))                        return 'Rate-limited — will retry automatically';
+  if (/RAR.*verify|failed to verify/i.test(e))        return 'Usenet release was incomplete or corrupt';
+  if (/already exists|duplicate/i.test(e))            return 'Looked like a duplicate you already have';
+  if (/No folder set/i.test(e))                       return 'No comics folder set for this series';
+  return strip(e);                                                                   // fall back to the raw reason
+}
+
 function _buildActivityHtml(queue) {
   const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','processing'].includes(q.state));
   const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
@@ -1609,6 +1626,7 @@ function _buildActivityHtml(queue) {
       const numStr = _actLabel(q);
       const thumb = _actThumb(q);
       const isDone = q.state === 'done';
+      const reason = _actReason(q);
       const errTip = q.error ? ` title="${esc(q.error)}"` : '';
       const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
       const retry = !isDone ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
@@ -1618,6 +1636,7 @@ function _buildActivityHtml(queue) {
           <div class="act-row-meta"${nav}>
             <div class="act-row-title">${esc(q.title)}</div>
             <div class="act-row-issue">${numStr}</div>
+            ${reason ? `<div class="act-row-reason">${esc(reason)}</div>` : ''}
           </div>
           <div class="act-row-actions">
             ${_actChip(q.state)}
