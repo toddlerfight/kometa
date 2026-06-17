@@ -479,7 +479,12 @@ def get_series(series_id: int):
     # None until first sync populates the cache, so it stays hidden vs flashing 0.
     trades = _cached_trades(s)
     trade_count = sum(1 for t in trades if not t["owned"]) if trades else None
-    return dict(s, issues=issues, trade_count=trade_count, **_summary(issues))
+    # has_trades = does this series have ANY collected edition (owned or not). Distinct
+    # from trade_count (the unowned-only badge): a trade-only series whose sole edition
+    # is already owned still has_trades, so the UI lands on Trades instead of an empty
+    # Issues grid that polls 'Syncing issues…' forever for singles that don't exist.
+    has_trades = bool(trades)
+    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_summary(issues))
 
 
 @app.get("/api/series/{series_id}/trades")
