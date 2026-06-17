@@ -544,7 +544,7 @@ async function renderSeriesDetail(id) {
   // Trades — otherwise you hit an empty Issues grid while the real content hides one
   // tab over. One-shot per entry (_autoTabFor) so a manual tab pick afterward sticks.
   if (_autoTabFor !== id) {
-    if (total === 0 && s.trade_count > 0) detailTab = 'trades';
+    if (total === 0 && s.has_trades) detailTab = 'trades';
     _autoTabFor = id;
   }
 
@@ -605,12 +605,18 @@ async function renderSeriesDetail(id) {
     </div>
     ${detailTab === 'trades'
       ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`
-      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${(s.metron_series_id || s.locg_series_id) && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>`}
+      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${
+          total === 0 && s.has_trades ? 'No single issues — collected in Trades →'
+          : (s.metron_series_id || s.locg_series_id) && total === 0 ? 'Syncing issues…'
+          : 'Nothing here.'}</div>`}</div>`}
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
 
-  if ((s.metron_series_id || s.locg_series_id) && total === 0 && detailTab !== 'trades') {
+  // Don't poll a trade-only series for singles that will never come (has_trades +
+  // empty issue list = collected editions only) — that's the 'Syncing issues…' spinner
+  // that never resolved. Only poll when issues are genuinely still inbound.
+  if ((s.metron_series_id || s.locg_series_id) && total === 0 && !s.has_trades && detailTab !== 'trades') {
     const _pollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
       const fresh = await api.get(`/api/series/${id}`).catch(() => null);
