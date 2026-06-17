@@ -158,7 +158,7 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
         sab = _sabnzbd()
         if indexers and sab:
             set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
-            nzb_url = search_usenet(indexers, item["title"], item["issue_number"])
+            nzb_url = search_usenet(indexers, item["title"], item["issue_number"], store_date)
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
                 if nzo_id:

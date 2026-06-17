@@ -1,8 +1,58 @@
 import re
 import logging
+import datetime
+import email.utils
 import requests
 
 logger = logging.getLogger(__name__)
+
+# How many days BEFORE an issue's store date a usenet post can still plausibly be
+# that issue. Digital/advance copies leak a little early and indexer post-dates are
+# fuzzy, so we're generous. But a post from a year before the issue even existed is
+# a DIFFERENT, older printing wearing the same number — the mislabeled-webtoon-as-#21
+# / "398 days old" trap. This slams it shut at search time so the page-count guard
+# downstream never has to be the last line of defense.
+_AGE_GRACE_DAYS = 45
+
+
+def _parse_post_date(raw: str | None) -> datetime.date | None:
+    """Newznab pubDate is RFC-2822 ('Wed, 11 Jun 2025 03:14:22 +0000'); fall back to
+    ISO. Returns None on anything we can't read — unknown date never filters."""
+    if not raw:
+        return None
+    raw = raw.strip()
+    try:
+        dt = email.utils.parsedate_to_datetime(raw)
+        if dt:
+            return dt.date()
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _drop_stale(results: list[dict], store_date: str | None, num_int, title: str) -> list[dict]:
+    """Drop results posted more than _AGE_GRACE_DAYS before the issue's store date.
+    No store date or unparseable post date → keep (never filter on missing data)."""
+    if not store_date:
+        return results
+    try:
+        cutoff = datetime.date.fromisoformat(store_date[:10]) - datetime.timedelta(days=_AGE_GRACE_DAYS)
+    except (ValueError, TypeError):
+        return results
+    kept, dropped = [], 0
+    for r in results:
+        pd = _parse_post_date(r.get("posted"))
+        if pd and pd < cutoff:
+            dropped += 1
+            continue
+        kept.append(r)
+    if dropped:
+        logger.info(f"Usenet: dropped {dropped} stale result(s) posted before {cutoff} "
+                    f"(store_date {store_date} − {_AGE_GRACE_DAYS}d) for {title!r} #{num_int}")
+    return kept
 
 
 def _norm(s: str) -> str:
@@ -81,7 +131,8 @@ class NewznabClient:
                 size = int(attrs.get("length", 0) or item.get("size", 0) or 0)
             except (ValueError, TypeError):
                 size = 0
-            results.append({"title": item.get("title", ""), "url": url, "size": size, "indexer": self.name})
+            results.append({"title": item.get("title", ""), "url": url, "size": size,
+                            "posted": item.get("pubDate") or item.get("pubdate"), "indexer": self.name})
         return results
 
     def _parse_xml(self, text: str) -> list[dict]:
@@ -106,8 +157,11 @@ class NewznabClient:
                     link_el = item.find("link")
                     url = link_el.text if link_el is not None else ""
                     size = 0
+                pd_el = item.find("pubDate")
+                posted = pd_el.text if pd_el is not None else None
                 if url:
-                    results.append({"title": title, "url": url, "size": size, "indexer": self.name})
+                    results.append({"title": title, "url": url, "size": size,
+                                    "posted": posted, "indexer": self.name})
         except (ET.ParseError, DefusedXmlException) as e:
             logger.warning(f"Newznab {self.name} XML parse failed: {e}")
         return results
@@ -170,10 +224,14 @@ def search_usenet_pack(indexers: list[dict], title: str) -> str | None:
     return best["url"]
 
 
-def search_usenet(indexers: list[dict], title: str, issue_number: float) -> str | None:
+def search_usenet(indexers: list[dict], title: str, issue_number: float,
+                  store_date: str | None = None) -> str | None:
     """
     Search configured Newznab indexers for a comic issue.
     Returns the best NZB URL, or None if nothing useful found.
+
+    store_date (ISO 'YYYY-MM-DD') gates out posts dated well before the issue
+    existed — an old edition reusing the number, not a soft/advance release.
     """
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     queries = [
@@ -195,8 +253,10 @@ def search_usenet(indexers: list[dict], title: str, issue_number: float) -> str 
 
     all_results: list[dict] = []
     for query in queries:
+        batch: list[dict] = []
         for client in clients:
-            all_results.extend(client.search(query))
+            batch.extend(client.search(query))
+        all_results.extend(_drop_stale(batch, store_date, num_int, title))
         if all_results:
             break
 
