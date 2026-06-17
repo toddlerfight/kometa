@@ -352,6 +352,7 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
     import shutil as _shutil
     from kometa.downloader import (
         _issue_num_from_file, _safe, _resolve_dir, _fix_extension,
+        _verify_single_issue, WrongIssueError,
     )
     issue_number = item["issue_number"]
     title = item["title"]
@@ -411,6 +412,15 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
             error=f"Usenet pack didn't contain #{int(issue_number)} (found: {found})",
             path=DB_PATH,
         )
+        return
+
+    # Parity with the GetComics path: verify the file is actually this single issue
+    # BEFORE we stamp our canonical name on it. The usenet route used to skip every
+    # check, so a mislabeled collection/webtoon release got accepted as the print issue.
+    try:
+        _verify_single_issue(target, issue_number, os.path.basename(target))
+    except WrongIssueError as e:
+        db.update_queue_state(qid, "failed", error=f"Usenet: {e}", path=DB_PATH)
         return
 
     # Rename to Kometa format
