@@ -51,12 +51,14 @@ const _metronArt = i => (i.metron_image && i.metron_image.startsWith('http')
   && !i.metron_image.includes('no-cover')) ? i.metron_image : null;
 let detailTab = 'all';
 let detailSortDesc = true;
+let _autoTabFor = null;   // series id we've already made the B1 trades-default call for
 
 function navigate(view, params = {}) {
   currentView = view;
   currentParams = params;
   if (view !== 'series-detail') {
     detailTab = 'all';
+    _autoTabFor = null;   // leaving detail — let the next entry re-decide its default tab
     document.getElementById('series-bg').classList.add('hidden');
     document.getElementById('series-bg-img').style.backgroundImage = '';
   }
@@ -74,6 +76,7 @@ window.addEventListener('popstate', () => {
   currentParams = params;
   if (view !== 'series-detail') {
     detailTab = 'all';
+    _autoTabFor = null;   // leaving detail — let the next entry re-decide its default tab
     document.getElementById('series-bg').classList.add('hidden');
     document.getElementById('series-bg-img').style.backgroundImage = '';
   }
@@ -537,6 +540,14 @@ async function renderSeriesDetail(id) {
   const total = s.owned + s.missing + s.upcoming;
   const released = s.owned + s.missing;
 
+  // B1: a trade-only series (no singles, but collected editions exist) lands you on
+  // Trades — otherwise you hit an empty Issues grid while the real content hides one
+  // tab over. One-shot per entry (_autoTabFor) so a manual tab pick afterward sticks.
+  if (_autoTabFor !== id) {
+    if (total === 0 && s.trade_count > 0) detailTab = 'trades';
+    _autoTabFor = id;
+  }
+
   const chips = [
     released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
@@ -594,12 +605,12 @@ async function renderSeriesDetail(id) {
     </div>
     ${detailTab === 'trades'
       ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`
-      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${s.metron_series_id && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>`}
+      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${(s.metron_series_id || s.locg_series_id) && total === 0 ? 'Syncing issues…' : 'Nothing here.'}</div>`}</div>`}
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
 
-  if (s.metron_series_id && total === 0 && detailTab !== 'trades') {
+  if ((s.metron_series_id || s.locg_series_id) && total === 0 && detailTab !== 'trades') {
     const _pollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
       const fresh = await api.get(`/api/series/${id}`).catch(() => null);
