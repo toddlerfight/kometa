@@ -77,7 +77,7 @@ def _series_matches(title_norm: str, post_norm: str) -> bool:
     return len(extra) == 0
 
 
-def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None) -> bool:
+def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None, post_raw: str = "") -> bool:
     """Trade-aware post matcher — the mirror image of _series_matches, which
     REJECTS format editions. Here we REQUIRE one: the post must name the series,
     look like a collected edition, and (when we know it) cover the volume we want.
@@ -85,9 +85,10 @@ def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=Non
     reads as 'vol 1 6', not 'vol 1-6'."""
     if title_norm not in post_norm:
         return False
-    if not (_FORMAT_WORDS & set(post_norm.split())):
-        return False
+    has_format = bool(_FORMAT_WORDS & set(post_norm.split()))
     if vol is not None:
+        if not has_format:
+            return False
         # Bundled range "vol 1 6" — two small numbers right after vol (guard the
         # second against being a year so "vol 1 2015" isn't read as 1..2015).
         m = re.search(r'vol(?:ume)?\s*(\d+)\s+(\d+)\b', post_norm)
@@ -95,9 +96,24 @@ def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=Non
             return True
         return bool(re.search(rf'vol(?:ume)?\s*{vol}\b', post_norm))
     if vol_range is not None:
+        if not has_format:
+            return False
         nums = {int(n) for n in re.findall(r'\b(\d+)\b', post_norm) if int(n) < 100}
         return vol_range[0] in nums or vol_range[1] in nums
-    return True
+    # No volume → OGN / one-shot. GetComics posts these under the BARE series title
+    # ("Gigs (2026)") with no format word, so the collected-edition gate above would
+    # wrongly reject them. A format word still counts as a trade; otherwise accept only
+    # when the post isn't a single issue — no "#N" in the raw title, and no leftover
+    # small number once the series name + 4-digit year are stripped. download_trade has
+    # no content verification, so this no-single-issue guard is the only backstop. See
+    # memory: getcomics-ogn-trade-match.
+    if has_format:
+        return True
+    if re.search(r'#\s*\d', post_raw):
+        return False
+    leftover = re.sub(r'\b\d{4}\b', ' ', post_norm)
+    leftover = re.sub(rf'\b{re.escape(title_norm)}\b', ' ', leftover)
+    return not re.search(r'\b\d{1,3}\b', leftover)
 
 
 class GCRateLimitError(Exception):
@@ -225,7 +241,7 @@ class GetComicsClient:
             if not a:
                 continue
             text = a.get_text(strip=True)
-            if _trade_post_matches(title_norm, _normalize(text), vol, vol_range):
+            if _trade_post_matches(title_norm, _normalize(text), vol, vol_range, post_raw=text):
                 logger.info(f"GetComics: matched trade post {text!r}")
                 return a.get("href", "")
         return None
