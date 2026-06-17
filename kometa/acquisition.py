@@ -72,6 +72,21 @@ def _trade_label(vol, vol_range) -> str:
     return ""
 
 
+def _trade_fallback_name(meta: dict, default_title: str) -> str:
+    """Canonical on-disk base name for a collected edition (no extension). Zero-padded
+    'Series Vol NN' for numbered editions (clean Komga sort), the edition's own title
+    for the no-volume ones (Compendium, year HCs, OGNs) so they don't all collapse onto
+    one name. Shared by the GetComics and usenet trade-finalize paths."""
+    title = meta.get("title") or default_title
+    vol = meta.get("vol")
+    vol_range = meta.get("vol_range")
+    if vol_range:
+        return f"{title} Vol {vol_range[0]:02d}-{vol_range[1]:02d}"
+    if vol is not None:
+        return f"{title} Vol {vol:02d}"
+    return meta.get("edition_title") or title
+
+
 def _komga_scan():
     komga = _komga()
     if komga:
@@ -207,18 +222,8 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     title = meta.get("title") or item["title"]
     vol = meta.get("vol")
     vol_range = meta.get("vol_range")
-    edition_title = meta.get("edition_title")
     label = _trade_label(vol, vol_range)
-
-    # Filename: zero-padded "Series Vol NN" for numbered editions (clean Komga sort),
-    # the edition's own title for the no-volume ones (Compendium, year HCs) so they
-    # don't all collapse onto one name and trip the duplicate guard.
-    if vol_range:
-        fallback = f"{title} Vol {vol_range[0]:02d}-{vol_range[1]:02d}"
-    elif vol is not None:
-        fallback = f"{title} Vol {vol:02d}"
-    else:
-        fallback = edition_title or title
+    fallback = _trade_fallback_name(meta, item["title"])
 
     dest_dir = item.get("folder_path")
     if not dest_dir:
@@ -393,6 +398,36 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
     comics = find_comics_in_dir(scan_dir)
     if not comics:
         db.update_queue_state(qid, "failed", error="Usenet: no comic files found in completed download", path=DB_PATH)
+        return
+
+    # Trade via usenet — the 'dumb' path, same contract as download_trade: a collected
+    # edition has no single issue number (it's None here), so single-issue verify/rename
+    # below would crash on int(None). Place the file(s) under the canonical trade name
+    # and let folder ownership + Komga scan do the rest. NO content verification.
+    if item.get("kind") == "trade":
+        meta = json.loads(item.get("meta_json") or "{}")
+        base = _safe(_trade_fallback_name(meta, title))
+        os.makedirs(dest_dir, exist_ok=True)
+        placed = 0
+        for src in comics:
+            ext = os.path.splitext(src)[1].lower()
+            # One file → canonical trade name; a bundle → keep each file's own name.
+            name = f"{base}{ext}" if len(comics) == 1 else os.path.basename(src)
+            dst = os.path.join(dest_dir, name)
+            if os.path.exists(dst):
+                logger.info(f"Trade: skipping {name} — already in library")
+                continue
+            _shutil.move(src, dst)
+            _fix_extension(dst)
+            placed += 1
+        logger.info(f"Usenet trade: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
+        db.complete_trade(qid, path=DB_PATH)
+        if not item.get("folder_path") and placed:
+            db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        try:
+            _komga_scan()
+        except Exception as e:
+            logger.warning(f"Komga scan after trade placement failed: {e}")
         return
 
     # If single file, take it. If multiple, find the one matching our issue number.
