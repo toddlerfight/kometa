@@ -236,6 +236,28 @@ def sync_one(series: dict):
     db.mark_synced(series["id"], DB_PATH)
 
 
+def _norm_name(s: str) -> str:
+    """Punctuation/spacing-insensitive key for matching an edition's title to a file
+    or Komga book name. 'Gigs TP' and 'Gigs  TP.cbz' collapse to the same thing."""
+    return re.sub(r'[^a-z0-9]+', ' ', (s or '').lower()).strip()
+
+
+def _scan_folder_edition_names(folder_path: str) -> set[str]:
+    """Normalized stems of NON-volume-numbered comic files on disk — the ownership
+    key for no-volume editions (OGNs, Compendiums, year HCs) that carry no volume
+    number for scan_folder_volumes to see."""
+    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
+    names = set()
+    try:
+        for name in os.listdir(folder_path):
+            stem, ext = os.path.splitext(name)
+            if ext.lower() in exts and _parse_volume_number(name) is None:
+                names.add(_norm_name(stem))
+    except Exception:
+        pass
+    return names
+
+
 def enrich_trades(series: dict, trades: list[dict]) -> list[dict]:
     """Stamp the two stored facts onto each trade: `owned` (file in the folder) and
     `komga_book_id` (the matching Komga book, for the read link). Computed at sync
@@ -244,15 +266,18 @@ def enrich_trades(series: dict, trades: list[dict]) -> list[dict]:
     an ownership source."""
     folder = series.get("folder_path")
     owned_vols = _scan_folder_volumes(folder) if folder else set()
+    owned_names = _scan_folder_edition_names(folder) if folder else set()
 
-    kbook_by_vol = {}
+    kbook_by_vol, kbook_by_name = {}, {}
     komga = _komga()
     if komga and series.get("komga_series_id"):
         try:
             for b in komga.get_books(series["komga_series_id"]):
-                v = _parse_volume_number(b.get("name", ""))
+                name = b.get("name", "")
+                v = _parse_volume_number(name)
                 if v is not None:
                     kbook_by_vol[v] = b["id"]
+                kbook_by_name[_norm_name(name)] = b["id"]
         except Exception as e:
             logger.warning(f"Komga trade-book map failed for '{series.get('title')}': {e}")
 
@@ -265,8 +290,13 @@ def enrich_trades(series: dict, trades: list[dict]) -> list[dict]:
             t["owned"] = all(v in owned_vols for v in range(lo, hi + 1))
             t["komga_book_id"] = None  # a range spans multiple books — no single link
         else:
-            t["owned"] = False
-            t["komga_book_id"] = None
+            # No volume number — an OGN / one-shot ("Gigs TP"). It can't match by
+            # volume, so key off the edition title: the file we place is named for it
+            # (_trade_fallback_name → edition_title), and Komga's book carries the same
+            # name. Without this an owned OGN reads forever-missing on the Trades tab.
+            key = _norm_name(t.get("title", ""))
+            t["owned"] = bool(key) and key in owned_names
+            t["komga_book_id"] = kbook_by_name.get(key)
     return trades
 
 
