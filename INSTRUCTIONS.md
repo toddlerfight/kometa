@@ -89,11 +89,14 @@ the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._kom
 
 Deploys do not require per-change approval while the NAS is the active test
 environment (rule changed 2026-06-10). The non-negotiable safety net: **every
-deploy is preceded by a commit pushed to Gitea** (`origin` =
-`ssh://git@192.168.1.166:2222/marcusg/kometa.git`, branch `main`), so
-there is always a point-in-time to roll back to. Rollback = `git checkout
-<commit> -- <files>`, re-sync, restart. Destructive operations (anything that
-touches library files or the DB schema) still need explicit approval.
+deploy is preceded by a commit pushed to the canonical remote**, so there is
+always a point-in-time to roll back to. Remotes (set 2026-06-18):
+- `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **private**, canonical) — `git push origin main` is the pre-deploy rollback point.
+- `gitea` → `ssh://git@192.168.1.166:2222/marcusg/kometa.git` (NAS Gitea, fast local mirror). Push here too when convenient: `git push gitea main`.
+
+Rollback = `git checkout <commit> -- <files>`, re-sync, restart. Destructive
+operations (anything that touches library files or the DB schema) still need
+explicit approval.
 
 Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
 NAS access: `ssh -p 42069 -i ~/.ssh/id_ed25519 marcusg@192.168.1.166`. Docker binary:
