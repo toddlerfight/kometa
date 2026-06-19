@@ -7,6 +7,22 @@ let _issueModalPollTimer = null;
 // feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
 const STAGGER_MS = 40;
 
+// "Open in Komga" links get handed to the BROWSER, not the server. _appConfig.komga_url
+// is the SERVER's view of Komga — a LAN IP frozen in settings. Hand that to a browser
+// sitting in New Zealand and it dies screaming into the void. So: keep Komga's scheme +
+// port from config, but swap the host for whatever host actually loaded THIS page. The
+// browser already proved it can reach that host (it's reading this from it), so Komga on
+// the same host answers too. LAN, Tailscale, localhost — the link follows you home.
+function komgaBase() {
+  try {
+    const u = new URL(_appConfig.komga_url);
+    u.hostname = location.hostname;
+    return u.origin;
+  } catch {
+    return `${location.protocol}//${location.hostname}:8585`;
+  }
+}
+
 const api = {
   get(url) {
     return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -693,7 +709,7 @@ function _tradeFooterAction(t, locgId) {
   if (t.owned) {
     // Two separate facts: owned (on disk) and whether Komga can read it.
     if (t.komga_book_id && _appConfig.komga_url) {
-      const url = `${_appConfig.komga_url}/book/${esc(t.komga_book_id)}/read`;
+      const url = `${komgaBase()}/book/${esc(t.komga_book_id)}/read`;
       return `<a class="btn btn-primary" href="${url}" target="_blank" rel="noopener">Open in Komga</a>`;
     }
     return `<span class="trade-owned-note">On disk${_appConfig.komga_url ? ' · not yet in Komga' : ''}</span>`;
@@ -2141,7 +2157,7 @@ async function showIssueModal(seriesId, number) {
 
   let footerAction = '';
   if (st === 'owned' && issue.komga_book_id && _appConfig.komga_url) {
-    const readerUrl = `${_appConfig.komga_url}/book/${esc(issue.komga_book_id)}/read`;
+    const readerUrl = `${komgaBase()}/book/${esc(issue.komga_book_id)}/read`;
     footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
   } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
@@ -2207,7 +2223,7 @@ async function showIssueModal(seriesId, number) {
       if (footer && !footer.querySelector('.komga-read-link')) {
         const a = document.createElement('a');
         a.className = 'btn btn-primary komga-read-link';
-        a.href = `${_appConfig.komga_url}/book/${fi.komga_book_id}/read`;
+        a.href = `${komgaBase()}/book/${fi.komga_book_id}/read`;
         a.target = '_blank';
         a.rel = 'noopener';
         a.textContent = 'Open in Komga';
