@@ -1414,6 +1414,12 @@ const QUEUE_STATE_LABEL = {
   processing: 'Processing', done: 'Done', failed: 'Failed',
 };
 let _activityPollTimer = null;
+// After a manual "Search now", the item sits in `queued` while the backend
+// thread runs the search async. `queued` isn't an "active" state, so the normal
+// poll loop would park and never catch the queued→searching→done/not_found
+// transition — the click looks dead. This timestamp keeps the poll loop alive
+// for a short window so we actually follow the search to its grave.
+let _activityPumpUntil = 0;
 
 // --- activity nav badge ---
 // "What happened since you last looked": counts terminal outcomes NEWER than
@@ -1539,7 +1545,10 @@ async function _refreshActivity() {
     }
   }
   const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet'].includes(q.state));
-  if (hasActive) _activityPollTimer = setTimeout(_refreshActivity, 2000);
+  // Within the post-retry window, keep polling while anything's still queued so
+  // we don't freeze on the stale `queued` card and miss the real outcome.
+  const pumping = Date.now() < _activityPumpUntil && queue.some(q => q.state === 'queued');
+  if (hasActive || pumping) _activityPollTimer = setTimeout(_refreshActivity, 2000);
 }
 
 function _actChip(state) {
@@ -1745,8 +1754,14 @@ async function clearHistory(btn) {
 
 async function retryQueue(id, btn) {
   btn.disabled = true;
+  btn.textContent = 'Searching…';
   await api.post(`/api/queue/${id}/retry`, {});
-  renderActivity();
+  // Backend runs the search on a thread — item stays `queued` for a beat, then
+  // flips to searching → done/not_found. Pump the poll loop for ~30s so the UI
+  // actually rides that transition out instead of going dead on the click.
+  _activityPumpUntil = Date.now() + 30000;
+  _activitySig = null;   // force a rebuild on the next poll even if state lags
+  _refreshActivity();
 }
 
 async function removeQueue(id, btn) {
