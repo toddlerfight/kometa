@@ -1504,6 +1504,8 @@ async function _refreshActivity() {
       if (text) {
         const detail = q.state === 'pending_usenet'
           ? ' · Usenet'
+          : q.state === 'pending_torrent'
+          ? ' · Torrent' + (q.search_status ? ' · ' + q.search_status : '')
           : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
         text.textContent = `${pct}%${detail}`;
       }
@@ -1544,7 +1546,7 @@ async function _refreshActivity() {
       _buildActivityHtml(queue);
     }
   }
-  const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet'].includes(q.state));
+  const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet','pending_torrent'].includes(q.state));
   // Within the post-retry window, keep polling while anything's still queued so
   // we don't freeze on the stale `queued` card and miss the real outcome.
   const pumping = Date.now() < _activityPumpUntil && queue.some(q => q.state === 'queued');
@@ -1558,6 +1560,7 @@ function _actChip(state) {
     found:       ['chip chip-muted',   'Found'],
     downloading: ['chip chip-active',  'Downloading'],
     pending_usenet: ['chip chip-active', 'Usenet'],
+    pending_torrent: ['chip chip-active', 'Torrent'],
     processing:  ['chip chip-muted',   'Processing'],
     done:        ['chip chip-done',    'Done'],
     not_found:   ['chip chip-warn',    'Not Found'],
@@ -1594,10 +1597,11 @@ function _actThumb(q) {
 function _actReason(q) {
   if (q.state === 'done' || !q.error) return '';
   const e = q.error;
-  const strip = s => s.replace(/^(Usenet|GetComics):\s*/i, '');
+  const strip = s => s.replace(/^(Usenet|GetComics|Torrent):\s*/i, '');
   if (/\bpages\b.*(collection|webtoon)/i.test(e))     return strip(e);               // already clear + specific
   if (/is #\d+, expected|ComicInfo reports/i.test(e)) return strip(e);               // wrong issue — keep the numbers
-  if (/No result on GetComics or Usenet/i.test(e))    return 'Not posted on GetComics or usenet yet';
+  if (/No result on GetComics/i.test(e))              return 'Not on GetComics, usenet or torrents yet';
+  if (/stalled, no seeders/i.test(e))                 return 'Torrent had no seeders';
   if (/rate limit.*(retries|giving up)/i.test(e))     return 'Gave up after repeated rate-limits';
   if (/rate limited/i.test(e))                        return 'Rate-limited — will retry automatically';
   if (/RAR.*verify|failed to verify/i.test(e))        return 'Usenet release was incomplete or corrupt';
@@ -1607,7 +1611,7 @@ function _actReason(q) {
 }
 
 function _buildActivityHtml(queue) {
-  const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','processing'].includes(q.state));
+  const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing'].includes(q.state));
   const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
 
   if (!queue.length) {
@@ -1625,11 +1629,13 @@ function _buildActivityHtml(queue) {
     const cards = inProgress.map(q => {
       const numStr = _actLabel(q);
       const thumb = _actThumb(q);
-      const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet';
+      const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet' || q.state === 'pending_torrent';
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
       // Usenet progress is a percentage from SAB (no byte counts); GetComics has bytes.
       const detail = q.state === 'pending_usenet'
         ? ' · Usenet'
+        : q.state === 'pending_torrent'
+        ? ' · Torrent' + (q.search_status ? ' · ' + esc(q.search_status) : '')
         : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
       const progress = q.state === 'searching' ? `
         <div class="act-card-progress">
