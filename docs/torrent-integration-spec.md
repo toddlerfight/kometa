@@ -60,6 +60,14 @@ Kometa's own scraper). Komga import is unchanged.
 
 ---
 
+## Status: P1–P5 BUILT + DEPLOYED (2026-06-25)
+
+All five phases done, committed on branch `torrent-integration`, deployed to live
+Kometa and verified (qBit v5.2.1 connects, prowlarr client up, torrent_hash column
+live, clean boot). Config set: qbit_url/user/pass + prowlarr_url/apikey. Rollback
+point: `main @ b65708a` (both remotes) + staged file bundle. **Awaiting the
+Knightquest acceptance test** before merging the branch to main.
+
 ## Phases
 
 Each phase is an independently testable/deployable slice. Risky qBittorrent

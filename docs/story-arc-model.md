@@ -84,13 +84,53 @@ Falls out of that mapping:
 - The hand-built reading-order manifest — the arc generates it.
 - Library fragmentation into many tiny single-trade "series".
 
-## Build sketch (when greenlit)
+## Phased build
 
-- New tracked-entity type `arc` (or arcs-as-special-series): id, cv_arc_id, title,
-  publisher, folder, the ordered issue list (cross-title), the trade list + spans.
-- ComicVine: `search_arcs(query)` + `get_arc_issues(arc_id)` in comicvine_client.
-- Add flow: search surfaces arcs; add an arc → populate cross-title issues + trades
-  (+ compute spans).
-- Series page `arcs` tab; arc detail page (reading order + trades); readlist button.
-- Acquisition: arc "grab missing" prefers trades; per-issue/trade cascade already
-  built (torrent stack P1–P5, live).
+Tracer-first, mirroring the torrent build. Each phase independently testable;
+the acceptance test (add Knightquest → grab → torrent → readlist, all UI) is the
+finish line.
+
+**Decision to settle in Phase B (architectural fork):** new `tracked_arc` table
+vs. arcs-as-special-`tracked_series` (`kind='arc'`). Special-series reuses the
+acquisition/folder/trade machinery but bends "a series = one title" (arc issues
+span titles). Separate table is cleaner but more new code. Lean: special-series
+with a cross-title issue list, reusing the queue/cascade as-is.
+
+### Phase A — ComicVine arc data (tracer)
+`comicvine_client.search_arcs(query)` + `get_arc_issues(arc_id)` (use the `issues`
+array, not the junk count; resolve each issue's source series+number).
+*Test:* Knightfall (40761) → 23 cross-title issues in order. Read-only, low risk.
+Proves the data before any model work.
+
+### Phase B — Arc entity + storage
+Schema (per the fork above): cv_arc_id, title, publisher, folder, the ordered
+cross-title issue list, the trade list + coverage spans. DB add/get/list helpers +
+migration.
+*Test:* create an arc record, round-trip its issues + trades.
+
+### Phase C — Add-Arc flow
+Surface arcs in the Add search (CV arc results, source=`arc`); add → create the
+arc + populate cross-title issues + trades + compute trade→issue spans from the CV
+collected-edition issue lists.
+*Test:* add Knightfall arc → issues + trades populate, spans computed.
+
+### Phase D — Arc UI
+Series `arcs` tab (arcs this title takes part in); arc detail page (reading-order +
+trades tabs) with per-row status and "▸ covered by Vol N" markers. Bump ?v=.
+*Test:* navigate the mockup's three views for real.
+
+### Phase E — Acquisition + Komga readlist (the acceptance test)
+"Grab All Missing" on an arc → prefers trades, falls through the existing
+GetComics→Usenet→Torrent cascade (P1–P5, live). "Build Komga Readlist" → arc order
+→ resolve Komga book ids → POST /api/v1/readlists.
+*Acceptance test:* add **Knightquest** in the UI → grab → watch it torrent →
+readlist appears in Komga. Fully UI-drivable — the thing that started all this.
+
+### Phase F — Trades-in-arcs polish
+Ownership satisfied by single OR covering trade; readlist granularity (trades vs
+singles vs mixed); span markers in the reading order.
+
+### Separate, small: finish Settings UI
+Surface qBit / Prowlarr / ComicVine in Settings (fields + Test buttons + the
+GET /api/config returns + /api/test/* + _INTEGRATION_KEYS). `ConfigRequest` already
+accepts the fields. Independent of the arc work — do anytime.
