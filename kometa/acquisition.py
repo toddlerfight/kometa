@@ -15,7 +15,7 @@ import kometa.db as db
 import kometa.downloader as downloader
 from kometa.sources import (
     komga as _komga, sabnzbd as _sabnzbd, usenet_indexers as _usenet_indexers,
-    comics_root as _comics_root, qbittorrent as _qbittorrent,
+    comics_root as _comics_root, qbittorrent as _qbittorrent, prowlarr as _prowlarr,
 )
 from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
@@ -166,9 +166,41 @@ def _process_queue_locked():
             clear_search_status(qid)
 
 
+def _try_torrent(item, qid) -> bool:
+    """Last rung of the cascade: acquire via torrent (Prowlarr aggregate search →
+    qBittorrent). Fired when GetComics+Usenet find nothing AND when a usenet job
+    fails to COMPLETE (retention) — torrent is the safety net for "couldn't
+    deliver", not just "couldn't find". Sets state → pending_torrent + stores the
+    hash; the torrent poller finalizes. Returns True if a torrent was queued."""
+    prowlarr = _prowlarr()
+    qbit = _qbittorrent()
+    if not (prowlarr and qbit):
+        return False
+    from kometa.prowlarr_client import search_torrent, search_torrent_pack
+    set_search_status(qid, "Torrent: searching…")
+    if item.get("kind") == "trade":
+        meta = json.loads(item.get("meta_json") or "{}")
+        cand = search_torrent_pack(prowlarr, meta.get("title") or item["title"])
+    else:
+        cand = search_torrent(prowlarr, item["title"], item["issue_number"])
+    if not cand:
+        return False
+    source = cand.get("magnet") or cand.get("url")
+    if not source:
+        return False
+    ih = qbit.add_torrent(source)
+    if not ih:
+        return False
+    db.update_queue_state(qid, "pending_torrent", source_url=source, path=DB_PATH)
+    db.set_torrent_hash(qid, ih, path=DB_PATH)
+    set_search_status(qid, f"Torrent: {cand['title'][:40]} · {cand.get('seeders', 0)} seeders")
+    logger.info(f"Torrent: queued {item['title']!r} → {ih} ({cand.get('seeders', 0)} seeders)")
+    return True
+
+
 def _acquire_issue(item, qid, gc, downloaded_urls):
-    """Search (GetComics → usenet) and place a single issue. Raises GCRateLimitError
-    / DuplicateIssueError up to the shared handler in the queue loop."""
+    """Search (GetComics → usenet → torrent) and place a single issue. Raises
+    GCRateLimitError / DuplicateIssueError up to the shared handler in the queue loop."""
     issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
     issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
     store_date = issue_row["store_date"] if issue_row else None
@@ -189,7 +221,9 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
                     db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
                     logger.info(f"Usenet: submitted nzo_id={nzo_id} for {item['title']} #{int(item['issue_number'])}")
                     return
-        db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
+        if _try_torrent(item, qid):
+            return
+        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
         return
 
     if dl_url in downloaded_urls:
@@ -255,7 +289,9 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
                     db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
                     logger.info(f"Usenet: submitted nzo_id={nzo_id} for trade {query!r}")
                     return
-        db.update_queue_state(qid, "not_found", error="No result on GetComics or Usenet", path=DB_PATH)
+        if _try_torrent(item, qid):
+            return
+        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
         return
 
     if dl_url in downloaded_urls:
@@ -357,6 +393,12 @@ def _poll_usenet_jobs():
             clear_progress(qid)
             err = result.get("error") or f"SABnzbd status: {status}"
             logger.warning(f"Usenet job {nzo_id} failed: {err}")
+            # Usenet couldn't DELIVER (retention/repair) — fall to torrent before
+            # giving up. This is what makes vintage land: the old NZB repair-fails,
+            # the healthy torrent catches it.
+            if _try_torrent(item, qid):
+                logger.info(f"Usenet job {nzo_id} failed; fell back to torrent for qid {qid}")
+                continue
             db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
 
 
