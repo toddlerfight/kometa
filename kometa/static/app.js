@@ -948,6 +948,10 @@ function _renderWizardResults(results, q) {
   if (!container) return;
   const ql = q.toLowerCase();
   results.sort((a, b) => {
+    // Arcs first — for an event that fell through to CV, the arc (whole cross-title
+    // story) is usually what you want over a single collected-edition volume.
+    const aArc = a.kind === 'arc', bArc = b.kind === 'arc';
+    if (aArc !== bArc) return aArc ? -1 : 1;
     const at = (a.series || a.name || '').toLowerCase();
     const bt = (b.series || b.name || '').toLowerCase();
     const aExact = at === ql, bExact = bt === ql;
@@ -968,8 +972,8 @@ function _renderWizardResults(results, q) {
             <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
@@ -1044,7 +1048,7 @@ async function wizardSearch() {
 function wizardPickSeries(idx) {
   const r = _wizardResults[idx];
   if (!r) return;
-  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: r.source || 'metron', locgId: r.source === 'locg' ? r.id : null };
+  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: r.kind === 'arc' ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: r.kind === 'arc' ? r.cv_arc_id : null };
   document.getElementById('modal').innerHTML = `
     <div class="modal-title">Add Series</div>
     <div class="wizard-series-preview">
@@ -1109,8 +1113,8 @@ function wizardBrowseFolder() {
 }
 
 async function wizardConfirm() {
-  const { metronId, source, locgId } = _wizardState;
-  if (!metronId && !locgId) return;
+  const { metronId, source, locgId, cvArcId } = _wizardState;
+  if (!metronId && !locgId && !cvArcId) return;
   const r = _wizardResults[_wizardState.idx];
   const folder = (document.getElementById('wizard-folder')?.value || '').trim() || null;
   const onPullList = document.getElementById('wizard-pull')?.checked ?? true;
@@ -1121,7 +1125,12 @@ async function wizardConfirm() {
       folder_path: folder,
       on_pull_list: onPullList,
     };
-    if (source === 'locg') {
+    if (source === 'arc') {
+      payload.cv_arc_id = cvArcId;
+      payload.title = r.series || r.name || '';
+      payload.publisher_name = r.publisher?.name || '';
+      payload.year_began = r.year_began || null;
+    } else if (source === 'locg') {
       payload.locg_id = locgId;
       payload.title = r.series || r.name || '';
       payload.publisher_name = r.publisher?.name || '';
