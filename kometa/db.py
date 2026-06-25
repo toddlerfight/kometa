@@ -82,6 +82,25 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
         if "locg_series_id" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_series_id INTEGER")
+        # Story arcs ride the tracked_series machinery (folder, trades, queue,
+        # Komga link) as kind='arc'; their cross-title reading order lives in the
+        # dedicated arc_issues table (issue_status is single-title, can't hold it).
+        # NB: the kind/cv_arc_id COLUMNS are added AFTER the nullable-rebuilds below
+        # — those recreate tracked_series and would drop anything added up here.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS arc_issues (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                arc_series_id   INTEGER NOT NULL REFERENCES tracked_series(id),
+                reading_order   INTEGER NOT NULL,
+                source_title    TEXT NOT NULL,
+                number          TEXT,
+                story_title     TEXT,
+                cv_issue_id     TEXT,
+                komga_book_id   TEXT,
+                owned           INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(arc_series_id, reading_order)
+            )
+        """)
 
         # Make komga_series_id nullable — SQLite can't drop NOT NULL via ALTER, must rebuild
         series_info = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(tracked_series)")}
@@ -148,6 +167,15 @@ def _migrate(path=DB_PATH):
                 FROM _ts_old2
             """)
             conn.execute("DROP TABLE _ts_old2")
+
+        # Arc columns go in AFTER both nullable-rebuilds above (they recreate
+        # tracked_series from the old column set, dropping anything added earlier).
+        # Fresh PRAGMA so this lands whatever the rebuilds left behind.
+        ts_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
+        if "kind" not in ts_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
+        if "cv_arc_id" not in ts_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_arc_id TEXT")
 
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         # Rename the old in_komga column to owned — it always meant "owned on disk",
@@ -316,21 +344,51 @@ def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
 
 def add_series(komga_series_id=None, metron_series_id=None, title=None, publisher=None,
                year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
-               path=DB_PATH) -> int:
+               kind="series", cv_arc_id=None, path=DB_PATH) -> int:
     with _connect(path) as conn:
         cur = conn.execute("""
             INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher,
-                                        year_began, folder_path, on_pull_list, locg_series_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                        year_began, folder_path, on_pull_list, locg_series_id,
+                                        kind, cv_arc_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (komga_series_id, metron_series_id, title, publisher, year_began,
-              folder_path, int(on_pull_list), locg_series_id))
+              folder_path, int(on_pull_list), locg_series_id, kind, cv_arc_id))
         return cur.lastrowid
 
 
 def remove_series(series_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM issue_status WHERE tracked_series_id = ?", (series_id,))
+        conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (series_id,))
         conn.execute("DELETE FROM tracked_series WHERE id = ?", (series_id,))
+
+
+def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
+    """Wipe + insert an arc's cross-title reading order. `issues` = list of dicts
+    {reading_order, source_title, number, story_title, cv_issue_id}. Preserves any
+    komga_book_id/owned already resolved for an issue (matched on reading_order)."""
+    with _connect(path) as conn:
+        prior = {r["reading_order"]: r for r in conn.execute(
+            "SELECT reading_order, komga_book_id, owned FROM arc_issues WHERE arc_series_id = ?",
+            (arc_series_id,))}
+        conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (arc_series_id,))
+        for it in issues:
+            ro = it["reading_order"]
+            keep = prior.get(ro, {})
+            conn.execute("""
+                INSERT INTO arc_issues (arc_series_id, reading_order, source_title, number,
+                                        story_title, cv_issue_id, komga_book_id, owned)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (arc_series_id, ro, it.get("source_title"), it.get("number"),
+                  it.get("story_title"), it.get("cv_issue_id"),
+                  keep.get("komga_book_id"), keep.get("owned", 0)))
+
+
+def get_arc_reading_order(arc_series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM arc_issues WHERE arc_series_id = ? ORDER BY reading_order",
+            (arc_series_id,))]
 
 
 def get_all_series(path=DB_PATH):
