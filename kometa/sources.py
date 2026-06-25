@@ -85,6 +85,18 @@ def qbittorrent() -> QBittorrentClient | None:
     return QBittorrentClient(url, user, pw) if url and user else None
 
 
+def prowlarr():
+    """Prowlarr aggregate-search client (sees usenet AND torrent indexers in one
+    query). Returns None until prowlarr_url + prowlarr_apikey are configured."""
+    cfg = db.get_config(DB_PATH)
+    url = cfg.get("prowlarr_url", "")
+    key = cfg.get("prowlarr_apikey", "")
+    if not url or not key:
+        return None
+    from kometa.prowlarr_client import ProwlarrClient
+    return ProwlarrClient(url, key)
+
+
 def usenet_indexers() -> list[dict]:
     import json
     cfg = db.get_config(DB_PATH)
