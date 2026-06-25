@@ -102,6 +102,13 @@ Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
 NAS access: `ssh -p 42069 -i ~/.ssh/id_ed25519 marcusg@192.168.1.166`. Docker binary:
 `/var/packages/ContainerManager/target/usr/bin/docker`. No rsync/scp — use `tar`-pipe.
 
+**Deploying off the home network (Tailscale):** the `192.168.1.166` host below is
+LAN-only. When remote, swap every SSH/tar host to `blackbox-2.tail9891f0.ts.net`
+(same port 42069, same key); add `-o StrictHostKeyChecking=accept-new` on first
+connect. Also: the pre-deploy `git push gitea main` rollback push FAILS off-LAN
+(the `gitea` remote is the LAN IP) — only `git push origin main` (GitHub) works
+remote, and that's the one that matters. Push to `gitea` later from home.
+
 **The source is now BIND-MOUNTED** (`/volume1/docker/kometa/kometa:/app/kometa` in
 `docker-compose.yml`), so code is NOT baked into the image. This makes deploys a
 **few-second restart, not a rebuild** (the old rebuild caused ~1-2 min downtime — see
