@@ -670,6 +670,7 @@ def _poll_torrent_jobs():
                     db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
                     continue
             set_progress(qid, result.get("pct", 0), 100)
+            set_search_status(qid, f"{result.get('seeders', 0)} seeders")
             continue
 
         if status == "completed":
