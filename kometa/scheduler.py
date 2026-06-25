@@ -15,7 +15,7 @@ SYNC_HOURS = [int(h.strip()) for h in _raw.split(",")]
 USENET_POLL_SECONDS = int(os.environ.get("KOMETA_USENET_POLL_SECONDS", "5"))
 
 
-def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None):
+def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None):
     scheduler = BackgroundScheduler(timezone="Australia/Sydney")
 
     for hour in SYNC_HOURS:
@@ -40,6 +40,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             poll_usenet_fn,
             IntervalTrigger(seconds=USENET_POLL_SECONDS),
             id="usenet_poller",
+            replace_existing=True,
+        )
+
+    # Poll qBittorrent for pending torrent jobs (same cadence as usenet)
+    if poll_torrent_fn:
+        scheduler.add_job(
+            poll_torrent_fn,
+            IntervalTrigger(seconds=USENET_POLL_SECONDS),
+            id="torrent_poller",
             replace_existing=True,
         )
 

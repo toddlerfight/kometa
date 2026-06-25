@@ -35,7 +35,7 @@ from kometa.sync import (
 from kometa.acquisition import (
     get_progress, get_search_status,
     _process_queue, _sweep_missing,
-    _poll_usenet_jobs, _release_day_retry,
+    _poll_usenet_jobs, _poll_torrent_jobs, _release_day_retry,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,7 @@ async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
-    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs)
+    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs)
     yield
 
 

@@ -15,7 +15,7 @@ import kometa.db as db
 import kometa.downloader as downloader
 from kometa.sources import (
     komga as _komga, sabnzbd as _sabnzbd, usenet_indexers as _usenet_indexers,
-    comics_root as _comics_root,
+    comics_root as _comics_root, qbittorrent as _qbittorrent,
 )
 from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
@@ -91,6 +91,14 @@ def _komga_scan():
     komga = _komga()
     if komga:
         komga.scan_library()
+
+
+def _komga_scan_safe():
+    """_komga_scan() that never lets a scan hiccup break a finalize."""
+    try:
+        _komga_scan()
+    except Exception as e:
+        logger.warning(f"Komga scan failed: {e}")
 
 
 # Five call sites spawn this in threads (scheduler tick, manual retries, bulk
@@ -491,6 +499,151 @@ def _finalize_usenet_download(item: dict, qid: int, storage: str):
         _komga_scan()
     except Exception as e:
         logger.warning(f"Komga scan after usenet placement failed: {e}")
+
+
+def _finalize_torrent_download(item: dict, qid: int, content_path: str):
+    """Copy a qBittorrent-completed download into the library and mark it done.
+    Twin of _finalize_usenet_download, but COPIES instead of moving — the torrent
+    keeps its files so it can seed; the cleanup pass removes it on a grace delay
+    after a confirmed import. content_path is a file (single) or dir (pack)."""
+    import shutil as _shutil
+    from kometa.downloader import (
+        _issue_num_from_file, _safe, _resolve_dir, _fix_extension,
+        _verify_single_issue, WrongIssueError,
+    )
+
+    def _place(src: str, dst: str):
+        _shutil.copy2(src, dst)  # copy, NOT move — leave the original for seeding
+        _fix_extension(dst)
+
+    issue_number = item["issue_number"]
+    title = item["title"]
+    publisher = item.get("publisher")
+    dest_dir = item.get("folder_path") or _resolve_dir(_comics_root(), publisher or "Unknown", title)
+
+    scan_dir = content_path if os.path.isdir(content_path) else os.path.dirname(content_path)
+    comics = find_comics_in_dir(scan_dir)
+    if not comics:
+        db.update_queue_state(qid, "failed", error="Torrent: no comic files in completed download", path=DB_PATH)
+        return
+
+    # Pack sentinel — copy every comic in, let the next sync mark issues.
+    if issue_number == -1:
+        os.makedirs(dest_dir, exist_ok=True)
+        placed = 0
+        for src in comics:
+            dst = os.path.join(dest_dir, os.path.basename(src))
+            if os.path.exists(dst):
+                continue
+            _place(src, dst)
+            placed += 1
+        logger.info(f"Torrent pack: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
+        db.update_queue_state(qid, "done", path=DB_PATH)
+        if not item.get("folder_path") and placed:
+            db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        _komga_scan_safe()
+        return
+
+    # Trade — copy under the canonical trade name(s); folder is truth, no verify.
+    if item.get("kind") == "trade":
+        meta = json.loads(item.get("meta_json") or "{}")
+        base = _safe(_trade_fallback_name(meta, title))
+        os.makedirs(dest_dir, exist_ok=True)
+        placed = 0
+        for src in comics:
+            ext = os.path.splitext(src)[1].lower()
+            name = f"{base}{ext}" if len(comics) == 1 else os.path.basename(src)
+            dst = os.path.join(dest_dir, name)
+            if os.path.exists(dst):
+                continue
+            _place(src, dst)
+            placed += 1
+        logger.info(f"Torrent trade: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
+        db.complete_trade(qid, path=DB_PATH)
+        if not item.get("folder_path") and placed:
+            db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        _komga_scan_safe()
+        try:
+            from kometa.sync import refresh_trades_owned
+            refresh_trades_owned(item["tracked_series_id"])
+        except Exception as e:
+            logger.warning(f"Trade owned-refresh failed: {e}")
+        return
+
+    # Single issue — find the matching file, verify it, copy under canonical name.
+    target = comics[0] if len(comics) == 1 else next(
+        (f for f in comics if _issue_num_from_file(f) == issue_number), None)
+    if target is None:
+        db.update_queue_state(qid, "failed",
+            error=f"Torrent pack didn't contain #{int(issue_number)}", path=DB_PATH)
+        return
+    try:
+        _verify_single_issue(target, issue_number, os.path.basename(target))
+    except WrongIssueError as e:
+        db.update_queue_state(qid, "failed", error=f"Torrent: {e}", path=DB_PATH)
+        return
+    ext = os.path.splitext(target)[1].lower()
+    dest_name = f"{_safe(title)} #{int(issue_number):03d}{ext}"
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = os.path.join(dest_dir, dest_name)
+    if not os.path.exists(dest_path):
+        try:
+            _place(target, dest_path)
+        except Exception as e:
+            db.update_queue_state(qid, "failed", error=f"Torrent copy failed: {e}", path=DB_PATH)
+            return
+    db.complete_download(
+        qid, item["tracked_series_id"], issue_number, item.get("store_date"),
+        filename=dest_path,
+        set_folder_path=dest_dir if not item.get("folder_path") else None,
+        path=DB_PATH,
+    )
+    _komga_scan_safe()
+
+
+def _poll_torrent_jobs():
+    """Check qBittorrent for completed pending_torrent items and finalize them.
+    Twin of _poll_usenet_jobs — runs on the same scheduler tick."""
+    from datetime import datetime, timedelta
+    qbit = _qbittorrent()
+    if not qbit:
+        return
+    items = db.get_pending_torrent_items(DB_PATH)
+    if not items:
+        return
+
+    for item in items:
+        qid = item["id"]
+        ih = item["torrent_hash"]
+        result = qbit.poll_job(ih)
+        status = result["status"]
+
+        if status == "downloading":
+            # Stall guard: a torrent with no seeders stuck in a stalled state for a
+            # while is dead — fail it instead of polling forever.
+            if result.get("seeders", 0) == 0 and "stalled" in result.get("state", ""):
+                age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+                if age > timedelta(hours=2):
+                    clear_progress(qid)
+                    db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
+                    continue
+            set_progress(qid, result.get("pct", 0), 100)
+            continue
+
+        if status == "completed":
+            clear_progress(qid)
+            content_path = result.get("content_path", "")
+            logger.info(f"Torrent {ih} completed — content_path: {content_path}")
+            _finalize_torrent_download(item, qid, content_path)
+
+        elif status in ("failed", "unknown"):
+            age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+            if status == "unknown" and age < timedelta(hours=4):
+                continue  # qBit may not have registered the magnet metadata yet
+            clear_progress(qid)
+            err = result.get("error") or f"qBittorrent status: {status}"
+            logger.warning(f"Torrent {ih} failed: {err}")
+            db.update_queue_state(qid, "failed", error=f"Torrent: {err}", path=DB_PATH)
 
 
 def _release_day_retry():

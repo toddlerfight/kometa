@@ -233,6 +233,13 @@ def _migrate(path=DB_PATH):
                 CREATE UNIQUE INDEX idx_dq_trade ON download_queue(tracked_series_id, locg_id);
             """)
 
+        # torrent_hash: opaque qBittorrent handle for a pending_torrent job — the
+        # twin of sab_nzo_id for the torrent path. Fresh PRAGMA read so it lands
+        # whether or not the table-rebuild above just ran.
+        dq_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
+        if "torrent_hash" not in dq_cols2:
+            conn.execute("ALTER TABLE download_queue ADD COLUMN torrent_hash TEXT")
+
 
 # config key -> env var for first-boot provisioning. Lets a deployer configure
 # entirely from compose/env instead of clicking through Settings. Seeded with
@@ -653,6 +660,25 @@ def set_sab_nzo_id(queue_id, nzo_id, path=DB_PATH):
         conn.execute(
             "UPDATE download_queue SET sab_nzo_id = ?, updated_at = datetime('now') WHERE id = ?",
             (nzo_id, queue_id),
+        )
+
+
+def get_pending_torrent_items(path=DB_PATH):
+    """Items waiting on qBittorrent to finish downloading — twin of the usenet one."""
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path
+            FROM download_queue q
+            JOIN tracked_series s ON s.id = q.tracked_series_id
+            WHERE q.state = 'pending_torrent' AND q.torrent_hash IS NOT NULL
+        """)]
+
+
+def set_torrent_hash(queue_id, torrent_hash, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE download_queue SET torrent_hash = ?, updated_at = datetime('now') WHERE id = ?",
+            (torrent_hash, queue_id),
         )
 
 
