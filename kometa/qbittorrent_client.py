@@ -1,0 +1,131 @@
+import logging
+import re
+import requests
+
+logger = logging.getLogger(__name__)
+
+# qBittorrent torrent states (WebAPI v2.x). These are the ones we branch on; the
+# rest (downloading, stalledDL, metaDL, queuedDL, checkingDL, forcedDL, moving,
+# checkingUP) all mean "not settled yet" → keep polling.
+_DONE_STATES = {"uploading", "stalledUP", "pausedUP", "queuedUP", "forcedUP"}
+_FAIL_STATES = {"error", "missingFiles"}
+
+
+def infohash_from_magnet(magnet: str) -> str | None:
+    """Pull the btih infohash out of a magnet URI, lowercased. This is our handle
+    on the torrent — qBit's /torrents/add returns only 'Ok.', not the hash, so we
+    derive it from the magnet ourselves and poll by it."""
+    m = re.search(r"xt=urn:btih:([0-9A-Fa-f]{40}|[A-Za-z2-7]{32})", magnet)
+    return m.group(1).lower() if m else None
+
+
+class QBittorrentClient:
+    """Thin qBittorrent WebAPI v2 client. Mirrors SABnzbdClient's surface so the
+    torrent acquisition branch and poller stay symmetric with the usenet ones.
+
+    Reach it from the NAS host / Kometa container via the LAN IP (e.g.
+    http://$NAS_HOST:8090) — qBit's WebUI rejects the Tailscale hostname and
+    requires auth even on localhost. Use a dedicated category ('kometa') so our
+    torrents never collide with the Sonarr/Radarr torrents sharing this client.
+    """
+
+    def __init__(self, url: str, username: str, password: str):
+        self.url = url.rstrip("/")
+        self.username = username
+        self.password = password
+        self.session = requests.Session()
+        self.session.headers["User-Agent"] = "kometa/1.0"
+        self.session.headers["Referer"] = self.url  # qBit CSRF/referer check
+        self._authed = False
+
+    def _login(self) -> bool:
+        try:
+            r = self.session.post(
+                f"{self.url}/api/v2/auth/login",
+                data={"username": self.username, "password": self.password},
+                timeout=15,
+            )
+            # qBit returns 200 "Ok." OR 204 No Content on success (and sets the
+            # QBT_SID cookie either way); only bad creds give 200 "Fails.".
+            ok = r.ok and "fail" not in r.text.lower()
+            self._authed = ok
+            if not ok:
+                logger.warning(f"qBittorrent login failed: {r.status_code} {r.text[:40]}")
+            return ok
+        except Exception as e:
+            logger.warning(f"qBittorrent login error: {e}")
+            return False
+
+    def _req(self, method: str, path: str, **kw):
+        """Auth-aware request. Lazily logs in, and re-logs once on a 403 so an
+        expired SID cookie heals itself instead of failing the whole grab."""
+        if not self._authed and not self._login():
+            return None
+        try:
+            r = self.session.request(method, f"{self.url}{path}", timeout=20, **kw)
+            if r.status_code == 403 and self._login():
+                r = self.session.request(method, f"{self.url}{path}", timeout=20, **kw)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            logger.warning(f"qBittorrent {method} {path} failed: {e}")
+            return None
+
+    def test(self) -> str | None:
+        """Return the qBit version string if reachable+authed, else None."""
+        r = self._req("GET", "/api/v2/app/version")
+        return r.text.strip() if r is not None else None
+
+    def add_magnet(self, magnet: str, category: str = "kometa",
+                   savepath: str | None = None, paused: bool = False) -> str | None:
+        """Add a magnet. Returns the infohash (our handle) or None on failure."""
+        ih = infohash_from_magnet(magnet)
+        if not ih:
+            logger.warning(f"qBittorrent: no infohash in magnet {magnet[:60]}")
+            return None
+        data = {"urls": magnet, "category": category}
+        if savepath:
+            data["savepath"] = savepath
+        if paused:
+            data["paused"] = "true"
+            data["stopped"] = "true"  # qBit 5.x renamed paused→stopped; send both
+        r = self._req("POST", "/api/v2/torrents/add", data=data)
+        if r is None:
+            return None
+        logger.info(f"qBittorrent: added magnet {ih} (category={category})")
+        return ih
+
+    def poll_job(self, infohash: str) -> dict:
+        """Poll a torrent. Same contract shape as SABnzbdClient.poll_job:
+          {"status": "downloading", "pct": float, "seeders": int, "state": str}
+          {"status": "completed",   "content_path": str}
+          {"status": "failed",      "error": str}
+          {"status": "unknown"}
+        Completion keys off the seeding states (files settled + in place), not bare
+        progress>=1.0, so we never import mid-move/mid-recheck.
+        """
+        r = self._req("GET", "/api/v2/torrents/info", params={"hashes": infohash})
+        if r is None:
+            return {"status": "unknown"}
+        arr = r.json()
+        if not arr:
+            return {"status": "unknown"}
+        t = arr[0]
+        state = t.get("state", "")
+        if state in _FAIL_STATES:
+            return {"status": "failed", "error": f"qBittorrent state: {state}"}
+        if state in _DONE_STATES:
+            return {"status": "completed", "content_path": t.get("content_path", "")}
+        return {
+            "status": "downloading",
+            "pct": round(float(t.get("progress", 0) or 0) * 100, 1),
+            "seeders": int(t.get("num_complete", 0) or 0),
+            "state": state,
+        }
+
+    def delete(self, infohash: str, delete_files: bool = True) -> bool:
+        """Remove a torrent (and optionally its data). Used by the cleanup pass
+        after a confirmed import — never before."""
+        r = self._req("POST", "/api/v2/torrents/delete",
+                      data={"hashes": infohash, "deleteFiles": str(delete_files).lower()})
+        return r is not None
