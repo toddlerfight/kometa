@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 # qBittorrent torrent states (WebAPI v2.x). These are the ones we branch on; the
 # rest (downloading, stalledDL, metaDL, queuedDL, checkingDL, forcedDL, moving,
 # checkingUP) all mean "not settled yet" → keep polling.
-_DONE_STATES = {"uploading", "stalledUP", "pausedUP", "queuedUP", "forcedUP"}
+_DONE_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP", "forcedUP"}
 _FAIL_STATES = {"error", "missingFiles"}
 
 
@@ -76,14 +76,19 @@ class QBittorrentClient:
         r = self._req("GET", "/api/v2/app/version")
         return r.text.strip() if r is not None else None
 
-    def add_magnet(self, magnet: str, category: str = "kometa",
-                   savepath: str | None = None, paused: bool = False) -> str | None:
-        """Add a magnet. Returns the infohash (our handle) or None on failure."""
-        ih = infohash_from_magnet(magnet)
-        if not ih:
-            logger.warning(f"qBittorrent: no infohash in magnet {magnet[:60]}")
-            return None
-        data = {"urls": magnet, "category": category}
+    def _hashes_in_category(self, category: str) -> set[str]:
+        r = self._req("GET", "/api/v2/torrents/info", params={"category": category})
+        return {str(t.get("hash", "")).lower() for t in r.json()} if r is not None else set()
+
+    def add_torrent(self, source: str, category: str = "kometa",
+                    savepath: str | None = None, paused: bool = False) -> str | None:
+        """Add a magnet OR a .torrent URL. Returns the infohash (our poll handle).
+        Magnet → hash derived directly. URL (many indexers give no magnet/infoHash)
+        → snapshot the category's hashes, add, then diff to find the newcomer."""
+        import time
+        is_magnet = source.startswith("magnet:")
+        pre = set() if is_magnet else self._hashes_in_category(category)
+        data = {"urls": source, "category": category}
         if savepath:
             data["savepath"] = savepath
         if paused:
@@ -92,8 +97,19 @@ class QBittorrentClient:
         r = self._req("POST", "/api/v2/torrents/add", data=data)
         if r is None:
             return None
-        logger.info(f"qBittorrent: added magnet {ih} (category={category})")
-        return ih
+        if is_magnet:
+            ih = infohash_from_magnet(source)
+            logger.info(f"qBittorrent: added magnet {ih} (category={category})")
+            return ih
+        for _ in range(12):  # URL fetch + registration is usually 1-3s
+            time.sleep(1)
+            new = self._hashes_in_category(category) - pre
+            if new:
+                ih = sorted(new)[0]
+                logger.info(f"qBittorrent: added .torrent url → {ih} (category={category})")
+                return ih
+        logger.warning("qBittorrent: .torrent url added but new hash never appeared")
+        return None
 
     def poll_job(self, infohash: str) -> dict:
         """Poll a torrent. Same contract shape as SABnzbdClient.poll_job:
