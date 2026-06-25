@@ -97,6 +97,17 @@ def prowlarr():
     return ProwlarrClient(url, key)
 
 
+def comicvine():
+    """ComicVine search client — the gap-filler for LOCG. Returns None until
+    cv_api_key is configured."""
+    cfg = db.get_config(DB_PATH)
+    key = cfg.get("cv_api_key", "")
+    if not key:
+        return None
+    from kometa.comicvine_client import ComicVineClient
+    return ComicVineClient(key)
+
+
 def usenet_indexers() -> list[dict]:
     import json
     cfg = db.get_config(DB_PATH)
