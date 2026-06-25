@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kometa — Story Arc mockup</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0b0c; --panel:#151517; --panel2:#1b1b1e; --line:#26262a;
+    --tp:#e9e9e6; --tm:#8d8d88; --tq:#59595a;
+    --pri:#c3f24b; --done:#84d98c; --miss:#e8746b; --amb:#e3b443; --blu:#6fb6e0;
+    --font:'Victor Mono',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#070708;color:var(--tp);font-family:var(--font);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .frame{max-width:880px;margin:24px auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+
+  /* top view switcher (mockup nav, not part of the app) */
+  .switch{display:flex;gap:6px;padding:10px 14px;background:#050506;border-bottom:1px solid var(--line)}
+  .switch button{font-family:var(--font);font-size:11px;background:transparent;color:var(--tm);border:1px solid var(--line);border-radius:6px;padding:6px 11px;cursor:pointer}
+  .switch button.on{color:#0b0b0c;background:var(--pri);border-color:var(--pri);font-weight:600}
+  .switch .lbl{color:var(--tq);font-size:10px;align-self:center;margin-right:6px;text-transform:uppercase;letter-spacing:.1em}
+
+  .view{display:none}
+  .view.on{display:block}
+
+  /* hero */
+  .hero{position:relative;padding:30px 26px 22px;overflow:hidden}
+  .hero-bg{position:absolute;inset:0;background-size:cover;background-position:center 28%;opacity:.16;filter:saturate(.7)}
+  .hero-grad{position:absolute;inset:0;background:linear-gradient(180deg,rgba(11,11,12,.45),rgba(11,11,12,.96))}
+  .hero-in{position:relative}
+  .kicker{font-size:10.5px;letter-spacing:.16em;color:var(--tm);text-transform:uppercase}
+  .kicker .arc{color:var(--pri)}
+  .htitle{font-size:30px;font-weight:600;margin:5px 0 11px;letter-spacing:-.01em}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .chip{font-size:11px;padding:3px 9px;border-radius:20px;border:1px solid var(--line);background:var(--panel)}
+  .chip.ok{color:var(--done);border-color:#2c4630}
+  .chip.miss{color:var(--miss);border-color:#4a2c2a}
+  .chip.up{color:var(--amb);border-color:#473a23}
+  .chip.sync{color:var(--blu);border-color:#274050}
+  .pull{margin-left:auto;font-family:var(--font);font-size:11px;padding:5px 13px;border-radius:6px;background:var(--pri);color:#0b0b0c;border:none;font-weight:600;cursor:pointer}
+  .pull.ghost{background:transparent;color:var(--tm);border:1px solid var(--line);font-weight:400}
+
+  .folder{display:flex;gap:9px;align-items:center;padding:9px 26px;color:var(--tq);font-size:11px;border-bottom:1px solid var(--line);background:#0e0e10}
+  .folder .ic{opacity:.6}
+
+  /* tabs */
+  .tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--line);background:#0e0e10;flex-wrap:wrap}
+  .tab{font-size:11.5px;color:var(--tm);padding:11px 13px;cursor:pointer;border-bottom:2px solid transparent;text-transform:lowercase}
+  .tab.active{color:var(--pri);border-bottom-color:var(--pri)}
+  .tab.new::after{content:'•';color:var(--pri);margin-left:5px}
+  .tab .badge{display:inline-block;font-size:9px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:0 5px;margin-left:5px;color:var(--tm);position:relative;top:-1px}
+
+  .body{padding:18px 26px 26px}
+  .sec-label{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--tq);margin:2px 0 14px}
+
+  /* arc cards (on a series page) */
+  .arc-row{display:flex;align-items:center;gap:13px;padding:12px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:9px;background:var(--panel);cursor:pointer;transition:border-color .12s}
+  .arc-row:hover{border-color:#3a3a40}
+  .arc-dia{color:var(--pri);font-size:13px}
+  .arc-name{font-weight:600;min-width:150px}
+  .arc-desc{color:var(--tm);flex:1;font-size:12px}
+  .arc-stat{color:var(--tq);font-size:11px;white-space:nowrap}
+  .arc-state{width:18px;text-align:center;font-size:13px}
+  .s-ok{color:var(--done)} .s-part{color:var(--amb)} .s-none{color:var(--tq)}
+
+  /* reading-order table */
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;color:var(--tq);font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:500;padding:0 8px 9px;border-bottom:1px solid var(--line)}
+  td{padding:8px;border-bottom:1px solid #1a1a1d;vertical-align:middle}
+  tr:hover td{background:#101012}
+  .num{color:var(--tq);width:30px}
+  .src{color:var(--tp);white-space:nowrap}
+  .src .iss{color:var(--tm)}
+  .story{color:var(--tm)}
+  .star{color:var(--pri)}
+  .st{white-space:nowrap;text-align:right;font-size:11px}
+  .st .owned{color:var(--done)}
+  .st .dl{color:var(--blu)}
+  .st .missing{color:var(--tq)}
+  .st .srch{color:var(--pri);border:1px solid #3a4a22;border-radius:5px;padding:1px 7px;margin-left:7px;font-size:10px;cursor:pointer}
+  .titlebreak td{background:#0e0e10;color:var(--tq);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:6px 8px}
+
+  /* trade rows */
+  .trade{display:flex;align-items:center;gap:12px;padding:13px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:9px;background:var(--panel)}
+  .trade .cv{width:34px;height:50px;border-radius:3px;background:linear-gradient(160deg,#2a2a30,#161618);border:1px solid var(--line);flex-shrink:0}
+  .trade-name{flex:1}
+  .trade-name .sub{color:var(--tq);font-size:11px}
+
+  .actions{display:flex;gap:9px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+  .btn{font-family:var(--font);font-size:11px;padding:8px 15px;border-radius:6px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--tm)}
+  .btn.pri{background:var(--pri);color:#0b0b0c;border-color:var(--pri);font-weight:600}
+  .hint{color:var(--tq);font-size:11px;margin-top:13px}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="switch">
+    <span class="lbl">mockup view:</span>
+    <button class="on" onclick="show('series',this)">Series · Batman (1940)</button>
+    <button onclick="show('arc-order',this)">Arc · Knightfall — reading order</button>
+    <button onclick="show('arc-trades',this)">Arc · Knightfall — trades</button>
+  </div>
+
+  <!-- ============ SERIES PAGE ============ -->
+  <div class="view on" id="series">
+    <div class="hero">
+      <div class="hero-bg" style="background-image:url('https://comicvine.gamespot.com/a/uploads/scale_medium/0/574/8125979-batman500.jpg')"></div>
+      <div class="hero-grad"></div>
+      <div class="hero-in">
+        <div class="kicker">DC COMICS &nbsp;•&nbsp; 1940</div>
+        <div class="htitle">Batman</div>
+        <div class="chips">
+          <span class="chip ok">488 / 500</span>
+          <span class="chip up">3 upcoming</span>
+          <button class="pull">Pull</button>
+        </div>
+      </div>
+    </div>
+    <div class="folder"><span class="ic">📁</span> /comics/DC Comics/Batman (1940) <span style="margin-left:auto;color:var(--tq)">[ browse ]</span></div>
+    <div class="tabs">
+      <div class="tab">all</div>
+      <div class="tab">owned</div>
+      <div class="tab">missing</div>
+      <div class="tab">upcoming</div>
+      <div class="tab">trades<span class="badge">4</span></div>
+      <div class="tab active new">arcs<span class="badge">5</span></div>
+    </div>
+    <div class="body">
+      <div class="sec-label">Story arcs · this title takes part in</div>
+
+      <div class="arc-row" onclick="show('arc-order',document.querySelectorAll('.switch button')[1])">
+        <span class="arc-dia">◆</span>
+        <span class="arc-name">Knightfall</span>
+        <span class="arc-desc">Bane breaks the Bat</span>
+        <span class="arc-stat">23 iss · 3 titles</span>
+        <span class="arc-state s-ok">✓</span>
+      </div>
+      <div class="arc-row">
+        <span class="arc-dia">◆</span>
+        <span class="arc-name">Knightquest</span>
+        <span class="arc-desc">Azrael takes the cowl</span>
+        <span class="arc-stat">31 iss · 5 titles</span>
+        <span class="arc-state s-part">◐</span>
+      </div>
+      <div class="arc-row">
+        <span class="arc-dia">◆</span>
+        <span class="arc-name">KnightsEnd</span>
+        <span class="arc-desc">Bruce reclaims the mantle</span>
+        <span class="arc-stat">18 iss · 4 titles</span>
+        <span class="arc-state s-none">○</span>
+      </div>
+      <div class="arc-row">
+        <span class="arc-dia">◆</span>
+        <span class="arc-name">Prodigal</span>
+        <span class="arc-desc">Dick Grayson as Batman</span>
+        <span class="arc-stat">12 iss · 4 titles</span>
+        <span class="arc-state s-none">○</span>
+      </div>
+      <div class="arc-row">
+        <span class="arc-dia">◆</span>
+        <span class="arc-name">Contagion</span>
+        <span class="arc-desc">The Clench plague hits Gotham</span>
+        <span class="arc-stat">15 iss · 6 titles</span>
+        <span class="arc-state s-none">○</span>
+      </div>
+      <div class="hint">◆ arcs cut across titles — click one for its own page (cross-title reading order + collected editions).</div>
+    </div>
+  </div>
+
+  <!-- ============ ARC — READING ORDER ============ -->
+  <div class="view" id="arc-order">
+    <div class="hero">
+      <div class="hero-bg" style="background-image:url('https://comicvine.gamespot.com/a/uploads/scale_medium/0/574/8125979-batman500.jpg')"></div>
+      <div class="hero-grad"></div>
+      <div class="hero-in">
+        <div class="kicker"><span class="arc">◆ STORY ARC</span> &nbsp;•&nbsp; DC COMICS &nbsp;•&nbsp; 1993</div>
+        <div class="htitle">Batman: Knightfall</div>
+        <div class="chips">
+          <span class="chip ok">23 / 23 owned</span>
+          <span class="chip sync">▣ readlist synced → Komga</span>
+          <button class="pull ghost">Pull arc</button>
+        </div>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab active">reading order</div>
+      <div class="tab" onclick="show('arc-trades',document.querySelectorAll('.switch button')[2])">trades<span class="badge">2</span></div>
+    </div>
+    <div class="body">
+      <div class="sec-label">Reading order · across all participating titles</div>
+      <table>
+        <thead><tr><th>#</th><th>Source</th><th>Story</th><th style="text-align:right">Status</th></tr></thead>
+        <tbody>
+          <tr><td class="num">01</td><td class="src">Batman <span class="iss">#491</span></td><td class="story">The Freedom of Madness</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">02</td><td class="src">Batman <span class="iss">#492</span></td><td class="story">Crossed Eyes and Dotty Teas</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">03</td><td class="src">Detective <span class="iss">#659</span></td><td class="story">Puppets</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">04</td><td class="src">Detective <span class="iss">#660</span></td><td class="story">Crocodile Tears</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">05</td><td class="src">Batman <span class="iss">#493</span></td><td class="story">Redslash</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">06</td><td class="src">Detective <span class="iss">#661</span></td><td class="story">City on Fire</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">11</td><td class="src">Batman <span class="iss">#497</span></td><td class="story">The Broken Bat <span class="star">☆</span></td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">13</td><td class="src">Showcase '93 <span class="iss">#7</span></td><td class="story">Two-Face pt.1</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">16</td><td class="src">Shadow of Bat <span class="iss">#16</span></td><td class="story">The God of Fear pt.1</td><td class="st"><span class="owned">✓ owned</span></td></tr>
+          <tr><td class="num">17</td><td class="src">Detective <span class="iss">#665</span></td><td class="story">Lightning Changes</td><td class="st"><span class="dl">⬇ torrent · 41% · 58s</span></td></tr>
+          <tr><td class="num">19</td><td class="src">Batman <span class="iss">#499</span></td><td class="story">The Venom Connection</td><td class="st"><span class="missing">○ missing</span><span class="srch">search</span></td></tr>
+          <tr><td class="num">23</td><td class="src">Batman <span class="iss">#500</span></td><td class="story">Dark Angel <span class="star">☆</span></td><td class="st"><span class="owned">✓ owned</span></td></tr>
+        </tbody>
+      </table>
+      <div class="actions">
+        <button class="btn pri">Grab All Missing</button>
+        <button class="btn">Rebuild Komga Readlist</button>
+      </div>
+      <div class="hint">The <b>Source</b> column changes title row-to-row — Batman → Detective → Showcase → Shadow of the Bat — that's the cross-title interleave ComicVine hands us, used as the reading order.</div>
+    </div>
+  </div>
+
+  <!-- ============ ARC — TRADES ============ -->
+  <div class="view" id="arc-trades">
+    <div class="hero">
+      <div class="hero-bg" style="background-image:url('https://comicvine.gamespot.com/a/uploads/scale_medium/0/574/8125979-batman500.jpg')"></div>
+      <div class="hero-grad"></div>
+      <div class="hero-in">
+        <div class="kicker"><span class="arc">◆ STORY ARC</span> &nbsp;•&nbsp; DC COMICS &nbsp;•&nbsp; 1993</div>
+        <div class="htitle">Batman: Knightfall</div>
+        <div class="chips">
+          <span class="chip ok">23 / 23 owned</span>
+          <span class="chip sync">▣ readlist synced → Komga</span>
+        </div>
+      </div>
+    </div>
+    <div class="tabs">
+      <div class="tab" onclick="show('arc-order',document.querySelectorAll('.switch button')[1])">reading order</div>
+      <div class="tab active">trades<span class="badge">2</span></div>
+    </div>
+    <div class="body">
+      <div class="sec-label">Collected editions · reprint this arc</div>
+      <div class="trade">
+        <div class="cv"></div>
+        <div class="trade-name">Batman: Knightfall — 25th Anniversary Edition v01<div class="sub">Broken Bat · 282 pages</div></div>
+        <span class="chip ok">✓ owned</span>
+      </div>
+      <div class="trade">
+        <div class="cv"></div>
+        <div class="trade-name">Batman: Knightfall — 25th Anniversary Edition v02<div class="sub">Who Rules the Night · 312 pages</div></div>
+        <span class="chip ok">✓ owned</span>
+      </div>
+      <div class="hint">Grab the whole arc in one or two files instead of chasing 23 singles — these flow through the same GetComics → Usenet → Torrent cascade.</div>
+    </div>
+  </div>
+
+</div>
+<script>
+  function show(id, btn){
+    document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on', v.id===id));
+    document.querySelectorAll('.switch button').forEach(b=>b.classList.remove('on'));
+    if(btn) btn.classList.add('on');
+    window.scrollTo(0,0);
+  }
+</script>
+</body>
+</html>
