@@ -12,6 +12,7 @@ import logging
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
 from kometa.sabnzbd_client import SABnzbdClient
+from kometa.qbittorrent_client import QBittorrentClient
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,16 @@ def sabnzbd() -> SABnzbdClient | None:
     url = cfg.get("sab_url", "")
     key = cfg.get("sab_apikey", "")
     return SABnzbdClient(url, key) if url and key else None
+
+
+def qbittorrent() -> QBittorrentClient | None:
+    """The torrent download client — twin of sabnzbd(). Reach it by LAN IP from
+    the Kometa container (qBit rejects the Tailscale host and needs auth)."""
+    cfg = db.get_config(DB_PATH)
+    url = cfg.get("qbit_url", "")
+    user = cfg.get("qbit_user", "")
+    pw = cfg.get("qbit_pass", "")
+    return QBittorrentClient(url, user, pw) if url and user else None
 
 
 def usenet_indexers() -> list[dict]:
