@@ -1984,3 +1984,19 @@ select.settings-input {
   animation: btn-spin .7s linear infinite;
 }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
+
+/* ── Story Arc detail — cross-title reading order ── */
+.arc-body { padding: 24px var(--app-pad, 26px) 48px; }
+.arc-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--bd); margin-bottom: 18px; }
+.arc-sec-label { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--tq); margin-bottom: 14px; }
+.arc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.arc-table th { text-align: left; color: var(--tq); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-weight: 500; padding: 0 10px 9px; border-bottom: 1px solid var(--bd); }
+.arc-table td { padding: 9px 10px; border-bottom: 1px solid var(--su1); }
+.arc-table tr:hover td { background: var(--su1); }
+.arc-num { color: var(--tq); width: 34px; }
+.arc-src { white-space: nowrap; color: var(--tp); }
+.arc-iss { color: var(--tm); }
+.arc-story { color: var(--tm); }
+.arc-stcell { text-align: right; white-space: nowrap; font-size: 11px; }
+.arc-st.owned { color: var(--pri); }
+.arc-st.missing { color: var(--tq); }

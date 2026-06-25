@@ -75,6 +75,11 @@ def _best_komga_match_by_path(candidates, folder_path):
 
 
 def sync_one(series: dict):
+    if series.get("kind") == "arc":
+        # Arcs are populated from ComicVine on add and carry no single-title
+        # issue_status, so the normal sync (Komga link, LOCG/Metron issues, trades)
+        # doesn't apply. Phase E adds arc-specific sync (ownership + trades).
+        return
     komga = _komga()
     metron = _metron()
 

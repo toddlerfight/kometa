@@ -535,12 +535,64 @@ function flipIssueSort(id) {
 
 const _autoSynced = new Set();   // series auto-synced this session — fire once each
 
+// Story arc detail — its issues span titles (Batman, Detective, …) and live in
+// arc_issues, not issue_status, so it renders a cross-title reading-order table
+// instead of the single-title issue grid.
+function renderArcDetail(s) {
+  const seriesBg = document.getElementById('series-bg');
+  if (seriesBg) seriesBg.classList.add('hidden');
+  const meta = ['◆ STORY ARC', s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
+  const ai = s.arc_issues || [];
+  const total = ai.length;
+  const chips = total
+    ? `<span class="chip ${s.owned < total ? 'chip-missing' : 'chip-complete'}">${s.owned}/${total}</span>`
+    : '';
+  const rows = ai.map(i => {
+    const st = i.owned
+      ? '<span class="arc-st owned">✓ owned</span>'
+      : '<span class="arc-st missing">○ missing</span>';
+    return `<tr>
+      <td class="arc-num">${i.reading_order}</td>
+      <td class="arc-src">${esc(i.source_title || '')} <span class="arc-iss">#${esc(String(i.number ?? '?'))}</span></td>
+      <td class="arc-story">${esc(i.story_title || '')}</td>
+      <td class="arc-stcell">${st}</td>
+    </tr>`;
+  }).join('');
+  const body = total ? `
+    <table class="arc-table">
+      <thead><tr><th>#</th><th>Source</th><th>Story</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : `<div class="state-msg" style="padding:28px 0;font-size:12px;color:var(--tq)">Pulling reading order from ComicVine…</div>`;
+  setApp(`
+    <div class="detail-hero">
+      <div class="detail-hero-gradient"></div>
+      <div class="detail-hero-content">
+        <div class="detail-hero-text">
+          <div class="detail-hero-publisher">${esc(meta)}</div>
+          <div class="detail-hero-title">${esc(s.title)}</div>
+          <div class="detail-hero-chips">${chips}</div>
+        </div>
+      </div>
+    </div>
+    <div class="arc-body">
+      <div class="arc-tabs"><div class="issue-tab active">reading order</div></div>
+      <div class="arc-sec-label">Reading order · across all participating titles</div>
+      ${body}
+    </div>
+  `);
+  // Just-added arc whose background populate hasn't landed yet — re-fetch once.
+  if (!total) setTimeout(() => {
+    if (currentView === 'series-detail' && currentParams.id === s.id) renderSeriesDetail(s.id);
+  }, 4000);
+}
+
 async function renderSeriesDetail(id) {
   setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
   setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
   _detailSeries = s;
+  if (s.kind === 'arc') return renderArcDetail(s);
 
   // Self-healing: a never-synced or stale (>1h) series refreshes itself on view,
   // in the background — no manual Sync button needed. Fires at most once per
@@ -1015,9 +1067,13 @@ async function wizardSearch() {
   const seq = ++_wizardSeq;             // anything older than this is stale on return
   try {
     _wizardStatus('Searching…');
-    // Metron is optional — if it's not configured or hiccups, don't let it kill
-    // the search. Swallow its error and fall through to LOCG (works key-free).
-    // The user just searches "for a series"; which source answers is our problem.
+    // ComicVine runs on EVERY search (in parallel) — an arc is a distinct
+    // event-level result that should surface ALONGSIDE LOCG's collected editions,
+    // not just when LOCG is empty. We always merge the arcs in; CV's collected-
+    // edition VOLUMES only show as the LOCG-empty fallback (to avoid noise).
+    const cvP = api.get(`/api/search/comicvine?q=${encodeURIComponent(q)}`).catch(() => []);
+
+    // Metron is optional — swallow its error and fall through to LOCG (key-free).
     let metronResults = [];
     try {
       metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
@@ -1025,15 +1081,20 @@ async function wizardSearch() {
       console.warn('Metron search unavailable, falling back to LOCG:', e);
     }
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    if (metronResults.length) { _renderWizardResults(metronResults, q); return; }
+    if (metronResults.length) {
+      const arcs = (await cvP).filter(r => r.kind === 'arc');
+      _renderWizardResults([...arcs, ...metronResults], q); return;
+    }
 
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    if (locgResults.length) { _renderWizardResults(locgResults, q); return; }
+    if (locgResults.length) {
+      const arcs = (await cvP).filter(r => r.kind === 'arc');
+      _renderWizardResults([...arcs, ...locgResults], q); return;
+    }
 
-    // LOCG came up empty — fall to ComicVine, which catalogs the vintage
-    // events/collections LOCG misses (e.g. Knightquest).
-    const cvResults = await api.get(`/api/search/comicvine?q=${encodeURIComponent(q)}`);
+    // LOCG empty — show the full ComicVine result (arcs + collected-edition volumes).
+    const cvResults = await cvP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     _renderWizardResults(cvResults, q);
   } catch (err) {
