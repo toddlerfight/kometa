@@ -1025,7 +1025,13 @@ async function wizardSearch() {
 
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    _renderWizardResults(locgResults, q);
+    if (locgResults.length) { _renderWizardResults(locgResults, q); return; }
+
+    // LOCG came up empty — fall to ComicVine, which catalogs the vintage
+    // events/collections LOCG misses (e.g. Knightquest).
+    const cvResults = await api.get(`/api/search/comicvine?q=${encodeURIComponent(q)}`);
+    if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
+    _renderWizardResults(cvResults, q);
   } catch (err) {
     console.error('wizardSearch error:', err);
     _wizardLastQuery = '';   // let a retry through — this query never landed

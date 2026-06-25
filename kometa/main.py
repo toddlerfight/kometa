@@ -21,7 +21,7 @@ from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
     komga as _komga, metron as _metron,
-    locg as _locg, comics_root as _comics_root,
+    locg as _locg, comics_root as _comics_root, comicvine as _comicvine,
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
@@ -398,6 +398,11 @@ class ConfigRequest(BaseModel):
     sab_url:            str | None = None
     sab_apikey:         str | None = None
     newznab_indexers:   str | None = None  # JSON array of {name, host, apikey, ssl}
+    qbit_url:           str | None = None
+    qbit_user:          str | None = None
+    qbit_pass:          str | None = None
+    prowlarr_url:       str | None = None
+    prowlarr_apikey:    str | None = None
 
 
 @app.patch("/api/config")
@@ -730,6 +735,29 @@ def search_locg(q: str):
         "cover":      r.get("cover"),
         "source":     "locg",
     } for r in raw[:15]]
+
+
+@app.get("/api/search/comicvine")
+def search_comicvine(q: str):
+    # The gap-filler: only reached when LOCG comes up empty (vintage events /
+    # collections it doesn't catalog). Not configured → [] so the wizard degrades
+    # cleanly. Same result shape as LOCG, carrying cv_volume_id for the add path.
+    cv = _comicvine()
+    if not cv:
+        return []
+    try:
+        return [{
+            "id":           r["cv_volume_id"],
+            "series":       r["name"],
+            "publisher":    {"name": r["publisher"]} if r["publisher"] else None,
+            "year_began":   r["year"],
+            "issue_count":  r["issue_count"],
+            "cv_volume_id": r["cv_volume_id"],
+            "source":       "comicvine",
+        } for r in cv.search_volumes(q)]
+    except Exception as e:
+        logger.warning(f"ComicVine search failed for {q!r}: {e}")
+        return []
 
 
 # --- sync ---
