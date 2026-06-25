@@ -479,6 +479,13 @@ def get_series(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
+    if s.get("kind") == "arc":
+        # An arc's cross-title reading order lives in arc_issues, not issue_status.
+        arc_issues = db.get_arc_reading_order(series_id, DB_PATH)
+        owned = sum(1 for i in arc_issues if i["owned"])
+        return dict(s, arc_issues=arc_issues, issues=[],
+                    owned=owned, missing=len(arc_issues) - owned, upcoming=0,
+                    has_trades=False, trade_count=None)
     issues = db.get_issues_for_series(series_id, DB_PATH)
     # Badge = UNOWNED trades, read from the stored owned flag (no per-request scan).
     # None until first sync populates the cache, so it stays hidden vs flashing 0.
