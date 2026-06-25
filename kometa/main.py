@@ -557,17 +557,54 @@ def download_trade(series_id: int, req: TradeDownloadRequest):
 class AddSeriesRequest(BaseModel):
     metron_id: int | None = None
     locg_id: int | None = None
+    cv_arc_id: int | None = None
     folder_path: str | None = None
     komga_id: str | None = None
     on_pull_list: bool = True
-    # Metadata from LOCG when metron_id is absent
+    # Metadata from LOCG/ComicVine when metron_id is absent
     title: str | None = None
     publisher_name: str | None = None
     year_began: int | None = None
 
 
+def _add_arc(req: AddSeriesRequest):
+    """Add a story arc: a kind='arc' tracked_series whose cross-title reading order
+    is populated from ComicVine. Reuses folder/queue/Komga machinery; the arc's
+    issues span titles so they live in arc_issues, not issue_status."""
+    cv = _comicvine()
+    title = req.title or ""
+    publisher = req.publisher_name or "DC Comics"
+    folder = req.folder_path or _resolve_dir(_comics_root(), publisher or "Unknown", title)
+    new_id = db.add_series(
+        title=title, publisher=publisher, year_began=req.year_began,
+        folder_path=folder, on_pull_list=req.on_pull_list,
+        kind="arc", cv_arc_id=str(req.cv_arc_id), path=DB_PATH,
+    )
+    added = db.get_series_by_id(new_id, DB_PATH)
+
+    def _bg():
+        if not cv:
+            return
+        try:
+            issues = [{"reading_order": r["order"], "source_title": r["series"],
+                       "number": r["number"], "story_title": r["title"],
+                       "cv_issue_id": str(r["cv_issue_id"])}
+                      for r in cv.get_arc_issues(req.cv_arc_id)]
+            db.replace_arc_reading_order(new_id, issues, DB_PATH)
+            logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
+            # Phase E adds: resolve owned/komga_book_id against Komga, populate trades,
+            # and (if on_pull_list) grab the covering trades through the cascade.
+        except Exception as e:
+            logger.warning(f"Arc populate failed for {title!r}: {e}")
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return added
+
+
 @app.post("/api/series", status_code=201)
 def add_series(req: AddSeriesRequest):
+    if req.cv_arc_id:
+        return _add_arc(req)
     metron = _metron()
 
     title = req.title or ""
@@ -745,19 +782,33 @@ def search_comicvine(q: str):
     cv = _comicvine()
     if not cv:
         return []
+    out = []
     try:
-        return [{
-            "id":           r["cv_volume_id"],
-            "series":       r["name"],
-            "publisher":    {"name": r["publisher"]} if r["publisher"] else None,
-            "year_began":   r["year"],
-            "issue_count":  r["issue_count"],
-            "cv_volume_id": r["cv_volume_id"],
-            "source":       "comicvine",
-        } for r in cv.search_volumes(q)]
+        # Arcs first — when something falls through to CV it's usually an event /
+        # collection, and the arc is the whole cross-title story in reading order.
+        for a in cv.search_arcs(q):
+            out.append({
+                "id":         a["cv_arc_id"],
+                "series":     (a["name"] or "").replace('"', ''),   # CV names like '"Batman" Knightfall'
+                "publisher":  {"name": a["publisher"]} if a["publisher"] else None,
+                "cv_arc_id":  a["cv_arc_id"],
+                "kind":       "arc",
+                "source":     "comicvine",
+            })
+        for r in cv.search_volumes(q):
+            out.append({
+                "id":           r["cv_volume_id"],
+                "series":       r["name"],
+                "publisher":    {"name": r["publisher"]} if r["publisher"] else None,
+                "year_began":   r["year"],
+                "issue_count":  r["issue_count"],
+                "cv_volume_id": r["cv_volume_id"],
+                "kind":         "series",
+                "source":       "comicvine",
+            })
     except Exception as e:
         logger.warning(f"ComicVine search failed for {q!r}: {e}")
-        return []
+    return out
 
 
 # --- sync ---
