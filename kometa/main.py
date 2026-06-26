@@ -455,7 +455,9 @@ def remove_indexer(idx: int):
 
 @app.get("/api/series")
 def list_series():
-    series = db.get_all_series(DB_PATH)
+    # Arcs are a navigation lens, not library items — they're reached via a
+    # series' Arcs tab + their own detail page, not as cards in the grid.
+    series = [s for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
     summaries = db.get_all_series_summaries(DB_PATH)
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None, "card_image": None}
     return [dict(s, **summaries.get(s["id"], empty)) for s in series]
@@ -523,6 +525,19 @@ def build_arc_readlist(series_id: int):
     result = komga.create_or_update_readlist(
         s["title"], book_ids, summary=f"Reading order for {s['title']} — built by Kometa.")
     return {"name": s["title"], "books": len(book_ids), "updated": result.get("updated", False)}
+
+
+@app.get("/api/series/{series_id}/arcs")
+def get_series_arcs(series_id: int):
+    """Story arcs this series participates in — the reverse lookup behind the
+    series' Arcs tab. An arc appears under every series whose issues it includes."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    from kometa.arc import arc_includes_series
+    arcs = [a for a in db.get_all_arcs(DB_PATH)
+            if arc_includes_series(a["source_titles"], s["title"])]
+    return {"arcs": sorted(arcs, key=lambda a: a["title"])}
 
 
 @app.get("/api/series/{series_id}/trades")
@@ -628,13 +643,19 @@ def _add_arc(req: AddSeriesRequest):
         except Exception as e:
             logger.warning(f"Arc populate failed for {title!r}: {e}")
         if req.on_pull_list:
-            # Acquire the arc as its collected-edition TRADE — the efficient layer
-            # (1-2 files vs N cross-title singles) — through the same
-            # GetComics → Usenet → Torrent cascade. queue_trade keys the search on
-            # the arc title; the trade lands in the arc folder, Komga ingests it.
-            db.queue_trade(new_id, f"arc-{req.cv_arc_id}", title, path=DB_PATH)
+            # The collected edition belongs to the arc's MAIN series, not the arc
+            # (lens model): route the trade grab to the main series so the file lands
+            # in ITS folder + Trades tab. Falls back to the arc only if the main
+            # series isn't tracked yet. Cascade (GetComics→Usenet→Torrent) unchanged.
+            from kometa.arc import main_series_title
+            ro = db.get_arc_reading_order(new_id, DB_PATH)
+            main_title = main_series_title(ro)
+            main = db.find_series_by_title(main_title, DB_PATH) if main_title else None
+            target_id = main["id"] if main else new_id
+            db.queue_trade(target_id, f"arc-{req.cv_arc_id}", title, path=DB_PATH)
             threading.Thread(target=_process_queue, daemon=True).start()
-            logger.info(f"Arc {title!r}: queued collected-edition grab")
+            logger.info(f"Arc {title!r}: queued trade grab → "
+                        f"{'main series ' + repr(main_title) if main else 'arc folder (main untracked)'}")
 
     threading.Thread(target=_bg, daemon=True).start()
     return added
