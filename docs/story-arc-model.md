@@ -7,6 +7,68 @@ couldn't add cleanly.
 
 ---
 
+## ★ CURRENT STATE (2026-06-26) — authoritative summary
+
+The model below evolved through several revisions; this is where it landed and what
+is LIVE on the NAS (branch `torrent-integration`, v=108). Read this first; the rest
+is the historical trail.
+
+**An arc is a LENS, not a container.** It owns no folder. It's a cross-title
+reading-order overlay that references issues living in their own series, plus a
+"grab the storyline" action and a Komga readlist. Arcs do not appear as library
+cards — they're reached through a series' Arcs tab and their own detail page.
+
+**Discovery — arcs arrive WITH a tracked series** (like its issues + trades); no
+separate "track an arc" step:
+- **PRIMARY = ComicVine.** `comicvine_client.discover_arcs(title)` = `search_arcs`
+  filtered by the quoted series prefix CV bakes into arc names (`"Batman"
+  Knightfall`) — structured, repeatable, precise (each carries a `cv_arc_id`), and
+  noise-free without extra calls. Rich for established characters (Batman: ~28 arcs
+  incl. Knightfall, which Wikipedia lacked).
+- **FALLBACK = Wikipedia** (`wikipedia_client`, MediaWiki API, keyless), fires only
+  when CV catalogs nothing (brand-new / indie — e.g. Absolute Batman). Parses the
+  collected-editions wikitable to {name, issue range}. Messy/inconsistent by nature
+  (prose tables) — hence fallback only.
+- Cached per series ~7 days (`arc_discovery_cache`). Merged with already-tracked
+  arcs (which carry live owned counts) in `GET /api/series/{id}/arcs`.
+- **GCD scratched**: its REST API exposes NO story-arc endpoints; arcs live only in
+  the full MySQL dump (heavy, uncertain). Not viable near-term.
+
+**Click-to-populate** (`POST /api/series/{id}/arcs/populate`): a CV arc → `_add_arc`
+(precise cross-title order); a Wikipedia arc → `_create_range_arc` (single-title
+lens over the VIEWED series, so a re-release like TWD Deluxe resolves ownership
+against what you actually own, not CV's original volume).
+
+**Reading order + ownership** (`_resolve_arc_ownership`, Brick A/4):
+- CV's `get_issues_meta` batch-resolves each issue's REAL number + exact volume
+  (fixes Showcase '93 → #7/#8; Batman → vol 796 (1940), not 2016). Stored as
+  `cv_volume_id` on `arc_issues`.
+- Ownership two ways: singles matched cross-title vs each issue's own Komga series;
+  AND collected-edition detection (`_arc_collection` — a Komga series named after
+  the arc). Arc page shows a ◆ collected chip + per-row "in collection".
+
+**Fulfill-the-arc** (Bricks B/C): adding/populating an arc auto-tracks its
+participating runs (`_track_participating`) — one tracked series per distinct
+`cv_volume_id`, **pull-list OFF** so broad sweeps skip them (the broad sweep gates
+on `monitor_status='monitored' AND on_pull_list=1`). Each run's card shows the arc's
+slice (Batman 1940 → 0/10). The arc page's **Fulfill arc** button queues ONLY the
+arc's missing issues into their runs (`/fulfill`, bulk-queued). Trades route to the
+arc's main series (`arc.main_series_title`). Readlist builds cross-title (singles →
+collection volumes → partial).
+
+**Key modules:** `arc.py` (title logic), `comicvine_client.py`,
+`wikipedia_client.py`, plus arc paths in `main.py` / `db.py`. **New tables:**
+`arc_issues` (+ `cv_volume_id`), `arc_discovery_cache`. **New `tracked_series`
+cols:** `kind`, `cv_arc_id`, `cv_volume_id`.
+
+**Known rough edges (deferred polish):** CV pads some arc issue lists with
+reprints/foreign editions (cosmetic); Wikipedia includes compendiums alongside
+granular arcs; first Arcs-tab load on a CV miss does a synchronous ~2s Wikipedia
+fetch. Test arcs accumulated in the live DB during development (Knightfall 64,
+Knightquest 63, Days Gone Bye 70, Hush 72) — legit but disposable.
+
+---
+
 ## ⚑ REVISED MODEL — arc as a LENS, not a container (2026-06-26)
 
 **This supersedes the "arc as a first-class container" approach below (Phases B–E
