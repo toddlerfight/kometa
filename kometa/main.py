@@ -637,16 +637,28 @@ def build_arc_readlist(series_id: int):
 
 
 def _discover_arcs(series: dict) -> list[dict]:
-    """Wikipedia-discovered arcs for a series, cached ~7 days. Resilient: returns the
-    stale cache (or []) on any failure — Wikipedia down, no article, parse miss."""
+    """Discovered arcs for a series, cached ~7 days. PRIMARY = ComicVine (structured,
+    repeatable, precise cv_arc_id, noise-filtered by quoted prefix); FALLBACK =
+    Wikipedia, only when CV catalogs nothing (brand-new / indie books)."""
     cached = db.get_arc_discovery(series["id"], DB_PATH)
     if cached and cached["age"] < 7 * 86400:
         return cached["arcs"]
-    try:
-        arcs = _wikipedia().discover_arcs(series["title"], series.get("year_began"))
-    except Exception as e:
-        logger.warning(f"Arc discovery failed for {series['title']!r}: {e}")
-        return cached["arcs"] if cached else []
+    arcs = []
+    cv = _comicvine()
+    if cv:
+        try:
+            arcs = [{"name": a["name"], "cv_arc_id": a["cv_arc_id"], "source": "comicvine"}
+                    for a in cv.discover_arcs(series["title"])]
+        except Exception as e:
+            logger.warning(f"CV arc discovery failed for {series['title']!r}: {e}")
+    if not arcs:  # CV blank -> the messy-but-broad fallback
+        try:
+            arcs = [{"name": a["name"], "first_issue": a["first_issue"],
+                     "last_issue": a["last_issue"], "source": "wikipedia"}
+                    for a in _wikipedia().discover_arcs(series["title"], series.get("year_began"))]
+        except Exception as e:
+            logger.warning(f"Wikipedia arc discovery failed for {series['title']!r}: {e}")
+            return cached["arcs"] if cached else []
     db.set_arc_discovery(series["id"], arcs, DB_PATH)
     return arcs
 
@@ -676,8 +688,7 @@ def get_series_arcs(series_id: int):
                         "issue_count": t["issue_count"], "owned_count": t["owned_count"],
                         "source_titles": t["source_titles"]})
         else:
-            out.append({"name": d["name"], "tracked": False, "source": "wikipedia",
-                        "first_issue": d.get("first_issue"), "last_issue": d.get("last_issue")})
+            out.append({**d, "tracked": False})
     # tracked arcs Wikipedia didn't surface (e.g. CV-added, or a coverage gap)
     for a in tracked:
         if a["id"] not in used:
@@ -689,6 +700,7 @@ def get_series_arcs(series_id: int):
 
 class PopulateArcRequest(BaseModel):
     name: str
+    cv_arc_id: int | None = None
     first_issue: int | None = None
     last_issue: int | None = None
 
@@ -724,12 +736,21 @@ def populate_arc(series_id: int, req: PopulateArcRequest):
     if not s:
         raise HTTPException(404)
     from kometa.arc import titles_match
-    existing = next((a for a in db.get_all_arcs(DB_PATH) if titles_match(a["title"], req.name)), None)
-    if existing:
-        return db.get_series_by_id(existing["id"], DB_PATH)
+    if req.cv_arc_id:
+        ex = db.find_arc_by_cv_id(req.cv_arc_id, DB_PATH)
+        if ex:
+            return ex
+    ex = next((a for a in db.get_all_arcs(DB_PATH) if titles_match(a["title"], req.name)), None)
+    if ex:
+        return db.get_series_by_id(ex["id"], DB_PATH)
+    # CV arc -> precise cross-title order (Brick A-C). Wikipedia range -> single-title
+    # lens over the viewed series (ownership-correct for re-releases).
+    if req.cv_arc_id:
+        return _add_arc(AddSeriesRequest(cv_arc_id=req.cv_arc_id, title=req.name,
+                                         publisher_name=s.get("publisher"), on_pull_list=False))
     if req.first_issue and req.last_issue:
         return _create_range_arc(s, req.name, req.first_issue, req.last_issue)
-    raise HTTPException(400, "No issue range to populate from")
+    raise HTTPException(400, "Nothing to populate from")
 
 
 @app.get("/api/series/{series_id}/trades")
