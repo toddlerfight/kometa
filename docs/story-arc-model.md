@@ -49,13 +49,22 @@ ARC      owns NOTHING — a cross-title reading-order OVERLAY + grab-trigger +
   + `arc.arc_includes_series`), `arc_count` on `get_series`, frontend tab +
   `_loadArcsPanel`/`_arcRowHtml`. Verified: Batman → Knightfall + Knightquest.
 - ✅ brick 5 — `list_series` filters `kind='arc'` → arcs gone from the library grid.
-- ⬜ **brick 4 (NEXT)** — ownership resolution: match arc_issues (and covering
-  trades) against Komga so the arc page shows real `12/23` not `0/23`; surface the
-  arc's collected editions as the MAIN series' trades. The meatiest remaining bit.
-- brick 6 — mostly moot: the lens model turned the old standalone test-arcs into
+- ✅ brick 4 — ownership resolution, two ways: (A) singles matched cross-title vs
+  each issue's own Komga series (`_resolve_arc_ownership` → `set_arc_ownership`);
+  (B) collected edition detected via `_arc_collection` (the Komga series named after
+  the arc, tracked or not). Arc page shows a ◆ collected chip + banner + per-row "in
+  collection"; readlist rebuilt cross-title (singles-exact → collection volumes →
+  partial). Also fixed `create_or_update_readlist` (Komga `?search` unreliable →
+  dupe-name 400 on rebuild). Verified: Knightfall (2 vols) + Knightquest (1 vol)
+  both detect + readlist.
+- brick 6 — moot: the lens model turned the old standalone test-arcs into
   legitimate, reachable arcs.
 
-Deployed live (v=102), branch `torrent-integration`. Resume at brick 4.
+**Lens rework COMPLETE.** Deployed live (v=103), branch `torrent-integration`.
+Loose ends (optional): vintage arcs show "0/N singles" + the collected banner (it's
+honest — owned as a collection, not singles); a collection that isn't separately
+tracked (e.g. Knightquest) shows no banner link; `build_arc_readlist` fetches the
+Komga library twice (minor perf). Next big step: merge `torrent-integration` → main.
 
 **Rework impact (mostly subtraction):**
 - KEEP: `comicvine_client.search_arcs`/`get_arc_issues` (Phase A); the `arc_issues`
