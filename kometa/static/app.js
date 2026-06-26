@@ -578,12 +578,27 @@ function renderArcDetail(s) {
       <div class="arc-tabs"><div class="issue-tab active">reading order</div></div>
       <div class="arc-sec-label">Reading order · across all participating titles</div>
       ${body}
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd)">
+        <button class="btn btn-primary" onclick="buildArcReadlist(${s.id}, this)">Build Komga Readlist</button>
+      </div>
     </div>
   `);
   // Just-added arc whose background populate hasn't landed yet — re-fetch once.
   if (!total) setTimeout(() => {
     if (currentView === 'series-detail' && currentParams.id === s.id) renderSeriesDetail(s.id);
   }, 4000);
+}
+
+async function buildArcReadlist(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
+  try {
+    const r = await api.post(`/api/series/${id}/readlist`, {});
+    showToast(`Readlist "${r.name}" → Komga · ${r.books} book${r.books === 1 ? '' : 's'}${r.updated ? ' (updated)' : ''}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Rebuild Komga Readlist'; }
+  } catch (e) {
+    showToast('Readlist failed — ' + (e?.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Build Komga Readlist'; }
+  }
 }
 
 async function renderSeriesDetail(id) {
