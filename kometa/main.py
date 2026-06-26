@@ -742,7 +742,7 @@ def _track_participating(arc_series_id: int) -> dict:
         vid = r.get("cv_volume_id")
         if vid and vid not in vols:
             vols[vid] = r.get("source_title") or ""
-    kall = _komga_all_series(komga) if komga else []
+    kall = None  # fetched lazily — skip the whole-library pull when nothing to create
     mapping = {}
     for vid, name in vols.items():
         existing = db.get_series_by_cv_volume(vid, DB_PATH)
@@ -754,6 +754,8 @@ def _track_participating(arc_series_id: int) -> dict:
         kid = None
         if komga:
             try:
+                if kall is None:
+                    kall = _komga_all_series(komga)
                 kid = _best_komga_match(kall, title) or _best_komga_match(kall, name)
             except Exception:
                 kid = None
@@ -768,7 +770,57 @@ def _track_participating(arc_series_id: int) -> dict:
             logger.warning(f"Participating-series sync failed for {title!r}: {e}")
         logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid} "
                     f"(komga={'yes' if kid else 'no'})")
+    _populate_participating_issues(arc_series_id)
     return mapping
+
+
+def _populate_participating_issues(arc_series_id: int) -> int:
+    """Brick C: stamp each arc issue into its participating run's issue_status, so the
+    run's card shows the issues THIS arc needs (owned/missing) and Fulfill can act on
+    them. Owned/komga_book_id carry over from the arc's resolved ownership."""
+    rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
+    vids = {r.get("cv_volume_id") for r in rows if r.get("cv_volume_id")}
+    ps_map = {vid: db.get_series_by_cv_volume(vid, DB_PATH) for vid in vids}
+    batch = []
+    for r in rows:
+        ps = ps_map.get(r.get("cv_volume_id"))
+        if not ps:
+            continue
+        try:
+            num = float(r.get("number"))
+        except (TypeError, ValueError):
+            continue
+        batch.append((ps["id"], num, r.get("owned", 0), r.get("komga_book_id")))
+    db.upsert_issue_status_bulk(batch, DB_PATH)
+    return len(batch)
+
+
+@app.post("/api/series/{series_id}/fulfill")
+def fulfill_arc(series_id: int):
+    """Pull just this arc's MISSING issues into their participating runs — singles,
+    through the normal cascade, scoped to the arc (not the whole runs)."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s or s.get("kind") != "arc":
+        raise HTTPException(404, "Not a story arc")
+    _track_participating(series_id)  # ensure runs exist + issues stamped (idempotent/fast)
+    rows = db.get_arc_reading_order(series_id, DB_PATH)
+    vids = {r.get("cv_volume_id") for r in rows if r.get("cv_volume_id")}
+    ps_map = {vid: db.get_series_by_cv_volume(vid, DB_PATH) for vid in vids}
+    pairs = []
+    for r in rows:
+        if r.get("owned"):
+            continue
+        ps = ps_map.get(r.get("cv_volume_id"))
+        if not ps:
+            continue
+        try:
+            pairs.append((ps["id"], float(r.get("number"))))
+        except (TypeError, ValueError):
+            continue
+    db.queue_issues_bulk(pairs, DB_PATH)
+    if pairs:
+        threading.Thread(target=_process_queue, daemon=True).start()
+    return {"queued": len(pairs), "total": len(rows), "owned": sum(1 for r in rows if r.get("owned"))}
 
 
 @app.post("/api/series/{series_id}/track-participating")

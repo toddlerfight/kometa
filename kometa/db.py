@@ -693,6 +693,39 @@ def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
         """, (tracked_series_id, issue_number))
 
 
+def queue_issues_bulk(pairs, path=DB_PATH):
+    """Queue many (tracked_series_id, issue_number) in ONE transaction. Per-call
+    queue_issue commits (and fsyncs) once each — N issues = N fsyncs, brutal on NAS
+    disk. Fulfilling an arc enqueues a whole reading order, so batch it."""
+    with _connect(path) as conn:
+        for sid, num in pairs:
+            conn.execute("""
+                INSERT INTO download_queue (tracked_series_id, issue_number, state)
+                VALUES (?, ?, 'queued')
+                ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
+                    state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
+                    error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
+                    updated_at = datetime('now')
+            """, (sid, num))
+    return len(pairs)
+
+
+def upsert_issue_status_bulk(rows, path=DB_PATH):
+    """Upsert many issues in ONE transaction (same fsync reason as above). rows =
+    list of (tracked_series_id, number, owned, komga_book_id). Leaves metadata
+    columns untouched on conflict."""
+    with _connect(path) as conn:
+        for sid, num, owned, kbid in rows:
+            conn.execute("""
+                INSERT INTO issue_status (tracked_series_id, number, owned, komga_book_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(tracked_series_id, number) DO UPDATE SET
+                    owned         = excluded.owned,
+                    komga_book_id = excluded.komga_book_id
+            """, (sid, num, int(owned), kbid))
+    return len(rows)
+
+
 def queue_trade(tracked_series_id, locg_id, title, vol=None, vol_range=None, cover=None,
                 edition_title=None, path=DB_PATH):
     """Queue a collected edition — same table, kind='trade'. meta_json carries the
