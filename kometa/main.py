@@ -828,6 +828,23 @@ class AddSeriesRequest(BaseModel):
     year_began: int | None = None
 
 
+def _drop_reprints(issues: list[dict]) -> list[dict]:
+    """Strip reprint noise from a CV arc reading order. Collected editions and
+    foreign reprints surface as a single issue in a one-off volume, while real
+    participating runs contribute >=2 (Knightfall: Batman 10, Detective 8, …). Keep
+    volumes with >=2 issues (plus unknown-volume rows); fall back to the full list if
+    that would empty it (genuine one-shot arcs). Renumbers reading order contiguously."""
+    from collections import Counter
+    counts = Counter(i["cv_volume_id"] for i in issues if i.get("cv_volume_id"))
+    keep_vols = {v for v, c in counts.items() if c >= 2}
+    kept = [i for i in issues if not i.get("cv_volume_id") or i["cv_volume_id"] in keep_vols]
+    if not kept or len(kept) == len(issues):
+        return issues
+    for k, i in enumerate(kept, 1):
+        i["reading_order"] = k
+    return kept
+
+
 def _vol_title(name: str, year) -> str:
     """Year-qualify a run so it's unambiguous + folders disjoint ('Batman' -> 'Batman
     (1940)'), unless the name already carries the year ('Showcase '93')."""
@@ -984,6 +1001,10 @@ def _add_arc(req: AddSeriesRequest):
                     "cv_issue_id": str(r["cv_issue_id"]),
                     "cv_volume_id": str(m["volume_id"]) if m.get("volume_id") else None,
                 })
+            kept = _drop_reprints(issues)
+            if len(kept) < len(issues):
+                logger.info(f"Arc {title!r}: dropped {len(issues) - len(kept)} reprint/edition issues")
+            issues = kept
             db.replace_arc_reading_order(new_id, issues, DB_PATH)
             logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
             # Resolve cross-title ownership against Komga so the arc page shows real
