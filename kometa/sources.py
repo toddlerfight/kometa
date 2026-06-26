@@ -108,6 +108,18 @@ def comicvine():
     return ComicVineClient(key)
 
 
+_wikipedia_instance = None
+
+
+def wikipedia():
+    """Wikipedia arc-discovery client — keyless, so always available."""
+    global _wikipedia_instance
+    if _wikipedia_instance is None:
+        from kometa.wikipedia_client import WikipediaClient
+        _wikipedia_instance = WikipediaClient()
+    return _wikipedia_instance
+
+
 def usenet_indexers() -> list[dict]:
     import json
     cfg = db.get_config(DB_PATH)

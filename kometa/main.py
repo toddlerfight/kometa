@@ -22,6 +22,7 @@ import kometa.db as db
 from kometa.sources import (
     komga as _komga, metron as _metron,
     locg as _locg, comics_root as _comics_root, comicvine as _comicvine,
+    wikipedia as _wikipedia,
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
@@ -504,9 +505,15 @@ def get_series(series_id: int):
     # is already owned still has_trades, so the UI lands on Trades instead of an empty
     # Issues grid that polls 'Syncing issues…' forever for singles that don't exist.
     has_trades = bool(trades)
-    # arc_count = how many tracked story arcs this series participates in (Arcs-tab badge)
-    from kometa.arc import arc_includes_series
-    arc_count = sum(1 for a in db.get_all_arcs(DB_PATH) if arc_includes_series(a["source_titles"], s["title"])) or None
+    # arc_count badge: prefer the cached discovered-arc count (no Wikipedia fetch on
+    # page load); fall back to tracked-arc count until the Arcs tab warms the cache.
+    disc = db.get_arc_discovery(series_id, DB_PATH)
+    if disc:
+        arc_count = len(disc["arcs"]) or None
+    else:
+        from kometa.arc import arc_includes_series
+        arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
+                        if arc_includes_series(a["source_titles"], s["title"])) or None
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades,
                 arc_count=arc_count, **_summary(issues))
 
@@ -629,17 +636,100 @@ def build_arc_readlist(series_id: int):
             "mode": mode, "updated": result.get("updated", False)}
 
 
+def _discover_arcs(series: dict) -> list[dict]:
+    """Wikipedia-discovered arcs for a series, cached ~7 days. Resilient: returns the
+    stale cache (or []) on any failure — Wikipedia down, no article, parse miss."""
+    cached = db.get_arc_discovery(series["id"], DB_PATH)
+    if cached and cached["age"] < 7 * 86400:
+        return cached["arcs"]
+    try:
+        arcs = _wikipedia().discover_arcs(series["title"], series.get("year_began"))
+    except Exception as e:
+        logger.warning(f"Arc discovery failed for {series['title']!r}: {e}")
+        return cached["arcs"] if cached else []
+    db.set_arc_discovery(series["id"], arcs, DB_PATH)
+    return arcs
+
+
 @app.get("/api/series/{series_id}/arcs")
 def get_series_arcs(series_id: int):
-    """Story arcs this series participates in — the reverse lookup behind the
-    series' Arcs tab. An arc appears under every series whose issues it includes."""
+    """The series' Arcs tab: every story arc it participates in — discovered from
+    Wikipedia (the arcs come with the series, like its issues + trades) and merged
+    with any already-tracked arcs (which carry live owned counts)."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    from kometa.arc import arc_includes_series
-    arcs = [a for a in db.get_all_arcs(DB_PATH)
-            if arc_includes_series(a["source_titles"], s["title"])]
-    return {"arcs": sorted(arcs, key=lambda a: a["title"])}
+    from kometa.arc import arc_includes_series, titles_match
+    tracked = [a for a in db.get_all_arcs(DB_PATH)
+               if arc_includes_series(a["source_titles"], s["title"])]
+
+    def _match_tracked(name):
+        return next((a for a in tracked
+                     if titles_match(a["title"], name) or _norm(name) in _norm(a["title"])), None)
+
+    out, used = [], set()
+    for d in _discover_arcs(s):
+        t = _match_tracked(d["name"])
+        if t:
+            used.add(t["id"])
+            out.append({"name": t["title"], "id": t["id"], "tracked": True,
+                        "issue_count": t["issue_count"], "owned_count": t["owned_count"],
+                        "source_titles": t["source_titles"]})
+        else:
+            out.append({"name": d["name"], "tracked": False, "source": "wikipedia",
+                        "first_issue": d.get("first_issue"), "last_issue": d.get("last_issue")})
+    # tracked arcs Wikipedia didn't surface (e.g. CV-added, or a coverage gap)
+    for a in tracked:
+        if a["id"] not in used:
+            out.append({"name": a["title"], "id": a["id"], "tracked": True,
+                        "issue_count": a["issue_count"], "owned_count": a["owned_count"],
+                        "source_titles": a["source_titles"]})
+    return {"arcs": out}
+
+
+class PopulateArcRequest(BaseModel):
+    name: str
+    first_issue: int | None = None
+    last_issue: int | None = None
+
+
+def _create_range_arc(series: dict, name: str, first: int, last: int) -> dict:
+    """Materialize a single-title discovered arc as a lens over THIS series' issue
+    slice (#first-last). Ownership comes straight from the series you're viewing — so
+    a re-release like 'TWD Deluxe' resolves correctly, where CV's original volume
+    wouldn't."""
+    new_id = db.add_series(title=name, publisher=series.get("publisher"),
+                           year_began=series.get("year_began"),
+                           folder_path=series.get("folder_path"), on_pull_list=False,
+                           kind="arc", cv_volume_id=series.get("cv_volume_id"), path=DB_PATH)
+    own = {i["number"]: i for i in db.get_issues_for_series(series["id"], DB_PATH)}
+    issues, resolved = [], []
+    for k, num in enumerate(range(first, last + 1), 1):
+        si = own.get(float(num), {})
+        issues.append({"reading_order": k, "source_title": series["title"],
+                       "number": str(num), "story_title": "", "cv_issue_id": None,
+                       "cv_volume_id": series.get("cv_volume_id")})
+        resolved.append((k, si.get("komga_book_id"), si.get("owned", 0)))
+    db.replace_arc_reading_order(new_id, issues, DB_PATH)
+    db.set_arc_ownership(new_id, resolved, DB_PATH)
+    return db.get_series_by_id(new_id, DB_PATH)
+
+
+@app.post("/api/series/{series_id}/arcs/populate")
+def populate_arc(series_id: int, req: PopulateArcRequest):
+    """Turn a discovered arc into a tracked arc on demand (click-to-populate). For a
+    single-title slice we lens it over the viewed series; CV cross-title arcs still
+    come in via the ◆ ARC search path."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    from kometa.arc import titles_match
+    existing = next((a for a in db.get_all_arcs(DB_PATH) if titles_match(a["title"], req.name)), None)
+    if existing:
+        return db.get_series_by_id(existing["id"], DB_PATH)
+    if req.first_issue and req.last_issue:
+        return _create_range_arc(s, req.name, req.first_issue, req.last_issue)
+    raise HTTPException(400, "No issue range to populate from")
 
 
 @app.get("/api/series/{series_id}/trades")

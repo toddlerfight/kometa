@@ -51,6 +51,12 @@ def init_db(path=DB_PATH):
                 fetched_at        TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS arc_discovery_cache (
+                tracked_series_id INTEGER PRIMARY KEY REFERENCES tracked_series(id),
+                data_json         TEXT NOT NULL,
+                fetched_at        TEXT DEFAULT (datetime('now'))
+            );
+
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -619,6 +625,30 @@ def get_trades(tracked_series_id, path=DB_PATH):
     if not row:
         return None
     return {"trades": json.loads(row["data_json"]), "age": row["age"]}
+
+
+def set_arc_discovery(tracked_series_id, arcs, path=DB_PATH):
+    """Cache a series' Wikipedia-discovered arc list (arcs barely change, so this
+    stays fresh for days)."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO arc_discovery_cache (tracked_series_id, data_json, fetched_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(tracked_series_id) DO UPDATE SET
+                data_json = excluded.data_json, fetched_at = excluded.fetched_at
+        """, (tracked_series_id, json.dumps(arcs)))
+
+
+def get_arc_discovery(tracked_series_id, path=DB_PATH):
+    """Cached discovered arcs + age in seconds, or None. {'arcs': [...], 'age': float}."""
+    with _connect(path) as conn:
+        row = conn.execute("""
+            SELECT data_json, (julianday('now') - julianday(fetched_at)) * 86400 AS age
+            FROM arc_discovery_cache WHERE tracked_series_id = ?
+        """, (tracked_series_id,)).fetchone()
+    if not row:
+        return None
+    return {"arcs": json.loads(row["data_json"]), "age": row["age"]}
 
 
 def get_issues_for_series(tracked_series_id, path=DB_PATH):
