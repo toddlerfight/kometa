@@ -599,10 +599,16 @@ def _add_arc(req: AddSeriesRequest):
                       for r in cv.get_arc_issues(req.cv_arc_id)]
             db.replace_arc_reading_order(new_id, issues, DB_PATH)
             logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
-            # Phase E adds: resolve owned/komga_book_id against Komga, populate trades,
-            # and (if on_pull_list) grab the covering trades through the cascade.
         except Exception as e:
             logger.warning(f"Arc populate failed for {title!r}: {e}")
+        if req.on_pull_list:
+            # Acquire the arc as its collected-edition TRADE — the efficient layer
+            # (1-2 files vs N cross-title singles) — through the same
+            # GetComics → Usenet → Torrent cascade. queue_trade keys the search on
+            # the arc title; the trade lands in the arc folder, Komga ingests it.
+            db.queue_trade(new_id, f"arc-{req.cv_arc_id}", title, path=DB_PATH)
+            threading.Thread(target=_process_queue, daemon=True).start()
+            logger.info(f"Arc {title!r}: queued collected-edition grab")
 
     threading.Thread(target=_bg, daemon=True).start()
     return added
