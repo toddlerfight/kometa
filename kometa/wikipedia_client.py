@@ -21,6 +21,8 @@ _UA = "Kometa/1.0 (comic library manager; arc discovery; +https://github.com/)"
 _EDITION_RE = re.compile(
     r"\s*[-:]?\s*\b(deluxe|omnibus|compendium|the complete|collected|library|"
     r"edition|hardcover|tpb)\b.*$", re.I)
+_ARC_SECTION_RE = re.compile(
+    r"\b(collected|story arc|trade paperback|graphic novel|reading order)\b", re.I)
 _RANGE_RE = re.compile(r"#?\s*(\d+)\s*[–\-—]\s*#?\s*(\d+)")
 _SINGLE_RE = re.compile(r"#\s*(\d+)\b")
 _COMIC_SUFFIXES = ("(comic book)", "(comics)", "(comic)", "(comic strip)",
@@ -142,32 +144,55 @@ class WikipediaClient:
                     return t
         return None
 
+    @staticmethod
+    def _arc_sections(wikitext):
+        """Bodies of sections whose heading names collected editions / story arcs —
+        the section is a precise filter, so even a 1-2 row table (new series) counts."""
+        parts = re.split(r"\n(==+[^=\n]+==+)\n", wikitext)
+        out = []
+        for i in range(1, len(parts), 2):
+            if _ARC_SECTION_RE.search(parts[i]) and i + 1 < len(parts):
+                out.append(parts[i + 1])
+        return out
+
+    @classmethod
+    def _table_candidates(cls, table):
+        cand = []
+        for row in re.split(r"\n\|-", table):
+            cells = cls._cells(row)
+            rng = None
+            for c in cells:
+                m = _RANGE_RE.search(c)
+                if m and _valid_range(int(m.group(1)), int(m.group(2))):
+                    rng = (int(m.group(1)), int(m.group(2)))
+                    break
+            if not rng:
+                continue
+            name = cls._row_name(cells)
+            if name:
+                cand.append((name, rng))
+        return cand
+
     @classmethod
     def _parse_arcs(cls, wikitext):
+        # Two passes, unioned: (1) tables inside collected-editions/story-arc sections
+        # accept even 1-2 rows (short/new series like Absolute Batman); (2) ANY table
+        # with >=3 valid rows — the broad net that also filters stray creator/novel
+        # tables. (1) rescues small tables (2) misses; (2) rescues big tables whose
+        # heading (1) doesn't match.
+        passes = [(b, 1) for b in cls._arc_sections(wikitext)] + [(wikitext, 3)]
         out, seen = [], set()
-        for table in re.findall(r"\{\|.*?\n\|\}", wikitext, re.S):
-            cand = []
-            for row in re.split(r"\n\|-", table):
-                cells = cls._cells(row)
-                rng = None
-                for c in cells:
-                    m = _RANGE_RE.search(c)
-                    if m and _valid_range(int(m.group(1)), int(m.group(2))):
-                        rng = (int(m.group(1)), int(m.group(2)))
-                        break
-                if not rng:
+        for block, require_min in passes:
+            for table in re.findall(r"\{\|.*?\n\|\}", block, re.S):
+                cand = cls._table_candidates(table)
+                if len(cand) < require_min:
                     continue
-                name = cls._row_name(cells)
-                if name:
-                    cand.append((name, rng))
-            if len(cand) < 3:   # not a collected-editions table (creators/novels/etc.)
-                continue
-            for name, (a, b) in cand:
-                key = _norm(name)
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append({"name": name, "first_issue": a, "last_issue": b})
+                for name, (a, b) in cand:
+                    key = _norm(name)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({"name": name, "first_issue": a, "last_issue": b})
         return out
 
 
