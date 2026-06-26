@@ -1639,6 +1639,9 @@ select.settings-input {
   margin-left: 4px;
   letter-spacing: 0.05em;
 }
+/* Collected edition (omnibus/deluxe/etc) — neutral grey so it reads as secondary
+   to the actual series it collects, not another amber result to track. */
+.collected-badge { color: var(--tm); border-color: var(--bd-l); }
 
 /* --- Trades (collected editions) — reuses .issue-tile / .issue-grid --- */
 

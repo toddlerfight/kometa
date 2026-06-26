@@ -1067,6 +1067,15 @@ function _wizardStatus(text) {
   el.innerHTML = `<div class="state-msg _wiz-status" style="padding:16px 0;font-size:11px">${text}<span class="animated-dots"></span></div>`;
 }
 
+// A search hit that's really a collected edition (omnibus/deluxe/etc), not a series.
+// Trades live in a series' Trades tab — flag these so they aren't mistaken for one.
+function _isCollectedResult(r) {
+  if (r.kind === 'arc') return false;
+  // 'absolute' deliberately excluded — DC's current Absolute line is ongoing series,
+  // not the old collected-edition format. Keep only unambiguous collected-edition words.
+  return /\b(omnibus|deluxe edition|compendium|the complete|collected edition|library edition)\b/i.test(r.series || r.name || '');
+}
+
 function _renderWizardResults(results, q) {
   const container = document.getElementById('wizard-results');
   if (!container) return;
@@ -1082,6 +1091,9 @@ function _renderWizardResults(results, q) {
     const aPrefix = at.startsWith(ql), bPrefix = bt.startsWith(ql);
     if (aExact !== bExact) return aExact ? -1 : 1;
     if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+    // A collected edition sinks below the actual series it collects.
+    const aColl = _isCollectedResult(a), bColl = _isCollectedResult(b);
+    if (aColl !== bColl) return aColl ? 1 : -1;
     return 0;
   });
   _wizardResults = results.slice(0, 15);
@@ -1096,8 +1108,8 @@ function _renderWizardResults(results, q) {
             <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
