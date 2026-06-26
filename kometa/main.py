@@ -485,8 +485,14 @@ def get_series(series_id: int):
         # An arc's cross-title reading order lives in arc_issues, not issue_status.
         arc_issues = db.get_arc_reading_order(series_id, DB_PATH)
         owned = sum(1 for i in arc_issues if i["owned"])
+        # 'collected' = a Komga series named after the arc holds its trade edition —
+        # the usual ownership shape for vintage events, distinct from owned singles.
+        komga = _komga()
+        coll = _arc_collection(s["title"], komga)
+        collection = _collection_info(coll, komga)
         return dict(s, arc_issues=arc_issues, issues=[],
                     owned=owned, missing=len(arc_issues) - owned, upcoming=0,
+                    collected=bool(coll), collection=collection,
                     has_trades=False, trade_count=None)
     issues = db.get_issues_for_series(series_id, DB_PATH)
     # Badge = UNOWNED trades, read from the stored owned flag (no per-request scan).
@@ -505,30 +511,122 @@ def get_series(series_id: int):
                 arc_count=arc_count, **_summary(issues))
 
 
+def _arc_collection(arc_title: str, komga, all_series=None):
+    """The Komga series that collects an arc (its trade edition), matched by title —
+    owned-as-a-collection regardless of whether that collection is separately tracked.
+    Returns the Komga series dict or None."""
+    if not komga:
+        return None
+    from kometa.arc import titles_match
+    try:
+        series = all_series if all_series is not None else komga.get_all_series()
+    except Exception:
+        return None
+    return next((x for x in series if titles_match(x.get("name", ""), arc_title)), None)
+
+
+def _collection_info(coll, komga) -> dict | None:
+    """Shape a Komga collection series for the API: name, book count, and the tracked
+    series id (if any) so the arc page can link to it."""
+    if not coll:
+        return None
+    try:
+        books = len(komga.get_books(coll["id"]))
+    except Exception:
+        books = None
+    tracked = db.find_series_by_title(coll.get("name", ""), DB_PATH)
+    return {"name": coll["name"], "komga_series_id": coll["id"], "books": books,
+            "series_id": tracked["id"] if tracked else None}
+
+
+def _resolve_arc_ownership(arc_series_id: int) -> dict:
+    """Cross-title ownership for an arc (the lens model): match each reading-order
+    issue (source_title + number) against ITS OWN title's Komga series, stamping
+    komga_book_id + owned. An arc spans titles, so this walks several Komga series,
+    not one — that's why a single 'the arc's Komga series' lookup was wrong."""
+    from kometa.arc import titles_match
+    komga = _komga()
+    s = db.get_series_by_id(arc_series_id, DB_PATH)
+    rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
+    if not komga or not rows:
+        return {"owned": 0, "total": len(rows), "collection": None}
+    all_series = komga.get_all_series()
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return _parse_issue_number(str(v or ""))
+
+    # (A) Singles: match each reading-order issue to a book in ITS title's Komga
+    # series. One book_map (issue number -> book id) per source title, fetched once.
+    book_maps: dict[str, dict] = {}
+    resolved = []
+    for r in rows:
+        st = r.get("source_title") or ""
+        if st not in book_maps:
+            ks = next((x for x in all_series if titles_match(x.get("name", ""), st)), None)
+            bm = {}
+            if ks:
+                for b in komga.get_books(ks["id"]):
+                    if b.get("media", {}).get("status") == "ERROR":
+                        continue
+                    n = _parse_issue_number(b.get("name", ""), st)
+                    if n is not None and n not in bm:
+                        bm[n] = b["id"]
+            book_maps[st] = bm
+        n = _num(r.get("number"))
+        book_id = book_maps[st].get(n) if n is not None else None
+        resolved.append((r["reading_order"], book_id, 1 if book_id else 0))
+    db.set_arc_ownership(arc_series_id, resolved, DB_PATH)
+
+    # (B) Collected edition: a KOMGA series named after the arc (its trade edition),
+    # whether or not that collection is separately tracked. Vintage arcs are usually
+    # owned this way, not as singles; the readlist falls back to its volumes.
+    coll = _arc_collection(s["title"], komga, all_series)
+    return {"owned": sum(1 for _, b, o in resolved if o), "total": len(rows),
+            "collection": _collection_info(coll, komga)}
+
+
+@app.post("/api/series/{series_id}/resolve-arc")
+def resolve_arc(series_id: int):
+    """Re-match an arc's reading order against Komga (after grabbing issues/trades),
+    refreshing the owned counts shown on the arc page."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s or s.get("kind") != "arc":
+        raise HTTPException(404, "Not a story arc")
+    return _resolve_arc_ownership(series_id)
+
+
 @app.post("/api/series/{series_id}/readlist")
 def build_arc_readlist(series_id: int):
-    """Build (or rebuild) a Komga readlist from a story arc's collected editions,
-    in reading order. The arc IS an ordered list — this is the one-click version of
-    the hand-built manifest."""
+    """Build (or rebuild) a Komga readlist from a story arc's reading order. The arc
+    spans titles, so it gathers the matched book across EVERY participating Komga
+    series, in reading order — re-resolving ownership first so it's fresh."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s or s.get("kind") != "arc":
         raise HTTPException(404, "Not a story arc")
     komga = _komga()
     if not komga:
         raise HTTPException(400, "Komga not configured")
-    folder = s.get("folder_path") or ""
-    all_series = komga.get_all_series()
-    ks = next((x for x in all_series if x.get("url") == folder), None) \
-        or next((x for x in all_series if _norm(x.get("name", "")) == _norm(s["title"])), None)
-    if not ks:
-        raise HTTPException(404, "No Komga books for this arc yet — grab it first")
-    books = komga.get_books(ks["id"])
-    if not books:
-        raise HTTPException(404, "The arc's Komga series has no books yet")
-    book_ids = [b["id"] for b in books]
+    _resolve_arc_ownership(series_id)
+    rows = db.get_arc_reading_order(series_id, DB_PATH)
+    coll = _arc_collection(s["title"], komga)
+    # Prefer issue-exact order when EVERY issue resolved to a single; otherwise fall
+    # back to the collected edition's volumes (the common vintage case); else whatever
+    # singles we did match.
+    if rows and all(r.get("komga_book_id") for r in rows):
+        book_ids, mode = [r["komga_book_id"] for r in rows], "singles"
+    elif coll:
+        book_ids, mode = [b["id"] for b in komga.get_books(coll["id"])], "collection"
+    else:
+        book_ids, mode = [r["komga_book_id"] for r in rows if r.get("komga_book_id")], "partial"
+    if not book_ids:
+        raise HTTPException(404, "None of this arc's issues are in Komga yet — grab them first")
     result = komga.create_or_update_readlist(
         s["title"], book_ids, summary=f"Reading order for {s['title']} — built by Kometa.")
-    return {"name": s["title"], "books": len(book_ids), "updated": result.get("updated", False)}
+    return {"name": s["title"], "books": len(book_ids), "total": len(rows),
+            "mode": mode, "updated": result.get("updated", False)}
 
 
 @app.get("/api/series/{series_id}/arcs")
@@ -644,6 +742,13 @@ def _add_arc(req: AddSeriesRequest):
                       for r in cv.get_arc_issues(req.cv_arc_id)]
             db.replace_arc_reading_order(new_id, issues, DB_PATH)
             logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
+            # Resolve cross-title ownership against Komga so the arc page shows real
+            # owned counts from the start, not 0/N.
+            try:
+                r = _resolve_arc_ownership(new_id)
+                logger.info(f"Arc {title!r}: resolved {r['owned']}/{r['total']} owned in Komga")
+            except Exception as e:
+                logger.warning(f"Arc ownership resolve failed for {title!r}: {e}")
         except Exception as e:
             logger.warning(f"Arc populate failed for {title!r}: {e}")
         if req.on_pull_list:

@@ -544,12 +544,16 @@ function renderArcDetail(s) {
   const meta = ['◆ STORY ARC', s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
   const ai = s.arc_issues || [];
   const total = ai.length;
-  const chips = total
+  const collChip = s.collected ? `<span class="chip chip-collected" title="${esc(s.collection?.name || '')}">◆ collected</span>` : '';
+  const chips = (total
     ? `<span class="chip ${s.owned < total ? 'chip-missing' : 'chip-complete'}">${s.owned}/${total}</span>`
-    : '';
+    : '') + collChip;
   const rows = ai.map(i => {
+    // Owned single > available via the collected edition > genuinely missing.
     const st = i.owned
       ? '<span class="arc-st owned">✓ owned</span>'
+      : s.collected
+      ? '<span class="arc-st coll">◆ in collection</span>'
       : '<span class="arc-st missing">○ missing</span>';
     return `<tr>
       <td class="arc-num">${i.reading_order}</td>
@@ -558,6 +562,10 @@ function renderArcDetail(s) {
       <td class="arc-stcell">${st}</td>
     </tr>`;
   }).join('');
+  const collBanner = (s.collected && s.collection) ? `
+    <div class="arc-collected-note" onclick="navigate('series-detail',{id:${s.collection.series_id}})">
+      ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. The readlist builds from its volumes.
+    </div>` : '';
   const body = total ? `
     <table class="arc-table">
       <thead><tr><th>#</th><th>Source</th><th>Story</th><th>Status</th></tr></thead>
@@ -577,9 +585,11 @@ function renderArcDetail(s) {
     <div class="arc-body">
       <div class="arc-tabs"><div class="issue-tab active">reading order</div></div>
       <div class="arc-sec-label">Reading order · across all participating titles</div>
+      ${collBanner}
       ${body}
-      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd)">
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center">
         <button class="btn btn-primary" onclick="buildArcReadlist(${s.id}, this)">Build Komga Readlist</button>
+        <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
     </div>
   `);
@@ -598,6 +608,19 @@ async function buildArcReadlist(id, btn) {
   } catch (e) {
     showToast('Readlist failed — ' + (e?.message || e), 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Build Komga Readlist'; }
+  }
+}
+
+async function refreshArcOwnership(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking Komga…'; }
+  try {
+    const r = await api.post(`/api/series/${id}/resolve-arc`, {});
+    const note = r.collection ? ` · collected in "${r.collection.name}"` : '';
+    showToast(`Ownership refreshed · ${r.owned}/${r.total} singles${note}`);
+    if (currentView === 'series-detail' && currentParams.id === id) renderSeriesDetail(id);
+  } catch (e) {
+    showToast('Refresh failed — ' + (e?.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh ownership'; }
   }
 }
 

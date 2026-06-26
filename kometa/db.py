@@ -391,6 +391,17 @@ def get_arc_reading_order(arc_series_id, path=DB_PATH):
             (arc_series_id,))]
 
 
+def set_arc_ownership(arc_series_id, resolved, path=DB_PATH):
+    """Stamp cross-title ownership onto an arc's rows. resolved = list of
+    (reading_order, komga_book_id | None, owned 0/1) — one per arc_issue."""
+    with _connect(path) as conn:
+        for ro, book_id, owned in resolved:
+            conn.execute(
+                "UPDATE arc_issues SET komga_book_id = ?, owned = ? "
+                "WHERE arc_series_id = ? AND reading_order = ?",
+                (book_id, int(owned), arc_series_id, ro))
+
+
 def find_series_by_title(title, path=DB_PATH):
     """A tracked (non-arc) series whose title matches, year-tolerant. Used to route
     an arc's collected-edition trade to its MAIN series (the lens model)."""
