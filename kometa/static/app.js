@@ -639,14 +639,15 @@ async function renderSeriesDetail(id) {
   const pullBtn = `<button class="btn btn-sm ${s.on_pull_list ? 'btn-primary' : 'btn-ghost'}"
     onclick="togglePullList(${s.id}, ${!s.on_pull_list})">Pull</button>`;
 
-  const tabs = ['all','owned','missing','upcoming','trades'].map(t => {
+  const tabs = ['all','owned','missing','upcoming','trades','arcs'].map(t => {
     // Trades tab carries a count badge when collected editions exist (from cache).
     const badge = (t === 'trades' && s.trade_count)
-      ? `<span class="tab-badge">${s.trade_count}</span>` : '';
+      ? `<span class="tab-badge">${s.trade_count}</span>`
+      : (t === 'arcs' && s.arc_count) ? `<span class="tab-badge">${s.arc_count}</span>` : '';
     return `<div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}${badge}</div>`;
   }).join('');
 
-  const tiles = detailTab === 'trades' ? '' : buildIssueTiles(s);
+  const tiles = (detailTab === 'trades' || detailTab === 'arcs') ? '' : buildIssueTiles(s);
 
   const seriesBg = document.getElementById('series-bg');
   const seriesBgImg = document.getElementById('series-bg-img');
@@ -688,6 +689,8 @@ async function renderSeriesDetail(id) {
     </div>
     ${detailTab === 'trades'
       ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`
+      : detailTab === 'arcs'
+      ? `<div id="arcs-panel" class="arcs-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for arcs…</div></div>`
       : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${
           total === 0 && s.has_trades ? 'No single issues — collected in Trades →'
           : (s.metron_series_id || s.locg_series_id) && total === 0 ? 'Syncing issues…'
@@ -695,6 +698,7 @@ async function renderSeriesDetail(id) {
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
+  if (detailTab === 'arcs') _loadArcsPanel(id);
 
   // Don't poll a trade-only series for singles that will never come (has_trades +
   // empty issue list = collected editions only) — that's the 'Syncing issues…' spinner
@@ -713,6 +717,36 @@ async function renderSeriesDetail(id) {
 function setDetailTab(tab, id) {
   detailTab = tab;
   renderSeriesDetail(id);
+}
+
+async function _loadArcsPanel(id) {
+  let data;
+  try {
+    data = await api.get(`/api/series/${id}/arcs`);
+  } catch (e) {
+    const b = document.getElementById('arcs-panel');
+    if (b) b.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px;color:var(--amb)">Lookup failed: ${esc(String(e))}</div>`;
+    return;
+  }
+  const body = document.getElementById('arcs-panel');
+  if (!body || detailTab !== 'arcs' || currentParams.id !== id) return;
+  const arcs = data.arcs || [];
+  if (!arcs.length) {
+    body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">No tracked story arcs include this series yet — add one from search (◆ ARC).</div>`;
+    return;
+  }
+  body.innerHTML = arcs.map(_arcRowHtml).join('');
+}
+
+function _arcRowHtml(a) {
+  const ntitles = (a.source_titles || []).length;
+  const complete = a.issue_count > 0 && a.owned_count >= a.issue_count;
+  return `<div class="arc-list-row" onclick="navigate('series-detail',{id:${a.id}})">
+    <span class="arc-list-dia">◆</span>
+    <span class="arc-list-name">${esc(a.title)}</span>
+    <span class="arc-list-meta">${a.issue_count} issues · ${ntitles} title${ntitles === 1 ? '' : 's'}</span>
+    <span class="arc-list-count${complete ? ' ok' : ''}">${a.owned_count}/${a.issue_count}</span>
+  </div>`;
 }
 
 async function _loadTradesPanel(id) {
