@@ -21,6 +21,8 @@ _VOLUME_PREFIX = "4050-"  # CV resource-type id for volumes
 _ARC_PREFIX = "4045-"     # CV resource-type id for story arcs
 # .../batman-491-the-freedom-of-madness/4000-37038/  → grabs the title slug
 _SLUG_RE = re.compile(r'/([a-z0-9-]+)/\d+-\d+/?$')
+# CV arc names embed the series in quotes: '"Batman" Knightfall'
+_QUOTED_ARC_RE = re.compile(r'^"([^"]+)"\s*(.*)$')
 
 
 class ComicVineClient:
@@ -100,6 +102,25 @@ class ComicVineClient:
                 "publisher": p.get("name") if isinstance(p, dict) else p,
             })
         logger.info(f"ComicVine: {len(out)} arc results for {query!r}")
+        return out
+
+    def discover_arcs(self, series_title: str) -> list[dict]:
+        """Story arcs CV catalogs for a series — the structured, repeatable discovery
+        primary. CV arc names embed the series in quotes ('"Batman" Knightfall'), so
+        a name search is filtered to hits whose quoted prefix matches the series. That
+        drops the noise ('"X-Men" ... Saga' for a 'Saga' search) with NO extra calls.
+        Returns [{name, cv_arc_id}] — name is the arc title, prefix stripped."""
+        from kometa.arc import base_series_title, titles_match
+        base = base_series_title(series_title)
+        out = []
+        for a in self.search_arcs(base, limit=40):
+            m = _QUOTED_ARC_RE.match(a.get("name") or "")
+            if not m:
+                continue
+            prefix, title = m.group(1), m.group(2).strip()
+            if titles_match(prefix, base):
+                out.append({"name": title or a["name"], "cv_arc_id": a["cv_arc_id"]})
+        logger.info(f"ComicVine: {len(out)} arcs scoped to {series_title!r}")
         return out
 
     def get_arc_issues(self, cv_arc_id) -> list[dict]:

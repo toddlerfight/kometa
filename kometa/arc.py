@@ -23,6 +23,19 @@ def titles_match(a: str, b: str) -> bool:
     return _strip_year(_norm_title(a)) == _strip_year(_norm_title(b))
 
 
+_EDITION_RE = re.compile(
+    r"\s*[-:]?\s*\b(deluxe|omnibus|compendium|the complete|collected|library|"
+    r"edition|hardcover|tpb)\b.*$", re.I)
+
+
+def base_series_title(title: str) -> str:
+    """Bare series name for searching: drop a trailing '(year)' and any edition
+    phrase. 'Batman (2016)' -> 'Batman'; 'The Walking Dead Deluxe' -> 'The Walking
+    Dead'."""
+    t = re.sub(r"\s*\(\d{4}\)\s*$", "", title or "")
+    return _EDITION_RE.sub("", t).strip(" -:") or (title or "")
+
+
 def arc_includes_series(source_titles, series_title: str) -> bool:
     """Does an arc (with these participating source titles) include this series?
     The reverse lookup behind a series' Arcs tab."""

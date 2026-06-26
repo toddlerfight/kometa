@@ -793,13 +793,15 @@ function _arcRowHtml(a, i) {
       <span class="arc-list-count${complete ? ' ok' : ''}">${a.owned_count}/${a.issue_count}</span>
     </div>`;
   }
-  // Discovered (Wikipedia) — not yet a tracked arc; clicking populates it on demand.
+  // Discovered (not yet tracked) — clicking populates on demand. ComicVine arcs
+  // carry a cv_arc_id (precise order); Wikipedia ones carry an issue range.
   const range = (a.first_issue && a.last_issue) ? `#${a.first_issue}–${a.last_issue}` : '';
   const n = (a.first_issue && a.last_issue) ? `${a.last_issue - a.first_issue + 1} issues` : '';
+  const meta = a.source === 'comicvine' ? 'ComicVine' : [range, n].filter(Boolean).join(' · ');
   return `<div class="arc-list-row arc-discovered" onclick="openDiscoveredArc(${i}, this)">
     <span class="arc-list-dia dim">◇</span>
     <span class="arc-list-name">${esc(a.name)}</span>
-    <span class="arc-list-meta">${[range, n].filter(Boolean).join(' · ')}</span>
+    <span class="arc-list-meta">${meta}</span>
     <span class="arc-list-count view">view →</span>
   </div>`;
 }
@@ -812,7 +814,7 @@ async function openDiscoveredArc(i, row) {
   if (row) row.style.opacity = '0.5';
   try {
     const arc = await api.post(`/api/series/${_arcsPanelSeriesId}/arcs/populate`,
-      { name: a.name, first_issue: a.first_issue, last_issue: a.last_issue });
+      { name: a.name, cv_arc_id: a.cv_arc_id, first_issue: a.first_issue, last_issue: a.last_issue });
     navigate('series-detail', { id: arc.id });
   } catch (e) {
     showToast('Couldn’t open arc — ' + (e?.message || e), 'error');
