@@ -2000,6 +2000,11 @@ select.settings-input {
 .arc-stcell { text-align: right; white-space: nowrap; font-size: 11px; }
 .arc-st.owned { color: var(--pri); }
 .arc-st.missing { color: var(--tq); }
+.arc-st.coll { color: var(--tm); }
+.chip-collected { background: rgba(145,252,78,.12); color: var(--pri); border: 1px solid rgba(145,252,78,.3); }
+.arc-collected-note { margin: 0 0 14px; padding: 11px 14px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; color: var(--tm); cursor: pointer; transition: background .12s; }
+.arc-collected-note:hover { background: rgba(145,252,78,.12); }
+.arc-collected-note strong { color: var(--pri); font-weight: 600; }
 
 /* Arcs tab on a series — the events that series participates in */
 .arcs-body { padding: 4px 0 24px; }
