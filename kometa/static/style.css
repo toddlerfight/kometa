@@ -2000,3 +2000,13 @@ select.settings-input {
 .arc-stcell { text-align: right; white-space: nowrap; font-size: 11px; }
 .arc-st.owned { color: var(--pri); }
 .arc-st.missing { color: var(--tq); }
+
+/* Arcs tab on a series — the events that series participates in */
+.arcs-body { padding: 4px 0 24px; }
+.arc-list-row { display: flex; align-items: center; gap: 13px; padding: 13px 14px; border: 1px solid var(--bd); border-radius: 8px; margin-bottom: 9px; background: var(--su1); cursor: pointer; transition: border-color .12s; }
+.arc-list-row:hover { border-color: var(--bd-l); }
+.arc-list-dia { color: var(--pri); font-size: 13px; }
+.arc-list-name { font-weight: 600; flex: 1; }
+.arc-list-meta { color: var(--tq); font-size: 11px; white-space: nowrap; }
+.arc-list-count { color: var(--tm); font-size: 11px; white-space: nowrap; min-width: 44px; text-align: right; }
+.arc-list-count.ok { color: var(--pri); }

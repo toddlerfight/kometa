@@ -498,7 +498,11 @@ def get_series(series_id: int):
     # is already owned still has_trades, so the UI lands on Trades instead of an empty
     # Issues grid that polls 'Syncing issues…' forever for singles that don't exist.
     has_trades = bool(trades)
-    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_summary(issues))
+    # arc_count = how many tracked story arcs this series participates in (Arcs-tab badge)
+    from kometa.arc import arc_includes_series
+    arc_count = sum(1 for a in db.get_all_arcs(DB_PATH) if arc_includes_series(a["source_titles"], s["title"])) or None
+    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades,
+                arc_count=arc_count, **_summary(issues))
 
 
 @app.post("/api/series/{series_id}/readlist")
