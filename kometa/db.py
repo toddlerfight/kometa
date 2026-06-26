@@ -413,6 +413,15 @@ def find_series_by_title(title, path=DB_PATH):
     return None
 
 
+def find_arc_by_cv_id(cv_arc_id, path=DB_PATH):
+    """An already-tracked arc with this ComicVine id, or None — so re-adding an arc
+    opens the existing one instead of duplicating it."""
+    with _connect(path) as conn:
+        r = conn.execute("SELECT * FROM tracked_series WHERE kind = 'arc' AND cv_arc_id = ?",
+                         (str(cv_arc_id),)).fetchone()
+        return dict(r) if r else None
+
+
 def get_all_arcs(path=DB_PATH):
     """Every story arc with its participating source titles + owned counts — the
     raw data behind a series' Arcs tab (caller filters by series title)."""

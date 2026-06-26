@@ -1181,34 +1181,41 @@ async function wizardSearch() {
 function wizardPickSeries(idx) {
   const r = _wizardResults[idx];
   if (!r) return;
-  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: r.kind === 'arc' ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: r.kind === 'arc' ? r.cv_arc_id : null };
+  const isArc = r.kind === 'arc';
+  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: isArc ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };
+  // An arc owns no folder (lens model): it tracks a cross-title reading order and
+  // grabs the collected edition into its main series. So no folder field, and the
+  // pull-list line means 'find the collected edition', not 'download every issue'.
+  const folderBlock = isArc ? `
+    <div class="wizard-arc-note">◆ Story arc — Kometa tracks the reading order across every participating title. It owns no folder; the collected edition lands in its main series' Trades.</div>`
+    : `
+    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input class="search-input" id="wizard-folder" placeholder="Resolving…" style="flex:1;margin:0">
+      <button class="btn btn-ghost btn-sm" onclick="wizardBrowseFolder()">Browse</button>
+    </div>
+    <div id="wizard-folder-hint" style="margin-top:6px;font-size:10px;color:var(--tq)">&nbsp;</div>`;
   document.getElementById('modal').innerHTML = `
-    <div class="modal-title">Add Series</div>
+    <div class="modal-title">Add ${isArc ? 'Story Arc' : 'Series'}</div>
     <div class="wizard-series-preview">
       <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt="" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
-        <div class="wizard-result-title">${esc(r.series || r.name || '')}</div>
-        <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+        <div class="wizard-result-title">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
+        <div class="wizard-result-meta">${isArc ? 'Story arc' : esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
       </div>
     </div>
-    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
-    <div style="display:flex;gap:6px;align-items:center">
-      <input class="search-input" id="wizard-folder" placeholder="Resolving…"
-        style="flex:1;margin:0">
-      <button class="btn btn-ghost btn-sm" onclick="wizardBrowseFolder()">Browse</button>
-    </div>
-    <div id="wizard-folder-hint" style="margin-top:6px;font-size:10px;color:var(--tq)">&nbsp;</div>
+    ${folderBlock}
     <label style="display:flex;align-items:center;gap:8px;margin-top:14px;cursor:pointer;user-select:none">
       <input type="checkbox" id="wizard-pull" checked style="accent-color:var(--pri);width:14px;height:14px">
       <span style="font-family:var(--font);font-size:10px;color:var(--tp)">Add to Pull List</span>
-      <span style="font-size:10px;color:var(--tq)">— queue download of all missing issues now</span>
+      <span style="font-size:10px;color:var(--tq)">— ${isArc ? "find &amp; grab this storyline's collected edition" : 'queue download of all missing issues now'}</span>
     </label>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="showAddWizard()">← Back</button>
-      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Track Series</button>
+      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">${isArc ? 'Track Arc' : 'Track Series'}</button>
     </div>
   `;
-  _previewFolder(r);
+  if (!isArc) _previewFolder(r);
 }
 
 async function _previewFolder(r) {

@@ -2005,6 +2005,7 @@ select.settings-input {
 .arc-collected-note { margin: 0 0 14px; padding: 11px 14px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; color: var(--tm); cursor: pointer; transition: background .12s; }
 .arc-collected-note:hover { background: rgba(145,252,78,.12); }
 .arc-collected-note strong { color: var(--pri); font-weight: 600; }
+.wizard-arc-note { margin: 16px 0 4px; padding: 11px 13px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 11px; line-height: 1.5; color: var(--tm); }
 
 /* Arcs tab on a series — the events that series participates in */
 .arcs-body { padding: 4px 0 24px; }

@@ -721,6 +721,10 @@ def _add_arc(req: AddSeriesRequest):
     """Add a story arc: a kind='arc' tracked_series whose cross-title reading order
     is populated from ComicVine. Reuses folder/queue/Komga machinery; the arc's
     issues span titles so they live in arc_issues, not issue_status."""
+    # Already tracking this arc? Open it instead of duplicating.
+    existing = db.find_arc_by_cv_id(req.cv_arc_id, DB_PATH)
+    if existing:
+        return existing
     cv = _comicvine()
     title = req.title or ""
     publisher = req.publisher_name or "DC Comics"
