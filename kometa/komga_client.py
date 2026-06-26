@@ -54,6 +54,22 @@ class KomgaClient:
             page += 1
         return books
 
+    def create_or_update_readlist(self, name, book_ids, summary=""):
+        """Create an ordered readlist, or replace an existing one with the same
+        name (so 'Rebuild' re-syncs instead of erroring on the duplicate name)."""
+        existing = self._get("/api/v1/readlists", params={"search": name, "size": 50})["content"]
+        match = next((r for r in existing if r["name"] == name), None)
+        if match:
+            r = self.session.patch(f"{self.base_url}/api/v1/readlists/{match['id']}",
+                                   json={"bookIds": book_ids})
+            r.raise_for_status()
+            return {"id": match["id"], "updated": True}
+        r = self.session.post(f"{self.base_url}/api/v1/readlists",
+                             json={"name": name, "summary": summary,
+                                   "ordered": True, "bookIds": book_ids})
+        r.raise_for_status()
+        return {"id": r.json().get("id"), "updated": False}
+
     def scan_library(self):
         r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan")
         r.raise_for_status()

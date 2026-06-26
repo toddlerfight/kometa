@@ -499,6 +499,32 @@ def get_series(series_id: int):
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_summary(issues))
 
 
+@app.post("/api/series/{series_id}/readlist")
+def build_arc_readlist(series_id: int):
+    """Build (or rebuild) a Komga readlist from a story arc's collected editions,
+    in reading order. The arc IS an ordered list — this is the one-click version of
+    the hand-built manifest."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s or s.get("kind") != "arc":
+        raise HTTPException(404, "Not a story arc")
+    komga = _komga()
+    if not komga:
+        raise HTTPException(400, "Komga not configured")
+    folder = s.get("folder_path") or ""
+    all_series = komga.get_all_series()
+    ks = next((x for x in all_series if x.get("url") == folder), None) \
+        or next((x for x in all_series if _norm(x.get("name", "")) == _norm(s["title"])), None)
+    if not ks:
+        raise HTTPException(404, "No Komga books for this arc yet — grab it first")
+    books = komga.get_books(ks["id"])
+    if not books:
+        raise HTTPException(404, "The arc's Komga series has no books yet")
+    book_ids = [b["id"] for b in books]
+    result = komga.create_or_update_readlist(
+        s["title"], book_ids, summary=f"Reading order for {s['title']} — built by Kometa.")
+    return {"name": s["title"], "books": len(book_ids), "updated": result.get("updated", False)}
+
+
 @app.get("/api/series/{series_id}/trades")
 def get_series_trades(series_id: int):
     """Collected editions (TPB/HC) available for this series, from LOCG. Discovery
