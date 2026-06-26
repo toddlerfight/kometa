@@ -41,6 +41,22 @@ ARC      owns NOTHING — a cross-title reading-order OVERLAY + grab-trigger +
 - **Arcs are NOT top-level library cards** — reached via a series' Arcs tab + their
   own detail page; they don't clutter the grid.
 
+**Rework progress (2026-06-26):**
+- ✅ brick 1 — `arc.py` `main_series_title()` (most-represented source title).
+- ✅ brick 2 — `_add_arc` routes the trade to the MAIN series
+  (`db.find_series_by_title`); arc no longer grabs into its own folder.
+- ✅ brick 3 — series **Arcs tab**: `GET /api/series/{id}/arcs` (`db.get_all_arcs`
+  + `arc.arc_includes_series`), `arc_count` on `get_series`, frontend tab +
+  `_loadArcsPanel`/`_arcRowHtml`. Verified: Batman → Knightfall + Knightquest.
+- ✅ brick 5 — `list_series` filters `kind='arc'` → arcs gone from the library grid.
+- ⬜ **brick 4 (NEXT)** — ownership resolution: match arc_issues (and covering
+  trades) against Komga so the arc page shows real `12/23` not `0/23`; surface the
+  arc's collected editions as the MAIN series' trades. The meatiest remaining bit.
+- brick 6 — mostly moot: the lens model turned the old standalone test-arcs into
+  legitimate, reachable arcs.
+
+Deployed live (v=102), branch `torrent-integration`. Resume at brick 4.
+
 **Rework impact (mostly subtraction):**
 - KEEP: `comicvine_client.search_arcs`/`get_arc_issues` (Phase A); the `arc_issues`
   table (the reading order); the arc reading-order PAGE (Phase D); the readlist
