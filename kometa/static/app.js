@@ -771,22 +771,54 @@ async function _loadArcsPanel(id) {
   const body = document.getElementById('arcs-panel');
   if (!body || detailTab !== 'arcs' || currentParams.id !== id) return;
   const arcs = data.arcs || [];
+  _arcsPanelData = arcs; _arcsPanelSeriesId = id;
   if (!arcs.length) {
-    body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">No tracked story arcs include this series yet — add one from search (◆ ARC).</div>`;
+    body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">No story arcs found for this series (Wikipedia has none, or it's not yet covered).</div>`;
     return;
   }
-  body.innerHTML = arcs.map(_arcRowHtml).join('');
+  body.innerHTML = arcs.map((a, i) => _arcRowHtml(a, i)).join('');
 }
 
-function _arcRowHtml(a) {
-  const ntitles = (a.source_titles || []).length;
-  const complete = a.issue_count > 0 && a.owned_count >= a.issue_count;
-  return `<div class="arc-list-row" onclick="navigate('series-detail',{id:${a.id}})">
-    <span class="arc-list-dia">◆</span>
-    <span class="arc-list-name">${esc(a.title)}</span>
-    <span class="arc-list-meta">${a.issue_count} issues · ${ntitles} title${ntitles === 1 ? '' : 's'}</span>
-    <span class="arc-list-count${complete ? ' ok' : ''}">${a.owned_count}/${a.issue_count}</span>
+let _arcsPanelData = [];
+let _arcsPanelSeriesId = null;
+
+function _arcRowHtml(a, i) {
+  if (a.tracked) {
+    const ntitles = (a.source_titles || []).length;
+    const complete = a.issue_count > 0 && a.owned_count >= a.issue_count;
+    return `<div class="arc-list-row" onclick="navigate('series-detail',{id:${a.id}})">
+      <span class="arc-list-dia">◆</span>
+      <span class="arc-list-name">${esc(a.name)}</span>
+      <span class="arc-list-meta">${a.issue_count} issues · ${ntitles} title${ntitles === 1 ? '' : 's'} · tracked</span>
+      <span class="arc-list-count${complete ? ' ok' : ''}">${a.owned_count}/${a.issue_count}</span>
+    </div>`;
+  }
+  // Discovered (Wikipedia) — not yet a tracked arc; clicking populates it on demand.
+  const range = (a.first_issue && a.last_issue) ? `#${a.first_issue}–${a.last_issue}` : '';
+  const n = (a.first_issue && a.last_issue) ? `${a.last_issue - a.first_issue + 1} issues` : '';
+  return `<div class="arc-list-row arc-discovered" onclick="openDiscoveredArc(${i}, this)">
+    <span class="arc-list-dia dim">◇</span>
+    <span class="arc-list-name">${esc(a.name)}</span>
+    <span class="arc-list-meta">${[range, n].filter(Boolean).join(' · ')}</span>
+    <span class="arc-list-count view">view →</span>
   </div>`;
+}
+
+async function openDiscoveredArc(i, row) {
+  const a = _arcsPanelData[i];
+  if (!a) return;
+  const cnt = row && row.querySelector('.arc-list-count');
+  if (cnt) cnt.textContent = 'opening…';
+  if (row) row.style.opacity = '0.5';
+  try {
+    const arc = await api.post(`/api/series/${_arcsPanelSeriesId}/arcs/populate`,
+      { name: a.name, first_issue: a.first_issue, last_issue: a.last_issue });
+    navigate('series-detail', { id: arc.id });
+  } catch (e) {
+    showToast('Couldn’t open arc — ' + (e?.message || e), 'error');
+    if (row) row.style.opacity = '';
+    if (cnt) cnt.textContent = 'view →';
+  }
 }
 
 async function _loadTradesPanel(id) {

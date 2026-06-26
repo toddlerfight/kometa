@@ -2019,3 +2019,6 @@ select.settings-input {
 .arc-list-meta { color: var(--tq); font-size: 11px; white-space: nowrap; }
 .arc-list-count { color: var(--tm); font-size: 11px; white-space: nowrap; min-width: 44px; text-align: right; }
 .arc-list-count.ok { color: var(--pri); }
+.arc-list-dia.dim { color: var(--tq); }
+.arc-list-count.view { color: var(--tq); font-size: 10px; }
+.arc-list-row.arc-discovered:hover .arc-list-count.view { color: var(--pri); }
