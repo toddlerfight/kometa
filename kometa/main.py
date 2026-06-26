@@ -740,10 +740,23 @@ def _add_arc(req: AddSeriesRequest):
         if not cv:
             return
         try:
-            issues = [{"reading_order": r["order"], "source_title": r["series"],
-                       "number": r["number"], "story_title": r["title"],
-                       "cv_issue_id": str(r["cv_issue_id"])}
-                      for r in cv.get_arc_issues(req.cv_arc_id)]
+            base = cv.get_arc_issues(req.cv_arc_id)
+            # Enrich with authoritative CV meta: the REAL issue number (fixes slug
+            # mis-parses like Showcase '93 → #7/#8) and the exact volume (so each
+            # issue routes to the right run — Batman 1940, not 2016). One batch call.
+            meta = cv.get_issues_meta([r["cv_issue_id"] for r in base])
+            issues = []
+            for r in base:
+                m = meta.get(str(r["cv_issue_id"]), {})
+                num = m.get("number") or r["number"]
+                issues.append({
+                    "reading_order": r["order"],
+                    "source_title": m.get("volume_name") or r["series"],
+                    "number": str(num) if num is not None else r["number"],
+                    "story_title": r["title"],
+                    "cv_issue_id": str(r["cv_issue_id"]),
+                    "cv_volume_id": str(m["volume_id"]) if m.get("volume_id") else None,
+                })
             db.replace_arc_reading_order(new_id, issues, DB_PATH)
             logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
             # Resolve cross-title ownership against Komga so the arc page shows real

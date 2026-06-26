@@ -128,6 +128,38 @@ class ComicVineClient:
             })
         return out
 
+    def get_issues_meta(self, issue_ids) -> dict:
+        """Batch-resolve issues to their REAL number + exact volume — the
+        authoritative fix for slug-parsed numbers (Showcase '93 → #7/#8) and volume
+        ambiguity (which Batman? → 1940 vol 796, not 2016). One call per 100 ids.
+        Returns {str(issue_id): {"number", "volume_id", "volume_name"}}."""
+        out = {}
+        ids = [str(i) for i in issue_ids if i]
+        for start in range(0, len(ids), 100):
+            chunk = ids[start:start + 100]
+            try:
+                d = self._get("issues/", filter="id:" + "|".join(chunk),
+                              field_list="id,issue_number,volume", limit=100)
+            except Exception as e:
+                logger.warning(f"ComicVine issues meta failed: {e}")
+                continue
+            for it in (d.get("results") or []):
+                v = it.get("volume") or {}
+                out[str(it.get("id"))] = {
+                    "number": it.get("issue_number"),
+                    "volume_id": v.get("id"), "volume_name": v.get("name"),
+                }
+        return out
+
+    def get_volume_year(self, cv_volume_id):
+        """Start year for a volume — disambiguates which run to track."""
+        try:
+            d = self._get(f"volume/{_VOLUME_PREFIX}{cv_volume_id}/", field_list="start_year")
+            return (d.get("results") or {}).get("start_year")
+        except Exception as e:
+            logger.warning(f"ComicVine volume {cv_volume_id} year failed: {e}")
+            return None
+
     @staticmethod
     def _parse_slug(url: str | None) -> tuple[str, str]:
         """'.../batman-491-the-freedom-of-madness/4000-37038/' → ('Batman', '491').
