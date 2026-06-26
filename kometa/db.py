@@ -391,6 +391,35 @@ def get_arc_reading_order(arc_series_id, path=DB_PATH):
             (arc_series_id,))]
 
 
+def find_series_by_title(title, path=DB_PATH):
+    """A tracked (non-arc) series whose title matches, year-tolerant. Used to route
+    an arc's collected-edition trade to its MAIN series (the lens model)."""
+    from kometa.arc import titles_match
+    with _connect(path) as conn:
+        for r in conn.execute("SELECT * FROM tracked_series WHERE kind != 'arc'"):
+            if titles_match(r["title"], title):
+                return dict(r)
+    return None
+
+
+def get_all_arcs(path=DB_PATH):
+    """Every story arc with its participating source titles + owned counts — the
+    raw data behind a series' Arcs tab (caller filters by series title)."""
+    with _connect(path) as conn:
+        arcs = {r["id"]: {"id": r["id"], "title": r["title"], "cv_arc_id": r["cv_arc_id"],
+                          "source_titles": set(), "issue_count": 0, "owned_count": 0}
+                for r in conn.execute("SELECT id, title, cv_arc_id FROM tracked_series WHERE kind = 'arc'")}
+        for r in conn.execute("SELECT arc_series_id, source_title, owned FROM arc_issues"):
+            a = arcs.get(r["arc_series_id"])
+            if a:
+                a["source_titles"].add(r["source_title"])
+                a["issue_count"] += 1
+                a["owned_count"] += (r["owned"] or 0)
+    for a in arcs.values():
+        a["source_titles"] = sorted(a["source_titles"])
+    return list(arcs.values())
+
+
 def get_all_series(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM tracked_series ORDER BY title")]

@@ -13,6 +13,22 @@ def _norm_title(t: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
 
 
+def _strip_year(nt: str) -> str:
+    """Drop a trailing 4-digit year so 'batman 1940' ~ 'batman'."""
+    return re.sub(r"\s*\d{4}$", "", nt).strip()
+
+
+def titles_match(a: str, b: str) -> bool:
+    """Year-tolerant title equality — 'Batman (1940)' matches CV's 'Batman'."""
+    return _strip_year(_norm_title(a)) == _strip_year(_norm_title(b))
+
+
+def arc_includes_series(source_titles, series_title: str) -> bool:
+    """Does an arc (with these participating source titles) include this series?
+    The reverse lookup behind a series' Arcs tab."""
+    return any(titles_match(st, series_title) for st in source_titles)
+
+
 def main_series_title(arc_issues: list[dict], arc_name: str = "") -> str | None:
     """The arc's MAIN series = the most-represented source title among its issues;
     ties broken by whichever leader the arc name leads with.
