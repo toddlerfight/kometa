@@ -587,8 +587,9 @@ function renderArcDetail(s) {
       <div class="arc-sec-label">Reading order · across all participating titles</div>
       ${collBanner}
       ${body}
-      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center">
-        <button class="btn btn-primary" onclick="buildArcReadlist(${s.id}, this)">Build Komga Readlist</button>
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="fulfillArc(${s.id}, this)">Fulfill arc</button>
+        <button class="btn btn-ghost" onclick="buildArcReadlist(${s.id}, this)">Build Komga Readlist</button>
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
     </div>
@@ -597,6 +598,22 @@ function renderArcDetail(s) {
   if (!total) setTimeout(() => {
     if (currentView === 'series-detail' && currentParams.id === s.id) renderSeriesDetail(s.id);
   }, 4000);
+}
+
+async function fulfillArc(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Queueing…'; }
+  try {
+    const r = await api.post(`/api/series/${id}/fulfill`, {});
+    if (r.queued === 0) {
+      showToast(r.owned >= r.total ? 'Arc already complete — nothing to pull' : 'Nothing missing to queue');
+    } else {
+      showToast(`Fulfilling arc — queued ${r.queued} missing issue${r.queued === 1 ? '' : 's'} into their runs`);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Fulfill arc'; }
+  } catch (e) {
+    showToast('Fulfill failed — ' + (e?.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Fulfill arc'; }
+  }
 }
 
 async function buildArcReadlist(id, btn) {
