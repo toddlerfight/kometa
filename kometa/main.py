@@ -717,6 +717,70 @@ class AddSeriesRequest(BaseModel):
     year_began: int | None = None
 
 
+def _vol_title(name: str, year) -> str:
+    """Year-qualify a run so it's unambiguous + folders disjoint ('Batman' -> 'Batman
+    (1940)'), unless the name already carries the year ('Showcase '93')."""
+    if not year:
+        return name
+    ys = str(year)
+    if ys in name or ("'" + ys[-2:]) in name:
+        return name
+    return f"{name} ({year})"
+
+
+def _track_participating(arc_series_id: int) -> dict:
+    """Brick B: auto-track the series an arc's issues belong to — one tracked series
+    per distinct CV volume, PULL-LIST OFF so broad sweeps skip them (the arc is the
+    lens that pulls just its issues). Idempotent via cv_volume_id. Returns
+    {cv_volume_id: series_id}."""
+    cv, komga = _comicvine(), _komga()
+    rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
+    arc = db.get_series_by_id(arc_series_id, DB_PATH)
+    publisher = arc.get("publisher") or "DC Comics"
+    vols = {}
+    for r in rows:
+        vid = r.get("cv_volume_id")
+        if vid and vid not in vols:
+            vols[vid] = r.get("source_title") or ""
+    kall = _komga_all_series(komga) if komga else []
+    mapping = {}
+    for vid, name in vols.items():
+        existing = db.get_series_by_cv_volume(vid, DB_PATH)
+        if existing:
+            mapping[vid] = existing["id"]
+            continue
+        year = cv.get_volume_year(vid) if cv else None
+        title = _vol_title(name, year)
+        kid = None
+        if komga:
+            try:
+                kid = _best_komga_match(kall, title) or _best_komga_match(kall, name)
+            except Exception:
+                kid = None
+        folder = _resolve_dir(_comics_root(), publisher, title)
+        sid = db.add_series(komga_series_id=kid, title=title, publisher=publisher,
+                            year_began=year, folder_path=folder, on_pull_list=False,
+                            cv_volume_id=str(vid), path=DB_PATH)
+        mapping[vid] = sid
+        try:
+            _sync_one(db.get_series_by_id(sid, DB_PATH))
+        except Exception as e:
+            logger.warning(f"Participating-series sync failed for {title!r}: {e}")
+        logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid} "
+                    f"(komga={'yes' if kid else 'no'})")
+    return mapping
+
+
+@app.post("/api/series/{series_id}/track-participating")
+def track_participating(series_id: int):
+    """Track (pull-list OFF) the series an arc's issues belong to."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s or s.get("kind") != "arc":
+        raise HTTPException(404, "Not a story arc")
+    m = _track_participating(series_id)
+    return {"tracked": len(m), "series_ids": list(m.values())}
+
+
 def _add_arc(req: AddSeriesRequest):
     """Add a story arc: a kind='arc' tracked_series whose cross-title reading order
     is populated from ComicVine. Reuses folder/queue/Komga machinery; the arc's
@@ -766,6 +830,13 @@ def _add_arc(req: AddSeriesRequest):
                 logger.info(f"Arc {title!r}: resolved {r['owned']}/{r['total']} owned in Komga")
             except Exception as e:
                 logger.warning(f"Arc ownership resolve failed for {title!r}: {e}")
+            # Brick B: auto-track the participating runs (pull-list OFF) so the arc's
+            # issues have a home and the library reflects them — without sweeping them.
+            try:
+                m = _track_participating(new_id)
+                logger.info(f"Arc {title!r}: tracking {len(m)} participating series (pull-off)")
+            except Exception as e:
+                logger.warning(f"Arc participating-track failed for {title!r}: {e}")
         except Exception as e:
             logger.warning(f"Arc populate failed for {title!r}: {e}")
         if req.on_pull_list:

@@ -177,6 +177,8 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
         if "cv_arc_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_arc_id TEXT")
+        if "cv_volume_id" not in ts_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
 
         # arc_issues gained cv_volume_id (the authoritative CV volume per issue, for
         # routing each issue to the right tracked run — e.g. Batman 1940, not 2016).
@@ -351,16 +353,25 @@ def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
 
 def add_series(komga_series_id=None, metron_series_id=None, title=None, publisher=None,
                year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
-               kind="series", cv_arc_id=None, path=DB_PATH) -> int:
+               kind="series", cv_arc_id=None, cv_volume_id=None, path=DB_PATH) -> int:
     with _connect(path) as conn:
         cur = conn.execute("""
             INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher,
                                         year_began, folder_path, on_pull_list, locg_series_id,
-                                        kind, cv_arc_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        kind, cv_arc_id, cv_volume_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (komga_series_id, metron_series_id, title, publisher, year_began,
-              folder_path, int(on_pull_list), locg_series_id, kind, cv_arc_id))
+              folder_path, int(on_pull_list), locg_series_id, kind, cv_arc_id, cv_volume_id))
         return cur.lastrowid
+
+
+def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
+    """A tracked series linked to this CV volume id, or None — the robust key for
+    routing an arc's issues to the right run (Batman 1940, not 2016)."""
+    with _connect(path) as conn:
+        r = conn.execute("SELECT * FROM tracked_series WHERE cv_volume_id = ?",
+                         (str(cv_volume_id),)).fetchone()
+        return dict(r) if r else None
 
 
 def remove_series(series_id, path=DB_PATH):
