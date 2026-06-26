@@ -96,6 +96,7 @@ def _migrate(path=DB_PATH):
                 number          TEXT,
                 story_title     TEXT,
                 cv_issue_id     TEXT,
+                cv_volume_id    TEXT,
                 komga_book_id   TEXT,
                 owned           INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(arc_series_id, reading_order)
@@ -176,6 +177,12 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
         if "cv_arc_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_arc_id TEXT")
+
+        # arc_issues gained cv_volume_id (the authoritative CV volume per issue, for
+        # routing each issue to the right tracked run — e.g. Batman 1940, not 2016).
+        ai_cols = [r[1] for r in conn.execute("PRAGMA table_info(arc_issues)")]
+        if "cv_volume_id" not in ai_cols:
+            conn.execute("ALTER TABLE arc_issues ADD COLUMN cv_volume_id TEXT")
 
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         # Rename the old in_komga column to owned — it always meant "owned on disk",
@@ -365,10 +372,10 @@ def remove_series(series_id, path=DB_PATH):
 
 def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
     """Wipe + insert an arc's cross-title reading order. `issues` = list of dicts
-    {reading_order, source_title, number, story_title, cv_issue_id}. Preserves any
-    komga_book_id/owned already resolved for an issue (matched on reading_order)."""
+    {reading_order, source_title, number, story_title, cv_issue_id, cv_volume_id}.
+    Preserves any komga_book_id/owned already resolved (matched on reading_order)."""
     with _connect(path) as conn:
-        prior = {r["reading_order"]: r for r in conn.execute(
+        prior = {r["reading_order"]: dict(r) for r in conn.execute(
             "SELECT reading_order, komga_book_id, owned FROM arc_issues WHERE arc_series_id = ?",
             (arc_series_id,))}
         conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (arc_series_id,))
@@ -377,10 +384,10 @@ def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
             keep = prior.get(ro, {})
             conn.execute("""
                 INSERT INTO arc_issues (arc_series_id, reading_order, source_title, number,
-                                        story_title, cv_issue_id, komga_book_id, owned)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                        story_title, cv_issue_id, cv_volume_id, komga_book_id, owned)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (arc_series_id, ro, it.get("source_title"), it.get("number"),
-                  it.get("story_title"), it.get("cv_issue_id"),
+                  it.get("story_title"), it.get("cv_issue_id"), it.get("cv_volume_id"),
                   keep.get("komga_book_id"), keep.get("owned", 0)))
 
 
