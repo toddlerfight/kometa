@@ -1,10 +1,64 @@
-# Story Arc model (design — not yet built)
+# Story Arc model
 
 The abstraction that resolves event/collection content (Knightfall, Knightquest,
-KnightsEnd, Metal): a **Story Arc** as a first-class trackable entity, parallel to
-Series. Arrived at after the torrent + ComicVine work exposed that the
+KnightsEnd, Metal). Arrived at after the torrent + ComicVine work exposed that the
 acquisition-needing content (vintage events) is exactly what the series-centric UI
 couldn't add cleanly.
+
+---
+
+## ⚑ REVISED MODEL — arc as a LENS, not a container (2026-06-26)
+
+**This supersedes the "arc as a first-class container" approach below (Phases B–E
+as BUILT).** After building it end-to-end and testing in the UI, the model is wrong
+in one structural way: an arc was made a `kind='arc'` tracked_series with its OWN
+folder that grabs the collected trade into itself. It shouldn't own anything.
+
+**Corrected model — series-first:**
+
+```
+SERIES   the tracked, folder-owning unit. Issues → their folders;
+         collected editions → the series' Trades tab (EXISTING machinery).
+ARC      owns NOTHING — a cross-title reading-order OVERLAY + grab-trigger +
+         readlist-builder. It only references things that live in series:
+           • reading-order rows → issues in their real series' folders
+           • its collected editions ARE trades of the arc's MAIN series
+             (Knightfall = a trade of Batman 1940, in Batman's Trades tab —
+             NOT an arc folder)
+           • "grab the storyline" → routes the trade grab to the main series'
+             Trades (existing flow); singles, where gettable, → their series
+           • "build readlist" → as already built (arc order → Komga books)
+```
+
+- **Main-series heuristic** (the "not clean" bit, resolved): the arc's lead title +
+  most-represented title in its issues. Knightfall → "Batman Knightfall", 10/23
+  issues are Batman → **Batman (1940)**; both signals agree. Crossovers with no
+  clear lead are fuzzier — defer or let the user pick.
+- **Discovery flips series-first:** searching an event ("knightfall") offers to
+  track the MAIN series if untracked, and surfaces the arc as the way to
+  grab/navigate it. The series detail page gets an **Arcs tab** listing the events
+  it participates in. The same arc appears under every participating series.
+- **Arcs are NOT top-level library cards** — reached via a series' Arcs tab + their
+  own detail page; they don't clutter the grid.
+
+**Rework impact (mostly subtraction):**
+- KEEP: `comicvine_client.search_arcs`/`get_arc_issues` (Phase A); the `arc_issues`
+  table (the reading order); the arc reading-order PAGE (Phase D); the readlist
+  button + `create_or_update_readlist` (Phase E).
+- REWORK: the arc as a folder-owning `tracked_series` (reconsider whether it's a
+  tracked_series at all vs a lighter entity referencing series); the add flow →
+  series-first; acquisition → route the trade to the MAIN series' Trades, not an
+  arc folder.
+- NEW: series **Arcs tab** (discovery), main-series resolution, demote arcs from
+  the library grid.
+- **Cleanup:** the `kind='arc'` standalone test series + their folders in the live
+  DB ("Batman Knightquest- The Crusade" #63, the "Batman Knightfall" arc the user
+  added).
+
+Everything below documents the as-built container model — kept for reference; the
+section above is the target.
+
+---
 
 ## Why an arc isn't "a section of a series"
 
