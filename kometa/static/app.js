@@ -461,6 +461,21 @@ function browseSearch(val) {
 // --- Series Detail ---
 
 let _detailSeries = null;
+let _pendingIssueOpen = null;   // {seriesId, number} — open this issue once its run renders
+
+// Click an arc issue → go to it in its OWN run (lazily created if needed, scoped to
+// this arc's issues). Issues live in their own runs (the model); this is how you get
+// there. Tracking-only — no download.
+async function openArcIssue(arcId, readingOrder) {
+  try {
+    const r = await api.post(`/api/series/${arcId}/open-issue`, { reading_order: readingOrder });
+    if (r.created) showToast('Created its run — tracking only, nothing downloaded');
+    _pendingIssueOpen = { seriesId: r.series_id, number: r.number };
+    navigate('series-detail', { id: r.series_id });
+  } catch (e) {
+    showToast('Couldn’t open issue — ' + (e?.message || e), 'error');
+  }
+}
 
 function buildIssueTiles(s) {
   const filtered = s.issues.filter(i => {
@@ -583,7 +598,9 @@ function renderArcDetail(s) {
       ? `<img src="${esc(i.image_url)}" alt="${num}" loading="lazy" onerror="this.remove()">`
       : '';
     const ttl = `${esc(i.source_title || '')} ${num}${i.story_title ? ' — ' + esc(i.story_title) : ''}`;
-    return `<div class="issue-tile" title="${ttl}">
+    return `<div class="issue-tile" title="${ttl}" tabindex="0" role="button"
+      onclick="openArcIssue(${s.id}, ${i.reading_order})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')openArcIssue(${s.id}, ${i.reading_order})">
       <div class="issue-tile-img${stateCls}">${cover}${covBadge}</div>
       <div class="issue-tile-num">${xt}${num}</div>
     </div>`;
@@ -768,6 +785,16 @@ async function renderSeriesDetail(id) {
 
   if (detailTab === 'trades') _loadTradesPanel(id);
   if (detailTab === 'arcs') _loadArcsPanel(id);
+
+  // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now
+  // that its run is loaded. Cleared so it fires once.
+  if (_pendingIssueOpen && _pendingIssueOpen.seriesId === id) {
+    const num = _pendingIssueOpen.number;
+    _pendingIssueOpen = null;
+    if (num != null && s.issues?.some(i => i.number === num)) {
+      setTimeout(() => showIssueModal(id, num), 50);
+    }
+  }
 
   // Don't poll a trade-only series for singles that will never come (has_trades +
   // empty issue list = collected editions only) — that's the 'Syncing issues…' spinner

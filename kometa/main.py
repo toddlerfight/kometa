@@ -1009,6 +1009,94 @@ def _populate_participating_issues(arc_series_id: int) -> int:
     return len(batch)
 
 
+def _stamp_arc_run_issues(run_id: int, arc_rows: list[dict], source_title: str, cv_vid) -> int:
+    """Stamp the slice of an arc's reading order that belongs to ONE run into that
+    run's issue_status, carrying covers. Match by volume id when the arc has it, else
+    by source title. This is what makes a lazily-created run hold ONLY the arc's
+    issues (spec: a run created via an arc isn't the whole run)."""
+    batch = []
+    for r in arc_rows:
+        same = (cv_vid and r.get("cv_volume_id") == cv_vid) or \
+               (not r.get("cv_volume_id") and r.get("source_title") == source_title)
+        if not same:
+            continue
+        try:
+            num = float(r.get("number"))
+        except (TypeError, ValueError):
+            continue
+        batch.append((run_id, num, r.get("owned", 0), r.get("komga_book_id"), r.get("image_url")))
+    if batch:
+        db.upsert_issue_status_bulk(batch, DB_PATH)
+    return len(batch)
+
+
+def _resolve_or_create_run(arc: dict, row: dict, arc_rows: list[dict]) -> dict:
+    """The run an arc issue lives in — resolved if already tracked, else lazily created
+    SCOPED (holding just this arc's issues for that run, with covers). Issues live in
+    their own runs (the model); opening one is how its run comes into being. No
+    download — creation is tracking-only."""
+    vid = row.get("cv_volume_id")
+    source = row.get("source_title") or ""
+    run = (db.get_series_by_cv_volume(vid, DB_PATH) if vid else None) \
+        or db.find_series_by_title(source, DB_PATH)
+    if run:
+        return run
+    cv, komga = _comicvine(), _komga()
+    year = cv.get_volume_year(vid) if (cv and vid) else None
+    title = _vol_title(source, year)
+    publisher = arc.get("publisher") or "DC Comics"
+    kid = None
+    if komga:
+        try:
+            kall = _komga_all_series(komga)
+            kid = _best_komga_match(kall, title) or _best_komga_match(kall, source)
+            if kid:
+                taken = db.get_series_by_komga_id(kid, DB_PATH)
+                if taken:
+                    if vid and not taken.get("cv_volume_id"):
+                        db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
+                    _stamp_arc_run_issues(taken["id"], arc_rows, source, vid)
+                    return db.get_series_by_id(taken["id"], DB_PATH)
+        except Exception:
+            kid = None
+    folder = _resolve_dir(_comics_root(), publisher, title)
+    sid = db.add_series(komga_series_id=kid, title=title, publisher=publisher,
+                        year_began=year, folder_path=folder, on_pull_list=False,
+                        cv_volume_id=str(vid) if vid else None, path=DB_PATH)
+    _stamp_arc_run_issues(sid, arc_rows, source, vid)
+    try:
+        _sync_one(db.get_series_by_id(sid, DB_PATH))
+    except Exception as e:
+        logger.warning(f"Lazy run sync failed for {title!r}: {e}")
+    out = db.get_series_by_id(sid, DB_PATH)
+    out["_created"] = True
+    return out
+
+
+class OpenArcIssueRequest(BaseModel):
+    reading_order: int
+
+
+@app.post("/api/series/{arc_id}/open-issue")
+def open_arc_issue(arc_id: int, req: OpenArcIssueRequest):
+    """Click an arc issue → resolve (or lazily create) the run it lives in, and return
+    where to navigate. Tracking-only: creates the run + stamps the arc's issues, never
+    downloads."""
+    arc = db.get_series_by_id(arc_id, DB_PATH)
+    if not arc or arc.get("kind") != "arc":
+        raise HTTPException(404, "Not an arc")
+    rows = db.get_arc_reading_order(arc_id, DB_PATH)
+    row = next((r for r in rows if r["reading_order"] == req.reading_order), None)
+    if not row:
+        raise HTTPException(404, "Issue not in arc")
+    run = _resolve_or_create_run(arc, row, rows)
+    try:
+        num = float(row["number"])
+    except (TypeError, ValueError):
+        num = None
+    return {"series_id": run["id"], "number": num, "created": bool(run.get("_created"))}
+
+
 @app.post("/api/series/{series_id}/fulfill")
 def fulfill_arc(series_id: int):
     """Pull just this arc's MISSING issues into their participating runs — singles,
