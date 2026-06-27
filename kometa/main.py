@@ -1002,7 +1002,9 @@ def _populate_participating_issues(arc_series_id: int) -> int:
             num = float(r.get("number"))
         except (TypeError, ValueError):
             continue
-        batch.append((ps["id"], num, r.get("owned", 0), r.get("komga_book_id")))
+        # Carry the arc issue's CV cover into the run's issue (metron_image) so the
+        # scoped run's tiles show art instead of dead boxes — no full-volume pull.
+        batch.append((ps["id"], num, r.get("owned", 0), r.get("komga_book_id"), r.get("image_url")))
     db.upsert_issue_status_bulk(batch, DB_PATH)
     return len(batch)
 

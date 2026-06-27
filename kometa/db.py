@@ -781,17 +781,21 @@ def queue_issues_bulk(pairs, path=DB_PATH):
 
 def upsert_issue_status_bulk(rows, path=DB_PATH):
     """Upsert many issues in ONE transaction (same fsync reason as above). rows =
-    list of (tracked_series_id, number, owned, komga_book_id). Leaves metadata
-    columns untouched on conflict."""
+    list of (tracked_series_id, number, owned, komga_book_id[, image]). The optional
+    5th element is a cover URL stored in metron_image (COALESCE'd — a real cover is
+    never nulled by a later row that lacks one). Leaves other metadata untouched."""
     with _connect(path) as conn:
-        for sid, num, owned, kbid in rows:
+        for row in rows:
+            sid, num, owned, kbid = row[0], row[1], row[2], row[3]
+            image = row[4] if len(row) > 4 else None
             conn.execute("""
-                INSERT INTO issue_status (tracked_series_id, number, owned, komga_book_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO issue_status (tracked_series_id, number, owned, komga_book_id, metron_image)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                     owned         = excluded.owned,
-                    komga_book_id = excluded.komga_book_id
-            """, (sid, num, int(owned), kbid))
+                    komga_book_id = excluded.komga_book_id,
+                    metron_image  = COALESCE(excluded.metron_image, metron_image)
+            """, (sid, num, int(owned), kbid, image))
     return len(rows)
 
 
