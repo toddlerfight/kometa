@@ -776,40 +776,72 @@ async function _loadArcsPanel(id) {
     body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">No story arcs found for this series (Wikipedia has none, or it's not yet covered).</div>`;
     return;
   }
-  body.innerHTML = arcs.map((a, i) => _arcRowHtml(a, i)).join('');
+  body.innerHTML = `<div class="series-grid">${arcs.map((a, i) => _arcRowHtml(a, i)).join('')}</div>`;
 }
 
 let _arcsPanelData = [];
 let _arcsPanelSeriesId = null;
 
+// Arcs render as the SAME series-card the library uses — clickable, navigable, the
+// app's own visual language (spec: "like the rest of the interface"). Tracked arcs
+// carry a live owned/total bar; discovered ones are a dimmed placeholder that
+// populates-then-navigates on click.
 function _arcRowHtml(a, i) {
+  const delay = `animation-delay:${Math.min(i, 14) * STAGGER_MS}ms`;
   if (a.tracked) {
     const ntitles = (a.source_titles || []).length;
-    const complete = a.issue_count > 0 && a.owned_count >= a.issue_count;
-    return `<div class="arc-list-row" onclick="navigate('series-detail',{id:${a.id}})">
-      <span class="arc-list-dia">◆</span>
-      <span class="arc-list-name">${esc(a.name)}</span>
-      <span class="arc-list-meta">${a.issue_count} issues · ${ntitles} title${ntitles === 1 ? '' : 's'} · tracked</span>
-      <span class="arc-list-count${complete ? ' ok' : ''}">${a.owned_count}/${a.issue_count}</span>
-    </div>`;
+    const total = a.issue_count || 0;
+    const owned = a.owned_count || 0;
+    const pct = total ? Math.round((owned / total) * 100) : 0;
+    const complete = total > 0 && owned >= total;
+    const color = complete ? 'var(--pri)' : (total ? 'var(--amb)' : 'var(--tq)');
+    const sub = ntitles > 1 ? `CROSSES ${ntitles} TITLES` : `${total} BOOK${total === 1 ? '' : 'S'}`;
+    return `
+      <div class="series-card card-cascade" style="${delay}" tabindex="0" role="button"
+        onclick="navigate('series-detail',{id:${a.id}})"
+        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${a.id}})">
+        <div class="series-card-img-wrap">
+          <img class="series-card-cover" src="/api/series/${a.id}/thumbnail" alt="${esc(a.name)}"
+            loading="lazy" onerror="this.style.opacity='0.15'">
+          <div class="series-card-next-release">◆ ARC</div>
+        </div>
+        <div class="series-card-bar-track">
+          <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <div class="series-card-footer">
+          <div class="series-card-title">${esc(a.name)}</div>
+          <div class="series-card-count" style="color:${color}">${owned}/${total}</div>
+        </div>
+        <div class="series-card-publisher">${sub}</div>
+      </div>`;
   }
   // Discovered (not yet tracked) — clicking populates on demand. ComicVine arcs
   // carry a cv_arc_id (precise order); Wikipedia ones carry an issue range.
-  const range = (a.first_issue && a.last_issue) ? `#${a.first_issue}–${a.last_issue}` : '';
-  const n = (a.first_issue && a.last_issue) ? `${a.last_issue - a.first_issue + 1} issues` : '';
-  const meta = a.source === 'comicvine' ? 'ComicVine' : [range, n].filter(Boolean).join(' · ');
-  return `<div class="arc-list-row arc-discovered" onclick="openDiscoveredArc(${i}, this)">
-    <span class="arc-list-dia dim">◇</span>
-    <span class="arc-list-name">${esc(a.name)}</span>
-    <span class="arc-list-meta">${meta}</span>
-    <span class="arc-list-count view">view →</span>
-  </div>`;
+  const n = (a.first_issue && a.last_issue) ? `${a.last_issue - a.first_issue + 1} BOOKS` : '';
+  const sub = a.source === 'comicvine' ? 'COMICVINE' : (n || 'STORY ARC');
+  return `
+    <div class="series-card card-cascade arc-discovered" style="${delay}" tabindex="0" role="button"
+      onclick="openDiscoveredArc(${i}, this)"
+      onkeydown="if(event.key==='Enter'||event.key===' ')openDiscoveredArc(${i},this)">
+      <div class="series-card-img-wrap">
+        <img class="series-card-cover" src="" alt="${esc(a.name)}" style="opacity:.12" onerror="this.style.opacity='0.12'">
+        <div class="series-card-next-release">◇ ARC</div>
+      </div>
+      <div class="series-card-bar-track">
+        <div class="series-card-bar-fill" style="width:0%;background:var(--tq)"></div>
+      </div>
+      <div class="series-card-footer">
+        <div class="series-card-title">${esc(a.name)}</div>
+        <div class="series-card-count view" style="color:var(--tq)">view →</div>
+      </div>
+      <div class="series-card-publisher">${sub}</div>
+    </div>`;
 }
 
 async function openDiscoveredArc(i, row) {
   const a = _arcsPanelData[i];
   if (!a) return;
-  const cnt = row && row.querySelector('.arc-list-count');
+  const cnt = row && row.querySelector('.series-card-count');
   if (cnt) cnt.textContent = 'opening…';
   if (row) row.style.opacity = '0.5';
   try {
