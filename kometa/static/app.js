@@ -626,6 +626,10 @@ function renderArcDetail(s) {
 }
 
 async function fulfillArc(id, btn) {
+  // GET is a deliberate, destructive action: it materialises every participating run
+  // (creating series + folders for Detective, Showcase, …) and queues downloads. Warn
+  // before doing any of that — no silent folder creation.
+  if (!confirm('Get this storyline?\n\nThis creates a tracked series + folder for every participating run (Detective Comics, Showcase \'93, …) and queues downloads of the missing issues into them. Nothing is created until you confirm.')) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Queueing…'; }
   try {
     const r = await api.post(`/api/series/${id}/fulfill`, {});

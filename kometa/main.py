@@ -961,6 +961,16 @@ def _track_participating(arc_series_id: int) -> dict:
                 kid = _best_komga_match(kall, title) or _best_komga_match(kall, name)
             except Exception:
                 kid = None
+        # That Komga series may already back a tracked run (komga_series_id is UNIQUE —
+        # inserting a second 500s). Reuse it: anchor its CV volume to this arc's run and
+        # map to it instead of minting a duplicate.
+        if kid:
+            taken = db.get_series_by_komga_id(kid, DB_PATH)
+            if taken:
+                if not taken.get("cv_volume_id"):
+                    db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
+                mapping[vid] = taken["id"]
+                continue
         folder = _resolve_dir(_comics_root(), publisher, title)
         sid = db.add_series(komga_series_id=kid, title=title, publisher=publisher,
                             year_began=year, folder_path=folder, on_pull_list=False,

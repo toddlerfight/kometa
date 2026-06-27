@@ -401,6 +401,18 @@ def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
         return dict(r) if r else None
 
 
+def get_series_by_komga_id(komga_series_id, path=DB_PATH):
+    """A tracked series already linked to this Komga series, or None. komga_series_id
+    is UNIQUE, so creating a second series with the same link IntegrityErrors — callers
+    reuse the existing series instead of inserting a duplicate."""
+    if not komga_series_id:
+        return None
+    with _connect(path) as conn:
+        r = conn.execute("SELECT * FROM tracked_series WHERE komga_series_id = ?",
+                         (str(komga_series_id),)).fetchone()
+        return dict(r) if r else None
+
+
 def remove_series(series_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM issue_status WHERE tracked_series_id = ?", (series_id,))
