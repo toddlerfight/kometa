@@ -371,6 +371,14 @@ def add_series(komga_series_id=None, metron_series_id=None, title=None, publishe
         return cur.lastrowid
 
 
+def set_series_cv_volume(series_id, cv_volume_id, path=DB_PATH):
+    """Cache a series' resolved CV volume id (so arc discovery can scope to the right
+    run — Batman 1940 vs 2025 — without re-resolving every time)."""
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET cv_volume_id = ? WHERE id = ?",
+                     (str(cv_volume_id), series_id))
+
+
 def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
     """A tracked series linked to this CV volume id, or None — the robust key for
     routing an arc's issues to the right run (Batman 1940, not 2016)."""
@@ -451,16 +459,20 @@ def get_all_arcs(path=DB_PATH):
     raw data behind a series' Arcs tab (caller filters by series title)."""
     with _connect(path) as conn:
         arcs = {r["id"]: {"id": r["id"], "title": r["title"], "cv_arc_id": r["cv_arc_id"],
-                          "source_titles": set(), "issue_count": 0, "owned_count": 0}
+                          "source_titles": set(), "cv_volume_ids": set(),
+                          "issue_count": 0, "owned_count": 0}
                 for r in conn.execute("SELECT id, title, cv_arc_id FROM tracked_series WHERE kind = 'arc'")}
-        for r in conn.execute("SELECT arc_series_id, source_title, owned FROM arc_issues"):
+        for r in conn.execute("SELECT arc_series_id, source_title, cv_volume_id, owned FROM arc_issues"):
             a = arcs.get(r["arc_series_id"])
             if a:
                 a["source_titles"].add(r["source_title"])
+                if r["cv_volume_id"]:
+                    a["cv_volume_ids"].add(str(r["cv_volume_id"]))
                 a["issue_count"] += 1
                 a["owned_count"] += (r["owned"] or 0)
     for a in arcs.values():
         a["source_titles"] = sorted(a["source_titles"])
+        a["cv_volume_ids"] = sorted(a["cv_volume_ids"])
     return list(arcs.values())
 
 

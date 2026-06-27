@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Arc surfacing — mockup</title>
+  <!-- the REAL app stylesheet, so this looks like the app, not an approximation -->
+  <link rel="stylesheet" href="../kometa/static/style.css">
+  <style>
+    /* mock-only bits: layout helpers + the new owned/covered/missing badges */
+    body { margin: 0; }
+    .mock-wrap { max-width: 1100px; margin: 0 auto; padding: 28px 32px 80px; }
+    .mock-label { color: var(--pri); font-family: var(--font); font-size: 11px;
+      letter-spacing: .12em; text-transform: uppercase; margin: 48px 0 14px; opacity: .8; }
+    .mock-label:first-child { margin-top: 8px; }
+    .mock-sep { border: 0; border-top: 1px solid var(--bd); margin: 56px 0 0; }
+
+    /* arc rows in the Arcs tab — clean, clickable, same language as the app */
+    .a-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+      border: 1px solid var(--bd); border-radius: 9px; margin-bottom: 10px;
+      background: var(--su1); cursor: pointer; transition: border-color .12s, background .12s; }
+    .a-row:hover { border-color: #3a3a3a; background: #161616; }
+    .a-dia { color: var(--pri); font-size: 13px; }
+    .a-name { font-weight: 600; flex: 1; font-size: 14px; }
+    .a-meta { color: var(--tq); font-size: 11px; white-space: nowrap; }
+    .a-count { font-size: 11px; white-space: nowrap; min-width: 92px; text-align: right; color: var(--tm); }
+    .a-count .ok { color: var(--pri); }
+
+    /* reading-order tiles — the SAME tile skeleton issues/trades use */
+    .ig { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+      gap: 14px; margin-top: 6px; }
+    .it { position: relative; }
+    .it-img { aspect-ratio: 2/3; border-radius: 7px; background: linear-gradient(150deg, #1c1c1c, #0c0c0c);
+      border: 1px solid var(--bd); display: flex; align-items: center; justify-content: center;
+      position: relative; overflow: hidden; }
+    .it.owned   .it-img { border-color: rgba(145,252,78,.45); }
+    .it.covered .it-img { border-color: rgba(145,252,78,.28); }
+    .it.missing .it-img { border-color: #3a2a2a; }
+    .it-n { font-size: 22px; font-weight: 700; color: #3a3a3a; }
+    .it.owned .it-n, .it.covered .it-n { color: #555; }
+    .it-badge { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px;
+      border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .it.owned   .it-badge { background: var(--pri); color: #000; }
+    .it.covered .it-badge { background: rgba(145,252,78,.16); color: var(--pri); border: 1px solid rgba(145,252,78,.4); }
+    .it.missing .it-badge { background: #1a1a1a; color: var(--tq); border: 1px solid var(--bd); }
+    .it-cap { font-size: 11px; color: var(--tm); margin-top: 7px; text-align: center; line-height: 1.35; }
+    .it-cross { display: block; font-size: 9px; color: var(--pri); letter-spacing: .04em; opacity: .85; }
+
+    .legend { display: flex; gap: 18px; margin: 4px 0 18px; font-size: 11px; color: var(--tq); flex-wrap: wrap; }
+    .legend b { display: inline-flex; align-items: center; gap: 6px; color: var(--tm); font-weight: 400; }
+    .legend .d { width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center;
+      justify-content: center; font-size: 9px; }
+    .coll-note { margin: 14px 0 20px; padding: 12px 15px; border: 1px solid rgba(145,252,78,.28);
+      background: rgba(145,252,78,.07); border-radius: 9px; font-size: 12px; color: var(--tm); }
+    .coll-note b { color: var(--pri); font-weight: 600; }
+  </style>
+</head>
+<body>
+<div id="layout">
+  <nav id="sidebar">
+    <div class="logo"><div class="logo-mark"></div><span class="logo-text">コメタ</span></div>
+    <div class="nav-items">
+      <a class="nav-item active" data-view="library">Library</a>
+      <a class="nav-item" data-view="pull-list">Pull List</a>
+      <a class="nav-item" data-view="activity">Activity</a>
+      <a class="nav-item" data-view="settings">Settings</a>
+    </div>
+  </nav>
+  <div id="content">
+    <header id="topbar"><span id="topbar-title"></span></header>
+    <main id="app">
+      <div class="mock-wrap">
+
+        <!-- ============================================================= -->
+        <div class="mock-label">① Series → Arcs tab (Batman 1940)</div>
+
+        <div class="detail-hero" style="position:relative;height:auto;padding:24px 0 8px">
+          <div class="detail-hero-content" style="position:static">
+            <div class="detail-hero-text">
+              <div class="detail-hero-publisher">DC COMICS · 1940</div>
+              <div class="detail-hero-title">Batman</div>
+              <div class="detail-hero-chips">
+                <span class="chip">10 owned</span>
+                <span class="chip chip-collected">◆ 13 covered</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="issue-tabs-row">
+          <div class="issue-tabs">
+            <div class="issue-tab">all</div>
+            <div class="issue-tab">owned</div>
+            <div class="issue-tab">missing</div>
+            <div class="issue-tab">upcoming</div>
+            <div class="issue-tab">trades</div>
+            <div class="issue-tab active">arcs<span class="tab-badge">7</span></div>
+          </div>
+        </div>
+
+        <div style="padding:8px 0 4px">
+          <div class="a-row">
+            <span class="a-dia">◆</span>
+            <span class="a-name">Knightfall</span>
+            <span class="a-meta">23 books · crosses 3 titles</span>
+            <span class="a-count"><span class="ok">23</span> have · 0 missing</span>
+          </div>
+          <div class="a-row">
+            <span class="a-dia">◆</span>
+            <span class="a-name">A Death in the Family</span>
+            <span class="a-meta">4 books · Batman</span>
+            <span class="a-count">4 have · 0 missing</span>
+          </div>
+          <div class="a-row">
+            <span class="a-dia">◆</span>
+            <span class="a-name">Hush</span>
+            <span class="a-meta">12 books · Batman</span>
+            <span class="a-count">2 have · 10 missing</span>
+          </div>
+          <div class="a-row">
+            <span class="a-dia">◆</span>
+            <span class="a-name">Year One</span>
+            <span class="a-meta">4 books · Batman</span>
+            <span class="a-count">0 have · 4 missing</span>
+          </div>
+        </div>
+
+        <hr class="mock-sep">
+
+        <!-- ============================================================= -->
+        <div class="mock-label">② Click an arc → the arc view (Knightfall)</div>
+
+        <div class="detail-hero" style="position:relative;height:auto;padding:24px 0 8px">
+          <div class="detail-hero-content" style="position:static">
+            <div class="detail-hero-text">
+              <div class="detail-hero-publisher">◆ STORYLINE · DC COMICS · 1993 · originates in Batman (1940)</div>
+              <div class="detail-hero-title">Knightfall</div>
+              <div class="detail-hero-chips">
+                <span class="chip chip-complete">23 / 23 have</span>
+                <span class="chip chip-collected">◆ collected</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="coll-note">
+          ◆ <b>Collected edition you own</b> — Batman: Knightfall 25th Anniversary v01 covers this whole storyline,
+          so every issue reads as <b>covered</b>. You can still chase individual singles if you want them.
+        </div>
+
+        <div class="legend">
+          <b><span class="d" style="background:var(--pri);color:#000">✓</span> own the single</b>
+          <b><span class="d" style="background:rgba(145,252,78,.16);color:var(--pri);border:1px solid rgba(145,252,78,.4)">◆</span> covered by a trade</b>
+          <b><span class="d" style="background:#1a1a1a;color:var(--tq);border:1px solid var(--bd)">○</span> missing</b>
+          <b style="color:var(--pri)">orange label = crosses into another series</b>
+        </div>
+
+        <div class="ig">
+          <div class="it owned"><div class="it-img"><span class="it-n">491</span><div class="it-badge">✓</div></div><div class="it-cap">Batman #491<br><span style="color:var(--tq)">The Freedom of Madness</span></div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">492</span><div class="it-badge">◆</div></div><div class="it-cap">Batman #492</div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">493</span><div class="it-badge">◆</div></div><div class="it-cap">Batman #493</div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">659</span><div class="it-badge">◆</div></div><div class="it-cap"><span class="it-cross">DETECTIVE COMICS</span>#659</div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">660</span><div class="it-badge">◆</div></div><div class="it-cap"><span class="it-cross">DETECTIVE COMICS</span>#660</div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">497</span><div class="it-badge">◆</div></div><div class="it-cap">Batman #497<br><span style="color:var(--tq)">The Broken Bat</span></div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">7</span><div class="it-badge">◆</div></div><div class="it-cap"><span class="it-cross">SHOWCASE '93</span>#7</div></div>
+          <div class="it covered"><div class="it-img"><span class="it-n">16</span><div class="it-badge">◆</div></div><div class="it-cap"><span class="it-cross">SHADOW OF THE BAT</span>#16</div></div>
+          <div class="it missing"><div class="it-img"><span class="it-n">500</span><div class="it-badge">○</div></div><div class="it-cap">Batman #500</div></div>
+        </div>
+
+        <div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center">
+          <button class="btn btn-primary">Get this storyline</button>
+          <button class="btn btn-ghost">Build Komga readlist</button>
+          <span style="color:var(--tq);font-size:11px;margin-left:4px">Get → grab singles, or the covering trade for what's missing</span>
+        </div>
+
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Arc flow — mockup (real components)</title>
+  <link rel="stylesheet" href="../kometa/static/style.css">
+  <style>
+    /* ONLY mock scaffolding — step bar, toast, and the two genuinely-new bits
+       (a cross-title tag on an issue-tile-num, and the covered ◆ badge). Everything
+       else is the app's real components/classes. */
+    body { margin: 0; }
+    main#app { padding: 22px 30px 90px; }
+    .steps { display: flex; gap: 8px; align-items: center; margin: 0 0 24px; font-family: var(--font);
+      font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .steps .st { color: var(--tq); display: flex; align-items: center; gap: 8px; }
+    .steps .st.on { color: var(--pri); }
+    .steps .st .n { width: 18px; height: 18px; border-radius: 50%; border: 1px solid currentColor;
+      display: inline-flex; align-items: center; justify-content: center; font-size: 10px; }
+    .steps .arrow { color: var(--bd); }
+    .screen { display: none; } .screen.on { display: block; }
+    .cue { color: var(--tq); font-size: 11px; margin: 16px 0; }
+    .cue b { color: var(--pri); }
+    .toast { display: inline-block; background: var(--su1); border: 1px solid rgba(145,252,78,.3);
+      color: var(--pri); font-size: 11px; padding: 7px 12px; border-radius: 7px; margin-bottom: 16px; }
+    /* cross-title tag riding inside the real issue-tile-num */
+    .xt { color: var(--pri); font-size: 9px; letter-spacing: .04em; display: block; }
+    /* the new "covered by a trade" badge — sits where the search ↓ button sits */
+    .issue-tile-cov { position: absolute; bottom: 8px; right: 8px; width: 20px; height: 20px;
+      border-radius: 50%; background: rgba(145,252,78,.16); color: var(--pri);
+      border: 1px solid rgba(145,252,78,.45); display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .collbar { margin: 0 0 18px; padding: 12px 15px; border: 1px solid rgba(145,252,78,.28);
+      background: rgba(145,252,78,.07); border-radius: 9px; font-size: 12px; color: var(--tm); }
+    .collbar b { color: var(--pri); }
+  </style>
+</head>
+<body>
+<div id="layout">
+  <nav id="sidebar">
+    <div class="logo"><div class="logo-mark"></div><span class="logo-text">コメタ</span></div>
+    <div class="nav-items">
+      <a class="nav-item active">Library</a><a class="nav-item">Pull List</a>
+      <a class="nav-item">Activity</a><a class="nav-item">Settings</a>
+    </div>
+  </nav>
+  <div id="content">
+    <header id="topbar"><span id="topbar-title"></span></header>
+    <main id="app">
+
+      <div class="steps">
+        <span class="st on" id="step1"><span class="n">1</span> Search a storyline</span><span class="arrow">→</span>
+        <span class="st" id="step2"><span class="n">2</span> Follow → series added</span><span class="arrow">→</span>
+        <span class="st" id="step3"><span class="n">3</span> Open the arc</span>
+      </div>
+
+      <!-- ============ SCREEN 1 — SEARCH (real .wizard-results / .wizard-result) ============ -->
+      <section class="screen on" id="s1">
+        <input class="search-input" value="Knightfall" readonly style="margin-bottom:6px">
+        <div class="wizard-results">
+          <div class="wizard-result wizard-result-enter" onclick="go(2)">
+            <img class="wizard-result-thumb" src="x" alt="" onerror="this.style.opacity=0">
+            <div class="wizard-result-text">
+              <div class="wizard-result-title">Knightfall <span class="locg-badge">◆ STORYLINE</span></div>
+              <div class="wizard-result-meta">DC Comics · story arc · originates in Batman (1940) · 1993 · 23 issues across 4 titles</div>
+            </div>
+          </div>
+          <div class="wizard-result wizard-result-enter" onclick="go(2)">
+            <img class="wizard-result-thumb" src="x" alt="" onerror="this.style.opacity=0">
+            <div class="wizard-result-text">
+              <div class="wizard-result-title">KnightsEnd <span class="locg-badge">◆ STORYLINE</span></div>
+              <div class="wizard-result-meta">DC Comics · story arc · originates in Batman (1940) · 1994 · 19 issues</div>
+            </div>
+          </div>
+        </div>
+        <div class="cue">▸ same Add-Series search you already have — but a <b>storyline</b> result leads with the run it originates in. Click it.</div>
+      </section>
+
+      <!-- ============ SCREEN 2 — SERIES + ARCS TAB (real detail-hero / issue-tabs / series-grid / series-card) ============ -->
+      <section class="screen" id="s2">
+        <div class="toast">✓ Batman (1940) added — tracking only, nothing downloaded</div>
+        <div class="detail-hero" style="position:relative;height:auto;padding:6px 0 4px">
+          <div class="detail-hero-content" style="position:static"><div class="detail-hero-text">
+            <div class="detail-hero-publisher">DC COMICS · 1940</div>
+            <div class="detail-hero-title">Batman</div>
+            <div class="detail-hero-chips"><span class="chip">0 owned</span></div>
+          </div></div>
+        </div>
+        <div class="issue-tabs-row"><div class="issue-tabs">
+          <div class="issue-tab">all</div><div class="issue-tab">owned</div><div class="issue-tab">missing</div>
+          <div class="issue-tab">upcoming</div><div class="issue-tab">trades</div>
+          <div class="issue-tab active">arcs<span class="tab-badge">1</span></div>
+        </div></div>
+        <div class="series-grid" style="margin-top:14px">
+          <div class="series-card" role="button" tabindex="0" onclick="go(3)">
+            <div class="series-card-img-wrap">
+              <img class="series-card-cover" src="x" alt="Knightfall" onerror="this.style.opacity=0.12">
+              <div class="series-card-next-release">◆ ARC</div>
+            </div>
+            <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:0%;background:var(--amb)"></div></div>
+            <div class="series-card-footer">
+              <div class="series-card-title">Knightfall</div>
+              <div class="series-card-count" style="color:var(--amb)">0/23</div>
+            </div>
+            <div class="series-card-publisher">CROSSES 3 TITLES</div>
+          </div>
+        </div>
+        <div class="cue">▸ only <b>Batman (1940)</b> was added. Detective / Shadow of the Bat get created later, only if you grab their issues. Click the arc card.</div>
+      </section>
+
+      <!-- ============ SCREEN 3 — ARC VIEW (real detail-hero / issue-tabs / issue-grid / issue-tile) ============ -->
+      <section class="screen" id="s3">
+        <div class="detail-hero" style="position:relative;height:auto;padding:6px 0 4px">
+          <div class="detail-hero-content" style="position:static"><div class="detail-hero-text">
+            <div class="detail-hero-publisher">◆ STORYLINE · DC COMICS · 1993 · originates in Batman (1940)</div>
+            <div class="detail-hero-title">Knightfall</div>
+            <div class="detail-hero-chips" id="kf-chips"><span class="chip chip-missing">0 / 23 have</span></div>
+          </div></div>
+        </div>
+        <div class="detail-folder-row">
+          <span class="detail-folder-path" style="opacity:.6">◆ storyline · issues live in their own runs · originates in Batman (1940)</span>
+          <div class="detail-folder-actions">
+            <button class="btn btn-primary btn-sm" onclick="getIt()">Get this storyline</button>
+            <button class="btn btn-ghost btn-sm">Build Komga readlist</button>
+            <button class="btn btn-ghost btn-sm">Unfollow</button>
+          </div>
+        </div>
+        <div class="issue-tabs-row"><div class="issue-tabs"><div class="issue-tab active">reading order</div></div></div>
+        <div class="issue-grid" id="kf-grid">
+          <!-- real issue-tile markup; cross-title rides in the issue-tile-num -->
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#491</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#492</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#493</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num"><span class="xt">DETECTIVE</span>#659</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num"><span class="xt">DETECTIVE</span>#660</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#494</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#497</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num"><span class="xt">SHOWCASE '93</span>#7</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num"><span class="xt">SHADOW OF BAT</span>#16</div><button class="issue-tile-search">↓</button></div>
+          <div class="issue-tile"><div class="issue-tile-img missing"><img src="x" onerror="this.remove()"></div><div class="issue-tile-num">#500</div><button class="issue-tile-search">↓</button></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+<script>
+  function go(n){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));
+    document.getElementById('s'+n).classList.add('on');
+    for(let i=1;i<=3;i++) document.getElementById('step'+i).classList.toggle('on', i<=n);
+    window.scrollTo(0,0);
+  }
+  // "Get" → the '93 singles barely exist, so it grabs the covering trade: every tile flips to ◆ covered.
+  addEventListener('load',()=>{ const h=+location.hash.slice(1); if(h>1) go(h); });
+  function getIt(){
+    document.querySelectorAll('#kf-grid .issue-tile').forEach(t=>{
+      t.querySelector('.issue-tile-search')?.remove();
+      t.querySelector('.issue-tile-img').classList.remove('missing');
+      const cov=document.createElement('div'); cov.className='issue-tile-cov'; cov.textContent='◆';
+      t.appendChild(cov);
+    });
+    document.getElementById('kf-chips').innerHTML='<span class="chip chip-complete">23 / 23 have</span><span class="chip chip-collected">◆ collected</span>';
+    const bar=document.createElement('div'); bar.className='collbar';
+    bar.innerHTML='◆ <b>Got it via the covering trade</b> — Knightfall 25th-Anniversary v01. Every issue now reads <b>◆ covered</b>; the count is 23/23. Singles stay grabbable individually.';
+    document.getElementById('s3').insertBefore(bar, document.getElementById('kf-grid'));
+  }
+</script>
+</body>
+</html>

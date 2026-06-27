@@ -636,29 +636,59 @@ def build_arc_readlist(series_id: int):
             "mode": mode, "updated": result.get("updated", False)}
 
 
+def _series_cv_volume(series: dict):
+    """The series' CV volume id (cached on the row), resolved via volume search by
+    base title + year — so arc discovery scopes to the right RUN (Batman 1940 vs
+    2025), not every same-named volume."""
+    if series.get("cv_volume_id"):
+        return series["cv_volume_id"]
+    cv = _comicvine()
+    if not cv:
+        return None
+    from kometa.arc import base_series_title, titles_match
+    base = base_series_title(series["title"])
+    yr = series.get("year_began")
+    try:
+        vols = cv.search_volumes(base, limit=15)
+    except Exception:
+        return None
+    match = (next((v for v in vols if titles_match(v.get("name", ""), base) and v.get("year") == yr), None)
+             if yr else None) \
+        or next((v for v in vols if titles_match(v.get("name", ""), base)), None)
+    if match and match.get("cv_volume_id"):
+        db.set_series_cv_volume(series["id"], str(match["cv_volume_id"]), DB_PATH)
+        return str(match["cv_volume_id"])
+    return None
+
+
 def _discover_arcs(series: dict) -> list[dict]:
-    """Discovered arcs for a series, cached ~7 days. PRIMARY = ComicVine (structured,
-    repeatable, precise cv_arc_id, noise-filtered by quoted prefix); FALLBACK =
-    Wikipedia, only when CV catalogs nothing (brand-new / indie books)."""
+    """Discovered arcs for a series, cached ~7 days. PRIMARY = ComicVine, scoped to
+    the series' RUN (so 'Batman 2025' doesn't inherit Batman 1940's canon). When CV
+    knows the run, its scoped result is authoritative (even if empty — a new book has
+    no arcs). Only when CV doesn't recognize the run at all do we fall back to the
+    messy-but-broad Wikipedia."""
     cached = db.get_arc_discovery(series["id"], DB_PATH)
     if cached and cached["age"] < 7 * 86400:
         return cached["arcs"]
-    arcs = []
     cv = _comicvine()
     if cv:
-        try:
-            arcs = [{"name": a["name"], "cv_arc_id": a["cv_arc_id"], "source": "comicvine"}
-                    for a in cv.discover_arcs(series["title"])]
-        except Exception as e:
-            logger.warning(f"CV arc discovery failed for {series['title']!r}: {e}")
-    if not arcs:  # CV blank -> the messy-but-broad fallback
-        try:
-            arcs = [{"name": a["name"], "first_issue": a["first_issue"],
-                     "last_issue": a["last_issue"], "source": "wikipedia"}
-                    for a in _wikipedia().discover_arcs(series["title"], series.get("year_began"))]
-        except Exception as e:
-            logger.warning(f"Wikipedia arc discovery failed for {series['title']!r}: {e}")
-            return cached["arcs"] if cached else []
+        vid = _series_cv_volume(series)
+        if vid:
+            try:
+                arcs = [{"name": a["name"], "cv_arc_id": a["cv_arc_id"], "source": "comicvine"}
+                        for a in cv.discover_arcs(series["title"], vid)]
+            except Exception as e:
+                logger.warning(f"CV arc discovery failed for {series['title']!r}: {e}")
+                arcs = []
+            db.set_arc_discovery(series["id"], arcs, DB_PATH)
+            return arcs
+    try:  # CV doesn't recognize this run (new/indie) -> Wikipedia
+        arcs = [{"name": a["name"], "first_issue": a["first_issue"],
+                 "last_issue": a["last_issue"], "source": "wikipedia"}
+                for a in _wikipedia().discover_arcs(series["title"], series.get("year_began"))]
+    except Exception as e:
+        logger.warning(f"Wikipedia arc discovery failed for {series['title']!r}: {e}")
+        return cached["arcs"] if cached else []
     db.set_arc_discovery(series["id"], arcs, DB_PATH)
     return arcs
 
@@ -672,8 +702,18 @@ def get_series_arcs(series_id: int):
     if not s:
         raise HTTPException(404)
     from kometa.arc import arc_includes_series, titles_match
-    tracked = [a for a in db.get_all_arcs(DB_PATH)
-               if arc_includes_series(a["source_titles"], s["title"])]
+    svid = _series_cv_volume(s)        # the series' run, resolved + cached
+    if svid:
+        s["cv_volume_id"] = svid       # so _discover_arcs doesn't re-resolve
+
+    def _arc_matches(a):
+        # Volume-aware when both sides carry it (Knightfall's vol 796 won't match the
+        # 2025 book); fall back to title match for legacy arcs / unresolved volumes.
+        if svid and a.get("cv_volume_ids"):
+            return svid in a["cv_volume_ids"]
+        return arc_includes_series(a["source_titles"], s["title"])
+
+    tracked = [a for a in db.get_all_arcs(DB_PATH) if _arc_matches(a)]
 
     def _match_tracked(name):
         return next((a for a in tracked
@@ -1213,6 +1253,16 @@ def search_locg(q: str):
         "cover":      r.get("cover"),
         "source":     "locg",
     } for r in raw[:15]]
+
+
+@app.get("/api/search/storyline")
+def search_storyline(q: str):
+    """Arc-first entry point: search a storyline, get it back resolved to the RUN it
+    originates in (the run you'd follow). Empty list if CV isn't configured."""
+    cv = _comicvine()
+    if not cv:
+        return []
+    return cv.search_storylines(q)
 
 
 @app.get("/api/search/comicvine")

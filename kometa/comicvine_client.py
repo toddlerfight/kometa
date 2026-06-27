@@ -104,23 +104,72 @@ class ComicVineClient:
         logger.info(f"ComicVine: {len(out)} arc results for {query!r}")
         return out
 
-    def discover_arcs(self, series_title: str) -> list[dict]:
-        """Story arcs CV catalogs for a series — the structured, repeatable discovery
-        primary. CV arc names embed the series in quotes ('"Batman" Knightfall'), so
-        a name search is filtered to hits whose quoted prefix matches the series. That
-        drops the noise ('"X-Men" ... Saga' for a 'Saga' search) with NO extra calls.
-        Returns [{name, cv_arc_id}] — name is the arc title, prefix stripped."""
+    def discover_arcs(self, series_title: str, cv_volume_id=None) -> list[dict]:
+        """Story arcs for a series, scoped to its RUN. CV arc names embed the series
+        in quotes ('"Batman" Knightfall'), so a name search is first filtered to hits
+        whose quoted prefix matches. But "Batman" spans many volumes (1940/2016/2025),
+        so when a cv_volume_id is given we further keep only arcs whose origin issue
+        (first_appeared_in_issue) lives in THAT volume — Knightfall (vol 796) shows
+        under Batman 1940, not the 2025 book. ~2 calls (search + one batch), not N.
+        Returns [{name, cv_arc_id}]."""
         from kometa.arc import base_series_title, titles_match
         base = base_series_title(series_title)
-        out = []
-        for a in self.search_arcs(base, limit=40):
-            m = _QUOTED_ARC_RE.match(a.get("name") or "")
-            if not m:
+        try:
+            d = self._get("story_arcs/", filter=f"name:{base}", limit=40,
+                          field_list="name,id,first_appeared_in_issue")
+        except Exception as e:
+            logger.warning(f"ComicVine arc discovery failed for {series_title!r}: {e}")
+            return []
+        cands = []
+        for r in (d.get("results") or []):
+            m = _QUOTED_ARC_RE.match(r.get("name") or "")
+            if not m or not titles_match(m.group(1), base):
                 continue
-            prefix, title = m.group(1), m.group(2).strip()
-            if titles_match(prefix, base):
-                out.append({"name": title or a["name"], "cv_arc_id": a["cv_arc_id"]})
-        logger.info(f"ComicVine: {len(out)} arcs scoped to {series_title!r}")
+            fa = r.get("first_appeared_in_issue") or {}
+            cands.append({"name": m.group(2).strip() or r["name"], "cv_arc_id": r["id"],
+                          "first_id": str(fa["id"]) if fa.get("id") else None})
+        if not cv_volume_id:
+            return [{"name": c["name"], "cv_arc_id": c["cv_arc_id"]} for c in cands]
+        first_ids = [c["first_id"] for c in cands if c["first_id"]]
+        meta = self.get_issues_meta(first_ids) if first_ids else {}
+        out = [{"name": c["name"], "cv_arc_id": c["cv_arc_id"]} for c in cands
+               if c["first_id"] and str(meta.get(c["first_id"], {}).get("volume_id")) == str(cv_volume_id)]
+        logger.info(f"ComicVine: {len(out)}/{len(cands)} arcs scoped to vol {cv_volume_id} for {series_title!r}")
+        return out
+
+    def search_storylines(self, query: str, limit: int = 12) -> list[dict]:
+        """Search storylines by name, each resolved to its ORIGIN run — the run its
+        first issue belongs to (first_appeared_in_issue → volume). This is the entry
+        point for the arc-first model: you search 'Knightfall', it tells you it
+        originates in Batman (1940). ~2 calls (search + one batch volume lookup) plus
+        a tiny per-distinct-volume year resolve. Returns
+        [{name, cv_arc_id, origin_title, origin_year, origin_volume_id}]."""
+        try:
+            d = self._get("story_arcs/", filter=f"name:{query}", limit=limit,
+                          field_list="name,id,first_appeared_in_issue")
+        except Exception as e:
+            logger.warning(f"ComicVine storyline search failed for {query!r}: {e}")
+            return []
+        arcs = d.get("results") or []
+        first_ids = [str(a["first_appeared_in_issue"]["id"]) for a in arcs
+                     if (a.get("first_appeared_in_issue") or {}).get("id")]
+        meta = self.get_issues_meta(first_ids) if first_ids else {}
+        years, out = {}, []
+        for a in arcs:
+            fa = a.get("first_appeared_in_issue") or {}
+            m = meta.get(str(fa.get("id")), {}) if fa.get("id") else {}
+            vid = m.get("volume_id")
+            if vid and vid not in years:
+                years[vid] = self.get_volume_year(vid)
+            nm = _QUOTED_ARC_RE.match(a.get("name") or "")
+            out.append({
+                "name": (nm.group(2).strip() if nm else a.get("name", "")) or a.get("name", ""),
+                "cv_arc_id": a.get("id"),
+                "origin_title": m.get("volume_name"),
+                "origin_year": years.get(vid),
+                "origin_volume_id": vid,
+            })
+        logger.info(f"ComicVine: {len(out)} storylines for {query!r}")
         return out
 
     def get_arc_issues(self, cv_arc_id) -> list[dict]:
