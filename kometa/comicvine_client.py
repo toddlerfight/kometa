@@ -116,7 +116,7 @@ class ComicVineClient:
         base = base_series_title(series_title)
         try:
             d = self._get("story_arcs/", filter=f"name:{base}", limit=40,
-                          field_list="name,id,first_appeared_in_issue")
+                          field_list="name,id,first_appeared_in_issue,image")
         except Exception as e:
             logger.warning(f"ComicVine arc discovery failed for {series_title!r}: {e}")
             return []
@@ -127,12 +127,13 @@ class ComicVineClient:
                 continue
             fa = r.get("first_appeared_in_issue") or {}
             cands.append({"name": m.group(2).strip() or r["name"], "cv_arc_id": r["id"],
+                          "image": (r.get("image") or {}).get("medium_url"),
                           "first_id": str(fa["id"]) if fa.get("id") else None})
         if not cv_volume_id:
-            return [{"name": c["name"], "cv_arc_id": c["cv_arc_id"]} for c in cands]
+            return [{"name": c["name"], "cv_arc_id": c["cv_arc_id"], "image": c["image"]} for c in cands]
         first_ids = [c["first_id"] for c in cands if c["first_id"]]
         meta = self.get_issues_meta(first_ids) if first_ids else {}
-        out = [{"name": c["name"], "cv_arc_id": c["cv_arc_id"]} for c in cands
+        out = [{"name": c["name"], "cv_arc_id": c["cv_arc_id"], "image": c["image"]} for c in cands
                if c["first_id"] and str(meta.get(c["first_id"], {}).get("volume_id")) == str(cv_volume_id)]
         logger.info(f"ComicVine: {len(out)}/{len(cands)} arcs scoped to vol {cv_volume_id} for {series_title!r}")
         return out
@@ -211,7 +212,7 @@ class ComicVineClient:
             chunk = ids[start:start + 100]
             try:
                 d = self._get("issues/", filter="id:" + "|".join(chunk),
-                              field_list="id,issue_number,volume", limit=100)
+                              field_list="id,issue_number,volume,image", limit=100)
             except Exception as e:
                 logger.warning(f"ComicVine issues meta failed: {e}")
                 continue
@@ -220,6 +221,7 @@ class ComicVineClient:
                 out[str(it.get("id"))] = {
                     "number": it.get("issue_number"),
                     "volume_id": v.get("id"), "volume_name": v.get("name"),
+                    "image_url": (it.get("image") or {}).get("medium_url"),
                 }
         return out
 

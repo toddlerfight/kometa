@@ -103,6 +103,7 @@ def _migrate(path=DB_PATH):
                 story_title     TEXT,
                 cv_issue_id     TEXT,
                 cv_volume_id    TEXT,
+                image_url       TEXT,
                 komga_book_id   TEXT,
                 owned           INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(arc_series_id, reading_order)
@@ -191,6 +192,10 @@ def _migrate(path=DB_PATH):
         ai_cols = [r[1] for r in conn.execute("PRAGMA table_info(arc_issues)")]
         if "cv_volume_id" not in ai_cols:
             conn.execute("ALTER TABLE arc_issues ADD COLUMN cv_volume_id TEXT")
+        # arc_issues gained image_url (CV per-issue cover, so reading-order tiles show
+        # real art instead of empty boxes — same batch call that resolves number/volume).
+        if "image_url" not in ai_cols:
+            conn.execute("ALTER TABLE arc_issues ADD COLUMN image_url TEXT")
 
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         # Rename the old in_komga column to owned — it always meant "owned on disk",
@@ -417,10 +422,12 @@ def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
             keep = prior.get(ro, {})
             conn.execute("""
                 INSERT INTO arc_issues (arc_series_id, reading_order, source_title, number,
-                                        story_title, cv_issue_id, cv_volume_id, komga_book_id, owned)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        story_title, cv_issue_id, cv_volume_id, image_url,
+                                        komga_book_id, owned)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (arc_series_id, ro, it.get("source_title"), it.get("number"),
                   it.get("story_title"), it.get("cv_issue_id"), it.get("cv_volume_id"),
+                  it.get("image_url"),
                   keep.get("komga_book_id"), keep.get("owned", 0)))
 
 

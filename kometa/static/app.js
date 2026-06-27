@@ -579,9 +579,12 @@ function renderArcDetail(s) {
     const cross = i.source_title && i.source_title !== primary;
     const xt = cross ? `<span class="issue-tile-xt">${esc(_arcShortTitle(i.source_title, primary))}</span>` : '';
     const covBadge = covered ? '<div class="issue-tile-cov">◆</div>' : '';
+    const cover = i.image_url
+      ? `<img src="${esc(i.image_url)}" alt="${num}" loading="lazy" onerror="this.remove()">`
+      : '';
     const ttl = `${esc(i.source_title || '')} ${num}${i.story_title ? ' — ' + esc(i.story_title) : ''}`;
     return `<div class="issue-tile" title="${ttl}">
-      <div class="issue-tile-img${stateCls}">${covBadge}</div>
+      <div class="issue-tile-img${stateCls}">${cover}${covBadge}</div>
       <div class="issue-tile-num">${xt}${num}</div>
     </div>`;
   }).join('');
@@ -823,7 +826,7 @@ function _arcRowHtml(a, i) {
         onclick="navigate('series-detail',{id:${a.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${a.id}})">
         <div class="series-card-img-wrap">
-          <img class="series-card-cover" src="/api/series/${a.id}/thumbnail" alt="${esc(a.name)}"
+          <img class="series-card-cover" src="${esc(a.image || `/api/series/${a.id}/thumbnail`)}" alt="${esc(a.name)}"
             loading="lazy" onerror="this.style.opacity='0.15'">
           <div class="series-card-next-release">◆ ARC</div>
         </div>
@@ -846,7 +849,8 @@ function _arcRowHtml(a, i) {
       onclick="openDiscoveredArc(${i}, this)"
       onkeydown="if(event.key==='Enter'||event.key===' ')openDiscoveredArc(${i},this)">
       <div class="series-card-img-wrap">
-        <img class="series-card-cover" src="" alt="${esc(a.name)}" style="opacity:.12" onerror="this.style.opacity='0.12'">
+        <img class="series-card-cover" src="${esc(a.image || '')}" alt="${esc(a.name)}"
+          style="${a.image ? '' : 'opacity:.12'}" onerror="this.style.opacity='0.12'">
         <div class="series-card-next-release">◇ ARC</div>
       </div>
       <div class="series-card-bar-track">

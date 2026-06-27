@@ -486,11 +486,12 @@ def get_series(series_id: int):
         # An arc's cross-title reading order lives in arc_issues, not issue_status.
         arc_issues = db.get_arc_reading_order(series_id, DB_PATH)
         owned = sum(1 for i in arc_issues if i["owned"])
-        # 'collected' = a Komga series named after the arc holds its trade edition —
-        # the usual ownership shape for vintage events, distinct from owned singles.
-        komga = _komga()
-        coll = _arc_collection(s["title"], komga)
-        collection = _collection_info(coll, komga)
+        # 'collected' = a trade that collects this arc is ACTUALLY OWNED ON DISK. Disk
+        # is the only ownership source — a Komga metadata entry named after the arc does
+        # NOT count (that was the old lie: a "collected" arc whose trade had no files).
+        coll = _owned_collection(s["title"])
+        collection = ({"name": coll["title"], "series_id": coll["id"],
+                       "komga_series_id": coll.get("komga_series_id")} if coll else None)
         return dict(s, arc_issues=arc_issues, issues=[],
                     owned=owned, missing=len(arc_issues) - owned, upcoming=0,
                     collected=bool(coll), collection=collection,
@@ -544,6 +545,37 @@ def _collection_info(coll, komga) -> dict | None:
     tracked = db.find_series_by_title(coll.get("name", ""), DB_PATH)
     return {"name": coll["name"], "komga_series_id": coll["id"], "books": books,
             "series_id": tracked["id"] if tracked else None}
+
+
+_COMIC_EXTS = (".cbz", ".cbr", ".cb7", ".cbt", ".pdf")
+
+
+def _folder_has_comics(folder: str | None) -> bool:
+    """True if the folder exists on disk and holds at least one comic file. The disk
+    is the sole ownership authority (spec) — this is what 'we own it' actually means."""
+    if not folder or not os.path.isdir(folder):
+        return False
+    try:
+        for root, _dirs, files in os.walk(folder):
+            if any(f.lower().endswith(_COMIC_EXTS) for f in files):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _owned_collection(arc_title: str):
+    """A trade/series we ACTUALLY own on disk that collects this arc — title-matched,
+    folder must exist with comic files. Replaces the old Komga-title match, which voted
+    ownership off metadata alone (the 'collected' lie). Returns the tracked series dict
+    or None."""
+    from kometa.arc import titles_match
+    for s in db.get_all_series(DB_PATH):
+        if s.get("kind") == "arc":
+            continue
+        if titles_match(s.get("title", ""), arc_title) and _folder_has_comics(s.get("folder_path")):
+            return s
+    return None
 
 
 def _resolve_arc_ownership(arc_series_id: int) -> dict:
@@ -675,7 +707,8 @@ def _discover_arcs(series: dict) -> list[dict]:
         vid = _series_cv_volume(series)
         if vid:
             try:
-                arcs = [{"name": a["name"], "cv_arc_id": a["cv_arc_id"], "source": "comicvine"}
+                arcs = [{"name": a["name"], "cv_arc_id": a["cv_arc_id"],
+                         "image": a.get("image"), "source": "comicvine"}
                         for a in cv.discover_arcs(series["title"], vid)]
             except Exception as e:
                 logger.warning(f"CV arc discovery failed for {series['title']!r}: {e}")
@@ -726,7 +759,7 @@ def get_series_arcs(series_id: int):
             used.add(t["id"])
             out.append({"name": t["title"], "id": t["id"], "tracked": True,
                         "issue_count": t["issue_count"], "owned_count": t["owned_count"],
-                        "source_titles": t["source_titles"]})
+                        "source_titles": t["source_titles"], "image": d.get("image")})
         else:
             out.append({**d, "tracked": False})
     # tracked arcs Wikipedia didn't surface (e.g. CV-added, or a coverage gap)
@@ -1041,6 +1074,7 @@ def _add_arc(req: AddSeriesRequest):
                     "story_title": r["title"],
                     "cv_issue_id": str(r["cv_issue_id"]),
                     "cv_volume_id": str(m["volume_id"]) if m.get("volume_id") else None,
+                    "image_url": m.get("image_url"),
                 })
             kept = _drop_reprints(issues)
             if len(kept) < len(issues):
