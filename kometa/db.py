@@ -373,10 +373,18 @@ def add_series(komga_series_id=None, metron_series_id=None, title=None, publishe
 
 def set_series_cv_volume(series_id, cv_volume_id, path=DB_PATH):
     """Cache a series' resolved CV volume id (so arc discovery can scope to the right
-    run — Batman 1940 vs 2025 — without re-resolving every time)."""
+    run — Batman 1940 vs 2025 — without re-resolving every time). When the anchor
+    actually CHANGES (e.g. a Follow re-stamps a run off its old wrong volume), the
+    arc-discovery cache is scoped to the old volume and now lies — drop it so the next
+    Arcs-tab load re-discovers against the correct run."""
     with _connect(path) as conn:
+        old = conn.execute("SELECT cv_volume_id FROM tracked_series WHERE id = ?",
+                           (series_id,)).fetchone()
         conn.execute("UPDATE tracked_series SET cv_volume_id = ? WHERE id = ?",
                      (str(cv_volume_id), series_id))
+        if not old or old[0] != str(cv_volume_id):
+            conn.execute("DELETE FROM arc_discovery_cache WHERE tracked_series_id = ?",
+                         (series_id,))
 
 
 def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
