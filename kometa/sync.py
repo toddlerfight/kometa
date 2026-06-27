@@ -12,7 +12,7 @@ import time
 import logging
 
 from kometa.sources import (
-    komga as _komga, metron as _metron, locg as _locg,
+    komga as _komga, metron as _metron, locg as _locg, comicvine as _comicvine,
 )
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
@@ -212,6 +212,37 @@ def sync_one(series: dict):
                 db.set_trades(series["id"], trades, DB_PATH)
             except Exception as e:
                 logger.warning(f"Trades cache failed for '{series['title']}': {e}")
+
+    # --- ComicVine: the issue source for a run followed via its CV volume ---
+    # A storyline-followed run (e.g. Batman 1940) carries only a cv_volume_id — no
+    # Metron/LOCG/Komga link — so the loops above leave issue_map empty and the series
+    # shows nothing but arc-injected stubs with no art. CV IS the authoritative source
+    # for that run: pull the volume's issue list (numbers + covers) so it reads like a
+    # real series. Covers ride in metron_image, which the thumbnail route already serves.
+    cv_vid = series.get("cv_volume_id")
+    if cv_vid and not issue_map:
+        cv = _comicvine()
+        if cv:
+            try:
+                have = len(db.get_issues_for_series(series["id"], DB_PATH))
+                stubs = cv.get_volume_issues(cv_vid)
+                # Only (re)populate when the run is incomplete — the first sync (or one
+                # holding just arc-injected stubs) pays the cover batch; a fully-populated
+                # re-sync skips it, so we never re-pull covers (and never null them: the
+                # upsert overwrites metron_image, so passing image=None would wipe it).
+                if len(stubs) > have:
+                    meta = cv.get_issues_meta([s.get("id") for s in stubs])
+                    for st in stubs:
+                        m = meta.get(str(st.get("id")), {})
+                        raw = m.get("number") if m.get("number") is not None else st.get("issue_number")
+                        try:
+                            num = float(raw)
+                        except (TypeError, ValueError):
+                            continue
+                        issue_map[num] = {"store_date": None, "image": m.get("image_url")}
+                    logger.info(f"ComicVine: populated {len(issue_map)} issues for '{series['title']}' from volume {cv_vid}")
+            except Exception as e:
+                logger.warning(f"ComicVine issue population failed for '{series['title']}': {e}")
 
     # --- Upsert merged issue list ---
     for num, data in issue_map.items():

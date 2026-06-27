@@ -805,73 +805,44 @@ async function _loadArcsPanel(id) {
     body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">No story arcs found for this series (Wikipedia has none, or it's not yet covered).</div>`;
     return;
   }
-  body.innerHTML = `<div class="series-grid">${arcs.map((a, i) => _arcRowHtml(a, i)).join('')}</div>`;
+  body.innerHTML = `<div class="issue-grid">${arcs.map((a, i) => _arcRowHtml(a, i)).join('')}</div>`;
 }
 
 let _arcsPanelData = [];
 let _arcsPanelSeriesId = null;
 
-// Arcs render as the SAME series-card the library uses — clickable, navigable, the
-// app's own visual language (spec: "like the rest of the interface"). Tracked arcs
-// carry a live owned/total bar; discovered ones are a dimmed placeholder that
-// populates-then-navigates on click.
+// Arcs render as the SAME issue-tile its sibling tabs (Issues, Trades) use — one
+// consistent tile size within a series' detail, not the bigger library card. The
+// ◆/◇ ARC badge rides the corner slot trades use for the format; the name + count
+// is the bottom label. Tracked → navigate; discovered → populate-then-navigate.
 function _arcRowHtml(a, i) {
-  const delay = `animation-delay:${Math.min(i, 14) * STAGGER_MS}ms`;
-  if (a.tracked) {
-    const ntitles = (a.source_titles || []).length;
-    const total = a.issue_count || 0;
-    const owned = a.owned_count || 0;
-    const pct = total ? Math.round((owned / total) * 100) : 0;
-    const complete = total > 0 && owned >= total;
-    const color = complete ? 'var(--pri)' : (total ? 'var(--amb)' : 'var(--tq)');
-    const sub = ntitles > 1 ? `CROSSES ${ntitles} TITLES` : `${total} BOOK${total === 1 ? '' : 'S'}`;
-    return `
-      <div class="series-card card-cascade" style="${delay}" tabindex="0" role="button"
-        onclick="navigate('series-detail',{id:${a.id}})"
-        onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${a.id}})">
-        <div class="series-card-img-wrap">
-          <img class="series-card-cover" src="${esc(a.image || `/api/series/${a.id}/thumbnail`)}" alt="${esc(a.name)}"
-            loading="lazy" onerror="this.style.opacity='0.15'">
-          <div class="series-card-next-release">◆ ARC</div>
-        </div>
-        <div class="series-card-bar-track">
-          <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
-        </div>
-        <div class="series-card-footer">
-          <div class="series-card-title">${esc(a.name)}</div>
-          <div class="series-card-count" style="color:${color}">${owned}/${total}</div>
-        </div>
-        <div class="series-card-publisher">${sub}</div>
-      </div>`;
-  }
-  // Discovered (not yet tracked) — clicking populates on demand. ComicVine arcs
-  // carry a cv_arc_id (precise order); Wikipedia ones carry an issue range.
-  const n = (a.first_issue && a.last_issue) ? `${a.last_issue - a.first_issue + 1} BOOKS` : '';
-  const sub = a.source === 'comicvine' ? 'COMICVINE' : (n || 'STORY ARC');
-  return `
-    <div class="series-card card-cascade arc-discovered" style="${delay}" tabindex="0" role="button"
-      onclick="openDiscoveredArc(${i}, this)"
-      onkeydown="if(event.key==='Enter'||event.key===' ')openDiscoveredArc(${i},this)">
-      <div class="series-card-img-wrap">
-        <img class="series-card-cover" src="${esc(a.image || '')}" alt="${esc(a.name)}"
-          style="${a.image ? '' : 'opacity:.12'}" onerror="this.style.opacity='0.12'">
-        <div class="series-card-next-release">◇ ARC</div>
-      </div>
-      <div class="series-card-bar-track">
-        <div class="series-card-bar-fill" style="width:0%;background:var(--tq)"></div>
-      </div>
-      <div class="series-card-footer">
-        <div class="series-card-title">${esc(a.name)}</div>
-        <div class="series-card-count view" style="color:var(--tq)">view →</div>
-      </div>
-      <div class="series-card-publisher">${sub}</div>
-    </div>`;
+  const tracked = !!a.tracked;
+  const total = a.issue_count || 0;
+  const owned = a.owned_count || 0;
+  const complete = tracked && total > 0 && owned >= total;
+  const cover = a.image
+    ? `<img src="${esc(a.image)}" alt="${esc(a.name)}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">`
+    : '';
+  // Incomplete/undiscovered arcs get the amber 'missing' outline, like a missing trade.
+  const stateCls = complete ? '' : ' missing';
+  const badge = `<div class="series-card-next-release">${tracked ? '◆' : '◇'} ARC</div>`;
+  const label = tracked && total ? `${esc(a.name)} · ${owned}/${total}` : esc(a.name);
+  const click = tracked
+    ? `onclick="navigate('series-detail',{id:${a.id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${a.id}})"`
+    : `onclick="openDiscoveredArc(${i}, this)" onkeydown="if(event.key==='Enter'||event.key===' ')openDiscoveredArc(${i},this)"`;
+  return `<div class="issue-tile arc-tile${tracked ? '' : ' arc-discovered'}" title="${esc(a.name)}" tabindex="0" role="button" ${click}>
+    <div class="issue-tile-img${a.image ? stateCls : ' unknown'}">
+      ${cover}
+      ${badge}
+    </div>
+    <div class="issue-tile-num">${label}</div>
+  </div>`;
 }
 
 async function openDiscoveredArc(i, row) {
   const a = _arcsPanelData[i];
   if (!a) return;
-  const cnt = row && row.querySelector('.series-card-count');
+  const cnt = row && row.querySelector('.issue-tile-num');
   if (cnt) cnt.textContent = 'opening…';
   if (row) row.style.opacity = '0.5';
   try {
@@ -881,7 +852,7 @@ async function openDiscoveredArc(i, row) {
   } catch (e) {
     showToast('Couldn’t open arc — ' + (e?.message || e), 'error');
     if (row) row.style.opacity = '';
-    if (cnt) cnt.textContent = 'view →';
+    if (cnt && a) cnt.textContent = a.name;
   }
 }
 
