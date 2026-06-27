@@ -535,42 +535,64 @@ function flipIssueSort(id) {
 
 const _autoSynced = new Set();   // series auto-synced this session — fire once each
 
+// A source title minus the run it shares with the storyline's home, upper-cased for
+// the cross-title tag: ('Detective Comics', 'Batman') -> 'DETECTIVE';
+// ('Batman: Shadow of the Bat', 'Batman') -> 'SHADOW OF THE BAT'.
+function _arcShortTitle(t, primary) {
+  let s = (t || '').trim();
+  if (primary && s.toLowerCase().startsWith(primary.toLowerCase())) {
+    s = s.slice(primary.length).replace(/^[:\-\s]+/, '') || s;
+  }
+  return s.toUpperCase().replace(/\bCOMICS\b/, '').replace(/\s+/g, ' ').trim();
+}
+
 // Story arc detail — its issues span titles (Batman, Detective, …) and live in
-// arc_issues, not issue_status, so it renders a cross-title reading-order table
-// instead of the single-title issue grid.
+// arc_issues, not issue_status. Per the spec it renders like the rest of the app:
+// the SAME issue-tile grid as a series, with cross-title issues tagged in lime and
+// the actions living in the detail-folder-row (the app's consistent action bar).
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
-  const meta = ['◆ STORY ARC', s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
   const ai = s.arc_issues || [];
   const total = ai.length;
+  // The storyline's HOME run = the most-represented title; everything else is a
+  // cross-title appearance and gets the lime tag.
+  const counts = {};
+  ai.forEach(i => { if (i.source_title) counts[i.source_title] = (counts[i.source_title] || 0) + 1; });
+  const primary = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '';
+  const meta = ['◆ STORYLINE', s.publisher ? s.publisher.toUpperCase() : '', s.year_began,
+    primary ? `originates in ${primary}` : ''].filter(Boolean).join('  •  ');
+
+  // "Have it" = own the single OR covered by a collected edition (slice 5 makes
+  // covered per-issue; for now s.collected is a whole-arc signal).
+  const have = ai.filter(i => i.owned || s.collected).length;
   const collChip = s.collected ? `<span class="chip chip-collected" title="${esc(s.collection?.name || '')}">◆ collected</span>` : '';
   const chips = (total
-    ? `<span class="chip ${s.owned < total ? 'chip-missing' : 'chip-complete'}">${s.owned}/${total}</span>`
+    ? `<span class="chip ${have >= total ? 'chip-complete' : 'chip-missing'}">${have} / ${total} have</span>`
     : '') + collChip;
-  const rows = ai.map(i => {
-    // Owned single > available via the collected edition > genuinely missing.
-    const st = i.owned
-      ? '<span class="arc-st owned">✓ owned</span>'
-      : s.collected
-      ? '<span class="arc-st coll">◆ in collection</span>'
-      : '<span class="arc-st missing">○ missing</span>';
-    return `<tr>
-      <td class="arc-num">${i.reading_order}</td>
-      <td class="arc-src">${esc(i.source_title || '')} <span class="arc-iss">#${esc(String(i.number ?? '?'))}</span></td>
-      <td class="arc-story">${esc(i.story_title || '')}</td>
-      <td class="arc-stcell">${st}</td>
-    </tr>`;
+
+  const tiles = ai.map(i => {
+    const owned = !!i.owned;
+    const covered = !owned && s.collected;
+    const stateCls = owned ? '' : covered ? ' covered' : ' missing';
+    const num = `#${esc(String(i.number ?? '?'))}`;
+    const cross = i.source_title && i.source_title !== primary;
+    const xt = cross ? `<span class="issue-tile-xt">${esc(_arcShortTitle(i.source_title, primary))}</span>` : '';
+    const covBadge = covered ? '<div class="issue-tile-cov">◆</div>' : '';
+    const ttl = `${esc(i.source_title || '')} ${num}${i.story_title ? ' — ' + esc(i.story_title) : ''}`;
+    return `<div class="issue-tile" title="${ttl}">
+      <div class="issue-tile-img${stateCls}">${covBadge}</div>
+      <div class="issue-tile-num">${xt}${num}</div>
+    </div>`;
   }).join('');
+
   const collBanner = (s.collected && s.collection) ? `
     <div class="arc-collected-note" onclick="navigate('series-detail',{id:${s.collection.series_id}})">
       ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. The readlist builds from its volumes.
     </div>` : '';
-  const body = total ? `
-    <table class="arc-table">
-      <thead><tr><th>#</th><th>Source</th><th>Story</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>` : `<div class="state-msg" style="padding:28px 0;font-size:12px;color:var(--tq)">Pulling reading order from ComicVine…</div>`;
+  const body = total
+    ? `<div class="issue-grid">${tiles}</div>`
+    : `<div class="state-msg" style="padding:28px 0;font-size:12px;color:var(--tq)">Pulling reading order from ComicVine…</div>`;
   setApp(`
     <div class="detail-hero">
       <div class="detail-hero-gradient"></div>
@@ -582,17 +604,17 @@ function renderArcDetail(s) {
         </div>
       </div>
     </div>
-    <div class="arc-body">
-      <div class="arc-tabs"><div class="issue-tab active">reading order</div></div>
-      <div class="arc-sec-label">Reading order · across all participating titles</div>
-      ${collBanner}
-      ${body}
-      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--bd);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="fulfillArc(${s.id}, this)">Fulfill arc</button>
-        <button class="btn btn-ghost" onclick="buildArcReadlist(${s.id}, this)">Build Komga Readlist</button>
+    <div class="detail-folder-row">
+      <span class="detail-folder-path">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
+      <div class="detail-folder-actions">
+        <button class="btn btn-primary btn-sm" onclick="fulfillArc(${s.id}, this)">Get this storyline</button>
+        <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
     </div>
+    <div class="issue-tabs-row"><div class="issue-tabs"><div class="issue-tab active">reading order</div></div></div>
+    ${collBanner}
+    ${body}
   `);
   // Just-added arc whose background populate hasn't landed yet — re-fetch once.
   if (!total) setTimeout(() => {
@@ -609,10 +631,10 @@ async function fulfillArc(id, btn) {
     } else {
       showToast(`Fulfilling arc — queued ${r.queued} missing issue${r.queued === 1 ? '' : 's'} into their runs`);
     }
-    if (btn) { btn.disabled = false; btn.textContent = 'Fulfill arc'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Get this storyline'; }
   } catch (e) {
     showToast('Fulfill failed — ' + (e?.message || e), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Fulfill arc'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Get this storyline'; }
   }
 }
 
@@ -624,7 +646,7 @@ async function buildArcReadlist(id, btn) {
     if (btn) { btn.disabled = false; btn.textContent = 'Rebuild Komga Readlist'; }
   } catch (e) {
     showToast('Readlist failed — ' + (e?.message || e), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Build Komga Readlist'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Build Komga readlist'; }
   }
 }
 
