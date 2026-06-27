@@ -1088,12 +1088,27 @@ def add_series(req: AddSeriesRequest):
     if req.cv_arc_id:
         return _add_arc(req)
     # Following a storyline lands its ORIGIN RUN as a normal series, anchored to the
-    # CV volume so the Arcs tab can scope to that run later. Idempotent: follow the
-    # same storyline twice (or two storylines from one run) and you get the one series.
+    # CV volume so the Arcs tab can scope to that run later. Idempotent two ways:
+    #   1) exact anchor match — same volume already followed → return it.
+    #   2) title+year match — the run is already tracked but carries a stale/missing
+    #      anchor (the old title+year resolver mis-stamped reprint volumes, e.g.
+    #      Batman 1940 ← Novaro 126840). Re-stamp it to THIS authoritative origin
+    #      volume and return it, rather than minting a twin. Self-healing.
+    # Year disambiguates same-named runs (Batman 1940 vs 2025), so this won't collapse
+    # distinct volumes together.
     if req.cv_volume_id:
         existing = db.get_series_by_cv_volume(str(req.cv_volume_id), DB_PATH)
         if existing:
             return existing
+        from kometa.arc import base_series_title, titles_match
+        want = base_series_title(req.title or "")
+        for s in db.get_all_series(DB_PATH):
+            if s.get("kind") == "arc":
+                continue
+            if (s.get("year_began") == req.year_began
+                    and want and titles_match(s.get("title") or "", want)):
+                db.set_series_cv_volume(s["id"], str(req.cv_volume_id), DB_PATH)
+                return db.get_series_by_id(s["id"], DB_PATH)
     metron = _metron()
 
     title = req.title or ""
