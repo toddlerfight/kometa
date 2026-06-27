@@ -859,6 +859,7 @@ class AddSeriesRequest(BaseModel):
     metron_id: int | None = None
     locg_id: int | None = None
     cv_arc_id: int | None = None
+    cv_volume_id: int | None = None   # the origin run, when followed via a storyline
     folder_path: str | None = None
     komga_id: str | None = None
     on_pull_list: bool = True
@@ -1086,6 +1087,13 @@ def _add_arc(req: AddSeriesRequest):
 def add_series(req: AddSeriesRequest):
     if req.cv_arc_id:
         return _add_arc(req)
+    # Following a storyline lands its ORIGIN RUN as a normal series, anchored to the
+    # CV volume so the Arcs tab can scope to that run later. Idempotent: follow the
+    # same storyline twice (or two storylines from one run) and you get the one series.
+    if req.cv_volume_id:
+        existing = db.get_series_by_cv_volume(str(req.cv_volume_id), DB_PATH)
+        if existing:
+            return existing
     metron = _metron()
 
     title = req.title or ""
@@ -1157,6 +1165,7 @@ def add_series(req: AddSeriesRequest):
         folder_path=folder_path,
         on_pull_list=req.on_pull_list,
         locg_series_id=locg_series_id,
+        cv_volume_id=str(req.cv_volume_id) if req.cv_volume_id else None,
         path=DB_PATH,
     )
     added = db.get_series_by_id(new_id, DB_PATH)
@@ -1258,11 +1267,29 @@ def search_locg(q: str):
 @app.get("/api/search/storyline")
 def search_storyline(q: str):
     """Arc-first entry point: search a storyline, get it back resolved to the RUN it
-    originates in (the run you'd follow). Empty list if CV isn't configured."""
+    originates in (the run you'd follow). Shaped to the wizard's result language
+    (kind/source/series/publisher) so it renders and Follows like any other hit.
+    Only storylines whose origin run resolves are returned — you can't follow what we
+    can't anchor. Empty list if CV isn't configured."""
     cv = _comicvine()
     if not cv:
         return []
-    return cv.search_storylines(q)
+    out = []
+    for s in cv.search_storylines(q):
+        if not s.get("origin_volume_id"):
+            continue
+        out.append({
+            "kind": "storyline",
+            "source": "storyline",
+            "series": s["name"],                       # the storyline's own name
+            "cv_arc_id": s["cv_arc_id"],
+            "origin_title": s["origin_title"],
+            "origin_year": s["origin_year"],
+            "origin_publisher": s.get("origin_publisher"),
+            "origin_volume_id": s["origin_volume_id"],
+            "publisher": {"name": s["origin_publisher"]} if s.get("origin_publisher") else None,
+        })
+    return out
 
 
 @app.get("/api/search/comicvine")

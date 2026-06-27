@@ -1132,7 +1132,11 @@ function _renderWizardResults(results, q) {
   if (!container) return;
   const ql = q.toLowerCase();
   results.sort((a, b) => {
-    // Arcs first — for an event that fell through to CV, the arc (whole cross-title
+    // Storylines (the arc-first entry) ride to the very top — searching an event by
+    // name, the run it originates in is the headline result, above any volume hit.
+    const aSl = a.kind === 'storyline', bSl = b.kind === 'storyline';
+    if (aSl !== bSl) return aSl ? -1 : 1;
+    // Arcs next — for an event that fell through to CV, the arc (whole cross-title
     // story) is usually what you want over a single collected-edition volume.
     const aArc = a.kind === 'arc', bArc = b.kind === 'arc';
     if (aArc !== bArc) return aArc ? -1 : 1;
@@ -1156,11 +1160,11 @@ function _renderWizardResults(results, q) {
     el.innerHTML = _wizardResults.length
       ? _wizardResults.map((r, i) => `
           <div class="wizard-result wizard-result-enter" style="animation-delay:${i * STAGGER_MS}ms" onclick="wizardPickSeries(${i})">
-            <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
+            <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
+              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
@@ -1207,6 +1211,10 @@ async function wizardSearch() {
     // not just when LOCG is empty. We always merge the arcs in; CV's collected-
     // edition VOLUMES only show as the LOCG-empty fallback (to avoid noise).
     const cvP = api.get(`/api/search/comicvine?q=${encodeURIComponent(q)}`).catch(() => []);
+    // Storylines (arc-first): each resolved to the run it originates in. Runs in
+    // parallel and merges to the TOP of every result set — searching "Knightfall"
+    // leads with "originates in Batman (1940)", whatever else the title search finds.
+    const slP = api.get(`/api/search/storyline?q=${encodeURIComponent(q)}`).catch(() => []);
 
     // Metron is optional — swallow its error and fall through to LOCG (key-free).
     let metronResults = [];
@@ -1218,20 +1226,20 @@ async function wizardSearch() {
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     if (metronResults.length) {
       const arcs = (await cvP).filter(r => r.kind === 'arc');
-      _renderWizardResults([...arcs, ...metronResults], q); return;
+      _renderWizardResults([...(await slP), ...arcs, ...metronResults], q); return;
     }
 
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     if (locgResults.length) {
       const arcs = (await cvP).filter(r => r.kind === 'arc');
-      _renderWizardResults([...arcs, ...locgResults], q); return;
+      _renderWizardResults([...(await slP), ...arcs, ...locgResults], q); return;
     }
 
     // LOCG empty — show the full ComicVine result (arcs + collected-edition volumes).
     const cvResults = await cvP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    _renderWizardResults(cvResults, q);
+    _renderWizardResults([...(await slP), ...cvResults], q);
   } catch (err) {
     console.error('wizardSearch error:', err);
     _wizardLastQuery = '';   // let a retry through — this query never landed
@@ -1244,6 +1252,7 @@ async function wizardSearch() {
 function wizardPickSeries(idx) {
   const r = _wizardResults[idx];
   if (!r) return;
+  if (r.kind === 'storyline') return wizardPickStoryline(idx);
   const isArc = r.kind === 'arc';
   _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: isArc ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };
   // An arc owns no folder (lens model): it tracks a cross-title reading order and
@@ -1315,8 +1324,61 @@ function wizardBrowseFolder() {
   _fbNav('');
 }
 
+// Following a storyline is the arc-first move: you don't add the arc, you add the
+// RUN it originates in, as a normal tracked series — nothing downloads. The arc then
+// lives under that series' Arcs tab. So this panel has no folder picker and no
+// pull-list toggle; it's a deliberate "track this run" with the storyline as the why.
+function wizardPickStoryline(idx) {
+  const r = _wizardResults[idx];
+  if (!r) return;
+  _wizardState = {
+    idx, source: 'storyline',
+    cvVolumeId: r.origin_volume_id,
+    originTitle: r.origin_title,
+    originYear: r.origin_year,
+    originPublisher: r.origin_publisher,
+  };
+  const run = `${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}`;
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-title">Follow Storyline</div>
+    <div class="wizard-series-preview">
+      <div class="wizard-result-text">
+        <div class="wizard-result-title">${esc(r.series || '')} <span class="locg-badge">◆ STORYLINE</span></div>
+        <div class="wizard-result-meta">${esc(r.origin_publisher || '')}${r.origin_publisher ? ' · ' : ''}originates in ${run}</div>
+      </div>
+    </div>
+    <div class="wizard-arc-note">Following adds <b>${run}</b> as a tracked series — its Issues, Trades and Arcs tabs. <b>Nothing downloads;</b> this is tracking only. The storyline then lives under that series' Arcs tab.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="showAddWizard()">← Back</button>
+      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Follow → add ${esc(r.origin_title || 'series')}</button>
+    </div>
+  `;
+}
+
 async function wizardConfirm() {
-  const { metronId, source, locgId, cvArcId } = _wizardState;
+  const { metronId, source, locgId, cvArcId, cvVolumeId } = _wizardState;
+  if (source === 'storyline') {
+    const r = _wizardResults[_wizardState.idx];
+    const btn = document.getElementById('wizard-add-btn');
+    btn.disabled = true; btn.textContent = 'Following…';
+    try {
+      // Add the ORIGIN RUN, anchored to its CV volume, tracking only (no pull list).
+      const added = await api.post('/api/series', {
+        cv_volume_id: cvVolumeId,
+        title: _wizardState.originTitle,
+        publisher_name: _wizardState.originPublisher || '',
+        year_began: _wizardState.originYear || null,
+        on_pull_list: false,
+      });
+      closeModal();
+      showToast(`Following ${added.title} — tracking only`);
+      navigate('series-detail', { id: added.id });
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Follow';
+      console.error(e);
+    }
+    return;
+  }
   if (!metronId && !locgId && !cvArcId) return;
   const r = _wizardResults[_wizardState.idx];
   const folder = (document.getElementById('wizard-folder')?.value || '').trim() || null;

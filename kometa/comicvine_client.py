@@ -142,8 +142,8 @@ class ComicVineClient:
         first issue belongs to (first_appeared_in_issue → volume). This is the entry
         point for the arc-first model: you search 'Knightfall', it tells you it
         originates in Batman (1940). ~2 calls (search + one batch volume lookup) plus
-        a tiny per-distinct-volume year resolve. Returns
-        [{name, cv_arc_id, origin_title, origin_year, origin_volume_id}]."""
+        a tiny per-distinct-volume info resolve. Returns
+        [{name, cv_arc_id, origin_title, origin_year, origin_publisher, origin_volume_id}]."""
         try:
             d = self._get("story_arcs/", filter=f"name:{query}", limit=limit,
                           field_list="name,id,first_appeared_in_issue")
@@ -154,19 +154,21 @@ class ComicVineClient:
         first_ids = [str(a["first_appeared_in_issue"]["id"]) for a in arcs
                      if (a.get("first_appeared_in_issue") or {}).get("id")]
         meta = self.get_issues_meta(first_ids) if first_ids else {}
-        years, out = {}, []
+        info, out = {}, []
         for a in arcs:
             fa = a.get("first_appeared_in_issue") or {}
             m = meta.get(str(fa.get("id")), {}) if fa.get("id") else {}
             vid = m.get("volume_id")
-            if vid and vid not in years:
-                years[vid] = self.get_volume_year(vid)
+            if vid and vid not in info:
+                info[vid] = self.get_volume_info(vid)
+            vi = info.get(vid, {})
             nm = _QUOTED_ARC_RE.match(a.get("name") or "")
             out.append({
                 "name": (nm.group(2).strip() if nm else a.get("name", "")) or a.get("name", ""),
                 "cv_arc_id": a.get("id"),
                 "origin_title": m.get("volume_name"),
-                "origin_year": years.get(vid),
+                "origin_year": vi.get("year"),
+                "origin_publisher": vi.get("publisher"),
                 "origin_volume_id": vid,
             })
         logger.info(f"ComicVine: {len(out)} storylines for {query!r}")
@@ -223,12 +225,22 @@ class ComicVineClient:
 
     def get_volume_year(self, cv_volume_id):
         """Start year for a volume — disambiguates which run to track."""
+        return self.get_volume_info(cv_volume_id).get("year")
+
+    def get_volume_info(self, cv_volume_id) -> dict:
+        """Start year + publisher for a volume — the bits the storyline-follow needs
+        to add the origin run as a real series (year disambiguates the run; publisher
+        gives the folder its home). Returns {"year", "publisher"}."""
         try:
-            d = self._get(f"volume/{_VOLUME_PREFIX}{cv_volume_id}/", field_list="start_year")
-            return (d.get("results") or {}).get("start_year")
+            d = self._get(f"volume/{_VOLUME_PREFIX}{cv_volume_id}/",
+                          field_list="start_year,publisher")
+            r = d.get("results") or {}
+            p = r.get("publisher")
+            return {"year": r.get("start_year"),
+                    "publisher": p.get("name") if isinstance(p, dict) else p}
         except Exception as e:
-            logger.warning(f"ComicVine volume {cv_volume_id} year failed: {e}")
-            return None
+            logger.warning(f"ComicVine volume {cv_volume_id} info failed: {e}")
+            return {}
 
     @staticmethod
     def _parse_slug(url: str | None) -> tuple[str, str]:
