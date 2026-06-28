@@ -492,10 +492,19 @@ def get_series(series_id: int):
         coll = _owned_collection(s["title"])
         collection = ({"name": coll["title"], "series_id": coll["id"],
                        "komga_series_id": coll.get("komga_series_id")} if coll else None)
+        # Origin run = where the arc starts (its first issue's run) — the back-link
+        # target, since the arc lives under that series' Arcs tab.
+        origin = None
+        if arc_issues:
+            f = arc_issues[0]
+            run = (db.get_series_by_cv_volume(f.get("cv_volume_id"), DB_PATH) if f.get("cv_volume_id") else None) \
+                or db.find_series_by_title(f.get("source_title", ""), DB_PATH)
+            if run:
+                origin = {"series_id": run["id"], "title": run["title"]}
         return dict(s, arc_issues=arc_issues, issues=[],
                     owned=owned, missing=len(arc_issues) - owned, upcoming=0,
                     collected=bool(coll), collection=collection,
-                    has_trades=False, trade_count=None)
+                    origin=origin, has_trades=False, trade_count=None)
     issues = db.get_issues_for_series(series_id, DB_PATH)
     # Badge = UNOWNED trades, read from the stored owned flag (no per-request scan).
     # None until first sync populates the cache, so it stays hidden vs flashing 0.

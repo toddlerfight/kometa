@@ -463,9 +463,47 @@ function browseSearch(val) {
 let _detailSeries = null;
 let _pendingIssueOpen = null;   // {seriesId, number} — open this issue once its run renders
 
-// Click an arc issue → go to it in its OWN run (lazily created if needed, scoped to
-// this arc's issues). Issues live in their own runs (the model); this is how you get
-// there. Tracking-only — no download.
+// Click an arc issue → its details in place (a modal), not a navigation. The issue's
+// own run is one button away ("Open in its run"), which is where full details +
+// variants + getting live. Reads the arc_issue already loaded in _detailSeries.
+function showArcIssueModal(readingOrder) {
+  const s = _detailSeries;
+  const i = (s?.arc_issues || []).find(x => x.reading_order === readingOrder);
+  if (!i) return;
+  const owned = !!i.owned;
+  const covered = !owned && s.collected;
+  const statusChip = owned ? '<span class="chip chip-complete">Owned</span>'
+    : covered ? '<span class="chip chip-collected">◆ Covered by a trade</span>'
+    : '<span class="chip chip-missing">Missing</span>';
+  const num = `#${esc(String(i.number ?? '?'))}`;
+  document.getElementById('modal').classList.add('modal-wide');
+  showModal(`
+    <div class="issue-modal-layout">
+      <div class="issue-modal-cover">
+        ${i.image_url
+          ? `<img src="${esc(i.image_url)}" alt="${num}" onerror="this.style.opacity='0.1'">`
+          : `<div class="issue-modal-no-cover"></div>`}
+      </div>
+      <div class="issue-modal-info">
+        <div class="issue-modal-num">${esc(i.source_title || '')} ${num}</div>
+        <div class="issue-modal-series">${esc(s.title)} · reading order ${i.reading_order}</div>
+        ${i.story_title ? `<div class="issue-modal-meta">${esc(i.story_title)}</div>` : ''}
+        <div style="margin:10px 0">${statusChip}</div>
+        <div class="issue-modal-details" style="font-size:12px;color:var(--tm);line-height:1.5">
+          This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
+          details, variants and to get it.
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>
+    </div>
+  `);
+}
+
+// Go to an arc issue in its OWN run (lazily created if needed, scoped to this arc's
+// issues). Tracking-only — no download. Reached from the issue modal's action.
 async function openArcIssue(arcId, readingOrder) {
   try {
     const r = await api.post(`/api/series/${arcId}/open-issue`, { reading_order: readingOrder });
@@ -568,6 +606,10 @@ function _arcShortTitle(t, primary) {
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
+  // Back-link to the origin series (the arc lives under its Arcs tab), not just Library.
+  if (s.origin) {
+    setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('series-detail',{id:${s.origin.series_id}})">← ${esc(s.origin.title)}</button>`);
+  }
   const ai = s.arc_issues || [];
   const total = ai.length;
   // The storyline's HOME run = the most-represented title; everything else is a
@@ -599,8 +641,8 @@ function renderArcDetail(s) {
       : '';
     const ttl = `${esc(i.source_title || '')} ${num}${i.story_title ? ' — ' + esc(i.story_title) : ''}`;
     return `<div class="issue-tile" title="${ttl}" tabindex="0" role="button"
-      onclick="openArcIssue(${s.id}, ${i.reading_order})"
-      onkeydown="if(event.key==='Enter'||event.key===' ')openArcIssue(${s.id}, ${i.reading_order})">
+      onclick="showArcIssueModal(${i.reading_order})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')showArcIssueModal(${i.reading_order})">
       <div class="issue-tile-img${stateCls}">${cover}${covBadge}</div>
       <div class="issue-tile-num">${xt}${num}</div>
     </div>`;
