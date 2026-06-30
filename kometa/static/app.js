@@ -1246,16 +1246,16 @@ function _renderWizardResults(results, q) {
     if (aExact !== bExact) return aExact ? -1 : 1;
     const aPrefix = at.startsWith(ql), bPrefix = bt.startsWith(ql);
     if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
-    // Same title-match tier? NOW the arc-first instinct kicks in: storyline (the run
-    // an event originates in) over arc over plain volume.
-    const aSl = a.kind === 'storyline', bSl = b.kind === 'storyline';
-    if (aSl !== bSl) return aSl ? -1 : 1;
-    const aArc = a.kind === 'arc', bArc = b.kind === 'arc';
-    if (aArc !== bArc) return aArc ? -1 : 1;
-    // A collected edition sinks below the actual series it collects.
-    const aColl = _isCollectedResult(a), bColl = _isCollectedResult(b);
-    if (aColl !== bColl) return aColl ? 1 : -1;
-    return 0;
+    // Same title-match tier? Rank by kind: storyline (the run an event originates in)
+    // first, then a real SERIES, then an arc, then a collected edition. SERIES beats
+    // ARC on purpose — search "100 Bullets" and a distinct spin-off (Brother Lono,
+    // The US of Anger) is something you'd actually ADD, while an inner arc (Tarantula,
+    // Punch Line…) you'll find on the run's own Arcs tab. Letting those inner arcs
+    // outrank the spin-offs chopped them off the slice(0,15) cliff. Collected editions
+    // still sink to the bottom — that was always the real intent, "arc beats a single
+    // collected volume," never "arc beats a series."
+    const rank = r => r.kind === 'storyline' ? 0 : _isCollectedResult(r) ? 3 : r.kind === 'arc' ? 2 : 1;
+    return rank(a) - rank(b);
   });
   _wizardResults = results.slice(0, 15);
   _wizardHi = -1;   // fresh results, fresh keyboard cursor
