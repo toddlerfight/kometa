@@ -25,6 +25,19 @@ _SLUG_RE = re.compile(r'/([a-z0-9-]+)/\d+-\d+/?$')
 _QUOTED_ARC_RE = re.compile(r'^"([^"]+)"\s*(.*)$')
 
 
+def _int_year(v):
+    """CV hands back `start_year` as a STRING ("1999"). Everything else in this app —
+    the DB's INTEGER year_began, LOCG (which already int()s at its own boundary) —
+    speaks int. Leaving CV's string to leak out means every `year == year_began`
+    comparison silently fails ("1999" != 1999), so the run resolver picks the WRONG
+    volume and arc discovery scopes to nothing. Coerce here, at the source, once — so
+    no downstream comparison ever has to think about it. Junk like "199?" → None."""
+    try:
+        return int(str(v).strip()) if v not in (None, "") else None
+    except (ValueError, TypeError):
+        return None
+
+
 class ComicVineClient:
     def __init__(self, apikey: str):
         self.apikey = apikey
@@ -63,7 +76,7 @@ class ComicVineClient:
             p = r.get("publisher")
             out.append({
                 "name": r.get("name", ""),
-                "year": r.get("start_year"),
+                "year": _int_year(r.get("start_year")),
                 "publisher": p.get("name") if isinstance(p, dict) else p,
                 "cv_volume_id": r.get("id"),
                 "issue_count": r.get("count_of_issues"),
@@ -238,7 +251,7 @@ class ComicVineClient:
                           field_list="start_year,publisher")
             r = d.get("results") or {}
             p = r.get("publisher")
-            return {"year": r.get("start_year"),
+            return {"year": _int_year(r.get("start_year")),
                     "publisher": p.get("name") if isinstance(p, dict) else p}
         except Exception as e:
             logger.warning(f"ComicVine volume {cv_volume_id} info failed: {e}")
