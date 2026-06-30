@@ -1234,20 +1234,24 @@ function _renderWizardResults(results, q) {
   if (!container) return;
   const ql = q.toLowerCase();
   results.sort((a, b) => {
-    // Storylines (the arc-first entry) ride to the very top — searching an event by
-    // name, the run it originates in is the headline result, above any volume hit.
-    const aSl = a.kind === 'storyline', bSl = b.kind === 'storyline';
-    if (aSl !== bSl) return aSl ? -1 : 1;
-    // Arcs next — for an event that fell through to CV, the arc (whole cross-title
-    // story) is usually what you want over a single collected-edition volume.
-    const aArc = a.kind === 'arc', bArc = b.kind === 'arc';
-    if (aArc !== bArc) return aArc ? -1 : 1;
+    // WHAT YOU TYPED WINS. Title match is the first gate, BEFORE kind — otherwise a
+    // long run like "100 Bullets" buries its own series under 20+ inner arcs
+    // (Tarantula, Punch Line, A Wake…) and the slice(0,15) below guillotines the
+    // series clean off the list. Type a series name → see the series. Type an event
+    // name ("Knightfall") → its storyline is the exact match and still leads. Same
+    // gate serves both.
     const at = (a.series || a.name || '').toLowerCase();
     const bt = (b.series || b.name || '').toLowerCase();
     const aExact = at === ql, bExact = bt === ql;
-    const aPrefix = at.startsWith(ql), bPrefix = bt.startsWith(ql);
     if (aExact !== bExact) return aExact ? -1 : 1;
+    const aPrefix = at.startsWith(ql), bPrefix = bt.startsWith(ql);
     if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+    // Same title-match tier? NOW the arc-first instinct kicks in: storyline (the run
+    // an event originates in) over arc over plain volume.
+    const aSl = a.kind === 'storyline', bSl = b.kind === 'storyline';
+    if (aSl !== bSl) return aSl ? -1 : 1;
+    const aArc = a.kind === 'arc', bArc = b.kind === 'arc';
+    if (aArc !== bArc) return aArc ? -1 : 1;
     // A collected edition sinks below the actual series it collects.
     const aColl = _isCollectedResult(a), bColl = _isCollectedResult(b);
     if (aColl !== bColl) return aColl ? 1 : -1;
