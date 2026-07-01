@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import hashlib
 import logging
@@ -909,6 +910,11 @@ class AddSeriesRequest(BaseModel):
     title: str | None = None
     publisher_name: str | None = None
     year_began: int | None = None
+    # One-shot: LOCG search can hand back a book at the ISSUE level. When the client
+    # picks one, it forwards the comic id + slug so the SERVER resolves it to its parent
+    # series here — a comic id can never anchor a series, whatever the client computed.
+    locg_comic_id: int | None = None
+    locg_comic_slug: str | None = None
 
 
 def _drop_reprints(issues: list[dict]) -> list[dict]:
@@ -1261,6 +1267,21 @@ def add_series(req: AddSeriesRequest):
     locg_series_id = req.locg_id
     folder_path = req.folder_path
     komga_series_id = req.komga_id
+
+    # One-shot backstop: if the client forwards a comic id + slug, the picked result was
+    # an ISSUE, not a series. Resolve it to its parent series HERE, server-side, so a
+    # comic id can never be persisted as a series anchor (which yields get_issues == 0
+    # → a zombie 'Syncing…' forever). Authoritative: overrides whatever locg_id the
+    # client computed. A one-shot that isn't linked to a series is refused, not stored.
+    if req.locg_comic_id and req.locg_comic_slug:
+        locg_client = _locg()
+        sid = (locg_client.resolve_comic_series(req.locg_comic_id, req.locg_comic_slug)
+               if locg_client
+               else _locg_resolve_comic_anon(req.locg_comic_id, req.locg_comic_slug))
+        if not sid:
+            raise HTTPException(400, "This one-shot isn't linked to a series on LOCG")
+        locg_series_id = sid
+        title = re.sub(r"\s*#\s*\d+.*$", "", title).strip()  # drop the '#1' issue suffix
 
     if req.metron_id:
         # Metron-sourced: fetch canonical metadata

@@ -821,7 +821,10 @@ async function renderSeriesDetail(id) {
       ? `<div id="arcs-panel" class="arcs-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for arcs…</div></div>`
       : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${
           total === 0 && s.has_trades ? 'No single issues — collected in Trades →'
-          : (s.metron_series_id || s.locg_series_id) && total === 0 ? 'Syncing issues…'
+          // Only claim "Syncing…" while a sync is genuinely pending (never synced). Once
+          // last_synced is set and there are still no issues, the sync is DONE and empty —
+          // say so, don't spin a lie the user has to reload to escape.
+          : (s.metron_series_id || s.locg_series_id) && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
           : 'Nothing here.'}</div>`}</div>`}
   `);
 
@@ -838,16 +841,24 @@ async function renderSeriesDetail(id) {
     }
   }
 
-  // Don't poll a trade-only series for singles that will never come (has_trades +
-  // empty issue list = collected editions only) — that's the 'Syncing issues…' spinner
-  // that never resolved. Only poll when issues are genuinely still inbound.
-  if ((s.metron_series_id || s.locg_series_id) && total === 0 && !s.has_trades && detailTab !== 'trades') {
+  // Auto-populate: while a sync is in flight, poll and re-render so issues appear on
+  // their own — no manual refresh. Runs for a fresh add (never synced) or an active
+  // re-sync this session; a trade-only series is skipped (its singles never come — that
+  // was the old forever-spinner). Re-render fires when issues land OR when the sync
+  // completes at all (last_synced advances) — so "Syncing…" resolves to "No issues
+  // found" instead of spinning. Time-boxed so a crashed sync (no mark_synced) stops.
+  if ((s.metron_series_id || s.locg_series_id) && total === 0 && !s.has_trades && detailTab !== 'trades'
+      && (!s.last_synced || _autoSynced.has(id))) {
+    const _syncedAt = s.last_synced || null;
+    const _stopAt = Date.now() + 90000;
     const _pollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
       const fresh = await api.get(`/api/series/${id}`).catch(() => null);
       if (!fresh) { clearInterval(_pollId); return; }
       const freshTotal = fresh.owned + fresh.missing + fresh.upcoming;
-      if (freshTotal > 0) { clearInterval(_pollId); renderSeriesDetail(id); }
+      if (freshTotal > 0 || (fresh.last_synced && fresh.last_synced !== _syncedAt) || Date.now() > _stopAt) {
+        clearInterval(_pollId); renderSeriesDetail(id);
+      }
     }, 3000);
   }
 }
@@ -1366,7 +1377,9 @@ async function _wizardResolveComic(idx) {
     <div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--tq)">Resolving “${esc(r.series || '')}” to its series on LOCG…</div>`;
   try {
     const res = await api.get(`/api/search/locg/resolve?comic_id=${encodeURIComponent(r.id)}&slug=${encodeURIComponent(r.slug || '')}`);
-    _wizardResults[idx] = { ...r, id: res.series_id, series: (r.series || '').replace(/\s*#\s*\d+.*$/, '').trim(), needs_resolve: false, slug: undefined };
+    // Keep the origin comic id + slug on the result so confirm can forward them — the
+    // SERVER re-resolves authoritatively at add time, so a comic id can't slip through.
+    _wizardResults[idx] = { ...r, id: res.series_id, series: (r.series || '').replace(/\s*#\s*\d+.*$/, '').trim(), needs_resolve: false, _comicId: r.id, _comicSlug: r.slug };
     wizardPickSeries(idx);
   } catch (e) {
     if (m) m.innerHTML = `<div class="modal-title">Couldn’t resolve</div>
@@ -1527,6 +1540,9 @@ async function wizardConfirm() {
       payload.title = r.series || r.name || '';
       payload.publisher_name = r.publisher?.name || '';
       payload.year_began = r.year_began || null;
+      // One-shot resolved on pick: forward the origin comic id + slug so the server
+      // re-resolves to the parent series authoritatively (never anchors a comic id).
+      if (r._comicId) { payload.locg_comic_id = r._comicId; payload.locg_comic_slug = r._comicSlug; }
     } else {
       payload.metron_id = metronId;
     }
