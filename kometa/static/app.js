@@ -780,7 +780,13 @@ async function renderSeriesDetail(id) {
   const seriesBg = document.getElementById('series-bg');
   const seriesBgImg = document.getElementById('series-bg-img');
   // Random issue cover as the backdrop — different each visit, not always the same one.
-  const _covers = (s.issues || []).map(i => i.metron_image).filter(Boolean);
+  // Build candidates off the SAME cover chain the grid tiles use (komga → LOCG art →
+  // per-issue thumbnail route), not the raw metron_image column. LOCG-only series (e.g.
+  // one-shots) never stamp metron_image, so keying off it alone left them with a dead
+  // /series/{id}/thumbnail fallback and a blank backdrop. The per-issue route self-heals.
+  const _covers = (s.issues || []).map(i =>
+    i.komga_book_id ? `/api/book/${i.komga_book_id}/thumbnail`
+      : _metronArt(i) || `/api/series/${s.id}/issues/${i.number}/thumbnail`);
   const _bg = _covers.length
     ? _covers[Math.floor(Math.random() * _covers.length)]
     : `/api/series/${s.id}/thumbnail`;
