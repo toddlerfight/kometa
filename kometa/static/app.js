@@ -1269,8 +1269,8 @@ function _renderWizardResults(results, q) {
             <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
+              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.needs_resolve ? ' <span class="locg-badge">◆ ONE-SHOT</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ' · one-shot → its series' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
@@ -1355,9 +1355,30 @@ async function wizardSearch() {
   }
 }
 
+// A one-shot LOCG returned at the issue level: its id is a COMIC id, not a series id.
+// Resolve it up to its parent series (one fetch, on pick — not per keystroke), swap the
+// result in place, then fall back into the normal series-pick flow. Strip the trailing
+// "#N" so the swapped title reads like the series, not the single issue.
+async function _wizardResolveComic(idx) {
+  const r = _wizardResults[idx];
+  const m = document.getElementById('modal');
+  if (m) m.innerHTML = `<div class="modal-title">Finding series…</div>
+    <div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--tq)">Resolving “${esc(r.series || '')}” to its series on LOCG…</div>`;
+  try {
+    const res = await api.get(`/api/search/locg/resolve?comic_id=${encodeURIComponent(r.id)}&slug=${encodeURIComponent(r.slug || '')}`);
+    _wizardResults[idx] = { ...r, id: res.series_id, series: (r.series || '').replace(/\s*#\s*\d+.*$/, '').trim(), needs_resolve: false, slug: undefined };
+    wizardPickSeries(idx);
+  } catch (e) {
+    if (m) m.innerHTML = `<div class="modal-title">Couldn’t resolve</div>
+      <div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--amb)">“${esc(r.series || '')}” isn’t linked to a series on LOCG, so it can’t be tracked as one.</div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="showAddWizard()">← Back</button></div>`;
+  }
+}
+
 function wizardPickSeries(idx) {
   const r = _wizardResults[idx];
   if (!r) return;
+  if (r.needs_resolve) return _wizardResolveComic(idx);
   if (r.kind === 'storyline') return wizardPickStoryline(idx);
   const isArc = r.kind === 'arc';
   _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: isArc ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };

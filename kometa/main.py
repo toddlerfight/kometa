@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
 from kometa.metron_client import MetronClient
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
@@ -1419,7 +1419,23 @@ def search_locg(q: str):
         "year_began": r["year"],
         "cover":      r.get("cover"),
         "source":     "locg",
+        # A one-shot LOCG returned at the issue level (its id is a COMIC id, not a
+        # series id) — the wizard resolves it up to its series on pick before add.
+        **({"needs_resolve": True, "slug": r["slug"]} if r.get("comic") else {}),
     } for r in raw[:15]]
+
+
+@app.get("/api/search/locg/resolve")
+def resolve_locg_comic(comic_id: int, slug: str):
+    """A one-shot search hit (/comic/{id}) -> its parent series id, so it can be added
+    as a normal tracked series. Called lazily by the wizard when such a result is
+    picked — never on the type-ahead path, so it costs one fetch per add, not per key."""
+    locg_client = _locg()
+    sid = (locg_client.resolve_comic_series(comic_id, slug) if locg_client
+           else _locg_resolve_comic_anon(comic_id, slug))
+    if not sid:
+        raise HTTPException(404, "This one-shot isn't linked to a series on LOCG")
+    return {"series_id": sid}
 
 
 @app.get("/api/search/storyline")

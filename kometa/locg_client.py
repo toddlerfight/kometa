@@ -52,22 +52,36 @@ def _anon_get_fn():
     return _anon_session["get"]
 
 def _parse_search_html(html: str) -> list[dict]:
-    """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}]."""
+    """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}].
+
+    A hit is usually a SERIES (/comics/series/{id}/) — but LOCG's ranking sometimes
+    hands a one-shot back at the ISSUE level (/comic/{id}/) instead: search 'rogue one'
+    and Saw Gerrera comes as a comic, not the series it clearly has. We used to drop
+    every non-series <li> on the floor, so those books just vanished. Now we keep them,
+    flagged {comic: True, slug}, to be lazily resolved to their parent series on pick."""
     soup = BeautifulSoup(html, "lxml")
     results, seen = [], set()
-    # Series results live in <li class="media"> with /comics/series/ links.
     # Publisher/date are siblings of the <a> inside the <li>, not children of it.
     for li in soup.find_all("li", class_="media"):
         a = li.find("a", href=re.compile(r"/comics/series/\d+/"))
-        if not a:
-            continue
-        m = re.search(r"/comics/series/(\d+)/", a["href"])
+        is_comic = False
+        if a:
+            m = re.search(r"/comics/series/(\d+)/", a["href"])
+            slug = None
+        else:
+            a = li.find("a", href=re.compile(r"/comic/\d+/"))
+            if not a:
+                continue
+            m = re.search(r"/comic/(\d+)/([a-z0-9-]+)", a["href"])
+            slug = m.group(2) if m else None
+            is_comic = True
         if not m:
             continue
-        sid = int(m.group(1))
-        if sid in seen:
+        cid = int(m.group(1))
+        key = ("c" if is_comic else "s", cid)
+        if key in seen:
             continue
-        seen.add(sid)
+        seen.add(key)
         img = li.find("img")
         title_el = li.find(class_="title")
         title_text = title_el.get_text(strip=True) if title_el else ""
@@ -83,17 +97,48 @@ def _parse_search_html(html: str) -> list[dict]:
         date_el = li.find(class_=re.compile(r"\bdate\b"))
         year = None
         if date_el:
-            dm = re.match(r"(\d{4})", date_el.get_text(strip=True))
+            # Series dates lead with the year; comic dates read "Jul 1st, 2026" — so
+            # grab the 4-digit year anywhere in the string, not just at the start.
+            dm = re.search(r"(\d{4})", date_el.get_text(strip=True))
             if dm:
                 year = int(dm.group(1))
-        results.append({
-            "id": sid,
+        row = {
+            "id": cid,
             "title": title_text,
             "publisher": pub_el.get_text(strip=True) if pub_el else "",
             "year": year,
             "cover": cover,
-        })
+        }
+        if is_comic:
+            row["comic"] = True
+            row["slug"] = slug
+        results.append(row)
     return results
+
+
+_SERIES_LINK_RE = re.compile(r"/comics/series/(\d+)/")
+
+
+def _comic_series_id(get_fn, comic_id, slug: str):
+    """Follow a one-shot (/comic/{id}/{slug}) to its parent series id. The bare
+    /comic/{id}/ URL 200s but drops the series link — the slugged URL is required, so
+    we carry the slug from the search result rather than guessing it. slug is validated
+    to a strict charset so this can't be turned into an arbitrary-path fetch."""
+    if not slug or not re.fullmatch(r"[a-z0-9-]+", slug):
+        return None
+    try:
+        r = get_fn(f"{BASE}/comic/{int(comic_id)}/{slug}")
+        r.raise_for_status()
+        m = _SERIES_LINK_RE.search(r.text)
+        return int(m.group(1)) if m else None
+    except Exception as e:
+        logger.warning(f"LoCG comic {comic_id} series-resolve failed: {e}")
+        return None
+
+
+def resolve_comic_series_anon(comic_id, slug):
+    """Anon path: one-shot comic id + slug -> parent series id (or None)."""
+    return _comic_series_id(_anon_get_fn(), comic_id, slug)
 
 
 def search_series_anon(title: str) -> list[dict]:
@@ -174,6 +219,10 @@ class LOCGClient:
         except Exception as e:
             logger.warning(f"LoCG search_series({title!r}) failed: {e}")
             return []
+
+    def resolve_comic_series(self, comic_id, slug):
+        """Authed path: one-shot comic id + slug -> parent series id (or None)."""
+        return _comic_series_id(self._get, comic_id, slug)
 
     def find_series_id(self, title: str, year: int | None = None) -> int | None:
         """Find best matching LoCG series ID for a title+year."""
