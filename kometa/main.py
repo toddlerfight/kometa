@@ -1336,6 +1336,21 @@ def add_series(req: AddSeriesRequest):
     if not folder_path:
         folder_path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
 
+    # Materialize the folder NOW, at add time — don't wait for the first download to
+    # create it. A tracked series with no folder on disk is invisible to _sweep_missing
+    # (its folder gate skips unscanned series), so a genuinely-new series could never
+    # get its FIRST grab: no folder → not swept → nothing to create the folder. Creating
+    # it here breaks that chicken-and-egg: rescan_owned scans an empty dir (correctly: 0
+    # owned), the sweep gate passes, and the pull list actually fills it. Existing folders
+    # (resolved or user-picked in the wizard) are left alone — scanned, ownership honored,
+    # no blind re-grab. Best-effort: a mkdir failure just falls back to the old behavior.
+    if folder_path and not os.path.isdir(folder_path):
+        try:
+            os.makedirs(folder_path, exist_ok=True)
+            logger.info(f"Created folder for new series {title!r}: {folder_path}")
+        except OSError as e:
+            logger.warning(f"Could not create folder {folder_path!r} for {title!r}: {e}")
+
     new_id = db.add_series(
         komga_series_id, metron_series_id,
         title=title,
