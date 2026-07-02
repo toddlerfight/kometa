@@ -10,6 +10,7 @@ import os
 import re
 import time
 import logging
+import threading
 
 from kometa.sources import (
     komga as _komga, locg as _locg,
@@ -31,6 +32,17 @@ DB_PATH = db.DB_PATH
 # place this gets read in bursts.
 _KOMGA_ALL_CACHE: dict = {"ts": 0.0, "data": None}
 _KOMGA_ALL_TTL = 120  # seconds
+
+# Concurrency guards. SEVEN entry points can reach sync_one (manual per-series,
+# sync-all, the cron, the startup catch-up, add_series, and two arc-path inline
+# calls) and SQLite has exactly ONE WAL writer slot — overlap them and the loser
+# eats "database is locked". Per-series locks collapse duplicate syncs of the
+# same series (sync_one is idempotent, so dropping the second is correct, not
+# lossy); full_sync_lock keeps whole-catalog sweeps from stacking on top of
+# each other (deploy-near-cron-hour spawns the catch-up AND the cron fire).
+_sync_locks: dict = {}
+_sync_locks_guard = threading.Lock()
+full_sync_lock = threading.Lock()
 
 
 def _komga_all_series(komga):
@@ -234,6 +246,32 @@ def sync_one(series: dict):
     db.set_komga_book_ids_bulk(series["id"], book_map, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
+
+
+def sync_one_guarded(series: dict, fn=None) -> bool:
+    """sync_one behind a per-series lock. If a sync of THIS series is already
+    in flight, return False and walk away — the running one will produce the
+    same result, so waiting in line just doubles the work. Also the ONLY place
+    sync failures get logged for the thread-target callers: a bare Thread
+    swallows its exception and dies silently, which is how syncs used to
+    vanish without a trace. Returns True if the sync ran (even if it failed).
+
+    `fn` is the seam: main passes its own late-bound `_sync_one` so tests can
+    monkeypatch main._sync_one and neutralize background syncs — otherwise a
+    bg thread here would write to the REAL database mid-test. Defaults to the
+    genuine sync_one."""
+    with _sync_locks_guard:
+        lock = _sync_locks.setdefault(series["id"], threading.Lock())
+    if not lock.acquire(blocking=False):
+        logger.info(f"Sync already running for {series.get('title')!r} (id={series['id']}) — skipping")
+        return False
+    try:
+        (fn or sync_one)(series)
+    except Exception:
+        logger.exception(f"Sync failed for {series.get('title')!r} (id={series['id']})")
+    finally:
+        lock.release()
+    return True
 
 
 def _scan_folder_edition_names(folder_path: str) -> set[str]:

@@ -29,7 +29,8 @@ from kometa.naming import (
     _resolve_dir, parse_issue_number as _parse_issue_number,
 )
 from kometa.sync import (
-    sync_one as _sync_one, rescan_owned as _rescan_owned,
+    sync_one as _sync_one, sync_one_guarded, full_sync_lock,
+    rescan_owned as _rescan_owned,
     _best_komga_match, _komga_all_series,
     enrich_trades as _enrich_trades,
 )
@@ -203,18 +204,30 @@ def _komga_book_map(komga, komga_series_id: str, title: str = "") -> dict:
 
 
 def _sync_all_job():
-    for s in db.get_all_series(DB_PATH):
-        _sync_one(s)
-    # Sweep AFTER every series has been folder-scanned above, so `owned` reflects
-    # disk before we decide what's missing. _sweep_missing is folder-gated — it only
-    # touches series whose folder we've actually inventoried, so the old "fresh
-    # instance with no folders → sweep the entire catalog" blowup can't recur. Genuine
-    # gaps in collections we've verified get queued; everything else is left alone.
-    _sweep_missing()
-    # Stamped at the END on purpose: a sync that crashes mid-run reads as "still
-    # missed" and the next startup catch-up (lifespan, below) retries it.
-    from datetime import datetime, timezone
-    db.set_config({"last_full_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}, DB_PATH)
+    # One full sweep at a time. A deploy near a cron hour fires BOTH the startup
+    # catch-up and the scheduler; without this they interleave 47 series' worth
+    # of SQLite writes and someone hits "database is locked".
+    if not full_sync_lock.acquire(blocking=False):
+        logger.info("Full sync already running — skipping this invocation")
+        return
+    try:
+        for s in db.get_all_series(DB_PATH):
+            # Guarded per series: a bad series logs and the loop MARCHES ON —
+            # one LOCG hiccup used to abort the whole sweep, and with it the
+            # _sweep_missing pass and the last_full_sync stamp below.
+            sync_one_guarded(s, _sync_one)
+        # Sweep AFTER every series has been folder-scanned above, so `owned` reflects
+        # disk before we decide what's missing. _sweep_missing is folder-gated — it only
+        # touches series whose folder we've actually inventoried, so the old "fresh
+        # instance with no folders → sweep the entire catalog" blowup can't recur. Genuine
+        # gaps in collections we've verified get queued; everything else is left alone.
+        _sweep_missing()
+        # Stamped at the END on purpose: a sync that crashes mid-run reads as "still
+        # missed" and the next startup catch-up (lifespan, below) retries it.
+        from datetime import datetime, timezone
+        db.set_config({"last_full_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}, DB_PATH)
+    finally:
+        full_sync_lock.release()
 
 
 @asynccontextmanager
@@ -1005,7 +1018,7 @@ def _track_participating(arc_series_id: int) -> dict:
                             cv_volume_id=str(vid), path=DB_PATH)
         mapping[vid] = sid
         try:
-            _sync_one(db.get_series_by_id(sid, DB_PATH))
+            sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
         except Exception as e:
             logger.warning(f"Participating-series sync failed for {title!r}: {e}")
         logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid} "
@@ -1093,7 +1106,7 @@ def _resolve_or_create_run(arc: dict, row: dict, arc_rows: list[dict]) -> dict:
                         cv_volume_id=str(vid) if vid else None, path=DB_PATH)
     _stamp_arc_run_issues(sid, arc_rows, source, vid)
     try:
-        _sync_one(db.get_series_by_id(sid, DB_PATH))
+        sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
     except Exception as e:
         logger.warning(f"Lazy run sync failed for {title!r}: {e}")
     out = db.get_series_by_id(sid, DB_PATH)
@@ -1338,13 +1351,16 @@ def add_series(req: AddSeriesRequest):
     added = db.get_series_by_id(new_id, DB_PATH)
 
     def _bg_sync():
-        _sync_one(added)
+        sync_one_guarded(added, _sync_one)
         if req.on_pull_list:
             issues = db.get_issues_for_series(new_id, DB_PATH)
             today_str = str(date.today())
-            for issue in issues:
-                if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today_str):
-                    db.queue_issue(new_id, issue["number"], DB_PATH)
+            # Batch the queue insert — per-issue queue_issue is one fresh
+            # connection + fsync EACH, which the NAS disk does not appreciate.
+            pairs = [(new_id, issue["number"]) for issue in issues
+                     if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today_str)]
+            if pairs:
+                db.queue_issues_bulk(pairs, DB_PATH)
             _process_queue()
 
     threading.Thread(target=_bg_sync, daemon=True).start()
@@ -1471,7 +1487,10 @@ def search_comicvine(q: str):
 
 @app.post("/api/sync")
 def sync_all():
-    threading.Thread(target=_sync_all_job, daemon=False).start()
+    # daemon=True or a container stop hangs waiting on a mid-flight sweep — the
+    # last_full_sync stamp lands at the END anyway, so a killed run just reads
+    # as "missed" and the startup catch-up retries it. Nothing is lost.
+    threading.Thread(target=_sync_all_job, daemon=True).start()
     return {"ok": True, "started": True}
 
 
@@ -1480,7 +1499,7 @@ def sync_one(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    threading.Thread(target=_sync_one, args=(s,), daemon=True).start()
+    threading.Thread(target=sync_one_guarded, args=(s, _sync_one), daemon=True).start()
     return {"ok": True}
 
 
@@ -1779,11 +1798,11 @@ def search_missing(series_id: int):
         raise HTTPException(404)
     issues = db.get_issues_for_series(series_id, DB_PATH)
     today = str(date.today())
-    queued = 0
-    for issue in issues:
-        if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today):
-            db.queue_issue(series_id, issue["number"], DB_PATH)
-            queued += 1
+    # One transaction for the whole batch — queue_issue fsyncs per call, and a
+    # long-running series can shove dozens of issues through here at once.
+    pairs = [(series_id, issue["number"]) for issue in issues
+             if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today)]
+    queued = db.queue_issues_bulk(pairs, DB_PATH) if pairs else 0
     if queued:
         threading.Thread(target=_process_queue, daemon=True).start()
     return {"queued": queued}
