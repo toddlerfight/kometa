@@ -5,6 +5,7 @@ first sync reconcile owned-vs-missing against disk instead of falling into the
 """
 import kometa.db as db
 import kometa.main as main
+import kometa.arcs as arcs
 from kometa.main import AddSeriesRequest
 
 
@@ -218,16 +219,16 @@ class TestArcParticipantGate:
 
     def test_the_actual_offenders_are_gated(self):
         # The two real junk series this gate exists to prevent (2026-07-02).
-        assert not main._arc_participant_allowed("Panini Verlag", "DC Comics")
-        assert not main._arc_participant_allowed("Wizard Press", "DC Comics")
+        assert not arcs._arc_participant_allowed("Panini Verlag", "DC Comics")
+        assert not arcs._arc_participant_allowed("Wizard Press", "DC Comics")
 
     def test_same_publisher_passes_including_punctuation_noise(self):
-        assert main._arc_participant_allowed("DC Comics", "DC Comics")
-        assert main._arc_participant_allowed("D.C. Comics", "DC Comics")
-        assert main._arc_participant_allowed("Marvel", "marvel")
+        assert arcs._arc_participant_allowed("DC Comics", "DC Comics")
+        assert arcs._arc_participant_allowed("D.C. Comics", "DC Comics")
+        assert arcs._arc_participant_allowed("Marvel", "marvel")
 
     def test_unknown_publisher_passes(self):
         # A CV hiccup (or no CV key) must not silently thin an arc.
-        assert main._arc_participant_allowed(None, "DC Comics")
-        assert main._arc_participant_allowed("", "DC Comics")
-        assert main._arc_participant_allowed("DC Comics", None)
+        assert arcs._arc_participant_allowed(None, "DC Comics")
+        assert arcs._arc_participant_allowed("", "DC Comics")
+        assert arcs._arc_participant_allowed("DC Comics", None)
