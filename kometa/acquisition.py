@@ -141,7 +141,7 @@ def _process_queue_locked():
             else:
                 _acquire_issue(item, qid, gc, downloaded_urls)
         except GCRateLimitError as e:
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             # A rate limit is "not yet", not "failed" — park the job and let the
             # 5-minute queue worker pick it back up after the cooldown. Real 429s
             # bump the attempt counter; gate refusals (no HTTP ever happened)
@@ -163,7 +163,7 @@ def _process_queue_locked():
                 logger.info(f"Queue item {qid}: rate limited — parked until {retry_at} UTC")
             break  # we're blocked either way — stop hammering with the rest of the queue
         except DuplicateIssueError as e:
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             retry_at = (_utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
             db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
             logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
@@ -431,12 +431,15 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         _verify_single_issue, WrongIssueError,
     )
 
-    def _place(src: str, dst: str):
+    def _place(src: str, dst: str) -> str:
         if keep_source:
             _shutil.copy2(src, dst)  # copy, NOT move — leave the original for seeding
         else:
             _shutil.move(src, dst)
-        _fix_extension(dst)
+        # _fix_extension RENAMES on disk when the extension lies about the magic
+        # bytes (.cbz that's really RAR -> .cbr) — return the real path so the
+        # caller records what actually exists, not what we hoped for.
+        return _fix_extension(dst)
 
     issue_number = item["issue_number"]
     title = item["title"]
@@ -533,7 +536,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
 
     if not os.path.exists(dest_path):
         try:
-            _place(target, dest_path)
+            dest_path = _place(target, dest_path)
         except Exception as e:
             verb = "copy" if keep_source else "move"
             db.update_queue_state(qid, "failed", error=f"{label} {verb} failed: {e}", path=DB_PATH)

@@ -81,7 +81,13 @@ function navigate(view, params = {}) {
   const hash = params && Object.keys(params).length
     ? `#${view}?${new URLSearchParams(params).toString()}`
     : `#${view}`;
-  history.pushState({ view, params }, '', hash);
+  // Re-clicking the active nav item used to pushState a duplicate entry —
+  // Back then needed N presses to visibly move. Same destination replaces.
+  if (location.hash === hash) {
+    history.replaceState({ view, params }, '', hash);
+  } else {
+    history.pushState({ view, params }, '', hash);
+  }
   updateNav();
   renderView();
 }
@@ -145,7 +151,11 @@ function renderView() {
 
 function esc(str) {
   if (str == null) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // &#39; hardens single-quoted ATTRIBUTE positions. It does NOT make strings
+  // safe inside inline onclick JS — the HTML parser decodes entities back to
+  // raw quotes before the JS engine parses the handler. Never interpolate a
+  // free-text string into inline JS; pass ids and read state (see confirmDelete).
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function _localToday() {
@@ -600,8 +610,9 @@ function _issueTileHtml(s, issue) {
       ? `<button class="issue-tile-search" title="Search for this issue" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
-    return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}"
-      onclick="showIssueModal(${s.id}, ${issue.number})">
+    return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}" tabindex="0" role="button"
+      onclick="showIssueModal(${s.id}, ${issue.number})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${s.id}, ${issue.number})">
       ${inner}
       <div class="issue-tile-num">${num}</div>
       ${searchBtn}
@@ -685,7 +696,8 @@ function renderArcDetail(s) {
   }).join('');
 
   const collBanner = (s.collected && s.collection) ? `
-    <div class="arc-collected-note" onclick="navigate('series-detail',{id:${s.collection.series_id}})">
+    <div class="arc-collected-note" tabindex="0" role="button" onclick="navigate('series-detail',{id:${s.collection.series_id}})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.collection.series_id}})">
       ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. The readlist builds from its volumes.
     </div>` : '';
   const body = total
@@ -791,6 +803,9 @@ async function renderSeriesDetail(id) {
   // Trades — otherwise you hit an empty Issues grid while the real content hides one
   // tab over. One-shot per entry (_autoTabFor) so a manual tab pick afterward sticks.
   if (_autoTabFor !== id) {
+    // Series→series hop (arc issue click, Activity row): navigate() only resets
+    // detailTab when LEAVING detail, so series B used to inherit series A's tab.
+    if (_autoTabFor !== null) detailTab = 'all';
     if (total === 0 && s.has_trades) detailTab = 'trades';
     _autoTabFor = id;
   }
@@ -808,7 +823,9 @@ async function renderSeriesDetail(id) {
     const badge = (t === 'trades' && s.trade_count)
       ? `<span class="tab-badge">${s.trade_count}</span>`
       : (t === 'arcs' && s.arc_count) ? `<span class="tab-badge">${s.arc_count}</span>` : '';
-    return `<div class="issue-tab ${detailTab === t ? 'active' : ''}" onclick="setDetailTab('${t}', ${id})">${t}${badge}</div>`;
+    return `<div class="issue-tab ${detailTab === t ? 'active' : ''}" tabindex="0" role="tab" aria-selected="${detailTab === t}"
+      onclick="setDetailTab('${t}', ${id})"
+      onkeydown="if(event.key==='Enter'||event.key===' ')setDetailTab('${t}', ${id})">${t}${badge}</div>`;
   }).join('');
 
   const tiles = (detailTab === 'trades' || detailTab === 'arcs') ? '' : buildIssueTiles(s);
@@ -843,11 +860,11 @@ async function renderSeriesDetail(id) {
     <div class="detail-folder-row" id="folder-row">
       <button class="btn-icon" title="Browse for folder" onclick="browseFolderPath(${s.id})"><svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
       <span class="detail-folder-path">${esc(s.folder_path || 'Not set')}</span>
-      <button class="btn-icon" title="Edit folder path" onclick="editFolderPath(${s.id}, '${esc(s.folder_path || '')}')">✎</button>
+      <button class="btn-icon" title="Edit folder path" onclick="editFolderPath(${s.id})">✎</button>
       <div class="detail-folder-actions">
         ${pullBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id}, '${esc(s.title)}')">Remove</button>
+        <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
       </div>
     </div>
     <div class="issue-tabs-row">
@@ -1017,12 +1034,15 @@ function _tradeTileHtml(t) {
   // Same tile skeleton as issues so the grid stays visually identical. The format
   // (TPB/HC) rides in the corner badge slot; the volume is the bottom label.
   const cover = t.cover ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : '';
-  const click = t.locg_id ? ` onclick="showTradeModal('${t.locg_id}')"` : '';
+  const click = t.locg_id
+    ? ` tabindex="0" role="button" onclick="showTradeModal('${esc(t.locg_id)}')"
+        onkeydown="if(event.key==='Enter'||event.key===' ')showTradeModal('${esc(t.locg_id)}')"`
+    : '';
   // Owned (file on disk) → no download arrow, owned styling. Otherwise the same
   // ↓ arrow missing singles get; stopPropagation so the tile click doesn't fire.
   const dlBtn = (t.locg_id && !t.owned)
     ? `<button class="issue-tile-search" title="Download this trade" data-dl="trade:${t.locg_id}"
-         onclick="event.stopPropagation(); tradeDownload('${t.locg_id}', this)">↓</button>`
+         onclick="event.stopPropagation(); tradeDownload('${esc(t.locg_id)}', this)">↓</button>`
     : '';
   const ownedBadge = t.owned ? `<div class="trade-owned-check" title="On disk">✓</div>` : '';
   // Unowned → amber 'missing' outline, exactly like a missing issue.
@@ -1544,7 +1564,8 @@ async function wizardConfirm() {
       showToast(`Following ${added.title} — tracking only`);
       navigate('series-detail', { id: added.id });
     } catch (e) {
-      btn.disabled = false; btn.textContent = 'Follow';
+      btn.disabled = false;
+      btn.textContent = `Follow → add ${_wizardState.originTitle || 'series'}`;  // restore the real label, not a stub
       showToast('Follow failed — try again');
       console.error(e);
     }
@@ -1579,7 +1600,8 @@ async function wizardConfirm() {
     closeModal();
     navigate('series-detail', { id: added.id });
   } catch (e) {
-    btn.disabled = false; btn.textContent = 'Track Series';
+    btn.disabled = false;
+    btn.textContent = _wizardState.source === 'arc' ? 'Track Arc' : 'Track Series';
     showToast('Add failed — try again');
     console.error(e);
   }
@@ -1649,7 +1671,10 @@ async function _fbSelect() {
   renderSeriesDetail(_fbSeriesId);
 }
 
-function editFolderPath(id, current) {
+function editFolderPath(id) {
+  // Same apostrophe trap as confirmDelete — read the path from state, don't
+  // thread it through an inline-JS string param.
+  const current = _detailSeries?.folder_path || '';
   const row = document.getElementById('folder-row');
   if (!row) return;
   row.innerHTML = `
@@ -1717,10 +1742,18 @@ function _trackTileDownload(seriesId, number, title) {
     const label = `${title ? title + ' ' : ''}#${fmtNum(number)}`;
     if (st === 'done') {
       showToast(`${label} downloaded ✓`);
-      const obj = _detailSeries?.issues?.find(i => i.number === number);
+      // Guard the cache mutation with onView: _detailSeries lingers after you
+      // leave a series, and matching on issue NUMBER alone would flip the
+      // last-viewed series' #N owned when a pull-list download of another
+      // series' #N lands.
+      const obj = onView ? _detailSeries?.issues?.find(i => i.number === number) : null;
       if (obj) obj.owned = 1;
       const tile = onView ? document.querySelector(`.issue-tile[data-num="${number}"]`) : null;
       if (tile && obj && _detailSeries) tile.outerHTML = _issueTileHtml(_detailSeries, obj);
+      // Pull-list rows aren't .issue-tile — their ↓ button was left frozen at
+      // the last percent forever on success (the failure branch below resets
+      // it; this is the success-side twin). Flip it to a done check.
+      else if (btn) { btn.textContent = '✓'; btn.title = 'Downloaded'; btn.disabled = true; }
     } else if (st === 'failed' || st === 'not_found') {
       const why = qs.error ? ` — ${qs.error}` : '';
       showToast(`${label}: ${st === 'failed' ? 'failed' : 'not found'}${why}`, 'error');
@@ -1745,7 +1778,11 @@ async function searchIssue(seriesId, issueNumber, btn) {
   }
 }
 
-function confirmDelete(id, title) {
+function confirmDelete(id) {
+  // Title comes from _detailSeries, NOT an onclick string param — interpolating
+  // a title into inline JS breaks on apostrophes (HTML entities decode back to
+  // raw quotes before the JS engine parses the handler, so esc() can't save you).
+  const title = _detailSeries?.title || 'this series';
   showModal(`
     <div class="modal-title">Remove Series</div>
     <div class="confirm-body">
@@ -2525,6 +2562,10 @@ function closeModal() {
   setTimeout(() => {
     modal.classList.add('hidden');
     modal.classList.remove('modal-wide');
+    // A close mid-height-tween never gets its transitionend — clear the pinned
+    // inline height or the NEXT modal opens squeezed to this one's size.
+    modal.style.height = '';
+    modal.style.transition = '';
     backdrop.classList.add('hidden');
     backdrop.classList.remove('closing');
   }, 200);                                     // match exit duration
@@ -2764,13 +2805,13 @@ function _imRenderVariants() {
   area.className = '';
   area.innerHTML = `<div class="variant-grid">${
     _issueVariantCovers.map((c, i) => `
-      <div class="v-card" id="vc-${c.id}" style="animation-delay:${i*STAGGER_MS}ms" onclick="_imToggleVariant('${c.id}')">
+      <div class="v-card" id="vc-${esc(c.id)}" style="animation-delay:${i*STAGGER_MS}ms" onclick="_imToggleVariant('${esc(c.id)}')">
         <div class="v-cover">
           <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy"
             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
           <div class="no-img" style="display:none">No image</div>
-          <button class="v-star" onclick="_imSetPrimary(event,'${c.id}')" title="Set as cover">★</button>
-          <button class="v-mag" onclick="_imOpenLightbox('${c.id}',event)" title="View larger"><svg viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
+          <button class="v-star" onclick="_imSetPrimary(event,'${esc(c.id)}')" title="Set as cover">★</button>
+          <button class="v-mag" onclick="_imOpenLightbox('${esc(c.id)}',event)" title="View larger"><svg viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
         </div>
         <div class="v-name">${esc(c.name)}</div>
       </div>`).join('')
@@ -2921,9 +2962,12 @@ async function _imApplyVariants(seriesId, number, isOwned) {
     // both now carry variant_cover as the display cover.
     const prim = selected.find(c => c.id === _issueVariantPrimary);
     const newSrc = prim ? (prim.large || prim.thumb) : null;
-    const obj = _detailSeries?.issues?.find(i => i.number === number);
+    // Only mutate the cache when we're still ON this series — _detailSeries
+    // lingers after navigation and #N matches the wrong series' issue otherwise.
+    const onView = currentView === 'series-detail' && currentParams.id === seriesId;
+    const obj = onView ? _detailSeries?.issues?.find(i => i.number === number) : null;
     if (obj) obj.variant_cover = newSrc;
-    if (newSrc) _crossfadeTileCover(number, newSrc);
+    if (obj && newSrc) _crossfadeTileCover(number, newSrc);
   } catch(e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Apply'; btn.classList.remove('btn-working'); }
     showToast(`Error: ${e.message || 'failed'}`, 'error');

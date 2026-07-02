@@ -11,7 +11,7 @@ corpse.
 import logging
 import requests
 
-from kometa.usenet_client import _norm, _nzb_score, _pack_score
+from kometa.usenet_client import _nzb_score, _pack_score
 
 logger = logging.getLogger(__name__)
 

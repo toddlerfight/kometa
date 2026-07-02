@@ -1017,10 +1017,8 @@ def _track_participating(arc_series_id: int) -> dict:
                             year_began=year, folder_path=folder, on_pull_list=False,
                             cv_volume_id=str(vid), path=DB_PATH)
         mapping[vid] = sid
-        try:
-            sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
-        except Exception as e:
-            logger.warning(f"Participating-series sync failed for {title!r}: {e}")
+        # No try needed: sync_one_guarded catches + logs everything internally.
+        sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
         logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid} "
                     f"(komga={'yes' if kid else 'no'})")
     _populate_participating_issues(arc_series_id)
@@ -1105,10 +1103,8 @@ def _resolve_or_create_run(arc: dict, row: dict, arc_rows: list[dict]) -> dict:
                         year_began=year, folder_path=folder, on_pull_list=False,
                         cv_volume_id=str(vid) if vid else None, path=DB_PATH)
     _stamp_arc_run_issues(sid, arc_rows, source, vid)
-    try:
-        sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
-    except Exception as e:
-        logger.warning(f"Lazy run sync failed for {title!r}: {e}")
+    # No try needed: sync_one_guarded catches + logs everything internally.
+    sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
     out = db.get_series_by_id(sid, DB_PATH)
     out["_created"] = True
     return out

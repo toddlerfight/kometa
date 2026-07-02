@@ -195,7 +195,7 @@ class WikipediaClient:
 
 
 if __name__ == "__main__":
-    import sys, json
+    import sys
     c = WikipediaClient()
     for t in sys.argv[1:]:
         arcs = c.discover_arcs(t)
