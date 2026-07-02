@@ -12,6 +12,11 @@ LIBRARY_ID = os.environ.get("KOMGA_LIBRARY_ID", "")
 
 
 class KomgaClient:
+    # Komga is LAN-local so this is generous — but without SOME bound, a hung
+    # Komga pins a threadpool worker per thumbnail request until the pool starves.
+    # Every other client here passes a timeout; this one was the odd one out.
+    TIMEOUT = 30
+
     def __init__(self, base_url=BASE_URL, auth=AUTH, library_id=LIBRARY_ID):
         self.session = requests.Session()
         self.session.auth = auth
@@ -19,7 +24,7 @@ class KomgaClient:
         self.library_id = library_id
 
     def _get(self, path, params=None):
-        r = self.session.get(f"{self.base_url}{path}", params=params)
+        r = self.session.get(f"{self.base_url}{path}", params=params, timeout=self.TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -65,24 +70,27 @@ class KomgaClient:
             page += 1
         if match:
             r = self.session.patch(f"{self.base_url}/api/v1/readlists/{match['id']}",
-                                   json={"bookIds": book_ids})
+                                   json={"bookIds": book_ids}, timeout=self.TIMEOUT)
             r.raise_for_status()
             return {"id": match["id"], "updated": True}
         r = self.session.post(f"{self.base_url}/api/v1/readlists",
                              json={"name": name, "summary": summary,
-                                   "ordered": True, "bookIds": book_ids})
+                                   "ordered": True, "bookIds": book_ids},
+                             timeout=self.TIMEOUT)
         r.raise_for_status()
         return {"id": r.json().get("id"), "updated": False}
 
     def scan_library(self):
-        r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan")
+        r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan",
+                              timeout=self.TIMEOUT)
         r.raise_for_status()
 
     def analyze_book(self, book_id):
         """Re-analyze a single book so Komga re-extracts its cover/pages from the file
         on disk — needed after we rewrite a CBZ (variant cover inject), or Komga keeps
         serving the thumbnail it cached on its last scan."""
-        r = self.session.post(f"{self.base_url}/api/v1/books/{book_id}/analyze")
+        r = self.session.post(f"{self.base_url}/api/v1/books/{book_id}/analyze",
+                              timeout=self.TIMEOUT)
         r.raise_for_status()
 
     def set_book_number(self, book_id, number, number_sort):
@@ -96,5 +104,6 @@ class KomgaClient:
                 "number": str(number), "numberLock": True,
                 "numberSort": float(number_sort), "numberSortLock": True,
             },
+            timeout=self.TIMEOUT,
         )
         r.raise_for_status()

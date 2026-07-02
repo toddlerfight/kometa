@@ -1,6 +1,6 @@
 """Source adapters — one place to get a configured client for every external
-system Kometa talks to (Komga, Metron, SABnzbd, LOCG, and the Usenet
-indexer list).
+system Kometa talks to (Komga, SABnzbd, qBittorrent, Prowlarr, ComicVine,
+LOCG, and the Usenet indexer list).
 
 Each accessor reads current config straight from the DB and rebuilds its client
 when credentials change, so callers never touch credentials or worry about
@@ -33,33 +33,43 @@ def staging_dir() -> str:
     KOMETA_DOWNLOADS overrides for anyone who wants a separate location."""
     return os.environ.get("KOMETA_DOWNLOADS") or os.path.join(comics_root(), ".kometa-staging")
 
-# Cached clients — rebuilt only when the relevant config key changes.
-_komga_instance: "KomgaClient | None" = None
-_komga_cfg_key: str = ""
+# Cached clients — one live instance per config signature, rebuilt only when
+# the relevant keys change. Building per-call was constructing a fresh
+# requests.Session (and for qBit, doing a fresh LOGIN) on every scheduler tick
+# and every queue item. A None build (unconfigured, or LOCG login failure) is
+# never cached, so a transient failure can't poison the cache until restart.
+_client_cache: dict = {}
+
+
+def _cached(name: str, key: str, build):
+    hit = _client_cache.get(name)
+    if hit and hit[0] == key:
+        return hit[1]
+    client = build()
+    if client is not None:
+        _client_cache[name] = (key, client)
+    return client
 
 
 def komga() -> KomgaClient | None:
-    global _komga_instance, _komga_cfg_key
     cfg = db.get_config(DB_PATH)
     if not cfg.get("komga_url"):
         return None
     key = f"{cfg.get('komga_url')}|{cfg.get('komga_user')}|{cfg.get('komga_pass')}|{cfg.get('komga_library_id')}"
-    if _komga_instance is None or key != _komga_cfg_key:
-        _komga_instance = KomgaClient(
-            base_url=cfg.get("komga_url", ""),
-            auth=(cfg.get("komga_user", ""), cfg.get("komga_pass", "")),
-            library_id=cfg.get("komga_library_id", ""),
-        )
-        _komga_cfg_key = key
-    return _komga_instance
-
+    return _cached("komga", key, lambda: KomgaClient(
+        base_url=cfg.get("komga_url", ""),
+        auth=(cfg.get("komga_user", ""), cfg.get("komga_pass", "")),
+        library_id=cfg.get("komga_library_id", ""),
+    ))
 
 
 def sabnzbd() -> SABnzbdClient | None:
     cfg = db.get_config(DB_PATH)
     url = cfg.get("sab_url", "")
     key = cfg.get("sab_apikey", "")
-    return SABnzbdClient(url, key) if url and key else None
+    if not url or not key:
+        return None
+    return _cached("sabnzbd", f"{url}|{key}", lambda: SABnzbdClient(url, key))
 
 
 def qbittorrent() -> QBittorrentClient | None:
@@ -69,7 +79,10 @@ def qbittorrent() -> QBittorrentClient | None:
     url = cfg.get("qbit_url", "")
     user = cfg.get("qbit_user", "")
     pw = cfg.get("qbit_pass", "")
-    return QBittorrentClient(url, user, pw) if url and user else None
+    if not url or not user:
+        return None
+    return _cached("qbittorrent", f"{url}|{user}|{pw}",
+                   lambda: QBittorrentClient(url, user, pw))
 
 
 def prowlarr():
@@ -81,7 +94,7 @@ def prowlarr():
     if not url or not key:
         return None
     from kometa.prowlarr_client import ProwlarrClient
-    return ProwlarrClient(url, key)
+    return _cached("prowlarr", f"{url}|{key}", lambda: ProwlarrClient(url, key))
 
 
 def comicvine():
@@ -92,7 +105,7 @@ def comicvine():
     if not key:
         return None
     from kometa.comicvine_client import ComicVineClient
-    return ComicVineClient(key)
+    return _cached("comicvine", key, lambda: ComicVineClient(key))
 
 
 _wikipedia_instance = None
@@ -125,13 +138,20 @@ def locg():
     pw   = cfg.get("locg_pass", "")
     if not user or not pw:
         return None
-    try:
-        from kometa.locg_client import LOCGClient
-        client = LOCGClient(user, pw, session=cfg.get("locg_session") or None)
-        # Persist refreshed session if it changed (re-login happened)
-        if client.session_cookie and client.session_cookie != cfg.get("locg_session"):
-            db.set_config({"locg_session": client.session_cookie}, DB_PATH)
-        return client
-    except Exception as e:
-        logger.warning(f"LoCG init failed: {e}")
-        return None
+
+    def _build():
+        try:
+            from kometa.locg_client import LOCGClient
+            return LOCGClient(user, pw, session=cfg.get("locg_session") or None)
+        except Exception as e:
+            logger.warning(f"LoCG init failed: {e}")
+            return None
+
+    # Keyed on creds only — the client re-logs-in internally when its session
+    # expires, so a cookie change must NOT invalidate the cache (that would
+    # rebuild + re-login in a loop). Instead, persist any refreshed cookie on
+    # every access so a restart resumes the live session instead of re-logging.
+    client = _cached("locg", f"{user}|{pw}", _build)
+    if client is not None and client.session_cookie and client.session_cookie != cfg.get("locg_session"):
+        db.set_config({"locg_session": client.session_cookie}, DB_PATH)
+    return client

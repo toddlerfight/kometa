@@ -11,6 +11,9 @@ DB_PATH = os.environ.get("KOMETA_DB", "/data/kometa.db")
 
 def init_db(path=DB_PATH):
     with _connect(path) as conn:
+        # WAL is a persistent property of the DB file — set once here, not on
+        # every _connect (it was costing a pragma round-trip per DB call).
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS tracked_series (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +69,6 @@ def init_db(path=DB_PATH):
 def _connect(path=DB_PATH):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -287,6 +289,15 @@ def _migrate(path=DB_PATH):
         dq_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
         if "torrent_hash" not in dq_cols2:
             conn.execute("ALTER TABLE download_queue ADD COLUMN torrent_hash TEXT")
+
+        # Indexes matching the actual hot query shapes: queue pollers filter on
+        # state; the backdrop/upcoming/missing queries filter+order issue_status
+        # on (series, store_date); arc discovery looks series up by CV volume.
+        conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_dq_state ON download_queue(state);
+            CREATE INDEX IF NOT EXISTS idx_is_series_date ON issue_status(tracked_series_id, store_date);
+            CREATE INDEX IF NOT EXISTS idx_ts_cv_volume ON tracked_series(cv_volume_id);
+        """)
 
 
 # config key -> env var for first-boot provisioning. Lets a deployer configure
