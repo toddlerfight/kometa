@@ -12,7 +12,7 @@ import time
 import logging
 
 from kometa.sources import (
-    komga as _komga, metron as _metron, locg as _locg,
+    komga as _komga, locg as _locg,
 )
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
@@ -81,7 +81,6 @@ def sync_one(series: dict):
         # doesn't apply. Phase E adds arc-specific sync (ownership + trades).
         return
     komga = _komga()
-    metron = _metron()
 
     # Auto-link to a Komga series when connected but unlinked. Folder PATH first
     # (unambiguous — disambiguates same-titled runs like the Batman 2016/2025), then
@@ -161,20 +160,11 @@ def sync_one(series: dict):
         else set()
     )
 
-    # --- Build issue map from Metron (primary) ---
-    issue_map: dict[float, dict] = {}
-    if series.get("metron_series_id"):
-        for issue in metron.get_issues(series["metron_series_id"]):
-            try:
-                num = float(issue["number"])
-            except (ValueError, TypeError):
-                continue
-            issue_map[num] = {"store_date": issue.get("store_date"), "image": issue.get("image"), "metron_issue_id": issue.get("id")}
-
-    # --- Supplement from LoCG (best for upcoming solicitations) ---
+    # --- Build issue map from LoCG (best for upcoming solicitations) ---
     # Auth buys series-id lookup; but if we already have a locg_series_id (e.g.
     # the series was added via the LOCG wizard) we can pull its issues with no
     # login at all. That anon path is what makes keyless onboarding actually work.
+    issue_map: dict[float, dict] = {}
     locg = _locg()
     locg_id = series.get("locg_series_id")
     if locg or locg_id:

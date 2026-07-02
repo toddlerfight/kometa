@@ -10,7 +10,6 @@ import os
 import logging
 
 from kometa.komga_client import KomgaClient
-from kometa.metron_client import MetronClient
 from kometa.sabnzbd_client import SABnzbdClient
 from kometa.qbittorrent_client import QBittorrentClient
 import kometa.db as db
@@ -37,8 +36,6 @@ def staging_dir() -> str:
 # Cached clients — rebuilt only when the relevant config key changes.
 _komga_instance: "KomgaClient | None" = None
 _komga_cfg_key: str = ""
-_metron_instance: "MetronClient | None" = None
-_metron_cfg_key: str = ""
 
 
 def komga() -> KomgaClient | None:
@@ -55,16 +52,6 @@ def komga() -> KomgaClient | None:
         )
         _komga_cfg_key = key
     return _komga_instance
-
-
-def metron() -> MetronClient:
-    global _metron_instance, _metron_cfg_key
-    cfg = db.get_config(DB_PATH)
-    key = f"{cfg.get('metron_user')}|{cfg.get('metron_pass')}"
-    if _metron_instance is None or key != _metron_cfg_key:
-        _metron_instance = MetronClient(auth=(cfg.get("metron_user", ""), cfg.get("metron_pass", "")))
-        _metron_cfg_key = key
-    return _metron_instance
 
 
 

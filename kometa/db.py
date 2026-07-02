@@ -299,8 +299,6 @@ _ENV_SEEDED_CONFIG = {
     "komga_user":       "KOMGA_USER",
     "komga_pass":       "KOMGA_PASS",
     "komga_library_id": "KOMGA_LIBRARY_ID",
-    "metron_user":      "METRON_USER",
-    "metron_pass":      "METRON_PASS",
 }
 
 

@@ -551,7 +551,7 @@ function _issueTileHtml(s, issue) {
       // variant_cover = your saved variant pick (not-yet-downloaded issues) — show it
       // here too so the grid tile matches the modal, falling back to the solicit cover.
       // No client-side art at all? Ask the server — its thumbnail route walks the
-      // whole fallback chain (metron → LOCG main → variant art). An issue with
+      // whole fallback chain (LOCG main → variant art). An issue with
       // genuinely zero art anywhere 404s and the img removes itself, same blank as before.
       const thumbSrc = issue.variant_cover
         || _metronArt(issue)
@@ -830,7 +830,7 @@ async function renderSeriesDetail(id) {
           // Only claim "Syncing…" while a sync is genuinely pending (never synced). Once
           // last_synced is set and there are still no issues, the sync is DONE and empty —
           // say so, don't spin a lie the user has to reload to escape.
-          : (s.metron_series_id || s.locg_series_id) && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
+          : s.locg_series_id && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
           : 'Nothing here.'}</div>`}</div>`}
   `);
 
@@ -853,7 +853,7 @@ async function renderSeriesDetail(id) {
   // was the old forever-spinner). Re-render fires when issues land OR when the sync
   // completes at all (last_synced advances) — so "Syncing…" resolves to "No issues
   // found" instead of spinning. Time-boxed so a crashed sync (no mark_synced) stops.
-  if ((s.metron_series_id || s.locg_series_id) && total === 0 && !s.has_trades && detailTab !== 'trades'
+  if (s.locg_series_id && total === 0 && !s.has_trades && detailTab !== 'trades'
       && (!s.last_synced || _autoSynced.has(id))) {
     const _syncedAt = s.last_synced || null;
     const _stopAt = Date.now() + 90000;
@@ -1122,7 +1122,7 @@ function _wizardPaintHi() {
     el.classList.toggle('kbd-hi', i === _wizardHi));
   document.querySelector('.wizard-result.kbd-hi')?.scrollIntoView({ block: 'nearest' });
 }
-let _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
+let _wizardState = { idx: -1, source: 'locg', locgId: null };
 
 function showAddWizard() {
   // Can't track or file a series with nowhere to put it. If the comics folder
@@ -1130,7 +1130,7 @@ function showAddWizard() {
   if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
   _wizardResults = [];
   _wizardLastQuery = '';
-  _wizardState = { idx: -1, metronId: null, source: 'metron', locgId: null };
+  _wizardState = { idx: -1, source: 'locg', locgId: null };
   showModal(`
     <div class="modal-title">Add Series</div>
     <div class="wizard-search-row">
@@ -1283,7 +1283,7 @@ function _renderWizardResults(results, q) {
     el.innerHTML = _wizardResults.length
       ? _wizardResults.map((r, i) => `
           <div class="wizard-result wizard-result-enter" style="animation-delay:${i * STAGGER_MS}ms" onclick="wizardPickSeries(${i})">
-            <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt=""
+            <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : esc(r.cover || r.image || '')}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
               <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.needs_resolve ? ' <span class="locg-badge">◆ ONE-SHOT</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
@@ -1339,19 +1339,6 @@ async function wizardSearch() {
     // leads with "originates in Batman (1940)", whatever else the title search finds.
     const slP = api.get(`/api/search/storyline?q=${encodeURIComponent(q)}`).catch(() => []);
 
-    // Metron is optional — swallow its error and fall through to LOCG (key-free).
-    let metronResults = [];
-    try {
-      metronResults = await api.get(`/api/search/metron?q=${encodeURIComponent(q)}`);
-    } catch (e) {
-      console.warn('Metron search unavailable, falling back to LOCG:', e);
-    }
-    if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    if (metronResults.length) {
-      const arcs = (await cvP).filter(r => r.kind === 'arc');
-      _renderWizardResults([...(await slP), ...arcs, ...metronResults], q); return;
-    }
-
     const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     if (locgResults.length) {
@@ -1400,7 +1387,7 @@ function wizardPickSeries(idx) {
   if (r.needs_resolve) return _wizardResolveComic(idx);
   if (r.kind === 'storyline') return wizardPickStoryline(idx);
   const isArc = r.kind === 'arc';
-  _wizardState = { idx, metronId: r.source === 'metron' ? r.id : null, source: isArc ? 'arc' : (r.source || 'metron'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };
+  _wizardState = { idx, source: isArc ? 'arc' : (r.source || 'locg'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };
   // An arc owns no folder (lens model): it tracks a cross-title reading order and
   // grabs the collected edition into its main series. So no folder field, and the
   // pull-list line means 'find the collected edition', not 'download every issue'.
@@ -1416,7 +1403,7 @@ function wizardPickSeries(idx) {
   document.getElementById('modal').innerHTML = `
     <div class="modal-title">Add ${isArc ? 'Story Arc' : 'Series'}</div>
     <div class="wizard-series-preview">
-      <img class="wizard-result-thumb" src="${r.source === 'locg' ? esc(r.cover || '') : `/api/metron/series/${r.id}/thumbnail`}" alt="" onerror="this.style.opacity=0">
+      <img class="wizard-result-thumb" src="${esc(r.cover || r.image || '')}" alt="" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
         <div class="wizard-result-title">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
         <div class="wizard-result-meta">${isArc ? 'Story arc' : esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
@@ -1502,7 +1489,7 @@ function wizardPickStoryline(idx) {
 }
 
 async function wizardConfirm() {
-  const { metronId, source, locgId, cvArcId, cvVolumeId } = _wizardState;
+  const { source, locgId, cvArcId, cvVolumeId } = _wizardState;
   if (source === 'storyline') {
     const r = _wizardResults[_wizardState.idx];
     const btn = document.getElementById('wizard-add-btn');
@@ -1525,7 +1512,7 @@ async function wizardConfirm() {
     }
     return;
   }
-  if (!metronId && !locgId && !cvArcId) return;
+  if (!locgId && !cvArcId) return;
   const r = _wizardResults[_wizardState.idx];
   const folder = (document.getElementById('wizard-folder')?.value || '').trim() || null;
   const onPullList = document.getElementById('wizard-pull')?.checked ?? true;
@@ -1549,8 +1536,6 @@ async function wizardConfirm() {
       // One-shot resolved on pick: forward the origin comic id + slug so the server
       // re-resolves to the parent series authoritatively (never anchors a comic id).
       if (r._comicId) { payload.locg_comic_id = r._comicId; payload.locg_comic_slug = r._comicSlug; }
-    } else {
-      payload.metron_id = metronId;
     }
     const added = await api.post('/api/series', payload);
     closeModal();
@@ -2225,7 +2210,6 @@ async function renderSettings() {
 
   const cfg = await api.get('/api/config');
   const komgaCfg  = !!(cfg.komga_url && cfg.komga_user);
-  const metronCfg = !!cfg.metron_user;
 
   setApp(`
     <div class="page-title">Settings</div>
@@ -2259,11 +2243,6 @@ async function renderSettings() {
       </div>
       <div>
         <div class="settings-card">
-          ${_settingsHeader('Metron', 'optional', 'metron', true, metronCfg)}
-          ${_settingsField('f-metron-user', 'Username', cfg.metron_user)}
-          ${_settingsField('f-metron-pass', 'Password', '', { set: metronCfg })}
-        </div>
-        <div class="settings-card" style="margin-top:36px">
           ${_settingsHeader('League of Comic Geeks', 'optional', 'locg', true, cfg.locg_configured)}
           ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
           ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
@@ -2292,8 +2271,6 @@ const _SETTINGS_FIELDS = {
   'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
   'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
   'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
-  'f-metron-user': { card: 'metron',    key: 'metron_user',      test: 'metron' },
-  'f-metron-pass': { card: 'metron',    key: 'metron_pass',      test: 'metron', secret: true },
   'f-locg-user':   { card: 'locg',      key: 'locg_user',        test: 'locg' },
   'f-locg-pass':   { card: 'locg',      key: 'locg_pass',        test: 'locg', secret: true },
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
@@ -2301,7 +2278,7 @@ const _SETTINGS_FIELDS = {
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', metron: 'metron', locg: 'locg', sabnzbd: 'sab' };
+const _TEST_ENDPOINTS = { komga: 'komga', locg: 'locg', sabnzbd: 'sab' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};
@@ -2638,7 +2615,7 @@ async function showIssueModal(seriesId, number) {
         </div>` : ''}
         <div class="issue-modal-panel active" id="impanel-details">
           <div class="issue-modal-details" id="issue-modal-details">
-            ${(issue.metron_issue_id || hasLocgId) ? '<div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>' : ''}
+            ${hasLocgId ? '<div class="state-msg" style="font-size:11px;padding:8px 0">Loading details…</div>' : ''}
           </div>
         </div>
         ${hasLocgId ? `
@@ -2682,18 +2659,12 @@ async function showIssueModal(seriesId, number) {
     }).catch(() => {});
   }
 
-  // Fetch issue details async — Metron when configured, else LOCG (keyless).
-  // Both normalise to flat [{role, name}] credits for _renderIssueDetails.
-  if (issue.metron_issue_id) {
-    try {
-      const d = await api.get(`/api/series/${seriesId}/issues/${number}/metron`);
-      const credits = (d.credits || []).map(c => ({ role: c.role?.name || 'Other', name: c.creator?.name || '' }));
-      _renderIssueDetails(d.desc, credits);
-    } catch { _renderIssueDetails('', []); }
-  } else if (hasLocgId) {
+  // Fetch issue details async from LOCG (keyless). Credits arrive as flat
+  // [{role, name}] ready for _renderIssueDetails.
+  if (hasLocgId) {
     try {
       const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
-      _renderIssueDetails(d.desc, d.credits || []);   // LOCG credits already {role, name}
+      _renderIssueDetails(d.desc, d.credits || []);
     } catch { _renderIssueDetails('', []); }
   }
 

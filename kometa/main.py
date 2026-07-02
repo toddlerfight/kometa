@@ -16,12 +16,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
-from kometa.metron_client import MetronClient
 from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon
 from kometa.scheduler import start_scheduler
 import kometa.db as db
 from kometa.sources import (
-    komga as _komga, metron as _metron,
+    komga as _komga,
     locg as _locg, comics_root as _comics_root, comicvine as _comicvine,
     wikipedia as _wikipedia,
 )
@@ -273,26 +272,6 @@ def test_komga(req: TestKomgaRequest):
         return {"ok": False, "error": str(e)}
 
 
-class TestMetronRequest(BaseModel):
-    user: str | None = None
-    password: str | None = None
-
-
-@app.post("/api/test/metron")
-def test_metron(req: TestMetronRequest):
-    user = req.user or _stored("metron_user")
-    password = req.password or _stored("metron_pass")
-    if not (user and password):
-        return {"ok": False, "error": "Not configured"}
-    try:
-        client = MetronClient(auth=(user, password))
-        r = client.session.get(f"{client.base_url}/series/", params={"name": "batman", "page": 1}, timeout=10)
-        r.raise_for_status()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
 class TestLocgRequest(BaseModel):
     user: str | None = None
     password: str | None = None
@@ -337,7 +316,6 @@ def test_sab(req: TestSabRequest):
 # mean 'keep current', so without this there is NO path to remove a credential.
 _INTEGRATION_KEYS = {
     "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
-    "metron":    ["metron_user", "metron_pass"],
     "locg":      ["locg_user", "locg_pass"],
     "sabnzbd":   ["sab_url", "sab_apikey"],
 }
@@ -374,8 +352,6 @@ def get_config():
         "komga_user":          cfg.get("komga_user", ""),
         "komga_pass":          "",
         "komga_library_id":    cfg.get("komga_library_id", ""),
-        "metron_user":         cfg.get("metron_user", ""),
-        "metron_pass":         "",
         "locg_user":           cfg.get("locg_user", ""),
         "locg_pass":           "",
         "locg_configured":     bool(cfg.get("locg_user", "") and cfg.get("locg_pass", "")),
@@ -392,8 +368,6 @@ class ConfigRequest(BaseModel):
     komga_user:         str | None = None
     komga_pass:         str | None = None
     komga_library_id:   str | None = None
-    metron_user:        str | None = None
-    metron_pass:        str | None = None
     locg_user:          str | None = None
     locg_pass:          str | None = None
     sync_hours:         str | None = None
@@ -899,14 +873,13 @@ def download_trade(series_id: int, req: TradeDownloadRequest):
 
 
 class AddSeriesRequest(BaseModel):
-    metron_id: int | None = None
     locg_id: int | None = None
     cv_arc_id: int | None = None
     cv_volume_id: int | None = None   # the origin run, when followed via a storyline
     folder_path: str | None = None
     komga_id: str | None = None
     on_pull_list: bool = True
-    # Metadata from LOCG/ComicVine when metron_id is absent
+    # Metadata carried from the LOCG/ComicVine search result
     title: str | None = None
     publisher_name: str | None = None
     year_began: int | None = None
@@ -1258,12 +1231,9 @@ def add_series(req: AddSeriesRequest):
                     and want and titles_match(s.get("title") or "", want)):
                 db.set_series_cv_volume(s["id"], str(req.cv_volume_id), DB_PATH)
                 return db.get_series_by_id(s["id"], DB_PATH)
-    metron = _metron()
-
     title = req.title or ""
     publisher = req.publisher_name
     year_began = req.year_began
-    metron_series_id = req.metron_id
     locg_series_id = req.locg_id
     folder_path = req.folder_path
     komga_series_id = req.komga_id
@@ -1282,33 +1252,6 @@ def add_series(req: AddSeriesRequest):
             raise HTTPException(400, "This one-shot isn't linked to a series on LOCG")
         locg_series_id = sid
         title = re.sub(r"\s*#\s*\d+.*$", "", title).strip()  # drop the '#1' issue suffix
-
-    if req.metron_id:
-        # Metron-sourced: fetch canonical metadata
-        ms = metron.get_series(req.metron_id)
-        title = ms.get("name") or ms.get("series_name") or title
-        pub = ms.get("publisher")
-        publisher = pub.get("name") if isinstance(pub, dict) else (pub or publisher)
-        year_began = ms.get("year_began") or year_began
-    else:
-        # LOCG-sourced: try to auto-link to Metron by title — but only if Metron
-        # is configured. Without creds this is a guaranteed 401 we'd just swallow.
-        cfg = db.get_config(DB_PATH)
-        if cfg.get("metron_user") and cfg.get("metron_pass"):
-            try:
-                candidates = metron.search_series(title)
-                match = next(
-                    (r for r in candidates
-                     if _norm(r.get("series") or r.get("name") or "") == _norm(title)),
-                    None
-                )
-                if match:
-                    metron_series_id = match["id"]
-                    pub = match.get("publisher")
-                    publisher = pub.get("name") if isinstance(pub, dict) else (pub or publisher)
-                    year_began = match.get("year_began") or year_began
-            except Exception:
-                pass
 
     komga = _komga()
     if komga_series_id and komga:
@@ -1352,7 +1295,7 @@ def add_series(req: AddSeriesRequest):
             logger.warning(f"Could not create folder {folder_path!r} for {title!r}: {e}")
 
     new_id = db.add_series(
-        komga_series_id, metron_series_id,
+        komga_series_id, None,
         title=title,
         publisher=publisher,
         year_began=year_began,
@@ -1398,51 +1341,6 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
 
 
 # --- search ---
-
-_STOP_WORDS = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "is", "it",
-               "as", "by", "be", "or", "and", "but", "from", "with", "this", "that",
-               "not", "are", "was", "were", "has", "have", "had", "its", "here", "there"}
-
-def _metron_search_ranked(metron, q: str) -> list[dict]:
-    results = metron.search_series(q)
-    if results:
-        return [dict(r, source="metron") for r in results]
-    # Metron is punctuation-sensitive ("whats" ≠ "What's").
-    # Retry with word pairs then single words, filtering to results that
-    # contain every meaningful query word in their normalized name.
-    words = [w for w in _norm(q).split() if len(w) > 2 and w not in _STOP_WORDS]
-    if words:
-        def _relevant(hits):
-            return [r for r in hits if all(
-                w in _norm(r.get('series') or r.get('name') or '')
-                for w in words
-            )]
-        if len(words) >= 2:
-            for i in range(len(words) - 1):
-                good = _relevant(metron.search_series(f"{words[i]} {words[i+1]}"))
-                if good:
-                    return [dict(r, source="metron") for r in good]
-        for word in sorted(words, key=len, reverse=True):
-            good = _relevant(metron.search_series(word))
-            if good:
-                return [dict(r, source="metron") for r in good]
-    return []
-
-
-@app.get("/api/search/metron")
-def search_metron(q: str):
-    # Metron is optional. Not configured (no creds) or a transient failure both
-    # return [] rather than 500, so the wizard falls through to LOCG cleanly
-    # instead of dying on the Metron call. This is what makes key-free onboarding work.
-    cfg = db.get_config(DB_PATH)
-    if not (cfg.get("metron_user") and cfg.get("metron_pass")):
-        return []
-    try:
-        return _metron_search_ranked(_metron(), q)
-    except Exception as e:
-        logger.warning(f"Metron search failed for {q!r}: {e}")
-        return []
-
 
 @app.get("/api/search/locg")
 def search_locg(q: str):
@@ -1639,7 +1537,7 @@ def issue_thumbnail(series_id: int, number: float):
             pass
 
     # Known-artless issue: 404 immediately (with browser caching) instead of
-    # re-running the whole metron/LOCG chain on every grid render. Without this,
+    # re-running the whole LOCG chain on every grid render. Without this,
     # each scroll past an artless tile re-fires S3 misses and LOCG lookups.
     miss_key = (series_id, number)
     if _thumb_misses.get(miss_key, 0) > time.time():
@@ -1703,40 +1601,6 @@ def book_thumbnail(book_id: str):
         raise
     except Exception as e:
         raise HTTPException(504) from e
-
-
-# --- metron thumbnails ---
-
-@app.get("/api/metron/series/{metron_id}/thumbnail")
-def metron_series_thumbnail(metron_id: int):
-    metron = _metron()
-    try:
-        detail = metron.get_series(metron_id)
-        img_url = detail.get("image")
-
-        if not img_url:
-            raise HTTPException(404)
-
-        return _cached_image_response(img_url)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(404) from e
-
-
-@app.get("/api/metron/series/{metron_id}/info")
-def metron_series_info(metron_id: int):
-    metron = _metron()
-    try:
-        detail = metron.get_series(metron_id)
-        return {
-            "id":          metron_id,
-            "issue_count": detail.get("issue_count"),
-            "volume":      detail.get("volume"),
-            "series_type": (detail.get("series_type") or {}).get("name", "") if isinstance(detail.get("series_type"), dict) else detail.get("series_type", ""),
-        }
-    except Exception as e:
-        raise HTTPException(404) from e
 
 
 # --- filesystem browse ---
@@ -1923,25 +1787,6 @@ def manual_process():
 @app.post("/api/queue/clear-history", status_code=204)
 def clear_queue_history():
     db.clear_queue_history(DB_PATH)
-
-
-@app.get("/api/series/{series_id}/issues/{number}/metron")
-def get_issue_metron(series_id: int, number: float):
-    issues = db.get_issues_for_series(series_id, DB_PATH)
-    issue = next((i for i in issues if i["number"] == number), None)
-    if not issue or not issue.get("metron_issue_id"):
-        raise HTTPException(404)
-    try:
-        detail = _metron().get_issue(issue["metron_issue_id"])
-        return {
-            "desc":       detail.get("desc"),
-            "title":      detail.get("name") or detail.get("title", ""),
-            "credits":    detail.get("credits", []),
-            "characters": [c.get("name", "") for c in detail.get("characters", [])],
-            "arcs":       [a.get("name", "") for a in detail.get("arcs", [])],
-        }
-    except Exception as e:
-        raise HTTPException(404) from e
 
 
 @app.get("/api/series/{series_id}/issues/{number}/locg-details")

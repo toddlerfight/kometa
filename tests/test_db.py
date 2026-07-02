@@ -100,25 +100,23 @@ class TestEnvConfigSeeding:
     """Env vars provision config on first boot (so compose-only setup works),
     but never override what's already in the DB."""
 
-    def test_komga_metron_env_seeded_on_fresh_db(self, tmp_path, monkeypatch):
+    def test_komga_env_seeded_on_fresh_db(self, tmp_path, monkeypatch):
         monkeypatch.setenv("KOMGA_URL", "http://example:8585")
         monkeypatch.setenv("KOMGA_USER", "kuser")
-        monkeypatch.setenv("METRON_USER", "muser")
         p = str(tmp_path / "k.db")
         db.init_db(p)
         cfg = db.get_config(p)
         assert cfg["komga_url"] == "http://example:8585"
         assert cfg["komga_user"] == "kuser"
-        assert cfg["metron_user"] == "muser"
 
     def test_unset_env_seeds_nothing(self, tmp_path, monkeypatch):
-        for v in ("KOMGA_URL", "KOMGA_USER", "METRON_USER", "CV_API_KEY"):
+        for v in ("KOMGA_URL", "KOMGA_USER", "CV_API_KEY"):
             monkeypatch.delenv(v, raising=False)
         p = str(tmp_path / "k.db")
         db.init_db(p)
         cfg = db.get_config(p)
         assert "komga_url" not in cfg
-        assert "metron_user" not in cfg
+        assert "komga_user" not in cfg
 
     def test_env_does_not_override_existing_ui_value(self, tmp_path, monkeypatch):
         p = str(tmp_path / "k.db")

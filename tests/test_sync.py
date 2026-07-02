@@ -110,7 +110,6 @@ class TestIssueDetailsParser:
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
     monkeypatch.setattr(sync, "_komga", lambda: None)
-    monkeypatch.setattr(sync, "_metron", lambda: None)
     monkeypatch.setattr(sync, "_locg", lambda: None)   # no LOCG creds
 
 

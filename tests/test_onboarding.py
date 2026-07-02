@@ -8,19 +8,12 @@ import kometa.main as main
 from kometa.main import AddSeriesRequest
 
 
-class _FakeMetron:
-    """No metron_id given -> add_series only calls search_series, which we stub empty."""
-    def search_series(self, q):
-        return []
-
-
 def _wire(monkeypatch, tmp_path, comics_root):
     dbp = str(tmp_path / "k.db")
     db.init_db(dbp)
     monkeypatch.setattr(main, "DB_PATH", dbp)
     monkeypatch.setattr(main, "_comics_root", lambda: str(comics_root))
     monkeypatch.setattr(main, "_komga", lambda: None)          # no Komga
-    monkeypatch.setattr(main, "_metron", lambda: _FakeMetron())
     monkeypatch.setattr(main, "_sync_one", lambda s: None)      # neutralize bg thread
     monkeypatch.setattr(main, "_process_queue", lambda: None)
     return dbp
@@ -63,16 +56,11 @@ def test_explicit_folder_path_is_respected(tmp_path, monkeypatch):
     assert added["folder_path"] == "/custom/path"
 
 
-def test_locg_add_skips_metron_autolink_when_unconfigured(tmp_path, monkeypatch):
-    """A keyless LOCG add must not fire the Metron auto-link (a guaranteed 401)."""
+def test_locg_add_persists_series_id(tmp_path, monkeypatch):
+    """A keyless LOCG add stores its locg_series_id and title verbatim."""
     root = tmp_path / "comics"
     root.mkdir()
-    _wire(monkeypatch, tmp_path, root)  # fresh DB -> no metron creds
-
-    class ExplodingMetron:
-        def search_series(self, q):
-            raise AssertionError("Metron must not be queried when unconfigured")
-    monkeypatch.setattr(main, "_metron", lambda: ExplodingMetron())
+    _wire(monkeypatch, tmp_path, root)  # fresh DB, no external sources
 
     added = main.add_series(AddSeriesRequest(locg_id=100002, title="Saga",
                                              publisher_name="Image", on_pull_list=False))
@@ -222,31 +210,3 @@ class TestResolveFolderPreview:
         res = main.resolve_folder(publisher="Oni Press", title="Nimona")
         assert res["path"] == str(root / "Oni Press" / "Nimona")
         assert res["exists"] is False
-
-
-class TestMetronSearchDegradesGracefully:
-    """A missing/failing Metron must return [] (not 500) so the wizard reaches LOCG."""
-
-    def test_not_configured_returns_empty(self, tmp_path, monkeypatch):
-        dbp = str(tmp_path / "k.db")
-        db.init_db(dbp)  # fresh DB has no metron_user/metron_pass
-        monkeypatch.setattr(main, "DB_PATH", dbp)
-        # _metron must never even be called when creds are absent
-        def _boom():
-            raise AssertionError("_metron() should not be called when unconfigured")
-        monkeypatch.setattr(main, "_metron", _boom)
-
-        assert main.search_metron("saga") == []
-
-    def test_configured_but_failing_returns_empty(self, tmp_path, monkeypatch):
-        dbp = str(tmp_path / "k.db")
-        db.init_db(dbp)
-        db.set_config({"metron_user": "u", "metron_pass": "p"}, dbp)
-        monkeypatch.setattr(main, "DB_PATH", dbp)
-
-        class FailingMetron:
-            def search_series(self, q):
-                raise RuntimeError("401 Unauthorized")
-        monkeypatch.setattr(main, "_metron", lambda: FailingMetron())
-
-        assert main.search_metron("saga") == []
