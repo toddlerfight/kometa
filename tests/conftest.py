@@ -19,7 +19,7 @@ def db_path(tmp_path):
 def series(db_path):
     """A single tracked, monitored series. Returns its id."""
     return db.add_series(
-        komga_series_id=None, metron_series_id=None, title="Saga",
+        komga_series_id=None, title="Saga",
         publisher="Image", year_began=2012, folder_path=None,
         on_pull_list=True, path=db_path,
     )

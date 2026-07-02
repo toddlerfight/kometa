@@ -1,10 +1,10 @@
 """Per-series sync — reconcile one tracked series against Komga (ownership +
-book IDs) and the metadata sources (Metron primary, LOCG as
-supplement), then upsert the merged issue list.
+book IDs) and the metadata sources, then upsert the merged issue list.
 
 Ownership is what's on disk; the Komga book map only supplies book IDs for
-thumbnails. Metron is authoritative for the issue list; CV/LOCG fill gaps and
-add upcoming solicitations.
+thumbnails. LOCG is authoritative for the issue list (covers land in the
+legacy-named metron_image column); CV fills arc/storyline runs and upcoming
+solicitations.
 """
 import os
 import re
@@ -77,7 +77,7 @@ def _best_komga_match_by_path(candidates, folder_path):
 def sync_one(series: dict):
     if series.get("kind") == "arc":
         # Arcs are populated from ComicVine on add and carry no single-title
-        # issue_status, so the normal sync (Komga link, LOCG/Metron issues, trades)
+        # issue_status, so the normal sync (Komga link, LOCG issues, trades)
         # doesn't apply. Phase E adds arc-specific sync (ownership + trades).
         return
     komga = _komga()
@@ -203,7 +203,7 @@ def sync_one(series: dict):
             except Exception as e:
                 logger.warning(f"Trades cache failed for '{series['title']}': {e}")
 
-    # NB: a storyline-followed run (only a cv_volume_id, no Metron/LOCG/Komga) is
+    # NB: a storyline-followed run (only a cv_volume_id, no LOCG/Komga) is
     # SCOPED to its arcs — it does NOT pull the full CV volume. Its issues are stamped
     # in by arc participation (_populate_participating_issues), carrying their covers.
     # So the loops above legitimately leave issue_map empty here; that's fine.
@@ -214,19 +214,18 @@ def sync_one(series: dict):
             series["id"], num, data["store_date"],
             num in owned_numbers, book_map.get(num),
             metron_image=data.get("image"),
-            metron_issue_id=data.get("metron_issue_id"),
             locg_issue_id=data.get("locg_issue_id"),
             path=DB_PATH,
         )
 
     # Folder is the source of truth for ownership — reconcile from disk (this also
-    # CREATES issues for files that aren't in the metadata list, e.g. when LOCG/
-    # Metron is unavailable), so ownership never depends on the network.
+    # CREATES issues for files that aren't in the metadata list, e.g. when LOCG
+    # is unavailable), so ownership never depends on the network.
     rescan_owned(series)
 
     # Stamp Komga book ids onto the (now reconciled) issues. The upsert loop above
     # only reached issues that came from a metadata source; a folder-only series (no
-    # Metron/CV/LOCG — e.g. a Noir Edition) builds its issue list purely from disk via
+    # CV/LOCG — e.g. a Noir Edition) builds its issue list purely from disk via
     # rescan_owned, which knows nothing of book_map. Without this its owned issues get
     # no komga_book_id → no thumbnail, no read link. UPDATE is a no-op for any book
     # number that has no matching issue row.
@@ -317,7 +316,7 @@ def refresh_trades_owned(series_id: int) -> None:
 def rescan_owned(series: dict) -> dict:
     """Folder is the source of truth for ownership. Scan it and reconcile owned:
     CREATE an owned issue for each file not yet tracked, mark found ones owned, and
-    clear ones whose file is gone. Pure disk — no Metron/CV/LOCG — so it works even
+    clear ones whose file is gone. Pure disk — no CV/LOCG — so it works even
     when those are blocked. Returns {scanned, owned}."""
     folder = series.get("folder_path")
     if not folder or not os.path.isdir(folder):

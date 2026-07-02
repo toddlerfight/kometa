@@ -158,8 +158,7 @@ function _fmtReleaseDate(dateStr) {
 }
 
 function fmtNum(n) {
-  const f = parseFloat(n);
-  return Number.isInteger(f) ? String(f) : String(f);
+  return String(parseFloat(n));
 }
 
 function issueStatus(issue) {
@@ -186,19 +185,6 @@ function pullGroup(isoDate) {
   if (d < nextWeekStart) return 'This Week';
   if (d < nextWeekEnd)   return 'Next Week';
   return 'Later';
-}
-
-function barColor(owned, total) {
-  if (!total) return 'var(--su3)';
-  const pct = owned / total;
-  if (pct >= 1)   return 'var(--pri)';
-  if (pct >= 0.9) return 'var(--pri)';
-  return 'var(--amb)';
-}
-
-function countColor(owned, total) {
-  if (!total) return 'var(--tq)';
-  return owned >= total ? 'var(--pri)' : 'var(--tm)';
 }
 
 // --- Series List ---
@@ -229,9 +215,9 @@ async function syncSeries(id, btn) {
       if (s.last_synced !== preSynced || Date.now() > deadline) {
         clearInterval(poll);
         // Only repaint if the user is STILL on this series — and only when the
-        // sync changed something visible. The old else-branch here painted
-        // renderSeries() (a dead, router-unreachable page) over WHATEVER view
-        // you were on whenever a background sync landed — the infamous
+        // sync changed something visible. The old else-branch here painted a
+        // long-dead, router-unreachable series page over WHATEVER view you
+        // were on whenever a background sync landed — the infamous
         // "page keeps bouncing to the library by itself" poltergeist.
         if (currentView === 'series-detail' && currentParams.id === id) {
           const changed = !before
@@ -2477,7 +2463,6 @@ function closeModal() {
 let _issueVariantCovers  = [];
 let _issueVariantSelected = new Set();
 let _issueVariantPrimary  = null;
-let _issueVariantFetched  = false;
 let _issueVariantSeriesId = null;
 let _issueVariantNumber   = null;
 
@@ -2538,7 +2523,6 @@ async function showIssueModal(seriesId, number) {
   _issueVariantCovers   = [];
   _issueVariantSelected = new Set();
   _issueVariantPrimary  = null;
-  _issueVariantFetched  = false;
   _issueVariantSeriesId = seriesId;
   _issueVariantNumber   = number;
 
@@ -2694,7 +2678,6 @@ async function _imFetchVariants(seriesId, number) {
       _issueVariantSelected = new Set(data.selected_ids);
       _issueVariantPrimary  = data.primary_id || data.selected_ids[0];
     }
-    _issueVariantFetched = true;
     _imRenderVariants();
   } catch(e) {
     const el = document.getElementById('variant-area');
@@ -3068,9 +3051,9 @@ document.addEventListener('touchend', () => _ptrFinish(true));
 document.addEventListener('touchcancel', () => _ptrFinish(false));
 
 async function boot() {
-  // Always land on the library. Komga and Metron are optional integrations,
-  // configured in Settings — never a blocking welcome gate. Kometa runs fine
-  // with neither: search and track via LOCG, own via folders.
+  // Always land on the library. Komga is an optional integration, configured
+  // in Settings — never a blocking welcome gate. Kometa runs fine without it:
+  // search and track via LOCG, own via folders.
   const cfg = await api.get('/api/config');
   _appConfig = cfg;
   const { view, params } = _parseHash();

@@ -1113,16 +1113,6 @@ def fulfill_arc(series_id: int):
     return {"queued": len(pairs), "total": len(rows), "owned": sum(1 for r in rows if r.get("owned"))}
 
 
-@app.post("/api/series/{series_id}/track-participating")
-def track_participating(series_id: int):
-    """Track (pull-list OFF) the series an arc's issues belong to."""
-    s = db.get_series_by_id(series_id, DB_PATH)
-    if not s or s.get("kind") != "arc":
-        raise HTTPException(404, "Not a story arc")
-    m = _track_participating(series_id)
-    return {"tracked": len(m), "series_ids": list(m.values())}
-
-
 def _add_arc(req: AddSeriesRequest):
     """Add a story arc: a kind='arc' tracked_series whose cross-title reading order
     is populated from ComicVine. Reuses folder/queue/Komga machinery; the arc's
@@ -1295,7 +1285,7 @@ def add_series(req: AddSeriesRequest):
             logger.warning(f"Could not create folder {folder_path!r} for {title!r}: {e}")
 
     new_id = db.add_series(
-        komga_series_id, None,
+        komga_series_id,
         title=title,
         publisher=publisher,
         year_began=year_began,
@@ -1480,7 +1470,7 @@ def series_thumbnail(series_id: int):
                 return resp
         except Exception:
             pass
-    # Use cached issue image URLs from DB — avoids live Metron API calls under concurrent grid load
+    # Use cached issue image URLs from DB — avoids live source API calls under concurrent grid load
     issues = db.get_issues_for_series(series_id, DB_PATH)
     img_url = next(
         (i["metron_image"] for i in sorted(issues, key=lambda x: x["number"])
@@ -1543,7 +1533,7 @@ def issue_thumbnail(series_id: int, number: float):
     if _thumb_misses.get(miss_key, 0) > time.time():
         return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
 
-    # Metron/LOCG list art — skip the 'no cover' placeholders some rows carry
+    # LOCG list art (legacy-named metron_image column) — skip the 'no cover' placeholders some rows carry
     # (relative paths that can never load; older syncs stored them as-is)
     mi = issue.get("metron_image") if issue else None
     if mi and mi.startswith("http") and "no-cover" not in mi:

@@ -23,9 +23,6 @@ class KomgaClient:
         r.raise_for_status()
         return r.json()
 
-    def search_series(self, query):
-        return self._get("/api/v1/series", params={"search": query, "size": 50})["content"]
-
     def get_all_series(self):
         """Every series in the library, paginated. Used for punctuation-proof
         local title matching — Komga's own /search is fussy about ':' vs '-' etc,

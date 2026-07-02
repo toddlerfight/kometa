@@ -71,11 +71,6 @@ class QBittorrentClient:
             logger.warning(f"qBittorrent {method} {path} failed: {e}")
             return None
 
-    def test(self) -> str | None:
-        """Return the qBit version string if reachable+authed, else None."""
-        r = self._req("GET", "/api/v2/app/version")
-        return r.text.strip() if r is not None else None
-
     def _hashes_in_category(self, category: str) -> set[str]:
         r = self._req("GET", "/api/v2/torrents/info", params={"category": category})
         return {str(t.get("hash", "")).lower() for t in r.json()} if r is not None else set()
@@ -139,9 +134,3 @@ class QBittorrentClient:
             "state": state,
         }
 
-    def delete(self, infohash: str, delete_files: bool = True) -> bool:
-        """Remove a torrent (and optionally its data). Used by the cleanup pass
-        after a confirmed import — never before."""
-        r = self._req("POST", "/api/v2/torrents/delete",
-                      data={"hashes": infohash, "deleteFiles": str(delete_files).lower()})
-        return r is not None

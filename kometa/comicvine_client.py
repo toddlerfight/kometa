@@ -50,14 +50,6 @@ class ComicVineClient:
         r.raise_for_status()
         return r.json()
 
-    def test(self) -> bool:
-        """True if the key is valid and CV answers."""
-        try:
-            d = self._get("search/", query="batman", resources="volume", limit=1)
-            return d.get("status_code") == 1
-        except Exception as e:
-            logger.warning(f"ComicVine test failed: {e}")
-            return False
 
     def search_volumes(self, query: str, limit: int = 12) -> list[dict]:
         """Search volumes (series + collected editions). Returns normalized dicts:

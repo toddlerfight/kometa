@@ -124,7 +124,7 @@ class TestKeylessSync:
             for n in (1, 2, 3)
         ])
 
-        sid = db.add_series(komga_series_id=None, metron_series_id=None, title="Saga",
+        sid = db.add_series(komga_series_id=None, title="Saga",
                             publisher="Image", locg_series_id=100002, path=dbp)
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
@@ -147,7 +147,7 @@ class TestKeylessSync:
         for n in (1, 2):
             (folder / f"Saga #{n:03d}.cbz").write_bytes(b"PK\x03\x04")
 
-        sid = db.add_series(komga_series_id=None, metron_series_id=None, title="Saga",
+        sid = db.add_series(komga_series_id=None, title="Saga",
                             publisher="Image", folder_path=str(folder),
                             locg_series_id=100002, path=dbp)
         sync.sync_one(db.get_series_by_id(sid, dbp))
@@ -165,7 +165,7 @@ class TestKeylessSync:
         monkeypatch.setattr(sync, "get_issues_anon",
                             lambda sid: (_ for _ in ()).throw(AssertionError("should not run")))
 
-        sid = db.add_series(komga_series_id=None, metron_series_id=None, title="Mystery",
+        sid = db.add_series(komga_series_id=None, title="Mystery",
                             publisher="Image", path=dbp)  # no locg_series_id
         sync.sync_one(db.get_series_by_id(sid, dbp))
 

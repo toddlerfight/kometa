@@ -176,7 +176,7 @@ class TestFreshInstallMigration:
         assert "locg_series_id" in cols
         assert "cv_volume_id" in cols  # still present, just unused now
 
-        sid = db.add_series(komga_series_id=None, metron_series_id=None,
+        sid = db.add_series(komga_series_id=None,
                             title="X", publisher="Y", path=p)
         db.set_locg_series_id(sid, 9999, p)
         row = db.get_series_by_id(sid, p)

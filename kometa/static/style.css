@@ -334,13 +334,6 @@ select.settings-input {
   color: var(--tp);
 }
 
-.empty-state-body {
-  font-family: var(--font);
-  font-size: 13px;
-  color: var(--tq);
-  margin-bottom: 8px;
-}
-
 /* ---- Library Browse ---- */
 
 .browse-header {
@@ -1208,7 +1201,6 @@ select.settings-input {
 }
 .btn-link:hover { color: var(--tp); }
 
-.settings-note { font-size: 11px; color: var(--tq); margin: -8px 0 16px; font-style: italic; }
 .settings-help { font-size: 11px; color: var(--tq); margin-top: 2px; }
 .settings-help.ok  { color: var(--pri); }
 .settings-help.bad { color: var(--pink); }
@@ -1258,15 +1250,6 @@ select.settings-input {
 }
 
 .settings-input:focus { border-color: var(--pri); }
-
-.settings-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
-  padding-top: 20px;
-  border-top: 1px solid var(--bd);
-  grid-column: 1 / -1;
-}
 
 /* ---- Modal ---- */
 
@@ -1397,9 +1380,6 @@ select.settings-input {
 }
 
 .search-input:focus { border-color: var(--pri); }
-
-/* --- Monitor select --- */
-
 
 /* --- Issue tile search button --- */
 
@@ -1688,11 +1668,6 @@ select.settings-input {
 
 /* --- Trades (collected editions) — reuses .issue-tile / .issue-grid --- */
 
-.trades-note {
-  font-size: 10px; color: var(--tq); line-height: 1.5;
-  padding: 8px 10px; margin-bottom: 14px;
-  border-left: 2px solid var(--bd-l); background: var(--su1);
-}
 /* Format tag rides the badge slot but pinned to the top-left corner, recoloured
    by edition so TPB/HC read at a glance. */
 .trade-tile .series-card-next-release {
@@ -2032,21 +2007,6 @@ select.settings-input {
 @keyframes btn-spin { to { transform: rotate(360deg); } }
 
 /* ── Story Arc detail — cross-title reading order ── */
-.arc-body { padding: 24px var(--app-pad, 26px) 48px; }
-.arc-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--bd); margin-bottom: 18px; }
-.arc-sec-label { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--tq); margin-bottom: 14px; }
-.arc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.arc-table th { text-align: left; color: var(--tq); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; font-weight: 500; padding: 0 10px 9px; border-bottom: 1px solid var(--bd); }
-.arc-table td { padding: 9px 10px; border-bottom: 1px solid var(--su1); }
-.arc-table tr:hover td { background: var(--su1); }
-.arc-num { color: var(--tq); width: 34px; }
-.arc-src { white-space: nowrap; color: var(--tp); }
-.arc-iss { color: var(--tm); }
-.arc-story { color: var(--tm); }
-.arc-stcell { text-align: right; white-space: nowrap; font-size: 11px; }
-.arc-st.owned { color: var(--pri); }
-.arc-st.missing { color: var(--tq); }
-.arc-st.coll { color: var(--tm); }
 .chip-collected { background: rgba(145,252,78,.12); color: var(--pri); border: 1px solid rgba(145,252,78,.3); }
 .arc-collected-note { margin: 0 0 14px; padding: 11px 14px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; color: var(--tm); cursor: pointer; transition: background .12s; }
 .arc-collected-note:hover { background: rgba(145,252,78,.12); }
@@ -2055,13 +2015,3 @@ select.settings-input {
 
 /* Arcs tab on a series — the events that series participates in */
 .arcs-body { padding: 4px 0 24px; }
-.arc-list-row { display: flex; align-items: center; gap: 13px; padding: 13px 14px; border: 1px solid var(--bd); border-radius: 8px; margin-bottom: 9px; background: var(--su1); cursor: pointer; transition: border-color .12s; }
-.arc-list-row:hover { border-color: var(--bd-l); }
-.arc-list-dia { color: var(--pri); font-size: 13px; }
-.arc-list-name { font-weight: 600; flex: 1; }
-.arc-list-meta { color: var(--tq); font-size: 11px; white-space: nowrap; }
-.arc-list-count { color: var(--tm); font-size: 11px; white-space: nowrap; min-width: 44px; text-align: right; }
-.arc-list-count.ok { color: var(--pri); }
-.arc-list-dia.dim { color: var(--tq); }
-.arc-list-count.view { color: var(--tq); font-size: 10px; }
-.arc-list-row.arc-discovered:hover .arc-list-count.view { color: var(--pri); }

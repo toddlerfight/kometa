@@ -360,16 +360,16 @@ def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
 
 # --- Series ---
 
-def add_series(komga_series_id=None, metron_series_id=None, title=None, publisher=None,
+def add_series(komga_series_id=None, title=None, publisher=None,
                year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
                kind="series", cv_arc_id=None, cv_volume_id=None, path=DB_PATH) -> int:
     with _connect(path) as conn:
         cur = conn.execute("""
-            INSERT INTO tracked_series (komga_series_id, metron_series_id, title, publisher,
+            INSERT INTO tracked_series (komga_series_id, title, publisher,
                                         year_began, folder_path, on_pull_list, locg_series_id,
                                         kind, cv_arc_id, cv_volume_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (komga_series_id, metron_series_id, title, publisher, year_began,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (komga_series_id, title, publisher, year_began,
               folder_path, int(on_pull_list), locg_series_id, kind, cv_arc_id, cv_volume_id))
         return cur.lastrowid
 
@@ -597,19 +597,18 @@ def set_owned(tracked_series_id, number, owned, path=DB_PATH):
         )
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, metron_issue_id=None, locg_issue_id=None, path=DB_PATH):
+def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, locg_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, metron_issue_id, locg_issue_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
                 owned        = excluded.owned,
                 komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
-                metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
-        """, (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, metron_issue_id, locg_issue_id))
+        """, (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, locg_issue_id))
 
 
 def set_komga_book_id(series_id, number, book_id, path=DB_PATH):
@@ -843,7 +842,7 @@ def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):
 def get_queue(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began
+            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             ORDER BY q.updated_at DESC
@@ -863,7 +862,7 @@ def reset_stuck_queue_items(path=DB_PATH):
 def get_queued_items(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.metron_series_id, s.komga_series_id, s.year_began, s.folder_path
+            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began, s.folder_path
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'queued'
@@ -985,14 +984,13 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
             )
         conn.execute("""
             INSERT INTO issue_status (tracked_series_id, number, store_date, owned,
-                                      komga_book_id, metron_image, metron_issue_id, locg_issue_id)
-            VALUES (?, ?, ?, 1, NULL, NULL, NULL, NULL)
+                                      komga_book_id, metron_image, locg_issue_id)
+            VALUES (?, ?, ?, 1, NULL, NULL, NULL)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
                 owned        = excluded.owned,
                 komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
-                metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id),
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
         """, (tracked_series_id, issue_number, store_date))
 
