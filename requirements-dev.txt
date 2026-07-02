@@ -2,3 +2,7 @@
 # runtime requirements.txt so it never ships to the NAS container.
 -r requirements.txt
 pytest==9.0.3
+# Browser smoke suite (tests/e2e, opt-in via `pytest -m e2e`). After install:
+#   .venv/bin/python -m playwright install chromium
+pytest-playwright==0.8.0
+playwright==1.61.0

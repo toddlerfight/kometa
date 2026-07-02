@@ -144,9 +144,15 @@ Always: after, `curl http://$NAS_HOST:6969/api/series` → 200, and confirm the 
 code is actually live, e.g. `docker exec kometa grep -c <new-symbol> /app/kometa/<file>`.
 Note: app-level Python loggers do NOT reach `docker logs` (only uvicorn access logs are
 wired up) — verify behaviour through the API/DB, not by grepping logs for logger.info
-lines. Validate locally first (`ruff check kometa/`, `pytest -q` = 80 tests, `node
---check kometa/static/app.js` for JS). The `.venv` has no git → snapshot files to
-`/tmp` before risky edits.
+lines. Validate locally first (`ruff check kometa/`, `pytest -q` = 92 unit tests,
+`node --check kometa/static/app.js` for JS). **For any frontend or route change,
+also run the browser smoke suite:** `.venv/bin/python -m pytest -m e2e -q`
+(11 tests, ~11s, headless Chromium against a real in-process server on a fixture
+DB — zero external network; see tests/e2e/conftest.py). First-time setup:
+`.venv/bin/python -m pip install -r requirements-dev.txt` then
+`.venv/bin/python -m playwright install chromium`. The `.venv` has no git →
+snapshot files to `/tmp` before risky edits. NB: the venv's bin/pip shebang is
+stale (pre-rename cleancomics path) — always use `.venv/bin/python -m pip`.
 
 Scheduler note (post-2026-07-02): a deploy restart that straddles a 5/12/17 sync fire
 no longer loses it — `lifespan` compares the `last_full_sync` config stamp against the

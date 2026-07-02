@@ -1,4 +1,4 @@
-# Playwright smoke suite — scope (drafted 2026-07-03, build next session)
+# Playwright smoke suite — scope (drafted 2026-07-03, BUILT same session: tests/e2e/, 11 tests, ~11s)
 
 Goal: the UI currently has zero regression coverage — every frontend fix this
 week was verified by eyeball. A small, fast (<30s) browser smoke suite that
