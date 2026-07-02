@@ -121,6 +121,14 @@ the 2026-06-09 git history of frustration). Pick the path by what changed:
   ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST \
     'cd /volume1/docker/kometa && /var/packages/ContainerManager/target/usr/bin/docker compose restart kometa'
   ```
+  **Syncing the whole `kometa/` dir** (many files changed): the NAS-side extraction
+  dies with "Permission denied" on `kometa/__pycache__/` — those .pyc files are
+  root-owned (written by the container). Exclude the junk and macOS metadata:
+  ```bash
+  COPYFILE_DISABLE=1 tar czf - --exclude '__pycache__' --exclude '.DS_Store' kometa | \
+    ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
+  ```
+  ("Ignoring unknown extended header keyword" warnings from the NAS tar are harmless.)
 - **Static change** (`static/app.js`, `style.css`, `index.html`) → tar-sync only;
   it's served live, **no restart needed**. Tell the user to hard-refresh (Cmd+Shift+R)
   — the SPA is browser-cached (`Cache-Control` on assets), so a stale cached app.js is
@@ -134,9 +142,16 @@ the 2026-06-09 git history of frustration). Pick the path by what changed:
 
 Always: after, `curl http://$NAS_HOST:6969/api/series` → 200, and confirm the new
 code is actually live, e.g. `docker exec kometa grep -c <new-symbol> /app/kometa/<file>`.
-Validate locally first (`ruff check kometa/`, `pytest -q` = 78 tests, `node --check
-kometa/static/app.js` for JS). The `.venv` has no git → snapshot files to `/tmp` before
-risky edits.
+Note: app-level Python loggers do NOT reach `docker logs` (only uvicorn access logs are
+wired up) — verify behaviour through the API/DB, not by grepping logs for logger.info
+lines. Validate locally first (`ruff check kometa/`, `pytest -q` = 80 tests, `node
+--check kometa/static/app.js` for JS). The `.venv` has no git → snapshot files to
+`/tmp` before risky edits.
+
+Scheduler note (post-2026-07-02): a deploy restart that straddles a 5/12/17 sync fire
+no longer loses it — `lifespan` compares the `last_full_sync` config stamp against the
+most recent scheduled slot and runs a catch-up sync at boot if one was missed. Expect
+a full sync (and its auto-grabs) right after any deploy that crossed a sync hour.
 
 ## NAS runtime integrations
 
