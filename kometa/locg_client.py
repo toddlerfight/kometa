@@ -21,11 +21,19 @@ _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 # session — homepage warm-up and all — on EVERY anon call was paying the
 # Cloudflare toll over and over for nothing. The TTL keeps the cookies from
 # rotting under a long-running server.
+#
+# The raw Session lives in the dict (not just inside a closure) so rotation can
+# .close() the outgoing one instead of orphaning its connection pool — the old
+# closure-only capture meant every replaced session leaked until GC felt like it.
 _ANON_SESSION_TTL = 1800  # seconds
-_anon_session = {"get": None, "ts": 0.0}
+_anon_session = {"session": None, "get": None, "ts": 0.0}
 # One session shared by every anon caller — and grid renders now fire thumbnail
 # fallbacks in PARALLEL. curl_cffi sessions make no thread-safety promises, and
 # CF gets twitchy about request bursts anyway. Serialize; politeness is cheap.
+#
+# The SAME lock also guards the TTL check-and-rebuild in _anon_get_fn (see the
+# double-check there). One lock, never nested — the rebuild finishes and releases
+# before any closure .get() can grab it, so no ordering games to lose.
 _anon_lock = threading.Lock()
 
 
@@ -34,22 +42,50 @@ def _anon_get_fn():
     TLS fingerprint is blocked from some hosts (e.g. the NAS container — 403 even on the
     homepage); curl_cffi impersonates a real Chrome TLS handshake, which CF accepts.
     Warms the homepage once for the ci_session cookie; the session is cached and
-    reused until _ANON_SESSION_TTL expires."""
-    now = time.time()
-    if _anon_session["get"] is None or now - _anon_session["ts"] > _ANON_SESSION_TTL:
+    reused until _ANON_SESSION_TTL expires.
+
+    Rotation is double-checked-locked: the parallel thumbnail fallbacks used to all
+    see the TTL expire at once and EACH pay the CF warm-up toll, last writer clobbering
+    the rest into leaked connection pools. Now one thread rebuilds under _anon_lock,
+    the losers re-check inside the lock and reuse its work. The warm-up GET runs while
+    holding the lock — deliberate: it serializes against in-flight closure .get()s,
+    which is the politeness we wanted anyway."""
+    # Unlocked fast path — a stale read here just falls through to the lock,
+    # where the truth gets re-checked. Fresh-session reads skip the lock entirely.
+    if _anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL:
+        return _anon_session["get"]
+    with _anon_lock:
+        # The double-check: whoever won the lock race may have already rebuilt.
+        now = time.time()
+        if _anon_session["get"] is not None and now - _anon_session["ts"] <= _ANON_SESSION_TTL:
+            return _anon_session["get"]
         from curl_cffi import requests as _cffi
         s = _cffi.Session(impersonate="chrome")
         try:
             s.get(BASE + "/", timeout=20)
         except Exception:
             pass
-        def _get(url, **kw):
-            kw.setdefault("timeout", 25)
-            with _anon_lock:
-                return s.get(url, **kw)
-        _anon_session["get"] = _get
+        # Close the outgoing session before swapping it in. We hold _anon_lock,
+        # and every closure .get() needs it too — so nothing is mid-flight on
+        # the old session when it dies.
+        old = _anon_session["session"]
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
+        _anon_session["session"] = s
+        if _anon_session["get"] is None:
+            # The closure reads the CURRENT session out of the dict under the lock
+            # (instead of capturing one), so callers holding a get fn from before a
+            # rotation transparently ride the new session — no zombie handles.
+            def _get(url, **kw):
+                kw.setdefault("timeout", 25)
+                with _anon_lock:
+                    return _anon_session["session"].get(url, **kw)
+            _anon_session["get"] = _get
         _anon_session["ts"] = now
-    return _anon_session["get"]
+        return _anon_session["get"]
 
 def _parse_search_html(html: str) -> list[dict]:
     """Parse LOCG search AJAX response HTML into [{id, title, publisher, year, cover}].
