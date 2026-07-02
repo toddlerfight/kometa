@@ -11,7 +11,7 @@ corpse.
 import logging
 import requests
 
-from kometa.usenet_client import _nzb_score, _pack_score
+from kometa.usenet_client import _nzb_score, _pack_score, year_mismatch
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class ProwlarrClient:
         return out
 
 
-def _best_downloadable_torrent(results: list[dict], score_fn) -> dict | None:
+def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 10) -> dict | None:
     """Pick the highest-scoring torrent we can act on — has a download handle
     (a magnet OR a .torrent url; many indexers give the latter, no magnet) and at
     least one live seeder. Returns the result dict or None."""
@@ -78,15 +78,23 @@ def _best_downloadable_torrent(results: list[dict], score_fn) -> dict | None:
         key=lambda x: (-x[1], -(x[0].get("seeders") or 0), -(x[0].get("size") or 0)),
     )
     best, score = scored[0]
-    if score < 10:
-        logger.info(f"Prowlarr torrent: best score {score} too low — skipping")
+    if score < min_score:
+        logger.info(f"Prowlarr torrent: best score {score} below {min_score} — skipping")
         return None
     logger.info(f"Prowlarr torrent: {best['title']!r} score={score} "
                 f"seeders={best['seeders']} from {best['indexer']}")
     return best
 
 
-def search_torrent_pack(prowlarr: ProwlarrClient, title: str) -> dict | None:
+def _drop_year_mismatches(results: list[dict], title: str, series_year) -> list[dict]:
+    kept = [r for r in results if not year_mismatch(r.get("title", ""), series_year)]
+    if len(kept) < len(results):
+        logger.info(f"Prowlarr: dropped {len(results) - len(kept)} year-mismatched result(s) "
+                    f"for {title!r} (series began {series_year})")
+    return kept
+
+
+def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> dict | None:
     """Best torrent pack/collection for a series. Returns the result dict (magnet,
     seeders, title, size) or None. Twin of usenet_client.search_usenet_pack."""
     results = []
@@ -94,18 +102,32 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str) -> dict | None:
         results = prowlarr.search(q, protocol="torrent")
         if results:
             break
+    results = _drop_year_mismatches(results, title, series_year)
     if not results:
         return None
     return _best_downloadable_torrent(
         results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
 
 
-def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float) -> dict | None:
+def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None) -> dict | None:
     """Best torrent for a single issue. Returns the result dict or None. Twin of
-    usenet_client.search_usenet."""
+    usenet_client.search_usenet.
+
+    A single-issue result must carry BOTH the series name (+10) AND issue-number
+    evidence (+5) BEFORE seeders count for anything — name-substring alone used
+    to hit the old bar of 10 exactly (and seeders could have vaulted it over any
+    combined threshold), which is how a well-seeded music album containing the
+    word 'Ripcord' got queued for issue #0."""
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
+    results = _drop_year_mismatches(results, title, series_year)
     if not results:
         return None
-    return _best_downloadable_torrent(
-        results, lambda r: _nzb_score(r["title"], title, issue_number) + _seed_bonus(r["seeders"]))
+
+    def _score(r):
+        base = _nzb_score(r["title"], title, issue_number)
+        if base < 15:            # name+number or nothing — seeders can't buy evidence
+            return 0
+        return base + _seed_bonus(r["seeders"])
+
+    return _best_downloadable_torrent(results, _score, min_score=15)

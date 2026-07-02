@@ -187,9 +187,11 @@ def _try_torrent(item, qid) -> bool:
     set_search_status(qid, "Torrent: searching…")
     if item.get("kind") == "trade":
         meta = json.loads(item.get("meta_json") or "{}")
-        cand = search_torrent_pack(prowlarr, meta.get("title") or item["title"])
+        cand = search_torrent_pack(prowlarr, meta.get("title") or item["title"],
+                                   series_year=item.get("year_began"))
     else:
-        cand = search_torrent(prowlarr, item["title"], item["issue_number"])
+        cand = search_torrent(prowlarr, item["title"], item["issue_number"],
+                              series_year=item.get("year_began"))
     if not cand:
         return False
     source = cand.get("magnet") or cand.get("url")
@@ -288,7 +290,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         if indexers and sab:
             set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
             query = f"{title} {label}".strip()
-            nzb_url = search_usenet_pack(indexers, query)
+            nzb_url = search_usenet_pack(indexers, query, series_year=item.get("year_began"))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=query)
                 if nzo_id:
@@ -350,7 +352,7 @@ def _sweep_missing():
             series = db.get_series_by_id(series_id, DB_PATH)
             if not series:
                 continue
-            nzb_url = search_usenet_pack(indexers, series["title"])
+            nzb_url = search_usenet_pack(indexers, series["title"], series_year=series.get("year_began"))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{series['title']} - Pack")
                 if nzo_id:

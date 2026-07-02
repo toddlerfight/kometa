@@ -57,6 +57,23 @@ def _drop_stale(results: list[dict], store_date: str | None, num_int, title: str
     return kept
 
 
+_TITLE_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def year_mismatch(title: str, series_year) -> bool:
+    """A result whose title carries a year well BEFORE the series began is a
+    different release wearing the same name — the lesson of the Keith Urban
+    'Ripcord' (2016) ALBUM getting grabbed for the Ripcord (2026) comic. Uses
+    the EARLIEST year in the title (packs legitimately span ranges forward,
+    never backward past the series' birth). Only a known mismatch rejects:
+    no year in the title, or no known series year, passes — this is a
+    tripwire, not a gate."""
+    if not series_year:
+        return False
+    years = [int(m.group(0)) for m in _TITLE_YEAR_RE.finditer(title or "")]
+    return bool(years) and min(years) < int(series_year) - 1
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     """Score an NZB title for relevance. Higher is better."""
     t = _norm(nzb_title)
@@ -182,7 +199,7 @@ def _pack_score(nzb_title: str, series: str, size: int) -> int:
     return score
 
 
-def search_usenet_pack(indexers: list[dict], title: str) -> str | None:
+def search_usenet_pack(indexers: list[dict], title: str, series_year=None) -> str | None:
     """Search for a series pack/collection NZB. Returns best NZB URL or None."""
     queries = [f"{title} complete", f"{title} pack", title]
     clients = [
@@ -202,6 +219,17 @@ def search_usenet_pack(indexers: list[dict], title: str) -> str | None:
     if not all_results:
         logger.info(f"Usenet pack: no results for {title!r}")
         return None
+
+    # Same tripwire as the torrent path: a pack whose earliest title-year
+    # predates the series is a different release wearing the name (the single
+    # search has the posted-date guard; packs had NOTHING).
+    if series_year:
+        pre = len(all_results)
+        all_results = [r for r in all_results if not year_mismatch(r.get("title", ""), series_year)]
+        if len(all_results) < pre:
+            logger.info(f"Usenet pack: dropped {pre - len(all_results)} year-mismatched result(s) for {title!r}")
+        if not all_results:
+            return None
 
     scored = sorted(
         [(r, _pack_score(r["title"], title, r.get("size", 0))) for r in all_results],
