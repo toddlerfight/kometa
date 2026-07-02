@@ -608,18 +608,47 @@ def set_owned(tracked_series_id, number, owned, path=DB_PATH):
         )
 
 
+def set_owned_bulk(tracked_series_id, numbers, owned, path=DB_PATH):
+    """set_owned for many issue numbers in ONE connection/transaction. The sync
+    reconcile loops were opening a connection per flipped issue."""
+    if not numbers:
+        return
+    with _connect(path) as conn:
+        conn.executemany(
+            "UPDATE issue_status SET owned = ? WHERE tracked_series_id = ? AND number = ?",
+            [(int(owned), tracked_series_id, n) for n in numbers],
+        )
+
+
+_UPSERT_ISSUE_SQL = """
+    INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tracked_series_id, number) DO UPDATE SET
+        store_date      = COALESCE(excluded.store_date, store_date),
+        owned        = excluded.owned,
+        komga_book_id   = excluded.komga_book_id,
+        metron_image    = excluded.metron_image,
+        locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
+"""
+
+
 def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, locg_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
-        conn.execute("""
-            INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(tracked_series_id, number) DO UPDATE SET
-                store_date      = COALESCE(excluded.store_date, store_date),
-                owned        = excluded.owned,
-                komga_book_id   = excluded.komga_book_id,
-                metron_image    = excluded.metron_image,
-                locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
-        """, (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, locg_issue_id))
+        conn.execute(_UPSERT_ISSUE_SQL,
+                     (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, locg_issue_id))
+
+
+def upsert_issue_status_many(rows, path=DB_PATH):
+    """Full-fidelity upsert_issue_status for many rows in ONE transaction. rows =
+    (tracked_series_id, number, store_date, owned, komga_book_id, metron_image,
+    locg_issue_id) tuples. The per-issue sync loop was paying a connect/commit
+    (fsync) cycle per issue, per series, per sync."""
+    if not rows:
+        return
+    with _connect(path) as conn:
+        conn.executemany(_UPSERT_ISSUE_SQL,
+                         [(sid, num, sd, int(owned), kbid, img, lid)
+                          for sid, num, sd, owned, kbid, img, lid in rows])
 
 
 def set_komga_book_id(series_id, number, book_id, path=DB_PATH):
@@ -630,6 +659,17 @@ def set_komga_book_id(series_id, number, book_id, path=DB_PATH):
         conn.execute(
             "UPDATE issue_status SET komga_book_id = ? WHERE tracked_series_id = ? AND number = ?",
             (book_id, series_id, number),
+        )
+
+
+def set_komga_book_ids_bulk(series_id, book_map, path=DB_PATH):
+    """set_komga_book_id for a whole {number: book_id} map in ONE transaction."""
+    if not book_map:
+        return
+    with _connect(path) as conn:
+        conn.executemany(
+            "UPDATE issue_status SET komga_book_id = ? WHERE tracked_series_id = ? AND number = ?",
+            [(bid, series_id, num) for num, bid in book_map.items()],
         )
 
 

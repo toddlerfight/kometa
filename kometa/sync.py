@@ -114,9 +114,11 @@ def sync_one(series: dict):
     # has no parseable issue number. On a clash, a filename-derived key always wins.
     book_map: dict[float, str] = {}
     book_src: dict[float, str] = {}  # 'name' (authoritative) vs 'sort' (fallback)
+    komga_books: list[dict] | None = None  # raw list, reused by enrich_trades below
     if series.get("komga_series_id") and komga:
         try:
-            for b in komga.get_books(series["komga_series_id"]):
+            komga_books = komga.get_books(series["komga_series_id"])
+            for b in komga_books:
                 if b.get("media", {}).get("status") == "ERROR":
                     continue
                 fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
@@ -198,7 +200,7 @@ def sync_one(series: dict):
         if locg_id:
             try:
                 trades = select_editions(get_trades_anon(locg_id))
-                enrich_trades(series, trades)
+                enrich_trades(series, trades, books=komga_books)
                 db.set_trades(series["id"], trades, DB_PATH)
             except Exception as e:
                 logger.warning(f"Trades cache failed for '{series['title']}': {e}")
@@ -208,29 +210,27 @@ def sync_one(series: dict):
     # in by arc participation (_populate_participating_issues), carrying their covers.
     # So the loops above legitimately leave issue_map empty here; that's fine.
 
-    # --- Upsert merged issue list ---
-    for num, data in issue_map.items():
-        db.upsert_issue_status(
-            series["id"], num, data["store_date"],
-            num in owned_numbers, book_map.get(num),
-            metron_image=data.get("image"),
-            locg_issue_id=data.get("locg_issue_id"),
-            path=DB_PATH,
-        )
+    # --- Upsert merged issue list (one transaction — not a connection per issue) ---
+    db.upsert_issue_status_many(
+        [(series["id"], num, data["store_date"], num in owned_numbers,
+          book_map.get(num), data.get("image"), data.get("locg_issue_id"))
+         for num, data in issue_map.items()],
+        path=DB_PATH,
+    )
 
     # Folder is the source of truth for ownership — reconcile from disk (this also
     # CREATES issues for files that aren't in the metadata list, e.g. when LOCG
-    # is unavailable), so ownership never depends on the network.
-    rescan_owned(series)
+    # is unavailable), so ownership never depends on the network. The folder was
+    # already listed above — hand the numbers over instead of scanning it twice.
+    rescan_owned(series, owned_numbers=owned_numbers if folder and os.path.isdir(folder) else None)
 
-    # Stamp Komga book ids onto the (now reconciled) issues. The upsert loop above
-    # only reached issues that came from a metadata source; a folder-only series (no
+    # Stamp Komga book ids onto the (now reconciled) issues. The upsert above only
+    # reached issues that came from a metadata source; a folder-only series (no
     # CV/LOCG — e.g. a Noir Edition) builds its issue list purely from disk via
     # rescan_owned, which knows nothing of book_map. Without this its owned issues get
     # no komga_book_id → no thumbnail, no read link. UPDATE is a no-op for any book
     # number that has no matching issue row.
-    for num, bid in book_map.items():
-        db.set_komga_book_id(series["id"], num, bid, DB_PATH)
+    db.set_komga_book_ids_bulk(series["id"], book_map, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
 
@@ -257,28 +257,33 @@ def _scan_folder_edition_names(folder_path: str) -> set[str]:
     return names
 
 
-def enrich_trades(series: dict, trades: list[dict]) -> list[dict]:
+def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = None) -> list[dict]:
     """Stamp the two stored facts onto each trade: `owned` (file in the folder) and
     `komga_book_id` (the matching Komga book, for the read link). Computed at sync
     time and cached so request handlers never fold-scan. The two are independent —
     the folder answers 'do I have it', Komga answers 'can I read it'; Komga is never
-    an ownership source."""
+    an ownership source.
+
+    books: pass the series' Komga book list if already fetched (sync_one pulls it
+    for the issue book map) to avoid a second full paginated get_books."""
     folder = series.get("folder_path")
     owned_vols = _scan_folder_volumes(folder) if folder else set()
     owned_names = _scan_folder_edition_names(folder) if folder else set()
 
     kbook_by_vol, kbook_by_name = {}, {}
-    komga = _komga()
-    if komga and series.get("komga_series_id"):
-        try:
-            for b in komga.get_books(series["komga_series_id"]):
-                name = b.get("name", "")
-                v = _parse_volume_number(name)
-                if v is not None:
-                    kbook_by_vol[v] = b["id"]
-                kbook_by_name[_norm_name(name)] = b["id"]
-        except Exception as e:
-            logger.warning(f"Komga trade-book map failed for '{series.get('title')}': {e}")
+    if books is None:
+        komga = _komga()
+        if komga and series.get("komga_series_id"):
+            try:
+                books = komga.get_books(series["komga_series_id"])
+            except Exception as e:
+                logger.warning(f"Komga trade-book map failed for '{series.get('title')}': {e}")
+    for b in books or []:
+        name = b.get("name", "")
+        v = _parse_volume_number(name)
+        if v is not None:
+            kbook_by_vol[v] = b["id"]
+        kbook_by_name[_norm_name(name)] = b["id"]
 
     for t in trades:
         if t.get("vol") is not None:
@@ -313,23 +318,33 @@ def refresh_trades_owned(series_id: int) -> None:
     db.set_trades(series_id, cached["trades"], DB_PATH)
 
 
-def rescan_owned(series: dict) -> dict:
+def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:
     """Folder is the source of truth for ownership. Scan it and reconcile owned:
     CREATE an owned issue for each file not yet tracked, mark found ones owned, and
     clear ones whose file is gone. Pure disk — no CV/LOCG — so it works even
-    when those are blocked. Returns {scanned, owned}."""
+    when those are blocked. Returns {scanned, owned}.
+
+    owned_numbers: pass a set already derived from this folder (sync_one scans it
+    for the metadata merge anyway) to skip re-listing the directory."""
     folder = series.get("folder_path")
     if not folder or not os.path.isdir(folder):
         return {"scanned": False, "owned": 0}
-    owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
+    if owned_numbers is None:
+        owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
     existing = {i["number"]: i for i in db.get_issues_for_series(series["id"], DB_PATH)}
-    for num in owned_numbers:
-        if num in existing:
-            if not existing[num]["owned"]:
-                db.set_owned(series["id"], num, True, DB_PATH)
-        else:
-            db.upsert_issue_status(series["id"], num, None, owned=True, path=DB_PATH)  # straight from disk
-    for num, iss in existing.items():
-        if num not in owned_numbers and iss["owned"]:
-            db.set_owned(series["id"], num, False, DB_PATH)
+    db.set_owned_bulk(
+        series["id"],
+        [num for num in owned_numbers if num in existing and not existing[num]["owned"]],
+        True, DB_PATH,
+    )
+    db.upsert_issue_status_many(
+        [(series["id"], num, None, True, None, None, None)  # straight from disk
+         for num in owned_numbers if num not in existing],
+        path=DB_PATH,
+    )
+    db.set_owned_bulk(
+        series["id"],
+        [num for num, iss in existing.items() if num not in owned_numbers and iss["owned"]],
+        False, DB_PATH,
+    )
     return {"scanned": True, "owned": len(owned_numbers)}
