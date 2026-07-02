@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
 from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon
-from kometa.scheduler import start_scheduler
+from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
 import kometa.db as db
 from kometa.sources import (
     komga as _komga,
@@ -211,6 +211,10 @@ def _sync_all_job():
     # instance with no folders → sweep the entire catalog" blowup can't recur. Genuine
     # gaps in collections we've verified get queued; everything else is left alone.
     _sweep_missing()
+    # Stamped at the END on purpose: a sync that crashes mid-run reads as "still
+    # missed" and the next startup catch-up (lifespan, below) retries it.
+    from datetime import datetime, timezone
+    db.set_config({"last_full_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}, DB_PATH)
 
 
 @asynccontextmanager
@@ -219,6 +223,16 @@ async def lifespan(app: FastAPI):
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
     start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs)
+    # Missed-sync catch-up. The scheduler's jobstore is in-memory, so a restart
+    # (i.e. every deploy) that straddles a cron fire produces a process that has
+    # NO IDEA the fire was missed — apscheduler's misfire grace can't help across
+    # restarts. Compare the last completed full sync against the most recent
+    # scheduled slot; if we slept through it, run it now. This is what finally
+    # kills the "deploy near a sync hour = pull list silently skips a day" trap.
+    missed_slot = last_scheduled_sync_utc()
+    if missed_slot and db.get_config(DB_PATH).get("last_full_sync", "") < missed_slot:
+        logger.info(f"Startup catch-up: missed scheduled sync at {missed_slot} UTC — running now")
+        threading.Thread(target=_sync_all_job, daemon=True).start()
     yield
 
 

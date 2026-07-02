@@ -170,3 +170,24 @@ class TestKeylessSync:
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
         assert db.get_issues_for_series(sid, dbp) == []
+
+
+class TestLastScheduledSyncSlot:
+    def test_most_recent_slot_is_utc_recent_and_parseable(self):
+        from datetime import datetime, timezone, timedelta
+        from kometa.scheduler import last_scheduled_sync_utc
+        s = last_scheduled_sync_utc()
+        slot = datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        # The most recent of three daily slots is never in the future and never
+        # more than ~24h stale (the widest gap between slots is 5pm -> 5am + tz).
+        assert slot <= now
+        assert now - slot < timedelta(hours=24)
+
+    def test_string_compare_semantics(self):
+        # The lifespan catch-up does a plain string compare against the
+        # last_full_sync stamp — both sides must be %Y-%m-%d %H:%M:%S UTC.
+        from kometa.scheduler import last_scheduled_sync_utc
+        s = last_scheduled_sync_utc()
+        assert "" < s          # missing stamp always reads as "missed"
+        assert s < "9999-01-01 00:00:00"

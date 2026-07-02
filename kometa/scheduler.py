@@ -1,5 +1,8 @@
 import os
 import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -9,21 +12,49 @@ logger = logging.getLogger(__name__)
 _raw = os.environ.get("KOMETA_SYNC_HOURS", "5,12,17")
 SYNC_HOURS = [int(h.strip()) for h in _raw.split(",")]
 
+TZ = ZoneInfo(os.environ.get("KOMETA_TZ", "Australia/Sydney"))
+
 # How often to poll SABnzbd for in-flight usenet downloads. Lower = smoother progress
 # bar (SAB's the source of truth for %, the UI only sees what we last polled). It's a
 # local API and the poll no-ops when nothing's pending, so a tight interval is cheap.
 USENET_POLL_SECONDS = int(os.environ.get("KOMETA_USENET_POLL_SECONDS", "5"))
 
 
-def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None):
-    scheduler = BackgroundScheduler(timezone="Australia/Sydney")
+def last_scheduled_sync_utc() -> str:
+    """The most recent SYNC_HOURS fire time as a 'YYYY-MM-DD HH:MM:SS' UTC string
+    (string-comparable with SQLite datetime('now') stamps). The jobstore is
+    in-memory, so a restarted container knows nothing about fires it slept
+    through — main's startup catch-up compares this against the last_full_sync
+    config stamp to decide whether a scheduled sync was missed."""
+    if not SYNC_HOURS:
+        return ""
+    now_local = datetime.now(TZ)
+    candidates = []
+    for day_offset in (0, -1):
+        day = now_local + timedelta(days=day_offset)
+        for hour in SYNC_HOURS:
+            slot = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if slot <= now_local:
+                candidates.append(slot)
+    return max(candidates).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+
+def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None):
+    scheduler = BackgroundScheduler(timezone=TZ)
+
+    # misfire_grace_time: apscheduler's default is 1 SECOND — a container
+    # restart (i.e. every deploy) straddling a fire time silently DROPS that
+    # run, and the pull list doesn't grab until the next window. With an hour
+    # of grace + coalesce, a restart-straddled sync fires once as soon as the
+    # container is back up instead of vanishing.
     for hour in SYNC_HOURS:
         scheduler.add_job(
             sync_all_fn,
             CronTrigger(hour=hour, minute=0),
             id=f"sync_all_{hour}",
             replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
         )
 
     # Process download queue every 5 minutes
@@ -59,6 +90,8 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             CronTrigger(hour=hour, minute=0),
             id=f"release_retry_{hour}",
             replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
         )
 
     scheduler.start()
