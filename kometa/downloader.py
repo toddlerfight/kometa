@@ -47,7 +47,21 @@ def _download_cover(cover_id: str) -> bytes | None:
     return r.content if r.status_code == 200 and r.content else None
 
 
-def _read_archive_pages(path: str):
+def _walk_dir_pages(d: str):
+    """Yield (rel_name, bytes) for every file under d, sorted — the same entry
+    shape the archive readers hand out, so an extracted dir is a drop-in."""
+    entries = []
+    for root, _dirs, files in os.walk(d):
+        for f in files:
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, d).replace(os.sep, '/')
+            entries.append((rel, full))
+    for rel, full in sorted(entries):
+        with open(full, 'rb') as fh:
+            yield rel, fh.read()
+
+
+def _read_archive_pages(path: str, extracted_dir: str | None = None):
     """Yield (name, bytes) for every entry, sorted by name.
 
     CBZ reads member-by-member via zipfile. RAR (detected by magic bytes, not
@@ -55,7 +69,13 @@ def _read_archive_pages(path: str):
     extract to a temp dir first: solid RAR archives are compressed as a single
     stream, so member-at-a-time access (what rarfile does with any backend that
     can't seek) dies with 'Failed the read enough data', while a front-to-back
-    full extract sails through. Proven against the exact file that failed."""
+    full extract sails through. Proven against the exact file that failed.
+
+    If the caller already paid for that extract (download_issue's one-shot RAR
+    extract), pass extracted_dir and we walk it instead of extracting AGAIN."""
+    if extracted_dir:
+        yield from _walk_dir_pages(extracted_dir)
+        return
     with open(path, 'rb') as fh:
         is_rar = fh.read(4) == b'Rar!'
     if is_rar:
@@ -63,15 +83,7 @@ def _read_archive_pages(path: str):
         try:
             subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
                            check=True, capture_output=True)
-            entries = []
-            for root, _dirs, files in os.walk(tmpdir):
-                for f in files:
-                    full = os.path.join(root, f)
-                    rel = os.path.relpath(full, tmpdir).replace(os.sep, '/')
-                    entries.append((rel, full))
-            for rel, full in sorted(entries):
-                with open(full, 'rb') as fh:
-                    yield rel, fh.read()
+            yield from _walk_dir_pages(tmpdir)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
     else:
@@ -80,7 +92,8 @@ def _read_archive_pages(path: str):
                 yield name, src.read(name)
 
 
-def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
+def inject_covers(cbz_path: str, selected: list, primary_id: str,
+                  extracted_dir: str | None = None) -> int:
     """
     Prepend selected variant cover images to cbz_path. Writes back in place
     (atomically — a temp file next to the target, then os.replace).
@@ -88,6 +101,8 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
     rebuilt archive verifies. Returns count of images injected.
     selected: [{"id": str, "name": str}, ...]
     primary_id: id of the cover that should sort first
+    extracted_dir: pre-extracted contents of cbz_path (RAR one-shot extract) —
+    read pages from there instead of extracting the archive all over again
     """
     # Bare requests.get per thread — no shared session state to trip over
     ids = [c['id'] for c in selected]
@@ -113,7 +128,7 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str) -> int:
                 cover_names.append(fname)
 
             comic_info_data = None
-            for name, data in _read_archive_pages(cbz_path):
+            for name, data in _read_archive_pages(cbz_path, extracted_dir):
                 if name.lower() == 'comicinfo.xml':
                     comic_info_data = data
                 elif re.match(r'\d{3}_cover_', name):
@@ -251,9 +266,20 @@ def _issue_num_from_file(path: str) -> float | None:
     return _num_from_filename_broad(path)
 
 
+def _pick_issue_file(files: list[str], issue_number: float) -> str | None:
+    """The pack-targeting rule, in exactly ONE place: first file whose parsed
+    issue number matches. Used by the GetComics pack path here and both
+    finalize paths in acquisition — it was copy-pasted three times before
+    somebody inevitably fixed a bug in only two of them."""
+    return next((f for f in files if _issue_num_from_file(f) == issue_number), None)
+
+
 def _read_archive_comicinfo(archive) -> str | None:
     names = [n for n in archive.namelist() if n.lower() == 'comicinfo.xml']
     return archive.read(names[0]).decode('utf-8', errors='replace') if names else None
+
+
+_COMICINFO_NUM_RE = re.compile(r'<Number>\s*(\d+(?:\.\d+)?)\s*</Number>', re.IGNORECASE)
 
 
 def _read_cbz_number(path: str) -> float | None:
@@ -274,9 +300,25 @@ def _read_cbz_number(path: str) -> float | None:
             except Exception:
                 return None
         if xml:
-            m = re.search(r'<Number>\s*(\d+(?:\.\d+)?)\s*</Number>', xml, re.IGNORECASE)
+            m = _COMICINFO_NUM_RE.search(xml)
             if m:
                 return float(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _comicinfo_number_from_dir(d: str) -> float | None:
+    """<Number> from an already-extracted archive dir. Root-level ComicInfo.xml
+    only — same rule as _read_archive_comicinfo, where a nested one never
+    matched the archive readers either."""
+    try:
+        for f in os.listdir(d):
+            if f.lower() == 'comicinfo.xml':
+                with open(os.path.join(d, f), 'rb') as fh:
+                    xml = fh.read().decode('utf-8', errors='replace')
+                m = _COMICINFO_NUM_RE.search(xml)
+                return float(m.group(1)) if m else None
     except Exception:
         pass
     return None
@@ -289,6 +331,15 @@ _SINGLE_ISSUE_PAGE_MAX = 70
 
 
 _IMG_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+
+
+def _count_images_in_dir(d: str) -> int:
+    """Image-file count of an extracted archive dir — the RAR half of
+    _count_archive_images, shared with the one-shot extract path."""
+    n = 0
+    for _root, _dirs, files in os.walk(d):
+        n += sum(1 for f in files if f.lower().endswith(_IMG_EXTS))
+    return n
 
 
 def _count_archive_images(path: str) -> int | None:
@@ -308,10 +359,7 @@ def _count_archive_images(path: str) -> int | None:
             try:
                 subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
                                check=True, capture_output=True, timeout=180)
-                n = 0
-                for _root, _dirs, files in os.walk(tmpdir):
-                    n += sum(1 for f in files if f.lower().endswith(_IMG_EXTS))
-                return n
+                return _count_images_in_dir(tmpdir)
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
     except Exception:
@@ -319,23 +367,76 @@ def _count_archive_images(path: str) -> int | None:
     return None
 
 
-def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None) -> None:
+def _extract_rar_once(path: str) -> str | None:
+    """If path is a RAR (magic bytes, not extension), extract it ONCE to a temp
+    dir and return the dir. This is the fix for the triple-extract shame spiral:
+    page-count, ComicInfo, and variant-inject each used to do their own full
+    bsdtar pass over the same 200MB archive. Now they all sip from this one dir.
+
+    Returns None for ZIPs (zipfile reads members cheaply — extracting one would
+    be a downgrade) and None when the extract fails, in which case consumers
+    fall back to their own attempts — preserving the old 'can't read it? don't
+    reject it' semantics exactly. Caller owns cleanup of the returned dir."""
+    try:
+        with open(path, 'rb') as fh:
+            if fh.read(4) != b'Rar!':
+                return None
+    except OSError:
+        return None
+    tmpdir = tempfile.mkdtemp(prefix='kometa-rar-')
+    try:
+        subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
+                       check=True, capture_output=True, timeout=180)
+        return tmpdir
+    except Exception:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return None
+
+
+def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
+                         extracted_dir: str | None = None) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
-    by both the GetComics and usenet paths so they accept/reject identically."""
+    by both the GetComics and usenet paths so they accept/reject identically.
+    extracted_dir: pre-extracted contents of path (RAR one-shot extract) — the
+    ComicInfo and page-count guards read it instead of re-opening the archive."""
     name = source_name or os.path.basename(path)
     fnum = _num_from_filename(name)
     if fnum is not None and fnum != issue_number:
         raise WrongIssueError(f"file is #{int(fnum)}, expected #{int(issue_number)}")
-    cnum = _read_cbz_number(path)
+    cnum = _comicinfo_number_from_dir(extracted_dir) if extracted_dir else _read_cbz_number(path)
     if cnum is not None and cnum != issue_number:
         raise WrongIssueError(f"ComicInfo reports #{int(cnum)}, expected #{int(issue_number)}")
-    pages = _count_archive_images(path)
+    pages = _count_images_in_dir(extracted_dir) if extracted_dir else _count_archive_images(path)
     if pages is not None and pages > _SINGLE_ISSUE_PAGE_MAX:
         raise WrongIssueError(
             f"{pages} pages — looks like a collection or vertical/webtoon edition, "
             f"not single issue #{int(issue_number)}")
+
+
+def _get_with_retries(url: str, label: str):
+    """Streamed GET with the 3-attempt backoff both download paths use. Returns
+    a live response the caller MUST close (use `with`). Connection/timeout woes
+    retry; an HTTP error status raises immediately — after closing the response,
+    because a leaked socket on the failure path is how you run out of file
+    descriptors at 3am."""
+    last_exc = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(5 * attempt)
+        try:
+            r = requests.get(url, stream=True, timeout=120, headers=HEADERS, allow_redirects=True)
+            try:
+                r.raise_for_status()
+            except BaseException:
+                r.close()
+                raise
+            return r
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            logger.warning(f"{label} attempt {attempt + 1} failed ({e}), retrying...")
+    raise last_exc or RuntimeError(f"{label} failed after retries: {url[:80]}")
 
 
 def download_issue(
@@ -380,100 +481,100 @@ def download_issue(
                 f"GetComics likely posted last week's file under issue #{int(issue_number)}"
             )
 
-    last_exc = None
-    for attempt in range(3):
-        if attempt:
-            time.sleep(5 * attempt)
-        try:
-            r = requests.get(url, stream=True, timeout=120, headers=HEADERS, allow_redirects=True)
-            r.raise_for_status()
-            break
-        except (requests.ConnectionError, requests.Timeout) as e:
-            last_exc = e
-            logger.warning(f"Download attempt {attempt + 1} failed ({e}), retrying...")
-    else:
-        raise last_exc or RuntimeError(f"Download failed after retries: {url[:80]}")
+    r = _get_with_retries(url, "Download")
 
-    filename = _server_filename(r, hint_filename, url)
-    if not filename:
-        logger.warning(f"Could not determine server filename for {url[:80]} — using fallback name")
-        ext = _detect_ext(r, hint_filename, url)
-        num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
-        filename = f"{_safe(title)} #{num_int:03d}{ext}"
+    # `with` closes the response even when the body loop blows up mid-stream —
+    # before this, an early raise left the socket dangling until GC felt like it.
+    with r:
+        filename = _server_filename(r, hint_filename, url)
+        if not filename:
+            logger.warning(f"Could not determine server filename for {url[:80]} — using fallback name")
+            ext = _detect_ext(r, hint_filename, url)
+            num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
+            filename = f"{_safe(title)} #{num_int:03d}{ext}"
 
-    # Strip any path components the server may have embedded — stage flat
-    filename = _safe(os.path.basename(filename))
-    staging_path = os.path.join(sources.staging_dir(), filename)
-    total = int(r.headers.get("content-length", 0))
-    done = 0
-    with open(staging_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=65536):
-            f.write(chunk)
-            done += len(chunk)
-            if progress_fn:
-                progress_fn(done, total)
+        # Strip any path components the server may have embedded — stage flat
+        filename = _safe(os.path.basename(filename))
+        staging_path = os.path.join(sources.staging_dir(), filename)
+        total = int(r.headers.get("content-length", 0))
+        done = 0
+        with open(staging_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=65536):
+                f.write(chunk)
+                done += len(chunk)
+                if progress_fn:
+                    progress_fn(done, total)
 
     size = os.path.getsize(staging_path)
     if size < 1024:
         os.remove(staging_path)
         raise ValueError(f"Downloaded file too small ({size} bytes) — likely an error page")
 
-    # Content checks: wrong issue (server filename / ComicInfo) or a collection /
-    # webtoon edition (page count). Shared with the usenet finalize so both sources
-    # reject the same bad content. Clean up the staging file on rejection.
+    # RAR/CBR: pay the full bsdtar extract ONCE, right here. Verification and
+    # variant injection below both read this dir instead of each re-extracting
+    # the whole archive (it used to happen three times per issue). None for
+    # ZIPs (cheap member reads, no extract needed) or when the extract fails —
+    # consumers then fall back to their own readers, same semantics as before.
+    rar_dir = _extract_rar_once(staging_path)
     try:
-        _verify_single_issue(staging_path, issue_number, filename)
-    except WrongIssueError:
-        os.remove(staging_path)
-        raise
-
-    if not dest_dir:
-        dest_dir = _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
-    os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, _safe(filename))
-    if os.path.exists(dest_path):
-        os.remove(staging_path)
-        raise DuplicateIssueError(
-            f"{filename} already exists in library — GetComics served an existing issue"
-        )
-    shutil.move(staging_path, dest_path)
-    dest_path = _fix_extension(dest_path)
-    logger.info(f"Placed: {dest_path}")
-
-    # If it's a ZIP pack containing multiple comics, extract and discard the wrapper
-    extracted = _extract_pack(dest_path, dest_dir)
-    if extracted:
-        os.remove(dest_path)
-        logger.info(f"Pack: {len(extracted)} new file(s) from {os.path.basename(dest_path)}")
-        # Find the extracted file that matches the issue we actually requested (Gap J/K)
-        target = next(
-            (f for f in extracted if _issue_num_from_file(f) == issue_number),
-            None,
-        )
-        if target is None:
-            # Pack didn't contain our specific issue — leave extracted files on disk
-            # so Komga picks them up on next scan; only fail this queue entry
-            logger.warning(
-                f"Pack did not contain issue #{int(issue_number)}, "
-                f"leaving {len(extracted)} extracted file(s) on disk"
-            )
-            raise WrongIssueError(
-                f"Pack did not contain issue #{int(issue_number)} "
-                f"(found: {[os.path.basename(f) for f in extracted]})"
-            )
-        dest_path = target
-        # Other newly-extracted issues stay on disk — next sync picks them up
-
-    if tracked_series_id is not None and db_path is not None:
+        # Content checks: wrong issue (server filename / ComicInfo) or a collection /
+        # webtoon edition (page count). Shared with the usenet finalize so both sources
+        # reject the same bad content. Clean up the staging file on rejection.
         try:
-            from kometa import db as _db
-            prefs = _db.get_variant_prefs(tracked_series_id, issue_number, db_path)
-            if prefs:
-                added = inject_covers(dest_path, prefs["selected"], prefs["primary_id"])
-                _db.clear_variant_prefs(tracked_series_id, issue_number, db_path)
-                logger.info(f"Injected {added} variant cover(s) into {dest_path}")
-        except Exception as e:
-            logger.warning(f"Variant injection failed: {e}")
+            _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir)
+        except WrongIssueError:
+            os.remove(staging_path)
+            raise
+
+        if not dest_dir:
+            dest_dir = _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, _safe(filename))
+        if os.path.exists(dest_path):
+            os.remove(staging_path)
+            raise DuplicateIssueError(
+                f"{filename} already exists in library — GetComics served an existing issue"
+            )
+        shutil.move(staging_path, dest_path)
+        dest_path = _fix_extension(dest_path)
+        logger.info(f"Placed: {dest_path}")
+
+        # If it's a ZIP pack containing multiple comics, extract and discard the wrapper.
+        # (A pack is always a ZIP, so rar_dir is None here — no stale-dir risk below.)
+        extracted = _extract_pack(dest_path, dest_dir)
+        if extracted:
+            os.remove(dest_path)
+            logger.info(f"Pack: {len(extracted)} new file(s) from {os.path.basename(dest_path)}")
+            # Find the extracted file that matches the issue we actually requested (Gap J/K)
+            target = _pick_issue_file(extracted, issue_number)
+            if target is None:
+                # Pack didn't contain our specific issue — leave extracted files on disk
+                # so Komga picks them up on next scan; only fail this queue entry
+                logger.warning(
+                    f"Pack did not contain issue #{int(issue_number)}, "
+                    f"leaving {len(extracted)} extracted file(s) on disk"
+                )
+                raise WrongIssueError(
+                    f"Pack did not contain issue #{int(issue_number)} "
+                    f"(found: {[os.path.basename(f) for f in extracted]})"
+                )
+            dest_path = target
+            # Other newly-extracted issues stay on disk — next sync picks them up
+
+        if tracked_series_id is not None and db_path is not None:
+            try:
+                from kometa import db as _db
+                prefs = _db.get_variant_prefs(tracked_series_id, issue_number, db_path)
+                if prefs:
+                    added = inject_covers(dest_path, prefs["selected"], prefs["primary_id"],
+                                          extracted_dir=rar_dir)
+                    _db.clear_variant_prefs(tracked_series_id, issue_number, db_path)
+                    logger.info(f"Injected {added} variant cover(s) into {dest_path}")
+            except Exception as e:
+                logger.warning(f"Variant injection failed: {e}")
+    finally:
+        if rar_dir:
+            shutil.rmtree(rar_dir, ignore_errors=True)
 
     try:
         komga_scan_fn()
@@ -498,36 +599,25 @@ def download_trade(
     os.makedirs(sources.staging_dir(), exist_ok=True)
     os.makedirs(dest_dir, exist_ok=True)
 
-    last_exc = None
-    for attempt in range(3):
-        if attempt:
-            time.sleep(5 * attempt)
-        try:
-            r = requests.get(url, stream=True, timeout=120, headers=HEADERS, allow_redirects=True)
-            r.raise_for_status()
-            break
-        except (requests.ConnectionError, requests.Timeout) as e:
-            last_exc = e
-            logger.warning(f"Trade download attempt {attempt + 1} failed ({e}), retrying...")
-    else:
-        raise last_exc or RuntimeError(f"Trade download failed after retries: {url[:80]}")
+    r = _get_with_retries(url, "Trade download")
 
-    filename = _server_filename(r, hint_filename, url)
-    if not filename:
-        # GetComics gave no Content-Disposition — name it from the trade itself so
-        # Komga reads something sane, not "trade.cbz".
-        base = fallback_name or "trade"
-        filename = f"{_safe(base)}{_detect_ext(r, hint_filename, url)}"
-    filename = _safe(os.path.basename(filename))
-    staging_path = os.path.join(sources.staging_dir(), filename)
-    total = int(r.headers.get("content-length", 0))
-    done = 0
-    with open(staging_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=65536):
-            f.write(chunk)
-            done += len(chunk)
-            if progress_fn:
-                progress_fn(done, total)
+    with r:
+        filename = _server_filename(r, hint_filename, url)
+        if not filename:
+            # GetComics gave no Content-Disposition — name it from the trade itself so
+            # Komga reads something sane, not "trade.cbz".
+            base = fallback_name or "trade"
+            filename = f"{_safe(base)}{_detect_ext(r, hint_filename, url)}"
+        filename = _safe(os.path.basename(filename))
+        staging_path = os.path.join(sources.staging_dir(), filename)
+        total = int(r.headers.get("content-length", 0))
+        done = 0
+        with open(staging_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=65536):
+                f.write(chunk)
+                done += len(chunk)
+                if progress_fn:
+                    progress_fn(done, total)
 
     size = os.path.getsize(staging_path)
     if size < 1024:
@@ -619,7 +709,4 @@ def _detect_ext(response, hint_filename: str | None, url: str) -> str:
         for ext in (".cbz", ".cbr", ".zip", ".rar"):
             if ext in source.lower():
                 return ".cbz" if ext == ".zip" else ext
-    ct = response.headers.get("content-type", "")
-    if "zip" in ct:
-        return ".cbz"
     return ".cbz"
