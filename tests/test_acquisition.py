@@ -27,9 +27,16 @@ def _qid_for(db_path, series_id, number):
 
 @pytest.fixture
 def wired(db_path, series, monkeypatch):
-    """Point acquisition at the temp DB and stub Komga scans to no-ops."""
+    """Point acquisition at the temp DB and stub Komga scans + torrent sources
+    to no-ops. The torrent stubs matter: _try_torrent runs in the no-source and
+    usenet-failed fallback paths, and the real _prowlarr()/_qbittorrent() read
+    config via sources.DB_PATH — the container path — which doesn't exist on a
+    dev machine, so without these two lines those paths die on 'unable to open
+    database file' and mark items failed instead of not_found."""
     monkeypatch.setattr(acq, "DB_PATH", db_path)
     monkeypatch.setattr(acq, "_komga_scan", lambda: None)
+    monkeypatch.setattr(acq, "_prowlarr", lambda: None)
+    monkeypatch.setattr(acq, "_qbittorrent", lambda: None)
     return db_path, series
 
 

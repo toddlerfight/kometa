@@ -9,7 +9,7 @@ import os
 import json
 import logging
 import threading
-from datetime import date
+from datetime import date, datetime, timezone
 
 import kometa.db as db
 import kometa.downloader as downloader
@@ -25,6 +25,13 @@ from kometa.sabnzbd_client import find_comics_in_dir
 logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
+
+
+def _utcnow() -> datetime:
+    """Naive UTC now. Every age/retry computation here compares against SQLite
+    datetime('now') strings, which are naive UTC — so we stay naive on purpose.
+    (Exact replacement for the deprecated datetime.utcnow.)"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Live download progress, keyed by queue id. Shared mutable state: download
 # threads (here AND in main's download-from-url route) write it, the queue
@@ -148,7 +155,7 @@ def _process_queue_locked():
                 logger.warning(f"Queue item {qid}: rate-limit retry cap hit — failed for real")
             else:
                 cooldown = max(int(e.retry_after or 0), 15 * 60)
-                retry_at = (datetime.utcnow() + timedelta(seconds=cooldown)).strftime("%Y-%m-%d %H:%M:%S")
+                retry_at = (_utcnow() + timedelta(seconds=cooldown)).strftime("%Y-%m-%d %H:%M:%S")
                 db.update_queue_state(
                     qid, "queued",
                     error="Rate limited by GetComics — parked, will retry automatically",
@@ -157,7 +164,7 @@ def _process_queue_locked():
             break  # we're blocked either way — stop hammering with the rest of the queue
         except DuplicateIssueError as e:
             from datetime import datetime, timedelta
-            retry_at = (datetime.utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+            retry_at = (_utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
             db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
             logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
         except Exception as e:
@@ -386,7 +393,7 @@ def _poll_usenet_jobs():
             _finalize_usenet_download(item, qid, storage)
 
         elif status in ("failed", "unknown"):
-            age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+            age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
             if status == "unknown" and age < timedelta(hours=4):
                 # SABnzbd may have cleaned old queue/history entries — wait a bit
                 continue
@@ -664,7 +671,7 @@ def _poll_torrent_jobs():
             # Stall guard: a torrent with no seeders stuck in a stalled state for a
             # while is dead — fail it instead of polling forever.
             if result.get("seeders", 0) == 0 and "stalled" in result.get("state", ""):
-                age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+                age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
                 if age > timedelta(hours=2):
                     clear_progress(qid)
                     db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
@@ -680,7 +687,7 @@ def _poll_torrent_jobs():
             _finalize_torrent_download(item, qid, content_path)
 
         elif status in ("failed", "unknown"):
-            age = datetime.utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
+            age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
             if status == "unknown" and age < timedelta(hours=4):
                 continue  # qBit may not have registered the magnet metadata yet
             clear_progress(qid)
