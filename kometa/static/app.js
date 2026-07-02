@@ -175,6 +175,23 @@ function fmtNum(n) {
   return String(parseFloat(n));
 }
 
+// How a collected edition names itself — tile label, modal title, queue toast,
+// Activity row. One place, or "Vol"/"Vols"/format drift across four copies.
+function _volLabel(t, fallback) {
+  return t.vol_range ? `Vols ${t.vol_range[0]}–${t.vol_range[1]}`
+       : t.vol != null ? `Vol ${t.vol}` : (fallback ?? t.format);
+}
+
+// The issue/trade modal's left cover column — image (dimmed on load failure)
+// or the blank slab. Three modals were carrying identical copies of this.
+function _modalCoverHtml(src, alt) {
+  return `<div class="issue-modal-cover">
+        ${src
+          ? `<img src="${esc(src)}" alt="${esc(alt || '')}" onerror="this.style.opacity='0.1'">`
+          : `<div class="issue-modal-no-cover"></div>`}
+      </div>`;
+}
+
 function issueStatus(issue) {
   const lt = _localToday(), ut = _usToday();
   if (issue.owned) return 'owned';
@@ -501,11 +518,7 @@ function showArcIssueModal(readingOrder) {
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
-      <div class="issue-modal-cover">
-        ${i.image_url
-          ? `<img src="${esc(i.image_url)}" alt="${num}" onerror="this.style.opacity='0.1'">`
-          : `<div class="issue-modal-no-cover"></div>`}
-      </div>
+      ${_modalCoverHtml(i.image_url, num)}
       <div class="issue-modal-info">
         <div class="issue-modal-num">${esc(i.source_title || '')} ${num}</div>
         <div class="issue-modal-series">${esc(s.title)} · reading order ${i.reading_order}</div>
@@ -1000,8 +1013,7 @@ async function _loadTradesPanel(id) {
 let _tradesByLocg = {};
 
 function _tradeTileHtml(t) {
-  const tag = t.vol_range ? `Vol ${t.vol_range[0]}–${t.vol_range[1]}`
-            : t.vol ? `Vol ${t.vol}` : t.format;
+  const tag = _volLabel(t);
   // Same tile skeleton as issues so the grid stays visually identical. The format
   // (TPB/HC) rides in the corner badge slot; the volume is the bottom label.
   const cover = t.cover ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : '';
@@ -1042,16 +1054,11 @@ async function showTradeModal(locgId) {
   const t = _tradesByLocg[locgId];
   if (!t) return;
   const s = _detailSeries;
-  const tag = t.vol_range ? `Vols ${t.vol_range[0]}–${t.vol_range[1]}`
-            : t.vol ? `Vol ${t.vol}` : t.format;
+  const tag = _volLabel(t);
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
-      <div class="issue-modal-cover">
-        ${t.cover
-          ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" onerror="this.style.opacity='0.1'">`
-          : `<div class="issue-modal-no-cover"></div>`}
-      </div>
+      ${_modalCoverHtml(t.cover, tag)}
       <div class="issue-modal-info">
         <div class="issue-modal-num">${esc(tag)}</div>
         <div class="issue-modal-series">${esc(s.title)}</div>
@@ -1081,8 +1088,7 @@ async function tradeDownload(locgId, btn) {
   // btn omitted → came from the modal's Download button.
   btn = btn || document.getElementById('trade-dl-btn');
   const isArrow = btn?.classList.contains('issue-tile-search');
-  const label = t.vol_range ? `Vols ${t.vol_range[0]}–${t.vol_range[1]}`
-              : t.vol ? `Vol ${t.vol}` : t.format;
+  const label = _volLabel(t);
   if (btn) {
     btn.disabled = true;
     if (isArrow) btn.textContent = '⋯';
@@ -1699,7 +1705,7 @@ function _trackTileDownload(seriesId, number, title) {
       if (btn) {
         const pct = qs.progress?.total ? Math.round(qs.progress.done / qs.progress.total * 100) : null;
         btn.textContent = (st === 'downloading' && pct != null) ? String(pct) : '…';
-        btn.title = QUEUE_STATE_LABEL[st] || st;
+        btn.title = _stateLabel(st);
         btn.disabled = true;
       }
       setTimeout(tick, 2500);
@@ -1863,11 +1869,22 @@ async function _renderPullListContent() {
 
 // --- Activity / Queue ---
 
-const QUEUE_STATE_LABEL = {
-  queued: 'Queued', searching: 'Searching', found: 'Found',
-  not_found: 'Not found', downloading: 'Downloading',
-  processing: 'Processing', done: 'Done', failed: 'Failed',
+// THE queue-state table: chip class + human label, one row per state. The
+// Activity chips and the issue-tile tooltip both read from here — there were
+// two drifting copies of this mapping before.
+const QUEUE_STATE = {
+  queued:          ['chip chip-muted',  'Queued'],
+  searching:       ['chip chip-active', 'Searching'],
+  found:           ['chip chip-muted',  'Found'],
+  downloading:     ['chip chip-active', 'Downloading'],
+  pending_usenet:  ['chip chip-active', 'Usenet'],
+  pending_torrent: ['chip chip-active', 'Torrent'],
+  processing:      ['chip chip-muted',  'Processing'],
+  done:            ['chip chip-done',   'Done'],
+  not_found:       ['chip chip-warn',   'Not Found'],
+  failed:          ['chip chip-fail',   'Failed'],
 };
+const _stateLabel = st => (QUEUE_STATE[st] || [null, st])[1];
 let _activityPollTimer = null;
 // After a manual "Search now", the item sits in `queued` while the backend
 // thread runs the search async. `queued` isn't an "active" state, so the normal
@@ -1956,14 +1973,7 @@ async function _refreshActivity() {
       const fill = document.getElementById(`actfill-${q.id}`);
       const text = document.getElementById(`acttext-${q.id}`);
       if (fill) fill.style.width = `${pct}%`;
-      if (text) {
-        const detail = q.state === 'pending_usenet'
-          ? ' · Usenet'
-          : q.state === 'pending_torrent'
-          ? ' · Torrent' + (q.search_status ? ' · ' + q.search_status : '')
-          : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
-        text.textContent = `${pct}%${detail}`;
-      }
+      if (text) text.textContent = `${pct}%${_actProgressDetail(q)}`;
       const ss = document.getElementById(`actsearch-${q.id}`);
       if (ss && q.search_status) ss.textContent = q.search_status;
     });
@@ -2009,20 +2019,19 @@ async function _refreshActivity() {
 }
 
 function _actChip(state) {
-  const map = {
-    queued:      ['chip chip-muted',   'Queued'],
-    searching:   ['chip chip-active',  'Searching'],
-    found:       ['chip chip-muted',   'Found'],
-    downloading: ['chip chip-active',  'Downloading'],
-    pending_usenet: ['chip chip-active', 'Usenet'],
-    pending_torrent: ['chip chip-active', 'Torrent'],
-    processing:  ['chip chip-muted',   'Processing'],
-    done:        ['chip chip-done',    'Done'],
-    not_found:   ['chip chip-warn',    'Not Found'],
-    failed:      ['chip chip-fail',    'Failed'],
-  };
-  const [cls, label] = map[state] || ['chip chip-muted', state];
+  const [cls, label] = QUEUE_STATE[state] || ['chip chip-muted', state];
   return `<span class="${cls}">${label}</span>`;
+}
+
+// One line of progress detail under a downloading row. Usenet progress is a
+// percentage from SAB (no byte counts); GetComics has bytes. Returns RAW text —
+// the innerHTML builder esc()s it, the textContent patcher must not.
+function _actProgressDetail(q) {
+  return q.state === 'pending_usenet'
+    ? ' · Usenet'
+    : q.state === 'pending_torrent'
+    ? ' · Torrent' + (q.search_status ? ' · ' + q.search_status : '')
+    : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
 }
 
 // Activity rows are kind-agnostic: a trade shows "Vol N" and the series cover
@@ -2030,9 +2039,7 @@ function _actChip(state) {
 function _actLabel(q) {
   if (q.kind === 'trade') {
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
-    if (m.vol_range) return `Vol ${m.vol_range[0]}–${m.vol_range[1]}`;
-    if (m.vol != null) return `Vol ${m.vol}`;
-    return 'Trade';
+    return _volLabel(m, 'Trade');
   }
   return `#${fmtNum(q.issue_number)}`;
 }
@@ -2086,12 +2093,7 @@ function _buildActivityHtml(queue) {
       const thumb = _actThumb(q);
       const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet' || q.state === 'pending_torrent';
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
-      // Usenet progress is a percentage from SAB (no byte counts); GetComics has bytes.
-      const detail = q.state === 'pending_usenet'
-        ? ' · Usenet'
-        : q.state === 'pending_torrent'
-        ? ' · Torrent' + (q.search_status ? ' · ' + esc(q.search_status) : '')
-        : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');
+      const detail = esc(_actProgressDetail(q));
       const progress = q.state === 'searching' ? `
         <div class="act-card-progress">
           <div class="act-progress-text" id="actsearch-${q.id}">${esc(q.search_status || 'Searching…')}</div>
@@ -2649,11 +2651,7 @@ async function showIssueModal(seriesId, number) {
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
-      <div class="issue-modal-cover">
-        ${imgSrc
-          ? `<img src="${esc(imgSrc)}" alt="${num}" onerror="this.style.opacity='0.1'">`
-          : `<div class="issue-modal-no-cover"></div>`}
-      </div>
+      ${_modalCoverHtml(imgSrc, num)}
       <div class="issue-modal-info">
         <div class="issue-modal-num">${num}</div>
         <div class="issue-modal-series">${esc(s.title)}</div>
