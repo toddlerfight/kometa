@@ -932,11 +932,30 @@ def _vol_title(name: str, year) -> str:
     return f"{name} ({year})"
 
 
+def _arc_participant_allowed(vol_publisher: str | None, arc_publisher: str | None) -> bool:
+    """Publisher gate for auto-tracked arc participants. ComicVine's arc issue
+    lists are dirty — they include foreign reprint volumes (Panini's German
+    'Batman: Die Neuen Abenteuer - Hush') and magazine promo inserts (Wizard) —
+    and their publishers never match the arc's. Only a KNOWN mismatch is gated:
+    a missing publisher (CV hiccup, cv unconfigured) passes, so an API blip
+    can't silently thin an arc. Cost: a genuine tie-in from a different imprint
+    (rare) needs a manual add — the arc's reading order still shows its issues
+    either way, there's just no auto-spawned run for them."""
+    if not vol_publisher or not arc_publisher:
+        return True
+    # Strip-everything key (not norm_key): "D.C. Comics" and "DC Comics" must
+    # collapse to the same thing, and space-collapsing leaves "d c" != "dc".
+    def key(s):
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+    return key(vol_publisher) == key(arc_publisher)
+
+
 def _track_participating(arc_series_id: int) -> dict:
     """Brick B: auto-track the series an arc's issues belong to — one tracked series
     per distinct CV volume, PULL-LIST OFF so broad sweeps skip them (the arc is the
-    lens that pulls just its issues). Idempotent via cv_volume_id. Returns
-    {cv_volume_id: series_id}."""
+    lens that pulls just its issues). Idempotent via cv_volume_id. Publisher-gated
+    (_arc_participant_allowed) so CV's reprint/magazine noise doesn't mint junk
+    series. Returns {cv_volume_id: series_id}."""
     cv, komga = _comicvine(), _komga()
     rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
     arc = db.get_series_by_id(arc_series_id, DB_PATH)
@@ -953,7 +972,14 @@ def _track_participating(arc_series_id: int) -> dict:
         if existing:
             mapping[vid] = existing["id"]
             continue
-        year = cv.get_volume_year(vid) if cv else None
+        # One CV call gets year AND publisher (get_volume_year was fetching the
+        # publisher and discarding it) — the gate below is free.
+        info = cv.get_volume_info(vid) if cv else {}
+        year = info.get("year")
+        if not _arc_participant_allowed(info.get("publisher"), publisher):
+            logger.info(f"Arc participant skipped (publisher gate): {name!r} is "
+                        f"{info.get('publisher')!r}, arc is {publisher!r}")
+            continue
         title = _vol_title(name, year)
         kid = None
         if komga:
