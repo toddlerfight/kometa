@@ -117,14 +117,28 @@ function setApp(html) {
 }
 
 function renderView() {
-  switch (currentView) {
-    case 'library':       return renderLibraryBrowse();
-    case 'series-detail': return renderSeriesDetail(currentParams.id);
-    case 'pull-list':     return renderPullList();
-    case 'activity':      return renderActivity();
-    case 'settings':      return renderSettings();
-    default:              setApp('<div class="state-msg">Not found</div>');
-  }
+  const view = currentView;
+  const paint = (() => {
+    switch (view) {
+      case 'library':       return renderLibraryBrowse();
+      case 'series-detail': return renderSeriesDetail(currentParams.id);
+      case 'pull-list':     return renderPullList();
+      case 'activity':      return renderActivity();
+      case 'settings':      return renderSettings();
+      default:              setApp('<div class="state-msg">Not found</div>');
+    }
+  })();
+  // None of the view renderers catch their own fetches, so before this a failed
+  // GET marooned the app on "Loading..." with no way out but a hard reload.
+  // Catch at the ONE dispatch point instead of in five renderers. The view check
+  // keeps a slow loser from painting its error over a view you've already left.
+  Promise.resolve(paint).catch(e => {
+    console.error(e);
+    if (currentView === view) {
+      setApp(`<div class="state-msg">Couldn't load this view. ${esc(String(e && e.message || e))}<br><br>
+        <button class="btn btn-sm" onclick="renderView()">Retry</button></div>`);
+    }
+  });
 }
 
 // --- Helpers ---
@@ -203,17 +217,38 @@ async function sweepSeries(id, btn) {
   }
 }
 
-async function syncSeries(id, btn) {
+// One poll loop per series — a manual Sync + pull-to-refresh + stale auto-sync
+// used to stack three concurrent 2s pollers on the same id, each burning a
+// fetch per tick for 90s. The backend already one-shots the sync itself; this
+// is the client-side twin of that guard.
+const _syncInFlight = new Set();
+
+async function syncSeries(id, btn, pre = null) {
+  const _resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Sync'; } };
+  if (_syncInFlight.has(id)) { _resetBtn(); return; }
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
-  const before = await api.get(`/api/series/${id}`);
-  const preSynced = before.last_synced;
-  await api.post(`/api/sync/${id}`, {});
+  _syncInFlight.add(id);
+  let before, preSynced;
+  try {
+    // `pre` = a series payload the caller JUST fetched (renderSeriesDetail's
+    // auto-sync) — reuse it instead of an identical back-to-back GET.
+    before = pre || await api.get(`/api/series/${id}`);
+    preSynced = before.last_synced;
+    await api.post(`/api/sync/${id}`, {});
+  } catch (e) {
+    _syncInFlight.delete(id);
+    _resetBtn();
+    if (btn) showToast('Sync failed — is the server up?');
+    console.error(e);
+    return;
+  }
   const deadline = Date.now() + 90_000;
   const poll = setInterval(async () => {
     try {
       const s = await api.get(`/api/series/${id}`);
       if (s.last_synced !== preSynced || Date.now() > deadline) {
         clearInterval(poll);
+        _syncInFlight.delete(id);
         // Only repaint if the user is STILL on this series — and only when the
         // sync changed something visible. The old else-branch here painted a
         // long-dead, router-unreachable series page over WHATEVER view you
@@ -226,11 +261,12 @@ async function syncSeries(id, btn) {
             || (s.issues || []).length !== (before.issues || []).length;
           if (changed) await renderSeriesDetail(id);
         }
-        if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
+        _resetBtn();
       }
     } catch {
       clearInterval(poll);
-      if (btn) { btn.disabled = false; btn.textContent = 'Sync'; }
+      _syncInFlight.delete(id);
+      _resetBtn();
     }
   }, 2000);
 }
@@ -573,6 +609,7 @@ function flipIssueSort(id) {
 }
 
 const _autoSynced = new Set();   // series auto-synced this session — fire once each
+let _detailPollId = null;        // the ONE live auto-populate poller (see renderSeriesDetail)
 
 // A source title minus the run it shares with the storyline's home, upper-cased for
 // the cross-title tag: ('Detective Comics', 'Batman') -> 'DETECTIVE';
@@ -730,7 +767,7 @@ async function renderSeriesDetail(id) {
   const _lastMs = s.last_synced ? Date.parse(s.last_synced.replace(' ', 'T') + 'Z') : 0;
   if ((Date.now() - _lastMs) > 3600000 && !_autoSynced.has(id)) {
     _autoSynced.add(id);
-    syncSeries(id, null);
+    syncSeries(id, null, s);   // s was fetched 10 lines up — don't GET it again
   }
 
   const meta = [s.publisher ? s.publisher.toUpperCase() : '', s.year_began].filter(Boolean).join('  •  ');
@@ -839,11 +876,15 @@ async function renderSeriesDetail(id) {
   // was the old forever-spinner). Re-render fires when issues land OR when the sync
   // completes at all (last_synced advances) — so "Syncing…" resolves to "No issues
   // found" instead of spinning. Time-boxed so a crashed sync (no mark_synced) stops.
+  // The id lives at module scope so re-entering this render (tab clicks route
+  // through setDetailTab → here) REPLACES the poller instead of stacking a new
+  // 3s loop on top of the old one every visit.
+  clearInterval(_detailPollId);
   if (s.locg_series_id && total === 0 && !s.has_trades && detailTab !== 'trades'
       && (!s.last_synced || _autoSynced.has(id))) {
     const _syncedAt = s.last_synced || null;
     const _stopAt = Date.now() + 90000;
-    const _pollId = setInterval(async () => {
+    const _pollId = _detailPollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
       const fresh = await api.get(`/api/series/${id}`).catch(() => null);
       if (!fresh) { clearInterval(_pollId); return; }
@@ -1073,7 +1114,11 @@ function _tradeBtnReset(btn, isArrow) {
 }
 
 async function togglePullList(id, on) {
-  await api.patch(`/api/series/${id}/pull-list`, { on_pull_list: on });
+  try {
+    await api.patch(`/api/series/${id}/pull-list`, { on_pull_list: on });
+  } catch (e) {
+    showToast('Pull-list update failed'); console.error(e); return;
+  }
   renderSeriesDetail(id);
 }
 
@@ -1494,6 +1539,7 @@ async function wizardConfirm() {
       navigate('series-detail', { id: added.id });
     } catch (e) {
       btn.disabled = false; btn.textContent = 'Follow';
+      showToast('Follow failed — try again');
       console.error(e);
     }
     return;
@@ -1528,6 +1574,7 @@ async function wizardConfirm() {
     navigate('series-detail', { id: added.id });
   } catch (e) {
     btn.disabled = false; btn.textContent = 'Track Series';
+    showToast('Add failed — try again');
     console.error(e);
   }
 }
@@ -1612,7 +1659,11 @@ function editFolderPath(id, current) {
 
 async function saveFolderPath(id) {
   const val = (document.getElementById('folder-input')?.value || '').trim();
-  await api.patch(`/api/series/${id}/folder`, { folder_path: val || null });
+  try {
+    await api.patch(`/api/series/${id}/folder`, { folder_path: val || null });
+  } catch (e) {
+    showToast('Folder update failed'); console.error(e); return;
+  }
   renderSeriesDetail(id);
 }
 
@@ -1704,7 +1755,11 @@ function confirmDelete(id, title) {
 
 async function doDelete(id) {
   closeModal();
-  await api.del(`/api/series/${id}`);
+  try {
+    await api.del(`/api/series/${id}`);
+  } catch (e) {
+    showToast('Delete failed'); console.error(e); return;
+  }
   navigate('library');
 }
 
@@ -2105,14 +2160,24 @@ function _buildActivityHtml(queue) {
 
 async function triggerSweep(btn) {
   btn.disabled = true; btn.textContent = 'Sweeping…';
-  await api.post('/api/queue/sweep', {});
+  try {
+    await api.post('/api/queue/sweep', {});
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Sweep Missing';
+    showToast('Sweep failed'); console.error(e); return;
+  }
   btn.textContent = 'Queued ✓';
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Sweep Missing'; renderActivity(); }, 1500);
 }
 
 async function forceQueueStart(btn) {
   btn.disabled = true; btn.textContent = 'Starting…';
-  await api.post('/api/queue/process', {});
+  try {
+    await api.post('/api/queue/process', {});
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Start Queue';
+    showToast('Queue start failed'); console.error(e); return;
+  }
   btn.textContent = 'Started ✓';
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Start Queue'; _refreshActivity(); }, 1000);
 }
@@ -2140,7 +2205,12 @@ function _animateRowOut(el) {
 
 async function clearHistory(btn) {
   btn.disabled = true; btn.textContent = 'Clearing…';
-  await api.post('/api/queue/clear-history', {});
+  try {
+    await api.post('/api/queue/clear-history', {});
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Clear History';
+    showToast('Clear failed'); console.error(e); return;
+  }
   // Fade the completed rows out in place — don't rebuild the whole list (the in-progress
   // section would flash). Stagger them a touch for a tidy cascade, then drop the sig so
   // the next poll reconciles cleanly.
