@@ -25,7 +25,7 @@ from kometa.sources import (
     wikipedia as _wikipedia,
 )
 from kometa.naming import (
-    find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm as _norm,
+    find_issue_file as _find_issue_file, normalize_url as _normalize_url, norm_key as _norm,
     _resolve_dir, parse_issue_number as _parse_issue_number,
 )
 from kometa.sync import (

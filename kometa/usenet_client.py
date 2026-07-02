@@ -4,6 +4,8 @@ import datetime
 import email.utils
 import requests
 
+from kometa.naming import norm_key as _norm
+
 logger = logging.getLogger(__name__)
 
 # How many days BEFORE an issue's store date a usenet post can still plausibly be
@@ -53,15 +55,6 @@ def _drop_stale(results: list[dict], store_date: str | None, num_int, title: str
         logger.info(f"Usenet: dropped {dropped} stale result(s) posted before {cutoff} "
                     f"(store_date {store_date} − {_AGE_GRACE_DAYS}d) for {title!r} #{num_int}")
     return kept
-
-
-def _norm(s: str) -> str:
-    # Collapse RUNS of non-alphanumerics to a single space (the `+`). Without it,
-    # ": " becomes 2 spaces and " - " becomes 3, so "Batman: Gargoyle … - Noir Edition"
-    # and a release named "Batman - Gargoyle … Noir Edition" normalise to DIFFERENT
-    # spacing → the series-name substring match silently fails → valid NZBs score too
-    # low and get skipped. Collapsing makes the match punctuation/spacing-insensitive.
-    return re.sub(r'[^a-z0-9]+', ' ', s.lower()).strip()
 
 
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:

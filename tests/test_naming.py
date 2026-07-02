@@ -67,9 +67,17 @@ class TestNormalizeUrl:
         assert naming.normalize_url("  ") == ""
 
 
-class TestNorm:
-    def test_strips_punctuation_and_lowercases(self):
-        assert naming.norm("Spider-Man! (2018)") == "spiderman 2018"
+class TestNormKey:
+    def test_collapses_punctuation_runs_to_single_spaces(self):
+        assert naming.norm_key("Spider-Man! (2018)") == "spider man 2018"
+
+    def test_spacing_variants_collapse_to_same_key(self):
+        # The whole point: ':' vs ' - ' vs '  ' must not change the key.
+        assert naming.norm_key("Batman: Gargoyle of Gotham") == naming.norm_key("Batman - Gargoyle  of Gotham")
+
+    def test_none_and_empty_are_empty(self):
+        assert naming.norm_key(None) == ""
+        assert naming.norm_key("  ") == ""
 
 
 class TestSafe:

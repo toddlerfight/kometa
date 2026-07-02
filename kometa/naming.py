@@ -96,8 +96,15 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def norm(s: str) -> str:
-    return re.sub(r'[^a-z0-9 ]', '', s.lower())
+def norm_key(s: str) -> str:
+    """THE punctuation/spacing-insensitive comparison key — collapse RUNS of
+    non-alphanumerics to a single space. The `+` matters: without it ": " becomes
+    2 spaces and " - " becomes 3, so 'Batman: Gargoyle … - Noir Edition' and a
+    release named 'Batman - Gargoyle … Noir Edition' normalise to DIFFERENT
+    spacing and substring matches silently fail. One definition, four consumers
+    (arc titles, edition/book names, NZB scoring, Wikipedia arc tables) — this
+    key deciding 'same name?' identically everywhere is a feature, not tidiness."""
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
 def _safe(name: str) -> str:

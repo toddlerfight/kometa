@@ -8,9 +8,7 @@ that the series-first flow leans on — starting with: which series is "main"?
 import re
 from collections import Counter
 
-
-def _norm_title(t: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+from kometa.naming import norm_key as _norm_title
 
 
 def _strip_year(nt: str) -> str:

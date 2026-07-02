@@ -17,6 +17,7 @@ from kometa.sources import (
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
     scan_folder_volumes as _scan_folder_volumes, parse_volume_number as _parse_volume_number,
+    norm_key as _norm_name,
 )
 from kometa.locg_client import get_issues_anon, get_trades_anon, select_editions
 import kometa.db as db
@@ -233,12 +234,6 @@ def sync_one(series: dict):
     db.set_komga_book_ids_bulk(series["id"], book_map, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
-
-
-def _norm_name(s: str) -> str:
-    """Punctuation/spacing-insensitive key for matching an edition's title to a file
-    or Komga book name. 'Gigs TP' and 'Gigs  TP.cbz' collapse to the same thing."""
-    return re.sub(r'[^a-z0-9]+', ' ', (s or '').lower()).strip()
 
 
 def _scan_folder_edition_names(folder_path: str) -> set[str]:

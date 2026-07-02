@@ -329,12 +329,25 @@ def _seed_defaults(path=DB_PATH):
                 "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
                 (key, value),
             )
+    _config_cache.pop(path, None)
+
+
+# get_config is called by EVERY sources.py accessor — several times per queue
+# item, once per thumbnail request — and was opening a fresh connection + full
+# table scan each time. The table only changes through set_config/_seed_defaults
+# (both below), so an invalidate-on-write cache is exact, not best-effort.
+_config_cache: dict = {}
 
 
 def get_config(path=DB_PATH) -> dict:
+    cached = _config_cache.get(path)
+    if cached is not None:
+        return dict(cached)  # copy — callers mutate their view, not the cache
     with _connect(path) as conn:
         rows = conn.execute("SELECT key, value FROM config").fetchall()
-        return {r["key"]: r["value"] for r in rows}
+        cfg = {r["key"]: r["value"] for r in rows}
+    _config_cache[path] = cfg
+    return dict(cfg)
 
 
 def set_config(updates: dict, path=DB_PATH):
@@ -344,6 +357,7 @@ def set_config(updates: dict, path=DB_PATH):
                 "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+    _config_cache.pop(path, None)
 
 
 # --- Issue details cache (LOCG desc + credits for the Details tab; the external

@@ -11,6 +11,8 @@ import logging
 
 import requests
 
+from kometa.naming import norm_key as _norm
+
 logger = logging.getLogger(__name__)
 
 _API = "https://en.wikipedia.org/w/api.php"
@@ -27,10 +29,6 @@ _RANGE_RE = re.compile(r"#?\s*(\d+)\s*[–\-—]\s*#?\s*(\d+)")
 _SINGLE_RE = re.compile(r"#\s*(\d+)\b")
 _COMIC_SUFFIXES = ("(comic book)", "(comics)", "(comic)", "(comic strip)",
                    "(comic series)")
-
-
-def _norm(s):
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
 def _arc_name(name):
