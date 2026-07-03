@@ -71,6 +71,16 @@ class QBittorrentClient:
             logger.warning(f"qBittorrent {method} {path} failed: {e}")
             return None
 
+    def test(self) -> tuple[bool, str]:
+        """Verify the WebUI is reachable and the creds authenticate. Returns
+        (ok, detail) — detail is the qBit version on success, else the reason."""
+        if not self._login():
+            return False, "Login failed — check URL, username, and password"
+        r = self._req("GET", "/api/v2/app/version")
+        if r is None:
+            return False, "Authenticated but /app/version did not respond"
+        return True, r.text.strip()
+
     def _hashes_in_category(self, category: str) -> set[str]:
         r = self._req("GET", "/api/v2/torrents/info", params={"category": category})
         return {str(t.get("hash", "")).lower() for t in r.json()} if r is not None else set()

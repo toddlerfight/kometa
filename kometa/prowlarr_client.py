@@ -28,6 +28,24 @@ class ProwlarrClient:
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "kometa/1.0"
 
+    def test(self) -> tuple[bool, str]:
+        """Verify the server answers and the API key is valid. /api/v1/indexer is
+        the cheapest authenticated call. Returns (ok, detail) — detail is the
+        configured-indexer count on success, else the reason."""
+        try:
+            r = self.session.get(
+                f"{self.base_url}/api/v1/indexer",
+                params={"apikey": self.apikey}, timeout=15,
+            )
+            if r.status_code == 401:
+                return False, "Unauthorized — check the API key"
+            r.raise_for_status()
+            data = r.json()
+            n = len(data) if isinstance(data, list) else 0
+            return True, f"{n} indexer{'s' if n != 1 else ''} configured"
+        except Exception as e:
+            return False, str(e)
+
     def search(self, query: str, protocol: str | None = None, limit: int = 100) -> list[dict]:
         """Aggregate search. Returns normalized dicts:
         {title, protocol, magnet, url, seeders, grabs, size, age, indexer}.

@@ -2348,6 +2348,17 @@ async function renderSettings() {
           ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
           <div id="indexers-section"></div>
         </div>
+        <div class="settings-card" style="margin-top:36px">
+          ${_settingsHeader('qBittorrent', 'optional — torrent downloads', 'qbit', true, cfg.qbit_configured)}
+          ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
+          ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
+          ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
+        </div>
+        <div class="settings-card" style="margin-top:36px">
+          ${_settingsHeader('Prowlarr', 'optional — torrent indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
+          ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
+          ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
+        </div>
       </div>
     </div>
   `);
@@ -2371,9 +2382,14 @@ const _SETTINGS_FIELDS = {
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
+  'f-qbit-url':        { card: 'qbit',     key: 'qbit_url',         test: 'qbit' },
+  'f-qbit-user':       { card: 'qbit',     key: 'qbit_user',        test: 'qbit' },
+  'f-qbit-pass':       { card: 'qbit',     key: 'qbit_pass',        test: 'qbit', secret: true },
+  'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
+  'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', locg: 'locg', sabnzbd: 'sab' };
+const _TEST_ENDPOINTS = { komga: 'komga', locg: 'locg', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};

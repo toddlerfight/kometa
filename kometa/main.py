@@ -186,12 +186,54 @@ def test_sab(req: TestSabRequest):
         return {"ok": False, "error": str(e)}
 
 
+class TestQbitRequest(BaseModel):
+    url: str | None = None
+    user: str | None = None
+    password: str | None = None
+
+
+@app.post("/api/test/qbit")
+def test_qbit(req: TestQbitRequest):
+    url = req.url or _stored("qbit_url")
+    user = req.user or _stored("qbit_user")
+    password = req.password or _stored("qbit_pass")
+    if not (url and user and password):
+        return {"ok": False, "error": "Not configured"}
+    try:
+        from kometa.qbittorrent_client import QBittorrentClient
+        ok, detail = QBittorrentClient(url, user, password).test()
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class TestProwlarrRequest(BaseModel):
+    url: str | None = None
+    apikey: str | None = None
+
+
+@app.post("/api/test/prowlarr")
+def test_prowlarr(req: TestProwlarrRequest):
+    url = req.url or _stored("prowlarr_url")
+    apikey = req.apikey or _stored("prowlarr_apikey")
+    if not (url and apikey):
+        return {"ok": False, "error": "Not configured"}
+    try:
+        from kometa.prowlarr_client import ProwlarrClient
+        ok, detail = ProwlarrClient(url, apikey).test()
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # Integration → config keys it owns. Drives 'Disconnect': blank password fields
 # mean 'keep current', so without this there is NO path to remove a credential.
 _INTEGRATION_KEYS = {
     "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
     "locg":      ["locg_user", "locg_pass"],
     "sabnzbd":   ["sab_url", "sab_apikey"],
+    "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
+    "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
 }
 
 
@@ -233,6 +275,13 @@ def get_config():
         "sab_url":             cfg.get("sab_url", ""),
         "sab_configured":      bool(cfg.get("sab_url", "") and cfg.get("sab_apikey", "")),
         "newznab_indexers":    safe_indexers,
+        "qbit_url":            cfg.get("qbit_url", ""),
+        "qbit_user":           cfg.get("qbit_user", ""),
+        "qbit_pass":           "",
+        "qbit_configured":     bool(cfg.get("qbit_url", "") and cfg.get("qbit_user", "")),
+        "prowlarr_url":        cfg.get("prowlarr_url", ""),
+        "prowlarr_apikey":     "",
+        "prowlarr_configured": bool(cfg.get("prowlarr_url", "") and cfg.get("prowlarr_apikey", "")),
     }
 
 
