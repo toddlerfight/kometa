@@ -47,7 +47,11 @@ def _img_ct(data: bytes) -> str:
 
 
 def _cache_path(cache_key: str) -> str:
-    return os.path.join(_COVER_CACHE_DIR, hashlib.sha1(cache_key.encode("utf-8")).hexdigest())
+    # SHA1 is a filename hash here, NOT a security digest — usedforsecurity=False
+    # says so (and keeps it working on FIPS builds). Collision resistance is
+    # irrelevant: worst case two cover URLs share a cache file, which just means
+    # a re-fetch.
+    return os.path.join(_COVER_CACHE_DIR, hashlib.sha1(cache_key.encode("utf-8"), usedforsecurity=False).hexdigest())
 
 
 def _read_cached(path: str) -> bytes | None:

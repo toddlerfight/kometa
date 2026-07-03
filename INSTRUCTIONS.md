@@ -154,6 +154,16 @@ DB — zero external network; see tests/e2e/conftest.py). First-time setup:
 snapshot files to `/tmp` before risky edits. NB: the venv's bin/pip shebang is
 stale (pre-rename cleancomics path) — always use `.venv/bin/python -m pip`.
 
+Dependency/security audit (external tools, added 2026-07-03; deps in
+requirements-dev.txt, config in pyproject.toml). Run before a dependency bump or
+periodically — all three are green as of 2026-07-03:
+- `.venv/bin/python -m pip_audit --skip-editable` — CVEs in the tree. Transitive
+  fixes go in requirements.txt as `>=` FLOORS (not `==`), so they don't fight
+  fastapi/requests version ranges; see the security-floor block there.
+- `.venv/bin/python -m bandit -r kometa/ -c pyproject.toml -ll` — security lint.
+- `.venv/bin/python -m deptry kometa/ --requirements-files requirements.txt` —
+  dead/missing deps (first-party + indirect-runtime deps allow-listed in pyproject).
+
 Scheduler note (post-2026-07-02): a deploy restart that straddles a 5/12/17 sync fire
 no longer loses it — `lifespan` compares the `last_full_sync` config stamp against the
 most recent scheduled slot and runs a catch-up sync at boot if one was missed. Expect

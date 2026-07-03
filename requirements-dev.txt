@@ -6,3 +6,10 @@ pytest==9.0.3
 #   .venv/bin/python -m playwright install chromium
 pytest-playwright==0.8.0
 playwright==1.61.0
+# External audit tools (2026-07-03) — run in the pre-deploy check:
+#   pip-audit            → CVEs in the dependency tree
+#   bandit -r kometa/ -c pyproject.toml → security AST lint
+#   deptry kometa/       → dead/missing/misplaced deps
+pip-audit==2.10.0
+bandit==1.9.4
+deptry==0.25.1

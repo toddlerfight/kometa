@@ -10,3 +10,11 @@ cloudscraper==1.2.71
 rarfile==4.2
 defusedxml==0.7.1
 curl_cffi==0.15.0
+
+# Transitive-dep security floors (pip-audit, 2026-07-03). These are pulled in by
+# fastapi/requests/anyio/cloudscraper; pinning a MINIMUM (not ==) closes known
+# CVEs without fighting the parents' own version ranges. Bump as advisories land.
+starlette>=1.3.1   # via fastapi — CVE-2026-48817/48818 + PYSEC-2026-161/248/249 (request handling)
+urllib3>=2.7.0     # via requests — PYSEC-2026-141/142 (the HTTP layer under every API client)
+idna>=3.15         # via requests/anyio — PYSEC-2026-215
+msgpack>=1.2.1     # via cloudscraper — GHSA-6v7p-g79w-8964

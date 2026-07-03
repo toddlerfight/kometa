@@ -1119,6 +1119,8 @@ def get_missing_for_monitored(path=DB_PATH):
 
 
 def get_upcoming_issues(days=90, past=0, path=DB_PATH):
+    # `lookback` is built ONLY from int(past) or a literal — no string ever
+    # reaches it, so the f-string can't inject. `days` is a bound param.
     if past:
         lookback = f"date('now', '-{int(past)} days')"
     else:
@@ -1133,7 +1135,7 @@ def get_upcoming_issues(days=90, past=0, path=DB_PATH):
               AND i.store_date <= date('now', ? || ' days')
               AND s.on_pull_list = 1
             ORDER BY i.store_date, s.title
-        """, (str(days),))]
+        """, (str(days),))]  # nosec B608 — lookback is int/literal-only, days is bound
 
 
 def set_variant_prefs(tracked_series_id, number, selected: list, primary_id: str, path=DB_PATH):

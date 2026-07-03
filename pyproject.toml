@@ -1,0 +1,22 @@
+# Tooling config only — this project has no build system (it's a bind-mounted
+# app, not a wheel). Keeps the external analysis tools (deptry, bandit) honest
+# so `pip-audit` / `bandit -r kometa/` / `deptry kometa/` run clean in the
+# pre-deploy check.
+
+[tool.deptry]
+known_first_party = ["kometa"]
+# Runtime deps used INDIRECTLY (never imported by name), so deptry's
+# import-scan can't see them — don't flag as unused:
+#   uvicorn = ASGI server (CLI entrypoint), lxml = bs4 parser backend,
+#   tzlocal = APScheduler tz resolution.
+[tool.deptry.per_rule_ignores]
+# uvicorn/lxml/tzlocal = indirect runtime deps (above);
+# starlette/urllib3/idna/msgpack = transitive SECURITY-FLOOR pins (see
+# requirements.txt) — deliberately present, deliberately not imported.
+DEP002 = ["uvicorn", "lxml", "tzlocal", "starlette", "urllib3", "idna", "msgpack"]
+
+[tool.bandit]
+# B608 hit is get_upcoming_issues — int/literal-only interpolation, marked
+# inline with # nosec. B101 (assert) only appears in tests.
+skips = ["B101"]
+exclude_dirs = ["tests", ".venv"]
