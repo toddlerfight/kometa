@@ -1,5 +1,15 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Touch: kill the 300ms double-tap-zoom delay on every tap target and make the
+   grey iOS tap-flash intentional (transparent — our own :active/hover is the
+   feedback). This is an iPad-first app; without touch-action every tile tap
+   waited on a maybe-double-tap. */
+button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
+.browse-filter-tab, .v-card, .arc-collected-note, [role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 :root {
   /* surfaces — dark→light ramp; hover lifts one step */
   --bg:    #000000;
@@ -1274,6 +1284,7 @@ select.settings-input {
   width: 580px;
   max-height: 82vh;
   overflow-y: auto;
+  overscroll-behavior: contain;   /* scrolling a tall modal to its end doesn't chain into the page behind it */
   will-change: transform, opacity;
   animation: modal-in var(--t-slow) var(--ease-out) both;
 }

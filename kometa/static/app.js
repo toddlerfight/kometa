@@ -393,7 +393,7 @@ async function _loadBrowsePage() {
   if (firstRender) {
     setApp(`
       <div class="browse-header">
-        <input class="browse-search" id="browse-search" placeholder="Search your collection…"
+        <input class="browse-search" id="browse-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search your collection…"
           value="${esc(browseState.search)}"
           oninput="browseSearch(this.value)">
         ${_browseFilterTabs()}
@@ -607,7 +607,7 @@ function _issueTileHtml(s, issue) {
       </div>`;
     }
     const searchBtn = (st === 'missing' || st === 'today')
-      ? `<button class="issue-tile-search" title="Search for this issue" data-dl="${s.id}:${issue.number}"
+      ? `<button class="issue-tile-search" title="Search for this issue" aria-label="Search for issue ${fmtNum(issue.number)}" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
     return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}" tabindex="0" role="button"
@@ -858,9 +858,9 @@ async function renderSeriesDetail(id) {
       </div>
     </div>
     <div class="detail-folder-row" id="folder-row">
-      <button class="btn-icon" title="Browse for folder" onclick="browseFolderPath(${s.id})"><svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
+      <button class="btn-icon" title="Browse for folder" aria-label="Browse for folder" onclick="browseFolderPath(${s.id})"><svg aria-hidden="true" width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
       <span class="detail-folder-path">${esc(s.folder_path || 'Not set')}</span>
-      <button class="btn-icon" title="Edit folder path" onclick="editFolderPath(${s.id})">✎</button>
+      <button class="btn-icon" title="Edit folder path" aria-label="Edit folder path" onclick="editFolderPath(${s.id})">✎</button>
       <div class="detail-folder-actions">
         ${pullBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
@@ -1041,7 +1041,7 @@ function _tradeTileHtml(t) {
   // Owned (file on disk) → no download arrow, owned styling. Otherwise the same
   // ↓ arrow missing singles get; stopPropagation so the tile click doesn't fire.
   const dlBtn = (t.locg_id && !t.owned)
-    ? `<button class="issue-tile-search" title="Download this trade" data-dl="trade:${t.locg_id}"
+    ? `<button class="issue-tile-search" title="Download this trade" aria-label="Download trade ${esc(tag)}" data-dl="trade:${t.locg_id}"
          onclick="event.stopPropagation(); tradeDownload('${esc(t.locg_id)}', this)">↓</button>`
     : '';
   const ownedBadge = t.owned ? `<div class="trade-owned-check" title="On disk">✓</div>` : '';
@@ -1191,7 +1191,7 @@ function showAddWizard() {
   showModal(`
     <div class="modal-title">Add Series</div>
     <div class="wizard-search-row">
-      <input class="search-input" id="wizard-search" placeholder="Search for a series…" autocomplete="off"
+      <input class="search-input" id="wizard-search" type="search" spellcheck="false" placeholder="Search for a series…" autocomplete="off"
         oninput="_wizardInput(this.value)" onkeydown="_wizardKey(event)">
       <button class="btn btn-primary" onclick="wizardSearch()">Search</button>
     </div>
@@ -1892,7 +1892,7 @@ async function _renderPullListContent() {
               <div class="pull-issue">#${fmtNum(e.number)}</div>
               ${_pullStatus(e)}
               <span class="pull-act">${(!e.owned && e.store_date < _usToday())
-                ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue"
+                ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue" aria-label="Download issue ${fmtNum(e.number)}"
                      onclick="event.stopPropagation(); pullDownload(${sid}, ${e.number}, this)">↓</button>`
                 : ''}</span>
             </div>
@@ -2086,9 +2086,9 @@ function _actThumb(q) {
   if (q.kind === 'trade') {
     // The trade's own LOCG cover (stashed in meta), falling back to the series.
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
-    return `<img src="${esc(m.cover || seriesThumb)}" onerror="this.src='${seriesThumb}'">`;
+    return `<img src="${esc(m.cover || seriesThumb)}" alt="" onerror="this.src='${seriesThumb}'">`;
   }
-  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" onerror="this.src='${seriesThumb}'">`;
+  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" alt="" onerror="this.src='${seriesThumb}'">`;
 }
 
 // Plain-language failure reason for an Activity row — surfaces what used to be a
@@ -2145,7 +2145,7 @@ function _buildActivityHtml(queue) {
       // user the wheel: kick a search right now, or yank it from the queue.
       const actions = q.state === 'queued' ? `
             <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue">✕</button>` : '';
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">✕</button>` : '';
       return `
         <div class="act-card${isDownloading ? '' : ' compact'}" data-qid="${q.id}"${errTip}>
           <div class="act-card-cover">${thumb}</div>
@@ -2183,7 +2183,7 @@ function _buildActivityHtml(queue) {
           <div class="act-row-actions">
             ${_actChip(q.state)}
             ${retry}
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)">✕</button>
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>
           </div>
         </div>`;
     }).join('');
@@ -2810,8 +2810,8 @@ function _imRenderVariants() {
           <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy"
             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
           <div class="no-img" style="display:none">No image</div>
-          <button class="v-star" onclick="_imSetPrimary(event,'${esc(c.id)}')" title="Set as cover">★</button>
-          <button class="v-mag" onclick="_imOpenLightbox('${esc(c.id)}',event)" title="View larger"><svg viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
+          <button class="v-star" onclick="_imSetPrimary(event,'${esc(c.id)}')" title="Set as cover" aria-label="Set as cover">★</button>
+          <button class="v-mag" onclick="_imOpenLightbox('${esc(c.id)}',event)" title="View larger" aria-label="View larger"><svg aria-hidden="true" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
         </div>
         <div class="v-name">${esc(c.name)}</div>
       </div>`).join('')
