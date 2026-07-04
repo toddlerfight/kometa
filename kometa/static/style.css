@@ -1191,8 +1191,26 @@ select.settings-input {
   display: flex; align-items: baseline; gap: 8px;
 }
 .settings-section-state { font-size: 9px; font-weight: 400; letter-spacing: 0.08em; color: var(--tq); }
-.settings-section.section-off .settings-card { opacity: 0.45; transition: opacity .15s ease; }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
+
+/* Collapse the section body when toggled off — grid-template-rows 1fr→0fr is
+   the one clean way to animate to auto height without measuring. The inner
+   wrapper carries overflow:hidden + min-height:0 so the grid track can shrink
+   to zero. Opacity fades a touch faster so it's gone before the fold finishes. */
+.settings-section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition: grid-template-rows .3s ease, opacity .2s ease;
+}
+.settings-section-inner { overflow: hidden; min-height: 0; }
+.settings-section.section-off .settings-section-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-section-body { transition: none; }
+}
 
 .settings-card-header {
   font-family: var(--font);

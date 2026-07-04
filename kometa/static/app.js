@@ -2344,26 +2344,30 @@ async function renderSettings() {
         </div>
         <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
           ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
-          <div class="settings-card">
-            ${_settingsHeader('SABnzbd', 'download client', 'sabnzbd', true, cfg.sab_configured)}
-            ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
-            ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
-            <div id="indexers-section"></div>
-          </div>
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsHeader('SABnzbd', 'download client', 'sabnzbd', true, cfg.sab_configured)}
+              ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
+              ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
+              <div id="indexers-section"></div>
+            </div>
+          </div></div>
         </div>
         <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent">
           ${_settingsSectionHead('Torrents', 't-torrent', cfg.torrent_enabled)}
-          <div class="settings-card">
-            ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
-            ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
-            ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
-            ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
-          </div>
-          <div class="settings-card" style="margin-top:36px">
-            ${_settingsHeader('Prowlarr', 'indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
-            ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
-            ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
-          </div>
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
+              ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
+              ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
+              ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
+            </div>
+            <div class="settings-card" style="margin-top:36px">
+              ${_settingsHeader('Prowlarr', 'indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
+              ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
+              ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
+            </div>
+          </div></div>
         </div>
       </div>
     </div>
