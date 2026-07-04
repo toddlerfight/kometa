@@ -31,3 +31,18 @@ def test_settings_renders_and_autosaves(app):
     ):
         field.fill("/tmp")
         field.blur()
+
+
+def test_source_toggles_render_and_flip(app):
+    # The Usenet/Torrents search-source toggles: default-on (seed sets no flag),
+    # and flipping one PATCHes the config + dims the section.
+    app.locator('.nav-item[data-view="settings"]').click()
+    usenet = app.locator('#t-usenet')
+    expect(usenet).to_be_checked()                       # absent flag = enabled
+    with app.expect_request(
+        lambda r: '/api/config' in r.url and r.method == 'PATCH', timeout=10000
+    ):
+        usenet.uncheck()
+    # section dims + state word flips
+    expect(app.locator('#sec-usenet.section-off')).to_have_count(1)
+    expect(app.locator('#sec-usenet .settings-section-state')).to_have_text('excluded from search')

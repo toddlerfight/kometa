@@ -33,6 +33,19 @@ def _utcnow() -> datetime:
     (Exact replacement for the deprecated datetime.utcnow.)"""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
+# Source enablement toggles. These gate SEARCH only — a disabled source drops
+# out of the acquisition cascade even with creds saved. Deliberately NOT applied
+# to the pollers (_poll_usenet_jobs/_poll_torrent_jobs): a job already submitted
+# must still finalize, or toggling a source off mid-download would orphan it.
+# Absent key = enabled, so existing installs (creds set, no flag) behave as before.
+def _usenet_on() -> bool:
+    return db.get_config(DB_PATH).get("usenet_enabled", "1") != "0"
+
+
+def _torrent_on() -> bool:
+    return db.get_config(DB_PATH).get("torrent_enabled", "1") != "0"
+
 # Live download progress, keyed by queue id. Shared mutable state: download
 # threads (here AND in main's download-from-url route) write it, the queue
 # routes read it. Nobody touches this dict directly across a module boundary —
@@ -179,6 +192,8 @@ def _try_torrent(item, qid) -> bool:
     fails to COMPLETE (retention) — torrent is the safety net for "couldn't
     deliver", not just "couldn't find". Sets state → pending_torrent + stores the
     hash; the torrent poller finalizes. Returns True if a torrent was queued."""
+    if not _torrent_on():
+        return False
     prowlarr = _prowlarr()
     qbit = _qbittorrent()
     if not (prowlarr and qbit):
@@ -220,7 +235,7 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     if not dl_url:
         indexers = _usenet_indexers()
         sab = _sabnzbd()
-        if indexers and sab:
+        if _usenet_on() and indexers and sab:
             set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
             nzb_url = search_usenet(indexers, item["title"], item["issue_number"], store_date)
             if nzb_url:
@@ -287,7 +302,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     if not dl_url:
         indexers = _usenet_indexers()
         sab = _sabnzbd()
-        if indexers and sab:
+        if _usenet_on() and indexers and sab:
             set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
             query = f"{title} {label}".strip()
             nzb_url = search_usenet_pack(indexers, query, series_year=item.get("year_began"))
@@ -341,7 +356,7 @@ def _sweep_missing():
     indexers = _usenet_indexers()
     sab = _sabnzbd()
 
-    if indexers and sab:
+    if _usenet_on() and indexers and sab:
         for series_id, count in missing_counts.items():
             if series_id not in checked:
                 continue

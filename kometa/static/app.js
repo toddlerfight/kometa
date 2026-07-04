@@ -2342,22 +2342,28 @@ async function renderSettings() {
           ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
           ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
         </div>
-        <div class="settings-card" style="margin-top:36px">
-          ${_settingsHeader('SABnzbd', 'optional — Usenet downloads', 'sabnzbd', true, cfg.sab_configured)}
-          ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
-          ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
-          <div id="indexers-section"></div>
+        <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
+          ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
+          <div class="settings-card">
+            ${_settingsHeader('SABnzbd', 'download client', 'sabnzbd', true, cfg.sab_configured)}
+            ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
+            ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
+            <div id="indexers-section"></div>
+          </div>
         </div>
-        <div class="settings-card" style="margin-top:36px">
-          ${_settingsHeader('qBittorrent', 'optional — torrent downloads', 'qbit', true, cfg.qbit_configured)}
-          ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
-          ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
-          ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
-        </div>
-        <div class="settings-card" style="margin-top:36px">
-          ${_settingsHeader('Prowlarr', 'optional — torrent indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
-          ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
-          ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
+        <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent">
+          ${_settingsSectionHead('Torrents', 't-torrent', cfg.torrent_enabled)}
+          <div class="settings-card">
+            ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
+            ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
+            ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
+            ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
+          </div>
+          <div class="settings-card" style="margin-top:36px">
+            ${_settingsHeader('Prowlarr', 'indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
+            ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
+            ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
+          </div>
         </div>
       </div>
     </div>
@@ -2407,6 +2413,50 @@ function _settingsField(id, label, value, opts = {}) {
         autocomplete="${secret ? 'new-password' : 'off'}" spellcheck="false"
         onchange="_settingsChanged(this)">
     </div>`;
+}
+
+// A pill toggle switch — track + thumb, matches kometa.pen (mEkWZ/eLfqf).
+// role="switch" + keyboard come free from the native checkbox.
+function _settingsToggle(id, on, label) {
+  return `<label class="toggle-switch">
+    <input type="checkbox" id="${id}" role="switch" ${on ? 'checked' : ''}
+      aria-label="${esc(label)}" onchange="_toggleSource(this)">
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+  </label>`;
+}
+
+// Section heading for a search source (Usenet / Torrents): title + a toggle
+// that enables/disables the whole pathway as a SEARCH option. The state word
+// spells out what 'off' means so it doesn't read as "broken".
+function _settingsSectionHead(title, toggleId, on) {
+  return `<div class="settings-section-head">
+    <span class="settings-section-title">${esc(title)}
+      <span class="settings-section-state">${on ? 'searched' : 'excluded from search'}</span></span>
+    ${_settingsToggle(toggleId, on, `${title} enabled for search`)}
+  </div>`;
+}
+
+// Toggle → persist the flag + dim/undim the section. Acquisition reads the flag
+// at search time (backend gates the search cascade, never the pollers).
+const _SOURCE_TOGGLES = {
+  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet' },
+  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents' },
+};
+async function _toggleSource(el) {
+  const t = _SOURCE_TOGGLES[el.id];
+  if (!t) return;
+  const on = el.checked;
+  try {
+    await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
+    const sec = document.getElementById(t.section);
+    if (sec) sec.classList.toggle('section-off', !on);
+    const state = sec?.querySelector('.settings-section-state');
+    if (state) state.textContent = on ? 'searched' : 'excluded from search';
+    showToast(`${t.label} ${on ? 'enabled' : 'excluded'} for search`);
+  } catch (e) {
+    el.checked = !on;   // revert the visual — the save didn't stick
+    showToast(`${t.label} toggle failed`, 'error');
+  }
 }
 
 function _settingsHeader(title, tag, cardId, integ = false, configured = false) {
