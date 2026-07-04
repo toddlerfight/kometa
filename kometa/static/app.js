@@ -2328,12 +2328,17 @@ async function renderSettings() {
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
-        <div class="settings-card" style="margin-top:36px">
-          ${_settingsHeader('Komga', 'optional', 'komga', true, komgaCfg)}
-          ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url)}
-          ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
-          ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
-          ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
+        <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga" style="margin-top:36px">
+          ${_settingsSectionHead('Komga', 't-komga', cfg.komga_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsHeader('Komga', 'reader + cover source', 'komga', true, komgaCfg)}
+              ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url)}
+              ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
+              ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
+              ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
+            </div>
+          </div></div>
         </div>
       </div>
       <div>
@@ -2371,6 +2376,7 @@ async function renderSettings() {
   _updateRootStatus(cfg.comics_root_ok);
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings).
+  if (!cfg.komga_enabled)   _collapseSection(document.getElementById('sec-komga'), true, false);
   if (!cfg.usenet_enabled)  _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled) _collapseSection(document.getElementById('sec-torrent'), true, false);
 }
@@ -2430,18 +2436,23 @@ function _settingsToggle(id, on, label) {
 // that enables/disables the whole pathway as a SEARCH option. The state word
 // spells out what 'off' means so it doesn't read as "broken".
 function _settingsSectionHead(title, toggleId, on) {
+  const t = _SOURCE_TOGGLES[toggleId] || { on: 'on', off: 'off' };
   return `<div class="settings-section-head">
     <span class="settings-section-title">${esc(title)}
-      <span class="settings-section-state">${on ? 'searched' : 'excluded from search'}</span></span>
-    ${_settingsToggle(toggleId, on, `${title} enabled for search`)}
+      <span class="settings-section-state">${on ? t.on : t.off}</span></span>
+    ${_settingsToggle(toggleId, on, `${title} ${on ? 'enabled' : 'disabled'}`)}
   </div>`;
 }
 
 // Toggle → persist the flag + dim/undim the section. Acquisition reads the flag
 // at search time (backend gates the search cascade, never the pollers).
+// on/off = the state word shown next to the title. Search sources say
+// "searched / excluded from search"; Komga is a library integration, not a
+// search source, so it says "enabled / off — folders + LOCG".
 const _SOURCE_TOGGLES = {
-  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet' },
-  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents' },
+  't-komga':   { key: 'komga_enabled',   section: 'sec-komga',   label: 'Komga',    on: 'enabled',  off: 'off — folders + LOCG' },
+  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet',   on: 'searched', off: 'excluded from search' },
+  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents', on: 'searched', off: 'excluded from search' },
 };
 // Fade + fold a section's body, mirroring _animateRowOut's convention: pin
 // max-height to the measured height, reflow, then transition to/from 0 so it
@@ -2480,7 +2491,7 @@ async function _toggleSource(el) {
   const on = el.checked;
   const sec = document.getElementById(t.section);
   const state = sec?.querySelector('.settings-section-state');
-  const paint = (open) => { if (state) state.textContent = open ? 'searched' : 'excluded from search'; };
+  const paint = (open) => { if (state) state.textContent = open ? t.on : t.off; };
   // Optimistic: fold + relabel THE MOMENT you tap — the save rides behind it,
   // like every other field's autosave. Waiting on the network before animating
   // is what made the fold look broken (it lagged the toggle, then snapped).
@@ -2488,7 +2499,7 @@ async function _toggleSource(el) {
   paint(on);
   try {
     await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
-    showToast(`${t.label} ${on ? 'enabled' : 'excluded'} for search`);
+    showToast(`${t.label} ${on ? 'enabled' : 'disabled'}`);
   } catch (e) {
     el.checked = !on;                  // revert toggle, fold, and label
     _collapseSection(sec, on, true);

@@ -53,6 +53,11 @@ def _cached(name: str, key: str, build):
 
 def komga() -> KomgaClient | None:
     cfg = db.get_config(DB_PATH)
+    # Komga is an OPTIONAL enhancement (covers, ownership linking, readlists) —
+    # the app runs on folders + LOCG art without it. The toggle gates it off
+    # without dropping the creds; every caller already treats None as "no Komga".
+    if cfg.get("komga_enabled", "1") == "0":
+        return None
     if not cfg.get("komga_url"):
         return None
     key = f"{cfg.get('komga_url')}|{cfg.get('komga_user')}|{cfg.get('komga_pass')}|{cfg.get('komga_library_id')}"

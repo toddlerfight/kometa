@@ -259,7 +259,8 @@ def get_config():
         "prowlarr_url":        cfg.get("prowlarr_url", ""),
         "prowlarr_apikey":     "",
         "prowlarr_configured": bool(cfg.get("prowlarr_url", "") and cfg.get("prowlarr_apikey", "")),
-        # Search-source toggles — absent = enabled (existing installs unchanged).
+        # Integration/search toggles — absent = enabled (existing installs unchanged).
+        "komga_enabled":       cfg.get("komga_enabled", "1") != "0",
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
         "torrent_enabled":     cfg.get("torrent_enabled", "1") != "0",
     }
@@ -280,6 +281,7 @@ class ConfigRequest(BaseModel):
     qbit_pass:          str | None = None
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
+    komga_enabled:      str | None = None   # "1"/"0" — integration toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
 
