@@ -2374,6 +2374,10 @@ async function renderSettings() {
   `);
   _renderIndexers(cfg.newznab_indexers);
   _updateRootStatus(cfg.comics_root_ok);
+  // Sections that load already-off start collapsed WITHOUT animation (no
+  // fold-in flash on entering Settings).
+  if (!cfg.usenet_enabled)  _collapseSection(document.getElementById('sec-usenet'), true, false);
+  if (!cfg.torrent_enabled) _collapseSection(document.getElementById('sec-torrent'), true, false);
 }
 
 // Autosave architecture: every field persists itself on change — no Save
@@ -2446,19 +2450,56 @@ const _SOURCE_TOGGLES = {
   't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet' },
   't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents' },
 };
+// Fade + fold a section's body, mirroring _animateRowOut's convention: pin
+// max-height to the measured height, reflow, then transition to/from 0 so it
+// animates FROM a real value (max-height from an oversized guess stalls the
+// first half of the fold). After an OPEN settles, release max-height so the
+// cards can still grow (indexer rows added, etc.).
+function _collapseSection(sec, collapsed, animate) {
+  const body = sec?.querySelector('.settings-section-body');
+  if (!body) return;
+  sec.classList.toggle('section-off', collapsed);
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!animate || reduce) {
+    body.style.maxHeight = collapsed ? '0px' : 'none';
+    body.style.opacity = collapsed ? '0' : '1';
+    return;
+  }
+  if (collapsed) {
+    body.style.maxHeight = body.scrollHeight + 'px';   // pin FROM current
+    void body.offsetHeight;                            // reflow so 0 transitions
+    body.style.maxHeight = '0px';
+    body.style.opacity = '0';
+  } else {
+    body.style.opacity = '1';
+    body.style.maxHeight = body.scrollHeight + 'px';   // animate 0 → measured
+    body.addEventListener('transitionend', function done(e) {
+      if (e.propertyName !== 'max-height') return;
+      body.style.maxHeight = 'none';                   // release so later content fits
+      body.removeEventListener('transitionend', done);
+    });
+  }
+}
+
 async function _toggleSource(el) {
   const t = _SOURCE_TOGGLES[el.id];
   if (!t) return;
   const on = el.checked;
+  const sec = document.getElementById(t.section);
+  const state = sec?.querySelector('.settings-section-state');
+  const paint = (open) => { if (state) state.textContent = open ? 'searched' : 'excluded from search'; };
+  // Optimistic: fold + relabel THE MOMENT you tap — the save rides behind it,
+  // like every other field's autosave. Waiting on the network before animating
+  // is what made the fold look broken (it lagged the toggle, then snapped).
+  _collapseSection(sec, !on, true);
+  paint(on);
   try {
     await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
-    const sec = document.getElementById(t.section);
-    if (sec) sec.classList.toggle('section-off', !on);
-    const state = sec?.querySelector('.settings-section-state');
-    if (state) state.textContent = on ? 'searched' : 'excluded from search';
     showToast(`${t.label} ${on ? 'enabled' : 'excluded'} for search`);
   } catch (e) {
-    el.checked = !on;   // revert the visual — the save didn't stick
+    el.checked = !on;                  // revert toggle, fold, and label
+    _collapseSection(sec, on, true);
+    paint(!on);
     showToast(`${t.label} toggle failed`, 'error');
   }
 }
