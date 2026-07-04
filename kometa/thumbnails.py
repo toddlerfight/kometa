@@ -16,7 +16,7 @@ import requests as _requests
 from fastapi import APIRouter, HTTPException, Response
 
 import kometa.db as db
-from kometa.sources import komga as _komga, locg as _locg
+from kometa.sources import komga as _komga
 from kometa.naming import parse_issue_number as _parse_issue_number
 
 logger = logging.getLogger(__name__)
@@ -283,12 +283,8 @@ def issue_thumbnail(series_id: int, number: float):
     locg_iid = issue.get("locg_issue_id") if issue else None
     if locg_iid:
         try:
-            locg = _locg()
-            if locg:
-                data = locg.fetch_variants(locg_iid)
-            else:
-                from kometa.locg_client import fetch_variants
-                data = fetch_variants(locg_iid)
+            from kometa.locg_client import fetch_variants
+            data = fetch_variants(locg_iid)
             for c in data.get("covers", [])[:6]:
                 resp = _image_or_none(c.get("thumb"))
                 if resp:

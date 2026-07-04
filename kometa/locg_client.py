@@ -4,7 +4,6 @@ import logging
 import threading
 from datetime import datetime, timezone
 
-import requests
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -202,102 +201,36 @@ def _parse_num(title: str) -> float | None:
     return None
 
 
-class LOCGClient:
-    def __init__(self, username: str, password: str, session: str | None = None):
-        self._username = username
-        self._password = password
-        self._s = requests.Session()
-        self._s.headers["User-Agent"] = _UA
-        self._session_cookie = session
-
-        if session:
-            self._s.cookies.set("ci_session", session, domain="leagueofcomicgeeks.com")
-        else:
-            self._login()
-
-    def _login(self):
-        r = self._s.post(
-            f"{BASE}/user/login",
-            data={"username": self._username, "password": self._password},
-            allow_redirects=True,
-            timeout=15,
-        )
-        r.raise_for_status()
-        cookie = self._s.cookies.get("ci_session")
-        if not cookie:
-            raise ValueError("LoCG login failed — no session cookie returned")
-        self._session_cookie = cookie
-        logger.info("LoCG: logged in, session acquired")
-
-    @property
-    def session_cookie(self) -> str | None:
-        return self._session_cookie
-
-    def _get(self, url: str, **kwargs) -> requests.Response:
-        r = self._s.get(url, timeout=15, **kwargs)
-        # Session expired if we get redirected to login page
-        if r.ok and "/user/login" in r.url:
-            logger.info("LoCG: session expired, re-logging in")
-            self._login()
-            r = self._s.get(url, timeout=15, **kwargs)
-        r.raise_for_status()
-        return r
-
-    def search_series(self, title: str) -> list[dict]:
-        """Search for series by title. Returns [{id, title, publisher, year}]."""
-        try:
-            r = self._get(
-                f"{BASE}/search/ajax_issues",
-                params={"query": title},
-                headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
-            )
-            return _parse_search_html(r.text)
-        except Exception as e:
-            logger.warning(f"LoCG search_series({title!r}) failed: {e}")
-            return []
-
-    def resolve_comic_series(self, comic_id, slug):
-        """Authed path: one-shot comic id + slug -> parent series id (or None)."""
-        return _comic_series_id(self._get, comic_id, slug)
-
-    def find_series_id(self, title: str, year: int | None = None) -> int | None:
-        """Find best matching LoCG series ID for a title+year."""
-        results = self.search_series(title)
-        if not results:
-            return None
-        title_l = title.lower()
-        _punct = re.compile(r"[\-\–\—\:\,\.\!\?\'\"]+")
-        title_norm = _punct.sub(" ", title_l).split()
-
-        def score(r):
-            s = 0
-            r_title = r["title"].lower()
-            r_norm = _punct.sub(" ", r_title).split()
-            if r_title == title_l:
-                s += 10
-            elif title_l in r_title or r_title in title_l:
-                s += 4
-            elif title_norm == r_norm:
-                s += 9
-            elif all(w in r_norm for w in title_norm):
-                s += 3
-            if year and r.get("year") == year:
-                s += 5
-            return s
-
-        results.sort(key=score, reverse=True)
-        best = results[0]
-        if score(best) >= 4:
-            return best["id"]
+def find_series_id_anon(title: str, year: int | None = None) -> int | None:
+    """Best-matching LOCG series id for a title+year, keyless. The search endpoint
+    ignores auth (same /search/ajax_issues the wizard already hits anonymously),
+    so this is exactly what the old authed find_series_id did minus the login."""
+    results = search_series_anon(title)
+    if not results:
         return None
+    title_l = title.lower()
+    _punct = re.compile(r"[\-\–\—\:\,\.\!\?\'\"]+")
+    title_norm = _punct.sub(" ", title_l).split()
 
-    def get_issues(self, series_id: int) -> list[dict]:
-        """Get all issues for a LoCG series. Returns [{number, store_date, cover}]."""
-        return _get_issues_with_get(series_id, self._get)
+    def score(r):
+        s = 0
+        r_title = r["title"].lower()
+        r_norm = _punct.sub(" ", r_title).split()
+        if r_title == title_l:
+            s += 10
+        elif title_l in r_title or r_title in title_l:
+            s += 4
+        elif title_norm == r_norm:
+            s += 9
+        elif all(w in r_norm for w in title_norm):
+            s += 3
+        if year and r.get("year") == year:
+            s += 5
+        return s
 
-    def fetch_variants(self, locg_issue_id: str) -> dict:
-        """Fetch variant covers for an issue using the authenticated session."""
-        return _fetch_variants_with_get(locg_issue_id, self._get)
+    results.sort(key=score, reverse=True)
+    best = results[0]
+    return best["id"] if score(best) >= 4 else None
 
 
 def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
@@ -512,7 +445,7 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
 
 
 def fetch_variants(locg_issue_id: str) -> dict:
-    """Fetch variants anonymously. Prefer LOCGClient.fetch_variants() when auth is available."""
+    """Fetch variant covers for an issue, keyless."""
     return _fetch_variants_with_get(locg_issue_id, _anon_get_fn())
 
 

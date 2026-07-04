@@ -110,7 +110,10 @@ class TestIssueDetailsParser:
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
     monkeypatch.setattr(sync, "_komga", lambda: None)
-    monkeypatch.setattr(sync, "_locg", lambda: None)   # no LOCG creds
+    # LOCG is keyless now. Stub the title→id resolver to None so a series
+    # without a seeded locg_series_id doesn't reach out to the live site;
+    # tests that DO seed one go straight through get_issues_anon.
+    monkeypatch.setattr(sync, "find_series_id_anon", lambda *a, **k: None)
 
 
 class TestKeylessSync:

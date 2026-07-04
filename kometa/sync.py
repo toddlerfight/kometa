@@ -12,15 +12,15 @@ import time
 import logging
 import threading
 
-from kometa.sources import (
-    komga as _komga, locg as _locg,
-)
+from kometa.sources import komga as _komga
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
     scan_folder_volumes as _scan_folder_volumes, parse_volume_number as _parse_volume_number,
     norm_key as _norm_name,
 )
-from kometa.locg_client import get_issues_anon, get_trades_anon, select_editions
+from kometa.locg_client import (
+    get_issues_anon, get_trades_anon, select_editions, find_series_id_anon,
+)
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
@@ -176,47 +176,44 @@ def sync_one(series: dict):
     )
 
     # --- Build issue map from LoCG (best for upcoming solicitations) ---
-    # Auth buys series-id lookup; but if we already have a locg_series_id (e.g.
-    # the series was added via the LOCG wizard) we can pull its issues with no
-    # login at all. That anon path is what makes keyless onboarding actually work.
+    # All keyless: series added via the wizard already carry a locg_series_id;
+    # one without a linked id (e.g. Komga-first) gets resolved by title here.
+    # LOCG never needed a login — the search/issue endpoints ignore auth.
     issue_map: dict[float, dict] = {}
-    locg = _locg()
     locg_id = series.get("locg_series_id")
-    if locg or locg_id:
-        try:
-            if locg and not locg_id:
-                locg_id = locg.find_series_id(series["title"], series.get("year_began"))
-                if locg_id:
-                    db.set_locg_series_id(series["id"], locg_id, DB_PATH)
-                    series = dict(series, locg_series_id=locg_id)
+    try:
+        if not locg_id and series.get("title"):
+            locg_id = find_series_id_anon(series["title"], series.get("year_began"))
             if locg_id:
-                locg_issues = locg.get_issues(locg_id) if locg else get_issues_anon(locg_id)
-                for li in locg_issues:
-                    num = li["number"]
-                    if num not in issue_map:
-                        issue_map[num] = {"store_date": li["store_date"], "image": li["cover"], "locg_issue_id": li.get("locg_issue_id")}
-                    else:
-                        if not issue_map[num]["store_date"]:
-                            issue_map[num]["store_date"] = li["store_date"]
-                        if not issue_map[num]["image"]:
-                            issue_map[num]["image"] = li["cover"]
-                        if not issue_map[num].get("locg_issue_id"):
-                            issue_map[num]["locg_issue_id"] = li.get("locg_issue_id")
-        except Exception as e:
-            logger.warning(f"LoCG supplement failed for '{series['title']}': {e}")
-
-        # Cache available collected editions while we're here — same anon LOCG
-        # path, so the Trades tab reads instantly instead of searching live every
-        # open. Enrich with the two stored facts (owned from the folder, komga_book_id
-        # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
-        # never fail an issue sync.
+                db.set_locg_series_id(series["id"], locg_id, DB_PATH)
+                series = dict(series, locg_series_id=locg_id)
         if locg_id:
-            try:
-                trades = select_editions(get_trades_anon(locg_id))
-                enrich_trades(series, trades, books=komga_books)
-                db.set_trades(series["id"], trades, DB_PATH)
-            except Exception as e:
-                logger.warning(f"Trades cache failed for '{series['title']}': {e}")
+            for li in get_issues_anon(locg_id):
+                num = li["number"]
+                if num not in issue_map:
+                    issue_map[num] = {"store_date": li["store_date"], "image": li["cover"], "locg_issue_id": li.get("locg_issue_id")}
+                else:
+                    if not issue_map[num]["store_date"]:
+                        issue_map[num]["store_date"] = li["store_date"]
+                    if not issue_map[num]["image"]:
+                        issue_map[num]["image"] = li["cover"]
+                    if not issue_map[num].get("locg_issue_id"):
+                        issue_map[num]["locg_issue_id"] = li.get("locg_issue_id")
+    except Exception as e:
+        logger.warning(f"LoCG supplement failed for '{series['title']}': {e}")
+
+    # Cache available collected editions while we're here — same anon LOCG
+    # path, so the Trades tab reads instantly instead of searching live every
+    # open. Enrich with the two stored facts (owned from the folder, komga_book_id
+    # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
+    # never fail an issue sync.
+    if locg_id:
+        try:
+            trades = select_editions(get_trades_anon(locg_id))
+            enrich_trades(series, trades, books=komga_books)
+            db.set_trades(series["id"], trades, DB_PATH)
+        except Exception as e:
+            logger.warning(f"Trades cache failed for '{series['title']}': {e}")
 
     # NB: a storyline-followed run (only a cv_volume_id, no LOCG/Komga) is
     # SCOPED to its arcs — it does NOT pull the full CV volume. Its issues are stamped

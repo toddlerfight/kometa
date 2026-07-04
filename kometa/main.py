@@ -20,9 +20,9 @@ from kometa.arcs import (
 from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
 import kometa.db as db
 from kometa.sources import (
-    komga as _komga,
-    locg as _locg, comics_root as _comics_root, comicvine as _comicvine,
+    komga as _komga, comics_root as _comics_root, comicvine as _comicvine,
 )
+from kometa.locg_client import fetch_variants as _locg_variants_anon
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, _resolve_dir,
 )
@@ -146,25 +146,6 @@ def test_komga(req: TestKomgaRequest):
         return {"ok": False, "error": str(e)}
 
 
-class TestLocgRequest(BaseModel):
-    user: str | None = None
-    password: str | None = None
-
-
-@app.post("/api/test/locg")
-def test_locg(req: TestLocgRequest):
-    user = req.user or _stored("locg_user")
-    password = req.password or _stored("locg_pass")
-    if not (user and password):
-        return {"ok": False, "error": "Not configured"}
-    try:
-        from kometa.locg_client import LOCGClient
-        LOCGClient(user, password)  # constructor logs in; raises on bad creds
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
 class TestSabRequest(BaseModel):
     url: str | None = None
     apikey: str | None = None
@@ -230,7 +211,6 @@ def test_prowlarr(req: TestProwlarrRequest):
 # mean 'keep current', so without this there is NO path to remove a credential.
 _INTEGRATION_KEYS = {
     "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
-    "locg":      ["locg_user", "locg_pass"],
     "sabnzbd":   ["sab_url", "sab_apikey"],
     "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
@@ -268,9 +248,6 @@ def get_config():
         "komga_user":          cfg.get("komga_user", ""),
         "komga_pass":          "",
         "komga_library_id":    cfg.get("komga_library_id", ""),
-        "locg_user":           cfg.get("locg_user", ""),
-        "locg_pass":           "",
-        "locg_configured":     bool(cfg.get("locg_user", "") and cfg.get("locg_pass", "")),
         "sync_hours":          cfg.get("sync_hours", "5,12,17"),
         "sab_url":             cfg.get("sab_url", ""),
         "sab_configured":      bool(cfg.get("sab_url", "") and cfg.get("sab_apikey", "")),
@@ -294,8 +271,6 @@ class ConfigRequest(BaseModel):
     komga_user:         str | None = None
     komga_pass:         str | None = None
     komga_library_id:   str | None = None
-    locg_user:          str | None = None
-    locg_pass:          str | None = None
     sync_hours:         str | None = None
     sab_url:            str | None = None
     sab_apikey:         str | None = None
@@ -582,10 +557,7 @@ def add_series(req: AddSeriesRequest):
     # → a zombie 'Syncing…' forever). Authoritative: overrides whatever locg_id the
     # client computed. A one-shot that isn't linked to a series is refused, not stored.
     if req.locg_comic_id and req.locg_comic_slug:
-        locg_client = _locg()
-        sid = (locg_client.resolve_comic_series(req.locg_comic_id, req.locg_comic_slug)
-               if locg_client
-               else _locg_resolve_comic_anon(req.locg_comic_id, req.locg_comic_slug))
+        sid = _locg_resolve_comic_anon(req.locg_comic_id, req.locg_comic_slug)
         if not sid:
             raise HTTPException(400, "This one-shot isn't linked to a series on LOCG")
         locg_series_id = sid
@@ -685,8 +657,7 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
 
 @app.get("/api/search/locg")
 def search_locg(q: str):
-    locg_client = _locg()
-    raw = locg_client.search_series(q) if locg_client else _locg_search_anon(q)
+    raw = _locg_search_anon(q)
     return [{
         "id":         r["id"],
         "series":     r["title"],
@@ -705,9 +676,7 @@ def resolve_locg_comic(comic_id: int, slug: str):
     """A one-shot search hit (/comic/{id}) -> its parent series id, so it can be added
     as a normal tracked series. Called lazily by the wizard when such a result is
     picked — never on the type-ahead path, so it costs one fetch per add, not per key."""
-    locg_client = _locg()
-    sid = (locg_client.resolve_comic_series(comic_id, slug) if locg_client
-           else _locg_resolve_comic_anon(comic_id, slug))
+    sid = _locg_resolve_comic_anon(comic_id, slug)
     if not sid:
         raise HTTPException(404, "This one-shot isn't linked to a series on LOCG")
     return {"series_id": sid}
@@ -1042,12 +1011,7 @@ def get_issue_variants(series_id: int, number: float):
     if not locg_issue_id:
         return {"covers": [], "locg_issue_id": None, "selected_ids": sel_ids, "primary_id": primary}
     try:
-        locg = _locg()
-        if locg:
-            data = locg.fetch_variants(locg_issue_id)
-        else:
-            from kometa.locg_client import fetch_variants
-            data = fetch_variants(locg_issue_id)
+        data = _locg_variants_anon(locg_issue_id)
         return {"covers": data["covers"], "locg_issue_id": locg_issue_id,
                 "selected_ids": sel_ids, "primary_id": primary}
     except Exception as e:

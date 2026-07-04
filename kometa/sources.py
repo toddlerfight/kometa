@@ -130,28 +130,6 @@ def usenet_indexers() -> list[dict]:
         return json.loads(raw)
     except Exception:
         return []
-
-
-def locg():
-    cfg = db.get_config(DB_PATH)
-    user = cfg.get("locg_user", "")
-    pw   = cfg.get("locg_pass", "")
-    if not user or not pw:
-        return None
-
-    def _build():
-        try:
-            from kometa.locg_client import LOCGClient
-            return LOCGClient(user, pw, session=cfg.get("locg_session") or None)
-        except Exception as e:
-            logger.warning(f"LoCG init failed: {e}")
-            return None
-
-    # Keyed on creds only — the client re-logs-in internally when its session
-    # expires, so a cookie change must NOT invalidate the cache (that would
-    # rebuild + re-login in a loop). Instead, persist any refreshed cookie on
-    # every access so a restart resumes the live session instead of re-logging.
-    client = _cached("locg", f"{user}|{pw}", _build)
-    if client is not None and client.session_cookie and client.session_cookie != cfg.get("locg_session"):
-        db.set_config({"locg_session": client.session_cookie}, DB_PATH)
-    return client
+# NB: no locg() accessor — LOCG is keyless. The login was fully redundant (the
+# search endpoint ignores auth), so callers use kometa.locg_client's anonymous
+# functions directly (search_series_anon, get_issues_anon, fetch_variants, …).

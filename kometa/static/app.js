@@ -2337,11 +2337,6 @@ async function renderSettings() {
         </div>
       </div>
       <div>
-        <div class="settings-card">
-          ${_settingsHeader('League of Comic Geeks', 'optional', 'locg', true, cfg.locg_configured)}
-          ${_settingsField('f-locg-user', 'Username', cfg.locg_user)}
-          ${_settingsField('f-locg-pass', 'Password', '', { set: cfg.locg_configured, ph: 'Enter password' })}
-        </div>
         <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
           ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -2391,8 +2386,6 @@ const _SETTINGS_FIELDS = {
   'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
   'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
   'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
-  'f-locg-user':   { card: 'locg',      key: 'locg_user',        test: 'locg' },
-  'f-locg-pass':   { card: 'locg',      key: 'locg_pass',        test: 'locg', secret: true },
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
@@ -2403,7 +2396,7 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', locg: 'locg', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr' };
+const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};
