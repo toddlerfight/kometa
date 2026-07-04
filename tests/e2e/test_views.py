@@ -43,6 +43,5 @@ def test_source_toggles_render_and_flip(app):
         lambda r: '/api/config' in r.url and r.method == 'PATCH', timeout=10000
     ):
         usenet.uncheck()
-    # section dims + state word flips
+    # section collapses (fold + fade)
     expect(app.locator('#sec-usenet.section-off')).to_have_count(1)
-    expect(app.locator('#sec-usenet .settings-section-state')).to_have_text('excluded from search')

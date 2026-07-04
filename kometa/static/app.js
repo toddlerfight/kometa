@@ -2325,7 +2325,7 @@ async function renderSettings() {
           <div class="settings-help" id="root-status"></div>
         </div>
         <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga" style="margin-top:36px">
-          ${_settingsSectionHead('Komga', 't-komga', cfg.komga_enabled)}
+          ${_settingsSectionHead('Komga Library', 't-komga', cfg.komga_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
               ${_settingsHeader('Komga', 'reader + cover source', 'komga', true, komgaCfg)}
@@ -2354,7 +2354,7 @@ async function renderSettings() {
           </div></div>
         </div>
         <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent">
-          ${_settingsSectionHead('Torrents', 't-torrent', cfg.torrent_enabled)}
+          ${_settingsSectionHead('Torrent', 't-torrent', cfg.torrent_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
               ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
@@ -2432,27 +2432,21 @@ function _settingsToggle(id, on, label) {
   </label>`;
 }
 
-// Section heading for a search source (Usenet / Torrents): title + a toggle
-// that enables/disables the whole pathway as a SEARCH option. The state word
-// spells out what 'off' means so it doesn't read as "broken".
+// Section heading for a toggleable integration (Komga / Usenet / Torrent):
+// just the title + the enable toggle. Off folds the section away.
 function _settingsSectionHead(title, toggleId, on) {
-  const t = _SOURCE_TOGGLES[toggleId] || { on: 'on', off: 'off' };
   return `<div class="settings-section-head">
-    <span class="settings-section-title">${esc(title)}
-      <span class="settings-section-state">${on ? t.on : t.off}</span></span>
+    <span class="settings-section-title">${esc(title)}</span>
     ${_settingsToggle(toggleId, on, `${title} ${on ? 'enabled' : 'disabled'}`)}
   </div>`;
 }
 
-// Toggle → persist the flag + dim/undim the section. Acquisition reads the flag
-// at search time (backend gates the search cascade, never the pollers).
-// on/off = the state word shown next to the title. Search sources say
-// "searched / excluded from search"; Komga is a library integration, not a
-// search source, so it says "enabled / off — folders + LOCG".
+// Toggle → persist the flag + fold/unfold the section. Backend reads the flag
+// (gates the search cascade for usenet/torrent, sources.komga() for komga).
 const _SOURCE_TOGGLES = {
-  't-komga':   { key: 'komga_enabled',   section: 'sec-komga',   label: 'Komga',    on: 'enabled',  off: 'off — folders + LOCG' },
-  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet',   on: 'searched', off: 'excluded from search' },
-  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents', on: 'searched', off: 'excluded from search' },
+  't-komga':   { key: 'komga_enabled',   section: 'sec-komga',   label: 'Komga' },
+  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet' },
+  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents' },
 };
 // Fade + fold a section's body, mirroring _animateRowOut's convention: pin
 // max-height to the measured height, reflow, then transition to/from 0 so it
@@ -2490,20 +2484,16 @@ async function _toggleSource(el) {
   if (!t) return;
   const on = el.checked;
   const sec = document.getElementById(t.section);
-  const state = sec?.querySelector('.settings-section-state');
-  const paint = (open) => { if (state) state.textContent = open ? t.on : t.off; };
-  // Optimistic: fold + relabel THE MOMENT you tap — the save rides behind it,
-  // like every other field's autosave. Waiting on the network before animating
-  // is what made the fold look broken (it lagged the toggle, then snapped).
+  // Optimistic: fold THE MOMENT you tap — the save rides behind it, like every
+  // other field's autosave. Waiting on the network before animating is what
+  // made the fold look broken (it lagged the toggle, then snapped).
   _collapseSection(sec, !on, true);
-  paint(on);
   try {
     await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
     showToast(`${t.label} ${on ? 'enabled' : 'disabled'}`);
   } catch (e) {
-    el.checked = !on;                  // revert toggle, fold, and label
+    el.checked = !on;                  // revert toggle + fold
     _collapseSection(sec, on, true);
-    paint(!on);
     showToast(`${t.label} toggle failed`, 'error');
   }
 }

@@ -1190,7 +1190,6 @@ select.settings-input {
   text-transform: uppercase; letter-spacing: 0.14em; color: var(--tp);
   display: flex; align-items: baseline; gap: 8px;
 }
-.settings-section-state { font-size: 9px; font-weight: 400; letter-spacing: 0.08em; color: var(--tq); }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
 
 /* Collapse the section body when toggled off — same fade-then-fold convention
