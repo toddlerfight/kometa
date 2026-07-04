@@ -2312,23 +2312,14 @@ async function renderSettings() {
       <div>
         <div class="settings-card">
           ${_settingsHeader('Comics Library', 'required', 'library')}
-          <div style="display:flex;gap:20px;align-items:flex-start">
-            <div class="settings-field" style="flex:1;margin:0">
-              <label class="settings-field-label" for="f-comics-root">Library path</label>
-              <div style="display:flex;gap:6px;align-items:center">
-                <input class="settings-input" id="f-comics-root" value="${esc(cfg.comics_root || '')}"
-                  data-last="${esc(cfg.comics_root || '')}" placeholder="/comics"
-                  autocomplete="off" spellcheck="false" style="flex:1;margin:0"
-                  onchange="_settingsChanged(this)">
-                <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
-              </div>
-            </div>
-            <div class="settings-field" style="flex:0 0 150px;margin:0">
-              <label class="settings-field-label" for="f-sync-hours">Sync hours (24h)</label>
-              <input class="settings-input" id="f-sync-hours" value="${esc(cfg.sync_hours || '')}"
-                data-last="${esc(cfg.sync_hours || '')}" placeholder="5,12,17"
-                autocomplete="off" spellcheck="false" style="margin:0"
+          <div class="settings-field">
+            <label class="settings-field-label" for="f-comics-root">Library path</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="settings-input" id="f-comics-root" value="${esc(cfg.comics_root || '')}"
+                data-last="${esc(cfg.comics_root || '')}" placeholder="/comics"
+                autocomplete="off" spellcheck="false" style="flex:1;margin:0"
                 onchange="_settingsChanged(this)">
+              <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
             </div>
           </div>
           <div class="settings-help" id="root-status"></div>
@@ -2347,7 +2338,11 @@ async function renderSettings() {
         </div>
       </div>
       <div>
-        <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
+        <div class="settings-card">
+          ${_settingsHeader('Sync Schedule', '', 'schedule')}
+          ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
+        </div>
+        <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet" style="margin-top:36px">
           ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
@@ -2397,7 +2392,7 @@ const _SETTINGS_FIELDS = {
   'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
   'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
   'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
-  'f-sync-hours':  { card: 'library',   key: 'sync_hours' },   // lives in the Comics Library card now
+  'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
   'f-qbit-url':        { card: 'qbit',     key: 'qbit_url',         test: 'qbit' },
