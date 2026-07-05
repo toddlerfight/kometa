@@ -650,15 +650,17 @@ select.settings-input {
 }
 .folder-field { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detail-folder-row .folder-field { flex: 1; }
+/* Same box chrome as .settings-input / .search-input / .browse-search
+   (su2 · bd · radius 2 · 8/12 padding · 12px text) so every field is one height. */
 .ff-box {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
-  background: var(--su2); border: 1px solid var(--bd); border-radius: 3px;
-  padding: 5px 10px; transition: border-color .15s;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  background: var(--su2); border: 1px solid var(--bd); border-radius: 2px;
+  padding: 8px 12px; transition: border-color .15s;
 }
 .ff-box:hover { border-color: var(--bd-l); }        /* editable field — subtle */
 .ff-box:focus-within { border-color: var(--pri); }
 .ff-ico {
-  flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-left: -3px;
+  flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-left: -1px;
   background: none; border: none; border-radius: 3px; color: var(--tq); cursor: pointer;
   transition: color .15s, background .15s;
 }
@@ -667,7 +669,7 @@ select.settings-input {
 .folder-field.empty .ff-ico { color: var(--pri); }  /* needs a folder — the lone lime cue */
 .ff-input {
   flex: 1; min-width: 0; background: none; border: none; color: var(--tp);
-  font-family: var(--font); font-size: 11px; padding: 2px 0;
+  font-family: var(--font); font-size: 12px; padding: 0;
 }
 .ff-input:focus { outline: none; }
 .ff-input::placeholder { color: var(--tq); }
