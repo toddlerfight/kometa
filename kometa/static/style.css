@@ -1203,8 +1203,14 @@ select.settings-input {
   border-left: 1px solid var(--bd);
 }
 .settings-subsections > .settings-section + .settings-section { margin-top: 32px; }
-/* label + test-controls row on a field (the Server URL of each integration) */
-.settings-field-hdr { display: flex; align-items: center; justify-content: space-between; }
+/* label + test-controls row on a field (the Server URL of each integration).
+   The 8px gap-to-input moves onto the row itself; the label drops its own
+   margin so it centres against the test cluster instead of riding high. */
+.settings-field-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.settings-field-hdr .settings-field-label { margin-bottom: 0; }
 
 /* Collapse the section body when toggled off — same fade-then-fold convention
    as .act-removing (opacity leads on --t-mid/--ease-in, height follows on
