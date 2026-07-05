@@ -104,8 +104,10 @@ def prowlarr():
 
 def comicvine():
     """ComicVine search client — the gap-filler for LOCG. Returns None until
-    cv_api_key is configured."""
+    cv_api_key is configured, or when the metadata toggle is off."""
     cfg = db.get_config(DB_PATH)
+    if cfg.get("comicvine_enabled", "1") == "0":
+        return None
     key = cfg.get("cv_api_key", "")
     if not key:
         return None

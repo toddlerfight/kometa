@@ -206,6 +206,23 @@ def test_prowlarr(req: TestProwlarrRequest):
         return {"ok": False, "error": str(e)}
 
 
+class TestComicVineRequest(BaseModel):
+    apikey: str | None = None
+
+
+@app.post("/api/test/comicvine")
+def test_comicvine(req: TestComicVineRequest):
+    apikey = req.apikey or _stored("cv_api_key")
+    if not apikey:
+        return {"ok": False, "error": "Not configured"}
+    try:
+        from kometa.comicvine_client import ComicVineClient
+        ok, detail = ComicVineClient(apikey).test()
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # Integration → config keys it owns. Drives 'Disconnect': blank password fields
 # mean 'keep current', so without this there is NO path to remove a credential.
 _INTEGRATION_KEYS = {
@@ -213,6 +230,7 @@ _INTEGRATION_KEYS = {
     "sabnzbd":   ["sab_url", "sab_apikey"],
     "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
+    "comicvine": ["cv_api_key"],
 }
 
 
@@ -250,12 +268,15 @@ def get_config():
         "prowlarr_url":        cfg.get("prowlarr_url", ""),
         "prowlarr_apikey":     "",
         "prowlarr_configured": bool(cfg.get("prowlarr_url", "") and cfg.get("prowlarr_apikey", "")),
+        "cv_api_key":          "",
+        "comicvine_configured": bool(cfg.get("cv_api_key", "")),
         # Integration/search toggles — absent = enabled (existing installs unchanged).
         "komga_enabled":       cfg.get("komga_enabled", "1") != "0",
         # Prowlarr is the master search switch; usenet/torrent are its children.
         "prowlarr_enabled":    cfg.get("prowlarr_enabled", "1") != "0",
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
         "torrent_enabled":     cfg.get("torrent_enabled", "1") != "0",
+        "comicvine_enabled":   cfg.get("comicvine_enabled", "1") != "0",
     }
 
 
@@ -273,10 +294,12 @@ class ConfigRequest(BaseModel):
     qbit_pass:          str | None = None
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
+    cv_api_key:         str | None = None
     komga_enabled:      str | None = None   # "1"/"0" — integration toggle
     prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
+    comicvine_enabled:  str | None = None   # "1"/"0" — metadata source toggle
 
 
 @app.patch("/api/config")

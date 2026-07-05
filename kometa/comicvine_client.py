@@ -50,6 +50,17 @@ class ComicVineClient:
         r.raise_for_status()
         return r.json()
 
+    def test(self) -> tuple[bool, str]:
+        """Verify the API key. CV returns HTTP 200 even on a bad key, so the
+        body's status_code is the truth: 1 = OK, 100 = invalid key."""
+        try:
+            d = self._get("search/", query="batman", resources="volume", limit=1)
+        except Exception as e:
+            return False, str(e)
+        if d.get("status_code") == 1:
+            return True, "verified"
+        return False, d.get("error") or f"ComicVine status {d.get('status_code')}"
+
 
     def search_volumes(self, query: str, limit: int = 12) -> list[dict]:
         """Search volumes (series + collected editions). Returns normalized dicts:

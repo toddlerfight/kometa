@@ -2342,6 +2342,14 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
+        <div class="settings-section ${cfg.comicvine_enabled ? '' : 'section-off'}" id="sec-comicvine" style="margin-top:32px">
+          ${_settingsSectionHead('ComicVine', 'metadata', 't-comicvine', cfg.comicvine_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsField('f-cv-apikey', 'API Key', '', { set: cfg.comicvine_configured, ph: 'Enter API key', test: { cardId: 'comicvine', configured: cfg.comicvine_configured } })}
+            </div>
+          </div></div>
+        </div>
       </div>
     </div>
   `);
@@ -2349,8 +2357,9 @@ async function renderSettings() {
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings). Prowlarr is the master — off folds the
   // whole usenet+torrent branch it wraps.
-  if (!cfg.komga_enabled)    _collapseSection(document.getElementById('sec-komga'), true, false);
-  if (!cfg.prowlarr_enabled) _collapseSection(document.getElementById('sec-prowlarr'), true, false);
+  if (!cfg.komga_enabled)     _collapseSection(document.getElementById('sec-komga'), true, false);
+  if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
+  if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
   if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
 }
@@ -2373,9 +2382,10 @@ const _SETTINGS_FIELDS = {
   'f-qbit-pass':       { card: 'qbit',     key: 'qbit_pass',        test: 'qbit', secret: true },
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
+  'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr' };
+const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};
@@ -2437,10 +2447,11 @@ function _settingsSectionHead(title, tag, toggleId, on) {
 // Toggle → persist the flag + fold/unfold the section. Backend reads the flag
 // (gates the search cascade for usenet/torrent, sources.komga() for komga).
 const _SOURCE_TOGGLES = {
-  't-komga':    { key: 'komga_enabled',    section: 'sec-komga',    label: 'Komga' },
-  't-prowlarr': { key: 'prowlarr_enabled', section: 'sec-prowlarr', label: 'Prowlarr' },
-  't-usenet':   { key: 'usenet_enabled',   section: 'sec-usenet',   label: 'Usenet' },
-  't-torrent':  { key: 'torrent_enabled',  section: 'sec-torrent',  label: 'Torrents' },
+  't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
+  't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
+  't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
+  't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
+  't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },
 };
 // Fade + fold a section's body, mirroring _animateRowOut's convention: pin
 // max-height to the measured height, reflow, then transition to/from 0 so it
