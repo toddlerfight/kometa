@@ -74,18 +74,48 @@ def year_mismatch(title: str, series_year) -> bool:
     return bool(years) and min(years) < int(series_year) - 1
 
 
+# TV/movie/music/ebook release markers. A comic NZB never carries these, so any
+# hit disqualifies — this is what finally shuts the 'Ripcord' trap: the Keith
+# Urban ALBUM (flac/kbps), the Shazam & Andy Richter TV EPISODES (SxxExx/720p),
+# and the Scott Pratt EPUB all die before they can score.
+_MEDIA_NOISE_RE = re.compile(
+    r'\b(?:'
+    r's\d{1,2}e\d{1,2}'                                   # TV episode  S02E05
+    r'|\d{3,4}p'                                          # video res   720p/1080p/2160p
+    r'|blu-?ray|web-?dl|webrip|hdtv|dvd-?rip|bd-?rip|hd-?rip'
+    r'|x26[45]|hevc|xvid|remux'                           # video codecs
+    r'|flac|mp3|aac|ac3|dts|ddp?5|\d{3}kbps'             # audio codecs
+    r'|epub|mobi|azw3?'                                   # ebooks
+    r')\b', re.I)
+
+
+def _looks_non_comic(title: str) -> bool:
+    return bool(_MEDIA_NOISE_RE.search(title or ""))
+
+
+def _issue_num_present(t: str, s: str, num_int) -> bool:
+    """True only when the issue number sits in a comic-issue position: right
+    after the series name (norm strips '#', so '#4' reads as 'series 4'), or as
+    a zero-padded 3-digit issue token ('004'/'000'). NOT a stray digit — the
+    '...MA.2.0...' → ' 0 ' match is exactly how a TV episode scored for #0."""
+    if float(num_int) == int(num_int):
+        n = int(num_int)
+        return bool(re.search(rf'{re.escape(s)}\s+0*{n}\b', t)
+                    or re.search(rf'\b{n:03d}\b', t))
+    return bool(re.search(rf'{re.escape(s)}\s+{re.escape(str(num_int))}\b', t))
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
-    """Score an NZB title for relevance. Higher is better."""
+    """Score an NZB title for relevance. Higher is better; 0 disqualifies."""
+    if _looks_non_comic(nzb_title):
+        return 0
     t = _norm(nzb_title)
     s = _norm(series)
     score = 0
     if s in t:
         score += 10
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
-    # Try #48, #048, " 48 ", " 048 "
-    candidates = {f'#{num_int}', f'#{int(num_int):03d}', f' {num_int} ', f' {int(num_int):03d} '}
-    padded = f' {t} '
-    if any(c.lower() in padded for c in candidates):
+    if _issue_num_present(t, s, num_int):
         score += 5
     return score
 
@@ -183,6 +213,8 @@ PACK_THRESHOLD = 5
 
 
 def _pack_score(nzb_title: str, series: str, size: int) -> int:
+    if _looks_non_comic(nzb_title):
+        return 0
     t = _norm(nzb_title)
     s = _norm(series)
     if s not in t:

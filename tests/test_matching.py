@@ -61,3 +61,31 @@ class TestSearchTorrentEvidence:
     def test_name_plus_number_required_not_just_high_base(self):
         # A name-only hit (base 10) scores 0 under the evidence gate.
         assert _nzb_score("Keith Urban - Ripcord 2016", "Ripcord", 0.0) == 10  # documents the hole the gate closes
+
+
+class TestMediaNoiseDisqualified:
+    """The live 'Ripcord #0' false positives — the real ones the indexers
+    returned. Each scored 15 because a stray '0' (from 'AAC2.0' / 'DTS.MA.2.0')
+    matched issue #0 AND the name matched. TV/music/ebook markers now disqualify
+    them outright, and the number must sit by the series name, not float free."""
+
+    def test_tv_episodes_rejected(self):
+        assert _nzb_score("Shazam.S03E03.Ripcord.1080p.BluRay.REMUX.AVC.DTS-HD.MA.2.0", "Ripcord", 0.0) == 0
+        assert _nzb_score("Andy.Richter.Controls.the.Universe.S02E05.Relationship.Ripcord.HDTV.720p.AAC2.0.x264", "Ripcord", 0.0) == 0
+
+    def test_music_and_ebook_rejected(self):
+        assert _nzb_score("Keith Urban Ripcord CD FLAC 2016 FORSAKEN", "Ripcord", 0.0) == 0
+        assert _nzb_score("Keith Urban-Ripcord-24BIT-WEB-FLAC-2016-TiMES", "Ripcord", 4.0) == 0
+        assert _nzb_score("Ripcord by Scott Pratt EPUB", "Ripcord", 0.0) == 0
+
+    def test_real_issue_zero_still_scores_full(self):
+        assert _nzb_score("Ripcord 000 [2026] [Digital] [DR & Quinch-Empire]", "Ripcord", 0.0) == 15
+
+    def test_stray_zero_no_longer_buys_the_number_point(self):
+        # bare '2 0' with no media markers: name matches (+10) but the number
+        # must be next to the series — a floating '0' no longer counts.
+        assert _nzb_score("Some Ripcord audio 2 0 bonus", "Ripcord", 0.0) == 10
+
+    def test_wrong_issue_number_not_matched(self):
+        assert _nzb_score("Ripcord 001 (2026) (Digital)", "Ripcord", 0.0) == 10   # 001 is #1, not #0
+        assert _nzb_score("Ripcord 001 (2026) (Digital)", "Ripcord", 1.0) == 15
