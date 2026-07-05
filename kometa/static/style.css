@@ -1,4 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Form controls don't inherit the family by default — opt them in once, so
+   nothing else in the sheet needs to restate font-family (body sets --font). */
+input, button, select, textarea { font-family: inherit; }
 
 /* Touch: kill the 300ms double-tap-zoom delay on every tap target and make the
    grey iOS tap-flash intentional (transparent — our own :active/hover is the
@@ -79,7 +82,7 @@ img.loaded { animation: cover-in var(--t-slow) var(--ease-out) backwards; }
 body {
   background: var(--bg);
   color: var(--tp);
-  font-family: var(--font);
+  font-family: var(--font);   /* root of the family cascade — everything inherits from here */
   font-size: 12px;
   line-height: 1.4;
   height: 100vh;
@@ -120,7 +123,6 @@ body {
 }
 
 #topbar-title {
-  font-family: var(--font);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -179,7 +181,6 @@ body {
   display: flex;
   align-items: center;
   padding: 0 16px;
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -214,7 +215,6 @@ body {
   gap: 6px;
   padding: 0 14px;
   height: 26px;
-  font-family: var(--font);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -267,7 +267,6 @@ textarea:focus-visible {
 
 .state-msg {
   color: var(--tq);
-  font-family: var(--font);
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -311,7 +310,6 @@ textarea:focus-visible {
 /* ---- Page section header ---- */
 
 .page-title {
-  font-family: var(--font);
   font-weight: 700;
   font-size: 18px;
   color: var(--tp);
@@ -338,7 +336,6 @@ select.settings-input {
 }
 
 .empty-state-title {
-  font-family: var(--font);
   font-weight: 700;
   font-size: 18px;
   color: var(--tp);
@@ -355,17 +352,24 @@ select.settings-input {
   border-bottom: 1px solid var(--bd);
 }
 
-.browse-search {
+/* ---- One input box, one definition ----
+   Every text field — and the folder-field container — shares this chrome so it
+   can't drift apart again. Per-field width/margin/flex live in the small rules
+   that follow (and must, since they override the shared values). */
+.settings-input, .search-input, .browse-search, .ff-box {
   background: var(--su2);
   border: 1px solid var(--bd);
   border-radius: 2px;
-  color: var(--tp);
-  font-family: var(--font);
-  font-size: 12px;
   padding: 8px 12px;
-  outline: none;
-  width: 240px;
 }
+.settings-input, .search-input, .browse-search {
+  width: 100%;
+  color: var(--tp);
+  font-size: 12px;
+  outline: none;
+}
+.search-input  { margin-bottom: 8px; }
+.browse-search { width: 240px; }
 
 .browse-search:focus { border-color: var(--pri); }
 
@@ -379,7 +383,6 @@ select.settings-input {
   border: 1px solid var(--bd);
   border-radius: 2px;
   color: var(--tq);
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -427,7 +430,6 @@ select.settings-input {
 }
 
 .sort-icon-alpha {
-  font-family: var(--font);
   font-weight: 700;
   font-size: 12px;
   line-height: 1;
@@ -441,7 +443,6 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tq);
   transition: color var(--t-fast), border-color var(--t-fast);
@@ -501,7 +502,6 @@ select.settings-input {
 }
 
 .series-card-title {
-  font-family: var(--font);
   font-weight: 700;
   font-size: 12px;
   color: var(--tp);
@@ -515,14 +515,12 @@ select.settings-input {
 }
 
 .series-card-count {
-  font-family: var(--font);
   font-size: 10px;
   flex-shrink: 0;
   text-align: right;
 }
 
 .series-card-publisher {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   text-transform: uppercase;
@@ -539,7 +537,6 @@ select.settings-input {
   transform: translateX(-50%);
   background: var(--pink);
   color: var(--tp);
-  font-family: var(--font);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -600,7 +597,6 @@ select.settings-input {
 .detail-hero-text { flex: 1; min-width: 0; }
 
 .detail-hero-publisher {
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
@@ -609,7 +605,6 @@ select.settings-input {
 }
 
 .detail-hero-title {
-  font-family: var(--font);
   font-weight: 700;
   font-size: 36px;
   line-height: 1.1;
@@ -645,17 +640,17 @@ select.settings-input {
    lime stays reserved for the icon-glow and focus. */
 /* storyline/arc detail rows reuse this for their read-only note (no folder to pick) */
 .detail-folder-path {
-  font-family: var(--font); font-size: 12px; color: var(--tm);
+  font-size: 12px; color: var(--tm);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .folder-field { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .detail-folder-row .folder-field { flex: 1; }
 /* Same box chrome as .settings-input / .search-input / .browse-search
    (su2 · bd · radius 2 · 8/12 padding · 12px text) so every field is one height. */
+/* chrome (bg/border/radius/padding) comes from the shared "One input box" rule */
 .ff-box {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
-  background: var(--su2); border: 1px solid var(--bd); border-radius: 2px;
-  padding: 8px 12px; transition: border-color var(--t-fast);
+  transition: border-color var(--t-fast);
 }
 .ff-box:hover { border-color: var(--bd-l); }        /* editable field — subtle */
 .ff-box:focus-within { border-color: var(--pri); }
@@ -669,7 +664,7 @@ select.settings-input {
 .folder-field.empty .ff-ico { color: var(--pri); }  /* needs a folder — the lone lime cue */
 .ff-input {
   flex: 1; min-width: 0; background: none; border: none; color: var(--tp);
-  font-family: var(--font); font-size: 12px; padding: 0;
+  font-size: 12px; padding: 0;
 }
 .ff-input:focus { outline: none; }
 .ff-input::placeholder { color: var(--tq); }
@@ -699,7 +694,6 @@ select.settings-input {
 /* ---- Folder browser modal ---- */
 
 .fb-path {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tq);
   word-break: break-all;
@@ -828,7 +822,6 @@ select.settings-input {
 }
 
 .sort-toggle {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tq);
   padding: 4px 6px;
@@ -837,7 +830,6 @@ select.settings-input {
 .sort-toggle:hover { opacity: 1; }
 
 .issue-tab {
-  font-family: var(--font);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -915,7 +907,6 @@ select.settings-input {
 .issue-tile-img.today::after    { border: 2px solid var(--blu); }
 
 .issue-tile-num {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   text-align: center;
@@ -971,7 +962,6 @@ select.settings-input {
 .pull-group { margin-bottom: 0; }
 
 .pull-group-label {
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1001,7 +991,6 @@ select.settings-input {
   background: var(--su2);
   border: 1px solid var(--bd);
   color: var(--tp);
-  font-family: var(--font);
   font-size: 12px;
   cursor: pointer;
   line-height: 1;
@@ -1047,7 +1036,6 @@ select.settings-input {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  font-family: var(--font);
   z-index: 300;
   transition: transform var(--t-fast) ease, color var(--t-fast), border-color var(--t-fast);
   pointer-events: none;
@@ -1151,7 +1139,6 @@ select.settings-input {
 }
 
 .pull-series {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tp);
   white-space: nowrap;
@@ -1160,13 +1147,11 @@ select.settings-input {
 }
 
 .pull-issue {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tm);
 }
 
 .pull-status {
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1206,7 +1191,7 @@ select.settings-input {
   margin: 36px 0 14px;
 }
 .settings-section-title {
-  font-family: var(--font); font-size: 12px; font-weight: 700;
+  font-size: 12px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.14em; color: var(--tp);
   display: flex; align-items: baseline; gap: 8px;
 }
@@ -1226,7 +1211,6 @@ select.settings-input {
 }
 
 .settings-card-header {
-  font-family: var(--font);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1268,7 +1252,7 @@ select.settings-input {
 
 .btn-link {
   background: none; border: none; padding: 0;
-  color: var(--tq); font-family: var(--font);
+  color: var(--tq);
   font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
   cursor: pointer;
 }
@@ -1287,7 +1271,6 @@ select.settings-input {
    face — same family as everything else, it just starts writing in cursive.
    text-transform reset or the script goes ALL-CAPS and loses the charm. */
 .settings-card-header .settings-opt {
-  font-family: var(--font);
   font-style: italic;
   font-size: 12px;
   font-weight: 400;
@@ -1302,7 +1285,6 @@ select.settings-input {
   /* <label> is inline by default — without this, margin-bottom is a no-op
      and the label welds itself to the input no matter what you set */
   display: block;
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   text-transform: uppercase;
@@ -1310,17 +1292,7 @@ select.settings-input {
   margin-bottom: 14px;
 }
 
-.settings-input {
-  width: 100%;
-  background: var(--su2);
-  border: 1px solid var(--bd);
-  border-radius: 2px;
-  color: var(--tp);
-  font-family: var(--font);
-  font-size: 12px;
-  padding: 8px 12px;
-  outline: none;
-}
+/* .settings-input chrome lives in the shared "One input box" rule above */
 
 .settings-input:focus { border-color: var(--pri); }
 
@@ -1391,7 +1363,6 @@ select.settings-input {
 }
 
 .modal-title {
-  font-family: var(--font);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -1413,7 +1384,6 @@ select.settings-input {
 /* ---- Confirm modal ---- */
 
 .confirm-body {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tm);
   margin: 8px 0 24px;
@@ -1421,7 +1391,6 @@ select.settings-input {
 }
 
 .confirm-note {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   margin-top: 6px;
@@ -1432,7 +1401,6 @@ select.settings-input {
 /* ---- Search ---- */
 
 .step-label {
-  font-family: var(--font);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1440,18 +1408,7 @@ select.settings-input {
   margin-bottom: 8px;
 }
 
-.search-input {
-  width: 100%;
-  background: var(--su2);
-  border: 1px solid var(--bd);
-  border-radius: 2px;
-  color: var(--tp);
-  font-family: var(--font);
-  font-size: 12px;
-  padding: 8px 12px;
-  outline: none;
-  margin-bottom: 8px;
-}
+/* .search-input chrome + margin live in the shared "One input box" rule above */
 
 .search-input:focus { border-color: var(--pri); }
 
@@ -1494,7 +1451,6 @@ select.settings-input {
 }
 
 .act-section-hdr {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tq);
   text-transform: uppercase;
@@ -1563,7 +1519,6 @@ select.settings-input {
 .act-card.compact .act-card-title { font-size: 12px; }
 
 .act-card-meta {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   margin-top: 3px;
@@ -1593,7 +1548,6 @@ select.settings-input {
 }
 
 .act-progress-text {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   margin-top: 4px;
@@ -1659,14 +1613,12 @@ select.settings-input {
 }
 
 .act-row-issue {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--tq);
   margin-top: 2px;
 }
 
 .act-row-reason {
-  font-family: var(--font);
   font-size: 10px;
   color: var(--amb);
   margin-top: 3px;
@@ -1697,13 +1649,11 @@ select.settings-input {
 }
 
 .act-empty-msg {
-  font-family: var(--font);
   font-size: 12px;
   color: var(--tq);
 }
 
 .chip {
-  font-family: var(--font);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -1727,7 +1677,6 @@ select.settings-input {
 .locg-badge {
   display: inline-block;
   font-size: 10px;
-  font-family: var(--font);
   color: var(--amb);
   border: 1px solid var(--amb);
   border-radius: 2px;
@@ -1752,7 +1701,7 @@ select.settings-input {
 .trade-tile .trade-fmt-hc  { background: var(--blu); color: var(--ink); }
 .trade-chip-tpb { color: var(--pri); border: 1px solid var(--pri); }
 .trade-chip-hc  { color: var(--blu); border: 1px solid var(--blu); }
-.trade-owned-note { font-size: 12px; color: var(--tq); font-family: var(--font); align-self: center; }
+.trade-owned-note { font-size: 12px; color: var(--tq); align-self: center; }
 /* Owned trade (file on disk): subdue the tile, stamp a corner check. */
 .trade-tile.owned .issue-tile-img { opacity: 0.55; }
 .trade-owned-check {
@@ -1797,7 +1746,6 @@ select.settings-input {
 }
 
 .issue-modal-num {
-  font-family: var(--font);
   font-size: 18px;
   color: var(--tp);
   line-height: 1;
@@ -2015,11 +1963,11 @@ select.settings-input {
   box-shadow: 0 12px 48px var(--shadow);
   display: block;
 }
-.vlb-name { font-family: var(--font); font-weight: 700; font-size: 12px; color: var(--tp); text-align: center; }
-.vlb-count { font-family: var(--font); font-size: 12px; color: var(--tq); margin-top: 3px; letter-spacing: .06em; text-align: center; }
+.vlb-name { font-weight: 700; font-size: 12px; color: var(--tp); text-align: center; }
+.vlb-count { font-size: 12px; color: var(--tq); margin-top: 3px; letter-spacing: .06em; text-align: center; }
 .vlb-actions { display: flex; gap: 10px; margin-top: 4px; }
 .vlb-btn {
-  font-family: var(--font); font-size: 12px;
+  font-size: 12px;
   border-radius: 8px; padding: 8px 16px; cursor: pointer;
   border: 1px solid var(--bd); background: transparent; color: var(--tm);
   transition: all var(--t-fast);
