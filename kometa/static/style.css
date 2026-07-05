@@ -1186,7 +1186,11 @@ select.settings-input {
   display: flex; align-items: center; justify-content: space-between;
   height: 28px; padding: 0 0 10px; margin: 0 0 20px;
   border-bottom: 1px solid var(--bd); gap: var(--sp-md);
+  transition: margin-bottom var(--t-slow) var(--ease-in-out);
 }
+/* Off = 0-height body, so the head's gap-to-body would dangle below the
+   underline (and overshoot the nest rail). Fold it away with the body. */
+.section-off .settings-section-head { margin-bottom: 0; }
 .settings-section-title {
   font-size: var(--fs-body); font-weight: 700;
   text-transform: uppercase; letter-spacing: var(--track-wide); color: var(--tp);
