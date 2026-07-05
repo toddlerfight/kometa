@@ -1296,6 +1296,9 @@ select.settings-input {
 }
 
 .settings-field { margin-bottom: 16px; }
+/* No trailing gap on a card's last field — otherwise the Prowlarr nest's rail
+   (and any card bottom) overshoots the final input by 16px. */
+.settings-card .settings-field:last-child { margin-bottom: 0; }
 
 .settings-field-label {
   /* <label> is inline by default — without this, margin-bottom is a no-op
