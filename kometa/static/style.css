@@ -247,7 +247,7 @@ body {
 
 .btn-primary { background: var(--pri); color: var(--ink); }
 .btn-primary:hover { background: var(--pri-l); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }   /* every .btn variant */
 
 .btn-ghost {
   background: transparent;
@@ -255,7 +255,6 @@ body {
   border: 1px solid var(--bd);
 }
 .btn-ghost:hover { color: var(--tm); border-color: var(--tq); }
-.btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-danger {
   background: transparent;
@@ -275,11 +274,14 @@ textarea:focus-visible {
   outline: none;
 }
 
+/* The one focus ring — every keyboard-focusable surface points here. */
 .btn:focus-visible,
 .nav-item:focus-visible,
 .issue-tab:focus-visible,
 .pull-row:focus-visible,
-.series-card:focus-visible {
+.series-card:focus-visible,
+.ff-ico:focus-visible,
+.toggle-switch input:focus-visible ~ .toggle-track {
   outline: 2px solid var(--pri);
   outline-offset: 2px;
 }
@@ -677,7 +679,6 @@ select.settings-input {
   transition: color var(--t-fast), background var(--t-fast);
 }
 .ff-ico:hover { color: var(--pri); background: var(--su3); }
-.ff-ico:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; }
 .folder-field.empty .ff-ico { color: var(--pri); }  /* needs a folder — the lone lime cue */
 .ff-input {
   flex: 1; min-width: 0; background: none; border: none; color: var(--tp);
@@ -1193,7 +1194,6 @@ select.settings-input {
 .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--tq); transition: transform var(--t-fast) ease, background var(--t-fast) ease; }
 .toggle-switch input:checked ~ .toggle-track { background: var(--pri); }
 .toggle-switch input:checked ~ .toggle-track .toggle-thumb { transform: translateX(12px); background: var(--bg); }
-.toggle-switch input:focus-visible ~ .toggle-track { outline: 2px solid var(--pri); outline-offset: 2px; }
 
 /* A search-source section (Usenet / Torrents): heading row with the toggle,
    then the integration card(s). Disabled = dimmed + "excluded from search". */
