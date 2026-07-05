@@ -329,7 +329,7 @@ const BROWSE_FILTERS = [
 function _browseFilterTabs() {
   return `<div class="browse-filters">
     ${BROWSE_FILTERS.map(f => `
-      <button class="browse-filter-tab${browseState.filter === f.key ? ' active' : ''}"
+      <button class="browse-filter-tab u-label${browseState.filter === f.key ? ' active' : ''}"
         onclick="browseFilter('${f.key}')">${f.label}</button>
     `).join('')}
   </div>`;
@@ -467,7 +467,7 @@ function _renderBrowseResults() {
   }
 
   const cards = filtered.map((s, i) => {
-    const pub   = s.publisher ? `<div class="series-card-publisher">${esc(s.publisher.toUpperCase())}</div>` : '';
+    const pub   = s.publisher ? `<div class="series-card-publisher u-truncate">${esc(s.publisher.toUpperCase())}</div>` : '';
     const total = (s.owned ?? 0) + (s.missing ?? 0);
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
     const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
@@ -681,7 +681,7 @@ function renderArcDetail(s) {
     const stateCls = owned ? '' : covered ? ' covered' : ' missing';
     const num = `#${esc(String(i.number ?? '?'))}`;
     const cross = i.source_title && i.source_title !== primary;
-    const xt = cross ? `<span class="issue-tile-xt">${esc(_arcShortTitle(i.source_title, primary))}</span>` : '';
+    const xt = cross ? `<span class="issue-tile-xt u-truncate">${esc(_arcShortTitle(i.source_title, primary))}</span>` : '';
     const covBadge = covered ? '<div class="issue-tile-cov">◆</div>' : '';
     const cover = i.image_url
       ? `<img src="${esc(i.image_url)}" alt="${num}" loading="lazy" onerror="this.remove()">`
@@ -715,7 +715,7 @@ function renderArcDetail(s) {
       </div>
     </div>
     <div class="detail-folder-row">
-      <span class="detail-folder-path">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
+      <span class="detail-folder-path u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
       <div class="detail-folder-actions">
         <button class="btn btn-primary btn-sm" onclick="fulfillArc(${s.id}, this)">Get this storyline</button>
         <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
@@ -1214,7 +1214,7 @@ function _showComicsRootSetup(prefill) {
       It's the one thing it needs — everything else is optional.
     </div>
     <div class="settings-field">
-      <div class="settings-field-label">Comics library path</div>
+      <div class="settings-field-label u-label">Comics library path</div>
       ${folderField('setup', cur, 'fs', () => {}, { whisper: false, reopen: (picked) => _showComicsRootSetup(picked) })}
     </div>
     <div id="setup-root-err" style="font-size:11px;color:var(--amb);margin-top:6px;min-height:14px"></div>
@@ -1304,7 +1304,7 @@ function _renderWizardResults(results, q) {
             <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : esc(r.cover || r.image || '')}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.needs_resolve ? ' <span class="locg-badge">◆ ONE-SHOT</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.needs_resolve ? ' <span class="locg-badge">◆ ONE-SHOT</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
               <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ' · one-shot → its series' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
             </div>
           </div>`).join('')
@@ -1412,7 +1412,7 @@ function wizardPickSeries(idx) {
   const folderBlock = isArc ? `
     <div class="wizard-arc-note">◆ Story arc — Kometa tracks the reading order across every participating title. It owns no folder; the collected edition lands in its main series' Trades.</div>`
     : `
-    <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
+    <div class="step-label u-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
     ${folderField('wizard', '', 'library', () => {}, { whisper: false, reopen: (picked) => {
       wizardPickSeries(idx);   // browsing replaced the wizard modal — rebuild it, then drop the pick in
       setTimeout(() => { const i = document.getElementById('ff-wizard'); if (i) { i.value = picked; _ffDirty('wizard'); } }, 20);
@@ -1423,7 +1423,7 @@ function wizardPickSeries(idx) {
     <div class="wizard-series-preview">
       <img class="wizard-result-thumb" src="${esc(r.cover || r.image || '')}" alt="" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
-        <div class="wizard-result-title">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
+        <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
         <div class="wizard-result-meta">${isArc ? 'Story arc' : esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
       </div>
     </div>
@@ -1480,7 +1480,7 @@ function wizardPickStoryline(idx) {
     <div class="modal-title">Follow Storyline</div>
     <div class="wizard-series-preview">
       <div class="wizard-result-text">
-        <div class="wizard-result-title">${esc(r.series || '')} <span class="locg-badge">◆ STORYLINE</span></div>
+        <div class="wizard-result-title u-truncate">${esc(r.series || '')} <span class="locg-badge">◆ STORYLINE</span></div>
         <div class="wizard-result-meta">${esc(r.origin_publisher || '')}${r.origin_publisher ? ' · ' : ''}originates in ${run}</div>
       </div>
     </div>
@@ -1852,7 +1852,7 @@ async function _renderPullListContent() {
     .filter(([, entries]) => entries.length > 0)
     .map(([label, entries]) => `
       <div class="pull-group">
-        <div class="pull-group-label">${label.toUpperCase()}</div>
+        <div class="pull-group-label u-label">${label.toUpperCase()}</div>
         ${entries.map(e => {
           const sid = e.id;
           return `
@@ -1861,7 +1861,7 @@ async function _renderPullListContent() {
               onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})">
               <img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
                 loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null">
-              <div class="pull-series">${esc(e.title)}</div>
+              <div class="pull-series u-truncate">${esc(e.title)}</div>
               <div class="pull-issue">#${fmtNum(e.number)}</div>
               ${_pullStatus(e)}
               <span class="pull-act">${(!e.owned && e.store_date < _usToday())
@@ -2123,7 +2123,7 @@ function _buildActivityHtml(queue) {
         <div class="act-card${isDownloading ? '' : ' compact'}" data-qid="${q.id}"${errTip}>
           <div class="act-card-cover">${thumb}</div>
           <div class="act-card-body"${nav}>
-            <div class="act-card-title">${esc(q.title)}</div>
+            <div class="act-card-title u-truncate">${esc(q.title)}</div>
             <div class="act-card-meta">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
             ${progress}
           </div>
@@ -2149,7 +2149,7 @@ function _buildActivityHtml(queue) {
         <div class="act-row${isDone ? ' done' : ''}" data-qid="${q.id}"${errTip}>
           <div class="act-row-cover">${thumb}</div>
           <div class="act-row-meta"${nav}>
-            <div class="act-row-title">${esc(q.title)}</div>
+            <div class="act-row-title u-truncate">${esc(q.title)}</div>
             <div class="act-row-issue">${numStr}</div>
             ${reason ? `<div class="act-row-reason">${esc(reason)}</div>` : ''}
           </div>
@@ -2286,7 +2286,7 @@ async function renderSettings() {
         <div class="settings-card">
           ${_settingsHeader('Comics Library', 'required', 'library')}
           <div class="settings-field">
-            <label class="settings-field-label" for="ff-root">Library path</label>
+            <label class="settings-field-label u-label" for="ff-root">Library path</label>
             ${folderField('root', cfg.comics_root, 'fs', async (path) => {
               const c = await api.patch('/api/config', { comics_root: path });
               _appConfig = { ..._appConfig, comics_root: path, comics_root_ok: c.comics_root_ok };
@@ -2382,7 +2382,7 @@ function _settingsField(id, label, value, opts = {}) {
     : (opts.ph || '');
   return `
     <div class="settings-field">
-      <label class="settings-field-label" for="${id}">${label}</label>
+      <label class="settings-field-label u-label" for="${id}">${label}</label>
       <input class="settings-input" id="${id}"
         type="${secret ? 'password' : 'text'}"
         value="${esc(value || '')}" data-last="${esc(value || '')}"
@@ -2576,7 +2576,7 @@ function _renderIndexers(list) {
       <button class="btn btn-ghost btn-sm" onclick="removeIndexer(${i})">Remove</button>
     </div>`).join('') || '<div style="color:var(--tq);font-size:11px;padding:3px 0">No indexers yet.</div>';
   el.innerHTML = `
-    <div class="settings-field-label" style="margin-top:16px">Newznab Indexers</div>
+    <div class="settings-field-label u-label" style="margin-top:16px">Newznab Indexers</div>
     ${rows}
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
       <input class="settings-input" id="ix-name" placeholder="Name" autocomplete="off" spellcheck="false" style="flex:1;min-width:70px">
@@ -2692,7 +2692,7 @@ function _renderIssueDetails(desc, credits) {
     html += '<div class="issue-modal-credits">' +
       Object.entries(grouped).map(([role, names]) =>
         `<div class="issue-modal-credit-row">
-          <div class="issue-modal-credit-role">${esc(role)}</div>
+          <div class="issue-modal-credit-role u-label">${esc(role)}</div>
           <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
         </div>`).join('') + '</div>';
   }

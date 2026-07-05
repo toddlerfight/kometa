@@ -143,13 +143,6 @@ body {
   flex-shrink: 0;
 }
 
-#topbar-title {
-  font-size: var(--fs-label);
-  letter-spacing: var(--track);
-  text-transform: uppercase;
-  color: var(--tq);
-}
-
 #topbar-actions {
   display: flex;
   gap: var(--sp-sm);
@@ -202,10 +195,6 @@ body {
   display: flex;
   align-items: center;
   padding: 0 var(--sp-lg);
-  font-size: var(--fs-label);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
-  color: var(--tq);
   cursor: pointer;
   position: relative;
   margin-bottom: 18px;
@@ -285,6 +274,13 @@ textarea:focus-visible {
   outline: 2px solid var(--pri);
   outline-offset: 2px;
 }
+
+/* ---- Utilities ---- */
+/* single-line truncation — every text element that clips with an ellipsis */
+.u-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the uppercase meta-label recipe — one definition, applied in markup.
+   Element state (:hover/.active) still wins: those selectors are more specific. */
+.u-label { font-size: var(--fs-label); letter-spacing: var(--track); text-transform: uppercase; color: var(--tq); }
 
 /* ---- State messages ---- */
 
@@ -405,10 +401,6 @@ select.settings-input {
   background: none;
   border: 1px solid var(--bd);
   border-radius: var(--r-sm);
-  color: var(--tq);
-  font-size: var(--fs-label);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
   padding: 5px var(--sp-md);
   cursor: pointer;
   transition: color var(--t-fast), border-color var(--t-fast);
@@ -544,9 +536,6 @@ select.settings-input {
   color: var(--tq);
   text-transform: uppercase;
   margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .series-card-next-release {
@@ -660,7 +649,7 @@ select.settings-input {
 /* storyline/arc detail rows reuse this for their read-only note (no folder to pick) */
 .detail-folder-path {
   font-size: var(--fs-body); color: var(--tm);
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
 }
 .folder-field { position: relative; display: flex; align-items: center; gap: var(--sp-sm); min-width: 0; }
 .detail-folder-row .folder-field { flex: 1; }
@@ -803,9 +792,6 @@ select.settings-input {
   font-size: var(--fs-body);
   font-weight: 500;
   color: var(--tp);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .wizard-result-meta {
@@ -934,9 +920,6 @@ select.settings-input {
   font-size: var(--fs-label);
   letter-spacing: var(--track-tight);
   margin-bottom: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* "Covered by a collected edition" tile state — the issue isn't owned as a single
@@ -974,10 +957,6 @@ select.settings-input {
 .pull-group { margin-bottom: 0; }
 
 .pull-group-label {
-  font-size: var(--fs-label);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
-  color: var(--tq);
   background: var(--su2);
   padding: 7px 0;
   border-top: 1px solid var(--bd);
@@ -1153,9 +1132,6 @@ select.settings-input {
 .pull-series {
   font-size: var(--fs-body);
   color: var(--tp);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .pull-issue {
@@ -1296,10 +1272,6 @@ select.settings-input {
   /* <label> is inline by default — without this, margin-bottom is a no-op
      and the label welds itself to the input no matter what you set */
   display: block;
-  font-size: var(--fs-label);
-  color: var(--tq);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
   margin-bottom: 14px;
 }
 
@@ -1412,10 +1384,6 @@ select.settings-input {
 /* ---- Search ---- */
 
 .step-label {
-  font-size: var(--fs-label);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
-  color: var(--tq);
   margin-bottom: var(--sp-sm);
 }
 
@@ -1515,9 +1483,6 @@ select.settings-input {
   font-size: var(--fs-body);
   font-weight: 500;
   color: var(--tp);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .act-card.compact .act-card-title { font-size: var(--fs-body); }
@@ -1603,9 +1568,6 @@ select.settings-input {
 .act-row-title {
   font-size: var(--fs-body);
   color: var(--tp);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .act-row-issue {
@@ -1807,10 +1769,6 @@ select.settings-input {
 }
 
 .issue-modal-credit-role {
-  color: var(--tq);
-  text-transform: uppercase;
-  letter-spacing: var(--track);
-  font-size: var(--fs-label);
   padding-top: 2px;
 }
 
