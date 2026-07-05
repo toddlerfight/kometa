@@ -41,6 +41,11 @@ button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
   --ink:   var(--bg);
   /* type */
   --font:  'Victor Mono', monospace;
+  /* uppercase-label tracking — one scale, referenced everywhere (was 8 ad-hoc
+     values solved independently per rule). Shifts with intent, not by accident. */
+  --track-tight: 0.05em;   /* dense meta: dates, tabs, statuses, badges */
+  --track:       0.08em;   /* standard labels: nav, buttons, field + card headers */
+  --track-wide:  0.12em;   /* airy: page/section titles, hero publisher */
   /* #app gutter — full-bleed elements derive their negative margins from this,
      so responsive padding changes can't strand them overhanging the clip edge */
   --app-pad: 24px;
@@ -124,7 +129,7 @@ body {
 
 #topbar-title {
   font-size: 10px;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--tq);
 }
@@ -183,7 +188,7 @@ body {
   padding: 0 16px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track);
   color: var(--tq);
   cursor: pointer;
   position: relative;
@@ -216,7 +221,7 @@ body {
   padding: 0 14px;
   height: 26px;
   font-size: 10px;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   cursor: pointer;
   border: none;
@@ -268,7 +273,7 @@ textarea:focus-visible {
 .state-msg {
   color: var(--tq);
   font-size: 12px;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   padding: 64px 0;
   text-align: center;
@@ -385,7 +390,7 @@ select.settings-input {
   color: var(--tq);
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   padding: 5px 12px;
   cursor: pointer;
   transition: color var(--t-fast), border-color var(--t-fast);
@@ -536,7 +541,7 @@ select.settings-input {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-tight);
   padding: 3px 7px;
   border-radius: 2px;
   white-space: nowrap;
@@ -595,7 +600,7 @@ select.settings-input {
 .detail-hero-publisher {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track-wide);
   color: var(--tq);
   margin-bottom: 6px;
 }
@@ -828,7 +833,7 @@ select.settings-input {
 .issue-tab {
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-tight);
   color: var(--tq);
   padding: 10px 16px 10px 0;
   cursor: pointer;
@@ -910,7 +915,7 @@ select.settings-input {
   display: block;
   color: var(--pri);
   font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-tight);
   margin-bottom: 1px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -954,7 +959,7 @@ select.settings-input {
 .pull-group-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track);
   color: var(--tq);
   background: var(--su2);
   padding: 7px 0;
@@ -1144,7 +1149,7 @@ select.settings-input {
 .pull-status {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-tight);
   text-align: right;
   white-space: nowrap;
 }
@@ -1182,7 +1187,7 @@ select.settings-input {
 }
 .settings-section-title {
   font-size: 12px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.14em; color: var(--tp);
+  text-transform: uppercase; letter-spacing: var(--track-wide); color: var(--tp);
   display: flex; align-items: baseline; gap: 8px;
 }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
@@ -1204,7 +1209,7 @@ select.settings-input {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track);
   color: var(--tp);
   padding: 0 0 10px;
   margin-bottom: 20px;
@@ -1243,7 +1248,7 @@ select.settings-input {
 .btn-link {
   background: none; border: none; padding: 0;
   color: var(--tq);
-  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: 10px; letter-spacing: var(--track); text-transform: uppercase;
   cursor: pointer;
 }
 .btn-link:hover { color: var(--tp); }
@@ -1265,7 +1270,7 @@ select.settings-input {
   font-size: 12px;
   font-weight: 400;
   text-transform: none;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--track-tight);
   color: var(--tq);
 }
 
@@ -1278,7 +1283,7 @@ select.settings-input {
   font-size: 10px;
   color: var(--tq);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   margin-bottom: 14px;
 }
 
@@ -1355,7 +1360,7 @@ select.settings-input {
 .modal-title {
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--track);
   color: var(--tp);
   margin-bottom: 20px;
 }
@@ -1385,7 +1390,7 @@ select.settings-input {
   color: var(--tq);
   margin-top: 6px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-tight);
 }
 
 /* ---- Search ---- */
@@ -1393,7 +1398,7 @@ select.settings-input {
 .step-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track);
   color: var(--tq);
   margin-bottom: 8px;
 }
@@ -1444,7 +1449,7 @@ select.settings-input {
   font-size: 12px;
   color: var(--tq);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track);
   padding: 0 0 10px;
   display: flex;
   align-items: center;
@@ -1631,7 +1636,7 @@ select.settings-input {
 .chip {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   padding: 3px 8px;
   border-radius: 8px;
@@ -1658,7 +1663,7 @@ select.settings-input {
   padding: 0 3px;
   vertical-align: middle;
   margin-left: 4px;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-tight);
 }
 /* Collected edition (omnibus/deluxe/etc) — neutral grey so it reads as secondary
    to the actual series it collects, not another amber result to track. */
@@ -1788,7 +1793,7 @@ select.settings-input {
 .issue-modal-credit-role {
   color: var(--tq);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track);
   font-size: 10px;
   padding-top: 2px;
 }
@@ -1939,7 +1944,7 @@ select.settings-input {
   display: block;
 }
 .vlb-name { font-weight: 700; font-size: 12px; color: var(--tp); text-align: center; }
-.vlb-count { font-size: 12px; color: var(--tq); margin-top: 3px; letter-spacing: 0.06em; text-align: center; }
+.vlb-count { font-size: 12px; color: var(--tq); margin-top: 3px; letter-spacing: var(--track); text-align: center; }
 .vlb-actions { display: flex; gap: 10px; margin-top: 4px; }
 .vlb-btn {
   font-size: 12px;
