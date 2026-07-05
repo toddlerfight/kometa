@@ -2292,8 +2292,8 @@ async function renderSettings() {
               _appConfig = { ..._appConfig, comics_root: path, comics_root_ok: c.comics_root_ok };
               _updateRootStatus(c.comics_root_ok);
             })}
+            <div class="settings-help" id="root-status"></div>
           </div>
-          <div class="settings-help" id="root-status"></div>
         </div>
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
