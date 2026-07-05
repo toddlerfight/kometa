@@ -491,7 +491,13 @@ select.settings-input {
 /* Cover image base — fills its frame, zooms on the parent's hover. The hover
    scale amount lives per-component (--zoom vs --zoom-lg); this is just the
    shared fill+transition so those four don't drift apart. */
-.series-card-cover, .issue-tile-img img, .act-card-cover img, 
+.series-card-cover, .issue-tile-img img, .act-card-cover img, .act-row-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform var(--t-slow) ease;
+}
 .series-card:hover .series-card-cover { transform: scale(var(--zoom)); }
 
 .series-card-bar-track {
