@@ -2418,7 +2418,7 @@ function _testControls(cardId, configured) {
   return `<span class="settings-head-right">
         <span class="settings-whisper" id="sw-${cardId}"></span>
         <span class="settings-dot ${configured ? 'cfg' : ''}" id="dot-${cardId}"
-          title="${configured ? 'configured — not yet verified' : 'not configured'}">${configured ? '○' : ''}</span>
+          title="${configured ? 'configured — not yet verified' : 'not configured'}"></span>
         <button class="btn-link" onclick="testIntegration('${cardId}')">test</button>
         <button class="btn-link" id="dc-${cardId}" style="${configured ? '' : 'display:none'}"
           onclick="disconnectIntegration('${cardId}', this)">disconnect</button>
@@ -2500,7 +2500,7 @@ function _settingsHeader(title, tag, cardId, integ = false, configured = false) 
         <span class="settings-whisper" id="sw-${cardId}"></span>
         ${integ ? `
           <span class="settings-dot ${configured ? 'cfg' : ''}" id="dot-${cardId}"
-            title="${configured ? 'configured — not yet verified' : 'not configured'}">${configured ? '○' : ''}</span>
+            title="${configured ? 'configured — not yet verified' : 'not configured'}"></span>
           <button class="btn-link" onclick="testIntegration('${cardId}')">test</button>
           <button class="btn-link" id="dc-${cardId}" style="${configured ? '' : 'display:none'}"
             onclick="disconnectIntegration('${cardId}', this)">disconnect</button>` : ''}
@@ -2559,19 +2559,19 @@ function _updateRootStatus(ok) {
 
 async function testIntegration(integ) {
   const dot = document.getElementById(`dot-${integ}`);
-  if (dot) { dot.textContent = '◌'; dot.className = 'settings-dot cfg'; dot.title = 'testing…'; }
+  if (dot) { dot.className = 'settings-dot testing'; dot.title = 'testing…'; }
   try {
     const res = await api.post(`/api/test/${_TEST_ENDPOINTS[integ]}`, {});
     if (res.ok) {
-      if (dot) { dot.textContent = '●'; dot.className = 'settings-dot ok'; dot.title = 'verified'; }
+      if (dot) { dot.className = 'settings-dot ok'; dot.title = 'verified'; }
       const dc = document.getElementById(`dc-${integ}`);
       if (dc) dc.style.display = '';
     } else {
-      if (dot) { dot.textContent = '✗'; dot.className = 'settings-dot bad'; dot.title = res.error || 'failed'; }
+      if (dot) { dot.className = 'settings-dot bad'; dot.title = res.error || 'failed'; }
       showToast(`${integ}: ${res.error || 'connection failed'}`, 'error');
     }
   } catch (e) {
-    if (dot) { dot.textContent = '✗'; dot.className = 'settings-dot bad'; dot.title = 'failed'; }
+    if (dot) { dot.className = 'settings-dot bad'; dot.title = 'failed'; }
     showToast(`${integ}: test failed`, 'error');
   }
 }

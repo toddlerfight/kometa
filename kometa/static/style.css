@@ -1264,7 +1264,17 @@ select.settings-input {
 .settings-whisper.err { color: var(--pink); font-style: normal; }
 
 /* integration status: ● verified · ○ configured-unverified · ✗ test failed */
-.settings-dot { font-size: var(--fs-body); }
+/* Status dot drawn in CSS (not a glyph — glyphs ride low in their line box and
+   never centre against the TEST label). Base is invisible; a state class lights
+   it up. cfg = hollow ring, ok = filled lime, bad = filled pink, testing = amber. */
+.settings-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none; box-sizing: border-box;
+  background: transparent; border: 1.5px solid transparent;
+}
+.settings-dot.cfg     { border-color: var(--tq); }
+.settings-dot.testing { border-color: var(--amb); }
+.settings-dot.ok      { border-color: var(--pri);  background: var(--pri); }
+.settings-dot.bad     { border-color: var(--pink); background: var(--pink); }
 .settings-dot.ok  { color: var(--pri); }
 .settings-dot.cfg { color: var(--tq); }
 .settings-dot.bad { color: var(--pink); }
