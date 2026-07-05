@@ -2295,32 +2295,32 @@ async function renderSettings() {
           </div>
           <div class="settings-help" id="root-status"></div>
         </div>
-        <div class="settings-card" style="margin-top:36px">
+        <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
-        <div class="settings-section ${cfg.prowlarr_enabled ? '' : 'section-off'}" id="sec-prowlarr" style="margin-top:36px">
-          ${_settingsSectionHead('Prowlarr', 'engine', 't-prowlarr', cfg.prowlarr_enabled, { integ: true, cardId: 'prowlarr', configured: cfg.prowlarr_configured })}
+        <div class="settings-section ${cfg.prowlarr_enabled ? '' : 'section-off'}" id="sec-prowlarr" style="margin-top:32px">
+          ${_settingsSectionHead('Prowlarr', 'engine', 't-prowlarr', cfg.prowlarr_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
-              ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
+              ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696', test: { cardId: 'prowlarr', configured: cfg.prowlarr_configured } })}
               ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
             </div>
             <div class="settings-subsections">
               <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
-                ${_settingsSectionHead('Usenet', 'client', 't-usenet', cfg.usenet_enabled, { integ: true, cardId: 'sabnzbd', configured: cfg.sab_configured })}
+                ${_settingsSectionHead('Usenet', 'client', 't-usenet', cfg.usenet_enabled)}
                 <div class="settings-section-body"><div class="settings-section-inner">
                   <div class="settings-card">
-                    ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
+                    ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080', test: { cardId: 'sabnzbd', configured: cfg.sab_configured } })}
                     ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
                   </div>
                 </div></div>
               </div>
-              <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent" style="margin-top:28px">
-                ${_settingsSectionHead('Torrent', 'client', 't-torrent', cfg.torrent_enabled, { integ: true, cardId: 'qbit', configured: cfg.qbit_configured })}
+              <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent">
+                ${_settingsSectionHead('Torrent', 'client', 't-torrent', cfg.torrent_enabled)}
                 <div class="settings-section-body"><div class="settings-section-inner">
                   <div class="settings-card">
-                    ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
+                    ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090', test: { cardId: 'qbit', configured: cfg.qbit_configured } })}
                     ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
                     ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
                   </div>
@@ -2332,10 +2332,10 @@ async function renderSettings() {
       </div>
       <div>
         <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga">
-          ${_settingsSectionHead('Komga', 'reader', 't-komga', cfg.komga_enabled, { integ: true, cardId: 'komga', configured: komgaCfg })}
+          ${_settingsSectionHead('Komga', 'reader', 't-komga', cfg.komga_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
-              ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url)}
+              ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url, { test: { cardId: 'komga', configured: komgaCfg } })}
               ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
               ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
               ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
@@ -2383,9 +2383,15 @@ function _settingsField(id, label, value, opts = {}) {
   const ph = secret
     ? (opts.set ? 'Leave blank to keep current' : (opts.ph || ''))
     : (opts.ph || '');
+  const labelRow = opts.test
+    ? `<div class="settings-field-hdr">
+        <label class="settings-field-label u-label" for="${id}">${label}</label>
+        ${_testControls(opts.test.cardId, opts.test.configured)}
+      </div>`
+    : `<label class="settings-field-label u-label" for="${id}">${label}</label>`;
   return `
     <div class="settings-field">
-      <label class="settings-field-label u-label" for="${id}">${label}</label>
+      ${labelRow}
       <input class="settings-input" id="${id}"
         type="${secret ? 'password' : 'text'}"
         value="${esc(value || '')}" data-last="${esc(value || '')}"
@@ -2405,24 +2411,26 @@ function _settingsToggle(id, on, label) {
   </label>`;
 }
 
-// One header row per toggleable section (Komga / Prowlarr / Usenet / Torrent):
-// title + role tag on the left; test/dot/disconnect + the enable toggle on the
-// right. Merges what used to be a section head AND a card header — no more
-// doubled title. Off folds the body away; this head stays put.
-function _settingsSectionHead(title, tag, toggleId, on, opts = {}) {
-  const { integ = false, cardId = '', configured = false } = opts;
-  const ctl = integ ? `
+// Verify cluster for an integration — status dot + test + disconnect. Lives on
+// the Server URL field's label row (it's the connection you're testing), not in
+// the section header, which stays just title + tag + toggle.
+function _testControls(cardId, configured) {
+  return `<span class="settings-head-right">
         <span class="settings-whisper" id="sw-${cardId}"></span>
         <span class="settings-dot ${configured ? 'cfg' : ''}" id="dot-${cardId}"
           title="${configured ? 'configured — not yet verified' : 'not configured'}">${configured ? '○' : ''}</span>
         <button class="btn-link" onclick="testIntegration('${cardId}')">test</button>
         <button class="btn-link" id="dc-${cardId}" style="${configured ? '' : 'display:none'}"
-          onclick="disconnectIntegration('${cardId}', this)">disconnect</button>` : '';
+          onclick="disconnectIntegration('${cardId}', this)">disconnect</button>
+      </span>`;
+}
+
+// One header row per toggleable section (Komga / Prowlarr / Usenet / Torrent):
+// title + role tag + the enable toggle, underlined. Off folds the body; head stays.
+function _settingsSectionHead(title, tag, toggleId, on) {
   return `<div class="settings-section-head">
     <span class="settings-section-title">${esc(title)}${tag ? ` <span class="settings-opt">${tag}</span>` : ''}</span>
-    <span class="settings-head-right">${ctl}
-      ${_settingsToggle(toggleId, on, `${title} ${on ? 'enabled' : 'disabled'}`)}
-    </span>
+    ${_settingsToggle(toggleId, on, `${title} ${on ? 'enabled' : 'disabled'}`)}
   </div>`;
 }
 

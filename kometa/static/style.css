@@ -1179,9 +1179,13 @@ select.settings-input {
 
 /* A search-source section (Usenet / Torrents): heading row with the toggle,
    then the integration card(s). Disabled = dimmed + "excluded from search". */
+/* Same chrome as .settings-card-header — one header look across the page:
+   28px row, underline, controls centred. Top margin 0; the 32px gap between
+   column items provides separation, so a first-in-column header sits flush. */
 .settings-section-head {
   display: flex; align-items: center; justify-content: space-between;
-  margin: 36px 0 14px;
+  height: 28px; padding: 0 0 10px; margin: 0 0 20px;
+  border-bottom: 1px solid var(--bd); gap: var(--sp-md);
 }
 .settings-section-title {
   font-size: var(--fs-body); font-weight: 700;
@@ -1190,11 +1194,17 @@ select.settings-input {
 }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
 
-/* Usenet + Torrent still live inside the Prowlarr master (so its toggle folds
-   them), but render flat — no rail/indent. The shared header row carries the
-   relationship instead. */
-.settings-subsections { margin-top: var(--sp-lg); }
-.settings-subsections > .settings-section:first-child > .settings-section-head { margin-top: 12px; }
+/* Usenet + Torrent nest under the Prowlarr master toggle — indented behind a
+   left rail so the hierarchy reads: children that can't work without the parent.
+   32px below the Prowlarr card (matches the column rhythm). */
+.settings-subsections {
+  margin-top: 32px;
+  padding-left: 20px;
+  border-left: 1px solid var(--bd);
+}
+.settings-subsections > .settings-section + .settings-section { margin-top: 32px; }
+/* label + test-controls row on a field (the Server URL of each integration) */
+.settings-field-hdr { display: flex; align-items: center; justify-content: space-between; }
 
 /* Collapse the section body when toggled off — same fade-then-fold convention
    as .act-removing (opacity leads on --t-mid/--ease-in, height follows on
@@ -1279,13 +1289,13 @@ select.settings-input {
   color: var(--tq);
 }
 
-.settings-field { margin-bottom: 22px; }
+.settings-field { margin-bottom: 16px; }
 
 .settings-field-label {
   /* <label> is inline by default — without this, margin-bottom is a no-op
      and the label welds itself to the input no matter what you set */
   display: block;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 
 /* .settings-input chrome lives in the shared "One input box" rule above */
