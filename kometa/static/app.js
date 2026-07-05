@@ -2528,8 +2528,9 @@ async function _settingsChanged(el) {
 function _updateRootStatus(ok) {
   const el = document.getElementById('root-status');
   if (!el) return;
-  el.textContent = ok ? '✓ path exists and is writable' : '✗ path missing or read-only';
-  el.className = `settings-help ${ok ? 'ok' : 'bad'}`;
+  // No news is good news — only surface the path when it's a problem.
+  el.textContent = ok ? '' : '✗ path missing or read-only';
+  el.className = ok ? 'settings-help' : 'settings-help bad';
 }
 
 async function testIntegration(integ) {
