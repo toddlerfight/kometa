@@ -1237,14 +1237,21 @@ select.settings-input {
   border-bottom: 1px solid var(--bd);
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  /* Fixed height, defined once. Content (badge, toggle, TEST link, or nothing)
+     centres inside it and can NEVER change it — so every card header is the
+     same height and every field below stays row-aligned across columns.
+     baseline alignment used to let the 12px "required" badge stretch the row,
+     which is what kept knocking LIBRARY PATH out of line with SYNC HOURS.
+     28px = the toggle/badge content (17px) + this rule's 10px pad + 1px border. */
+  align-items: center;
+  height: 28px;
   gap: 12px;
 }
 
 .settings-head-right {
   display: inline-flex;
   gap: 10px;
-  align-items: baseline;
+  align-items: center;
   font-weight: 400;
   letter-spacing: 0;
 }
@@ -1287,10 +1294,6 @@ select.settings-input {
   text-transform: none;
   letter-spacing: .03em;
   color: var(--tq);
-  /* 12px italic sits in a taller line box than the 10px header — cap it to the
-     header's 14px line so a card with a "required" badge is the same height as
-     one without, and fields below stay row-aligned across columns. */
-  line-height: 14px;
 }
 
 .settings-field { margin-bottom: 22px; }
