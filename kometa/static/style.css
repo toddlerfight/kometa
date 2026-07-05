@@ -1190,6 +1190,15 @@ select.settings-input {
 }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
 
+/* Usenet + Torrent nest under the Prowlarr master toggle — indent + a left rail
+   so the hierarchy reads: they're children that can't work without the parent. */
+.settings-subsections {
+  margin-top: var(--sp-lg);
+  padding-left: 20px;
+  border-left: 1px solid var(--bd);
+}
+.settings-subsections > .settings-section:first-child > .settings-section-head { margin-top: 12px; }
+
 /* Collapse the section body when toggled off — same fade-then-fold convention
    as .act-removing (opacity leads on --t-mid/--ease-in, height follows on
    --t-slow). max-height is JS-pinned to the measured height first so it

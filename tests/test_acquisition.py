@@ -73,8 +73,7 @@ class TestProcessQueue:
                 return (None, None)
 
         monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
-        monkeypatch.setattr(acq, "_usenet_indexers", lambda: [])
-        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)   # no usenet client; _prowlarr already None (wired)
 
         acq._process_queue()
 

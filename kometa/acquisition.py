@@ -14,10 +14,13 @@ from datetime import date, datetime, timezone
 import kometa.db as db
 import kometa.downloader as downloader
 from kometa.sources import (
-    komga as _komga, sabnzbd as _sabnzbd, usenet_indexers as _usenet_indexers,
+    komga as _komga, sabnzbd as _sabnzbd,
     comics_root as _comics_root, qbittorrent as _qbittorrent, prowlarr as _prowlarr,
 )
-from kometa.usenet_client import search_usenet, search_usenet_pack, PACK_THRESHOLD
+from kometa.usenet_client import PACK_THRESHOLD
+# Usenet + torrent both search through Prowlarr now — one indexer manager, both
+# protocols. (The old per-newznab-feed usenet_client search is retired.)
+from kometa.prowlarr_client import search_usenet, search_usenet_pack
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
 from kometa.downloader import DuplicateIssueError
 from kometa.sabnzbd_client import find_comics_in_dir
@@ -39,6 +42,12 @@ def _utcnow() -> datetime:
 # to the pollers (_poll_usenet_jobs/_poll_torrent_jobs): a job already submitted
 # must still finalize, or toggling a source off mid-download would orphan it.
 # Absent key = enabled, so existing installs (creds set, no flag) behave as before.
+def _prowlarr_on() -> bool:
+    # Master switch: Prowlarr is the shared search layer for BOTH usenet and
+    # torrent. Off → neither protocol searches, whatever the child toggles say.
+    return db.get_config(DB_PATH).get("prowlarr_enabled", "1") != "0"
+
+
 def _usenet_on() -> bool:
     return db.get_config(DB_PATH).get("usenet_enabled", "1") != "0"
 
@@ -192,7 +201,7 @@ def _try_torrent(item, qid) -> bool:
     fails to COMPLETE (retention) — torrent is the safety net for "couldn't
     deliver", not just "couldn't find". Sets state → pending_torrent + stores the
     hash; the torrent poller finalizes. Returns True if a torrent was queued."""
-    if not _torrent_on():
+    if not (_prowlarr_on() and _torrent_on()):
         return False
     prowlarr = _prowlarr()
     qbit = _qbittorrent()
@@ -233,11 +242,11 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
                                       status_fn=lambda s, qid=qid: set_search_status(qid, s))
     if not dl_url:
-        indexers = _usenet_indexers()
+        prowlarr = _prowlarr()
         sab = _sabnzbd()
-        if _usenet_on() and indexers and sab:
-            set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
-            nzb_url = search_usenet(indexers, item["title"], item["issue_number"], store_date)
+        if _prowlarr_on() and _usenet_on() and prowlarr and sab:
+            set_search_status(qid, "Usenet: searching…")
+            nzb_url = search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
                 if nzo_id:
@@ -300,12 +309,12 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
                                    status_fn=lambda s, qid=qid: set_search_status(qid, s))
     if not dl_url:
-        indexers = _usenet_indexers()
+        prowlarr = _prowlarr()
         sab = _sabnzbd()
-        if _usenet_on() and indexers and sab:
-            set_search_status(qid, "Usenet: " + ", ".join(ix.get("name", "?") for ix in indexers))
+        if _prowlarr_on() and _usenet_on() and prowlarr and sab:
+            set_search_status(qid, "Usenet: searching…")
             query = f"{title} {label}".strip()
-            nzb_url = search_usenet_pack(indexers, query, series_year=item.get("year_began"))
+            nzb_url = search_usenet_pack(prowlarr, query, series_year=item.get("year_began"))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=query)
                 if nzo_id:
@@ -353,10 +362,10 @@ def _sweep_missing():
 
     missing_counts = db.get_missing_counts_by_series(DB_PATH)
     pack_submitted: set[int] = set()
-    indexers = _usenet_indexers()
+    prowlarr = _prowlarr()
     sab = _sabnzbd()
 
-    if _usenet_on() and indexers and sab:
+    if _prowlarr_on() and _usenet_on() and prowlarr and sab:
         for series_id, count in missing_counts.items():
             if series_id not in checked:
                 continue
@@ -367,7 +376,7 @@ def _sweep_missing():
             series = db.get_series_by_id(series_id, DB_PATH)
             if not series:
                 continue
-            nzb_url = search_usenet_pack(indexers, series["title"], series_year=series.get("year_began"))
+            nzb_url = search_usenet_pack(prowlarr, series["title"], series_year=series.get("year_began"))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{series['title']} - Pack")
                 if nzo_id:

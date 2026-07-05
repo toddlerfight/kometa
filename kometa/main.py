@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import logging
 import threading
 from datetime import date
@@ -231,13 +230,6 @@ def disconnect_integration(integration: str):
 @app.get("/api/config")
 def get_config():
     cfg = db.get_config(DB_PATH)
-    indexers_raw = cfg.get("newznab_indexers", "[]")
-    try:
-        indexers = json.loads(indexers_raw)
-    except Exception:
-        indexers = []
-    # Strip apikeys from indexer list before returning
-    safe_indexers = [{"name": i["name"], "host": i["host"], "ssl": i.get("ssl", True)} for i in indexers]
     root = _comics_root()
     return {
         "comics_root":         root,
@@ -251,7 +243,6 @@ def get_config():
         "sync_hours":          cfg.get("sync_hours", "5,12,17"),
         "sab_url":             cfg.get("sab_url", ""),
         "sab_configured":      bool(cfg.get("sab_url", "") and cfg.get("sab_apikey", "")),
-        "newznab_indexers":    safe_indexers,
         "qbit_url":            cfg.get("qbit_url", ""),
         "qbit_user":           cfg.get("qbit_user", ""),
         "qbit_pass":           "",
@@ -261,6 +252,8 @@ def get_config():
         "prowlarr_configured": bool(cfg.get("prowlarr_url", "") and cfg.get("prowlarr_apikey", "")),
         # Integration/search toggles — absent = enabled (existing installs unchanged).
         "komga_enabled":       cfg.get("komga_enabled", "1") != "0",
+        # Prowlarr is the master search switch; usenet/torrent are its children.
+        "prowlarr_enabled":    cfg.get("prowlarr_enabled", "1") != "0",
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
         "torrent_enabled":     cfg.get("torrent_enabled", "1") != "0",
     }
@@ -275,13 +268,13 @@ class ConfigRequest(BaseModel):
     sync_hours:         str | None = None
     sab_url:            str | None = None
     sab_apikey:         str | None = None
-    newznab_indexers:   str | None = None  # JSON array of {name, host, apikey, ssl}
     qbit_url:           str | None = None
     qbit_user:          str | None = None
     qbit_pass:          str | None = None
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
     komga_enabled:      str | None = None   # "1"/"0" — integration toggle
+    prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
 
@@ -295,41 +288,9 @@ def update_config(req: ConfigRequest):
     return get_config()
 
 
-def _load_indexers() -> list[dict]:
-    try:
-        return json.loads(db.get_config(DB_PATH).get("newznab_indexers", "[]"))
-    except Exception:
-        return []
-
-
-def _save_indexers(indexers: list[dict]):
-    db.set_config({"newznab_indexers": json.dumps(indexers)}, DB_PATH)
-
-
-class IndexerRequest(BaseModel):
-    name: str
-    host: str
-    apikey: str
-    ssl: bool = True
-
-
-@app.post("/api/config/indexers", status_code=201)
-def add_indexer(req: IndexerRequest):
-    # Add/remove operate on individual entries (not a whole-list re-save) so the
-    # stored apikeys are never round-tripped through the browser and blanked.
-    indexers = _load_indexers()
-    indexers.append({"name": req.name, "host": req.host, "apikey": req.apikey, "ssl": req.ssl})
-    _save_indexers(indexers)
-    return {"ok": True, "count": len(indexers)}
-
-
-@app.delete("/api/config/indexers/{idx}", status_code=204)
-def remove_indexer(idx: int):
-    indexers = _load_indexers()
-    if not (0 <= idx < len(indexers)):
-        raise HTTPException(404)
-    indexers.pop(idx)
-    _save_indexers(indexers)
+# Newznab indexers are gone — Prowlarr aggregates every indexer now, so the
+# manual per-feed list (and its add/remove endpoints) is retired. Usenet +
+# torrent both search through Prowlarr; SAB/qBit just catch the grabs.
 
 
 # --- series routes ---

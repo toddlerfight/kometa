@@ -2313,43 +2313,50 @@ async function renderSettings() {
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
-        <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet" style="margin-top:36px">
-          ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
+        <div class="settings-section ${cfg.prowlarr_enabled ? '' : 'section-off'}" id="sec-prowlarr" style="margin-top:36px">
+          ${_settingsSectionHead('Prowlarr', 't-prowlarr', cfg.prowlarr_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
-              ${_settingsHeader('SABnzbd', 'download client', 'sabnzbd', true, cfg.sab_configured)}
-              ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
-              ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
-              <div id="indexers-section"></div>
-            </div>
-          </div></div>
-        </div>
-        <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent">
-          ${_settingsSectionHead('Torrent', 't-torrent', cfg.torrent_enabled)}
-          <div class="settings-section-body"><div class="settings-section-inner">
-            <div class="settings-card">
-              ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
-              ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
-              ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
-              ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
-            </div>
-            <div class="settings-card" style="margin-top:36px">
-              ${_settingsHeader('Prowlarr', 'indexer search', 'prowlarr', true, cfg.prowlarr_configured)}
+              ${_settingsHeader('Search source', 'usenet + torrent', 'prowlarr', true, cfg.prowlarr_configured)}
               ${_settingsField('f-prowlarr-url', 'Server URL', cfg.prowlarr_url, { ph: 'http://host:9696' })}
               ${_settingsField('f-prowlarr-apikey', 'API Key', '', { set: cfg.prowlarr_configured, ph: 'Enter API key' })}
+            </div>
+            <div class="settings-subsections">
+              <div class="settings-section ${cfg.usenet_enabled ? '' : 'section-off'}" id="sec-usenet">
+                ${_settingsSectionHead('Usenet', 't-usenet', cfg.usenet_enabled)}
+                <div class="settings-section-body"><div class="settings-section-inner">
+                  <div class="settings-card">
+                    ${_settingsHeader('SABnzbd', 'download client', 'sabnzbd', true, cfg.sab_configured)}
+                    ${_settingsField('f-sab-url', 'Server URL', cfg.sab_url, { ph: 'http://host:8080' })}
+                    ${_settingsField('f-sab-apikey', 'API Key', '', { set: cfg.sab_configured, ph: 'Enter API key' })}
+                  </div>
+                </div></div>
+              </div>
+              <div class="settings-section ${cfg.torrent_enabled ? '' : 'section-off'}" id="sec-torrent" style="margin-top:28px">
+                ${_settingsSectionHead('Torrent', 't-torrent', cfg.torrent_enabled)}
+                <div class="settings-section-body"><div class="settings-section-inner">
+                  <div class="settings-card">
+                    ${_settingsHeader('qBittorrent', 'download client', 'qbit', true, cfg.qbit_configured)}
+                    ${_settingsField('f-qbit-url', 'Server URL', cfg.qbit_url, { ph: 'http://host:8090' })}
+                    ${_settingsField('f-qbit-user', 'Username', cfg.qbit_user)}
+                    ${_settingsField('f-qbit-pass', 'Password', '', { set: cfg.qbit_configured, ph: 'Enter password' })}
+                  </div>
+                </div></div>
+              </div>
             </div>
           </div></div>
         </div>
       </div>
     </div>
   `);
-  _renderIndexers(cfg.newznab_indexers);
   _updateRootStatus(cfg.comics_root_ok);
   // Sections that load already-off start collapsed WITHOUT animation (no
-  // fold-in flash on entering Settings).
-  if (!cfg.komga_enabled)   _collapseSection(document.getElementById('sec-komga'), true, false);
-  if (!cfg.usenet_enabled)  _collapseSection(document.getElementById('sec-usenet'), true, false);
-  if (!cfg.torrent_enabled) _collapseSection(document.getElementById('sec-torrent'), true, false);
+  // fold-in flash on entering Settings). Prowlarr is the master — off folds the
+  // whole usenet+torrent branch it wraps.
+  if (!cfg.komga_enabled)    _collapseSection(document.getElementById('sec-komga'), true, false);
+  if (!cfg.prowlarr_enabled) _collapseSection(document.getElementById('sec-prowlarr'), true, false);
+  if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
+  if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
 }
 
 // Autosave architecture: every field persists itself on change — no Save
@@ -2414,9 +2421,10 @@ function _settingsSectionHead(title, toggleId, on) {
 // Toggle → persist the flag + fold/unfold the section. Backend reads the flag
 // (gates the search cascade for usenet/torrent, sources.komga() for komga).
 const _SOURCE_TOGGLES = {
-  't-komga':   { key: 'komga_enabled',   section: 'sec-komga',   label: 'Komga' },
-  't-usenet':  { key: 'usenet_enabled',  section: 'sec-usenet',  label: 'Usenet' },
-  't-torrent': { key: 'torrent_enabled', section: 'sec-torrent', label: 'Torrents' },
+  't-komga':    { key: 'komga_enabled',    section: 'sec-komga',    label: 'Komga' },
+  't-prowlarr': { key: 'prowlarr_enabled', section: 'sec-prowlarr', label: 'Prowlarr' },
+  't-usenet':   { key: 'usenet_enabled',   section: 'sec-usenet',   label: 'Usenet' },
+  't-torrent':  { key: 'torrent_enabled',  section: 'sec-torrent',  label: 'Torrents' },
 };
 // Fade + fold a section's body, mirroring _animateRowOut's convention: pin
 // max-height to the measured height, reflow, then transition to/from 0 so it
@@ -2568,54 +2576,8 @@ async function disconnectIntegration(integ, btn) {
   }
 }
 
-function _renderIndexers(list) {
-  const el = document.getElementById('indexers-section');
-  if (!el) return;
-  const rows = (list || []).map((ix, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px">
-      <span style="flex:1">${esc(ix.name)} <span style="color:var(--tq)">${esc(ix.host)}${ix.ssl ? '' : ' · no ssl'}</span></span>
-      <button class="btn btn-ghost btn-sm" onclick="removeIndexer(${i})">Remove</button>
-    </div>`).join('') || '<div style="color:var(--tq);font-size:11px;padding:3px 0">No indexers yet.</div>';
-  el.innerHTML = `
-    <div class="settings-field-label u-label" style="margin-top:16px">Newznab Indexers</div>
-    ${rows}
-    <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-      <input class="settings-input" id="ix-name" placeholder="Name" autocomplete="off" spellcheck="false" style="flex:1;min-width:70px">
-      <input class="settings-input" id="ix-host" placeholder="api.example.info" autocomplete="off" spellcheck="false" style="flex:2;min-width:130px">
-      <input class="settings-input" id="ix-apikey" type="password" autocomplete="new-password" placeholder="API key" style="flex:1;min-width:70px">
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
-      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--tp);cursor:pointer"><input type="checkbox" id="ix-ssl" checked> SSL</label>
-      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="addIndexer(this)">Add Indexer</button>
-    </div>`;
-}
-
-async function addIndexer(btn) {
-  const name = document.getElementById('ix-name').value.trim();
-  const host = document.getElementById('ix-host').value.trim();
-  const apikey = document.getElementById('ix-apikey').value.trim();
-  const ssl = document.getElementById('ix-ssl').checked;
-  if (!name || !host || !apikey) { showToast('Name, host, and API key are all required.', 'error'); return; }
-  btn.disabled = true; btn.textContent = 'Adding…'; btn.classList.add('btn-working');
-  try {
-    await api.post('/api/config/indexers', { name, host, apikey, ssl });
-    const cfg = await api.get('/api/config');
-    _renderIndexers(cfg.newznab_indexers);  // re-renders cleared inputs too
-  } catch (e) {
-    btn.disabled = false; btn.textContent = 'Add Indexer'; btn.classList.remove('btn-working');
-    showToast(`Add failed: ${e.message || 'unknown error'}`, 'error');
-  }
-}
-
-async function removeIndexer(idx) {
-  try {
-    await api.del(`/api/config/indexers/${idx}`);
-    const cfg = await api.get('/api/config');
-    _renderIndexers(cfg.newznab_indexers);
-  } catch (e) {
-    showToast(`Remove failed: ${e.message || 'unknown error'}`, 'error');
-  }
-}
+// Newznab indexer list retired — Prowlarr aggregates every indexer now, so
+// there's nothing to hand-enter. (The Add/Remove UI + endpoints are gone.)
 
 // --- Modal ---
 

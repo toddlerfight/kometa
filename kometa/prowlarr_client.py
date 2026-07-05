@@ -149,3 +149,55 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
         return base + _seed_bonus(r["seeders"])
 
     return _best_downloadable_torrent(results, _score, min_score=15)
+
+
+def _best_usenet(results: list[dict], score_fn, min_score: int) -> dict | None:
+    """Pick the highest-scoring usenet result we can act on. Usenet has no
+    seeders — a post is either retained or it isn't, and we can't know until SAB
+    tries — so viability is just "has an NZB url", and grabs/size break ties."""
+    viable = [r for r in results if r.get("url")]
+    if not viable:
+        return None
+    scored = sorted(
+        [(r, score_fn(r)) for r in viable],
+        key=lambda x: (-x[1], -(x[0].get("grabs") or 0), -(x[0].get("size") or 0)),
+    )
+    best, score = scored[0]
+    if score < min_score:
+        logger.info(f"Prowlarr usenet: best score {score} below {min_score} — skipping")
+        return None
+    logger.info(f"Prowlarr usenet: {best['title']!r} score={score} "
+                f"grabs={best['grabs']} from {best['indexer']}")
+    return best
+
+
+def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None) -> str | None:
+    """Best usenet NZB for a single issue. Returns the NZB download URL or None —
+    a drop-in for usenet_client.search_usenet, but sourced through Prowlarr so it
+    sees every usenet indexer Prowlarr aggregates. Same evidence bar as the
+    torrent twin: series name (+10) AND issue-number evidence (+5) before we act."""
+    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
+    results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
+    results = _drop_year_mismatches(results, title, series_year)
+    if not results:
+        return None
+    def _score(r):
+        base = _nzb_score(r["title"], title, issue_number)
+        return base if base >= 15 else 0     # name+number or nothing
+    best = _best_usenet(results, _score, min_score=15)
+    return best["url"] if best else None
+
+
+def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> str | None:
+    """Best usenet pack/collection for a series. Returns the NZB url or None.
+    Drop-in for usenet_client.search_usenet_pack, sourced through Prowlarr."""
+    results = []
+    for q in (f"{title} complete", title):
+        results = prowlarr.search(q, protocol="usenet")
+        if results:
+            break
+    results = _drop_year_mismatches(results, title, series_year)
+    if not results:
+        return None
+    best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"]), min_score=10)
+    return best["url"] if best else None
