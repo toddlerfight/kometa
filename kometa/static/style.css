@@ -1190,13 +1190,10 @@ select.settings-input {
 }
 .settings-section .settings-card:first-of-type { margin-top: 0 !important; }
 
-/* Usenet + Torrent nest under the Prowlarr master toggle — indent + a left rail
-   so the hierarchy reads: they're children that can't work without the parent. */
-.settings-subsections {
-  margin-top: var(--sp-lg);
-  padding-left: 20px;
-  border-left: 1px solid var(--bd);
-}
+/* Usenet + Torrent still live inside the Prowlarr master (so its toggle folds
+   them), but render flat — no rail/indent. The shared header row carries the
+   relationship instead. */
+.settings-subsections { margin-top: var(--sp-lg); }
 .settings-subsections > .settings-section:first-child > .settings-section-head { margin-top: 12px; }
 
 /* Collapse the section body when toggled off — same fade-then-fold convention
@@ -1272,7 +1269,8 @@ select.settings-input {
 /* the 'relax, you can skip this' whisper. Victor Mono's italics ARE the script
    face — same family as everything else, it just starts writing in cursive.
    text-transform reset or the script goes ALL-CAPS and loses the charm. */
-.settings-card-header .settings-opt {
+.settings-card-header .settings-opt,
+.settings-section-title .settings-opt {
   font-style: italic;
   font-size: var(--fs-body);
   font-weight: 400;
