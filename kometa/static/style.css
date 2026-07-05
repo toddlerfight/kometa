@@ -80,7 +80,7 @@ body {
   background: var(--bg);
   color: var(--tp);
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.4;
   height: 100vh;
   overflow: hidden;
@@ -121,7 +121,7 @@ body {
 
 #topbar-title {
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--tq);
@@ -164,7 +164,7 @@ body {
   /* Victor Mono has no kana — give the logo a clean JP fallback chain */
   font-family: 'Victor Mono', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', monospace;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--tp);
 }
 
@@ -215,12 +215,12 @@ body {
   padding: 0 14px;
   height: 26px;
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
   border: none;
-  border-radius: 3px;
+  border-radius: 2px;
   white-space: nowrap;
 }
 
@@ -243,7 +243,7 @@ body {
 }
 .btn-danger:hover { background: color-mix(in srgb, var(--pink) 10%, transparent); }
 
-.btn-sm { height: 22px; padding: 0 10px; font-size: 9px; }
+.btn-sm { height: 22px; padding: 0 10px; font-size: 10px; }
 
 /* ---- Focus rings ---- */
 
@@ -268,7 +268,7 @@ textarea:focus-visible {
 .state-msg {
   color: var(--tq);
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 64px 0;
@@ -429,7 +429,7 @@ select.settings-input {
 .sort-icon-alpha {
   font-family: var(--font);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -442,7 +442,7 @@ select.settings-input {
   align-items: center;
   justify-content: center;
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   transition: color var(--t-fast), border-color var(--t-fast);
   user-select: none;
@@ -466,7 +466,7 @@ select.settings-input {
 .series-card-img-wrap {
   width: 205px;
   aspect-ratio: 205 / 315;
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
   background: var(--su2);
   position: relative;
@@ -503,7 +503,7 @@ select.settings-input {
 .series-card-title {
   font-family: var(--font);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--tp);
   overflow: hidden;
   display: -webkit-box;
@@ -540,12 +540,12 @@ select.settings-input {
   background: var(--pink);
   color: var(--tp);
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 3px 7px;
-  border-radius: 3px;
+  border-radius: 2px;
   white-space: nowrap;
   pointer-events: none;
 }
@@ -645,7 +645,7 @@ select.settings-input {
    lime stays reserved for the icon-glow and focus. */
 /* storyline/arc detail rows reuse this for their read-only note (no folder to pick) */
 .detail-folder-path {
-  font-family: var(--font); font-size: 11px; color: var(--tm);
+  font-family: var(--font); font-size: 12px; color: var(--tm);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .folder-field { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -655,14 +655,14 @@ select.settings-input {
 .ff-box {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
   background: var(--su2); border: 1px solid var(--bd); border-radius: 2px;
-  padding: 8px 12px; transition: border-color .15s;
+  padding: 8px 12px; transition: border-color var(--t-fast);
 }
 .ff-box:hover { border-color: var(--bd-l); }        /* editable field — subtle */
 .ff-box:focus-within { border-color: var(--pri); }
 .ff-ico {
   flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-left: -1px;
-  background: none; border: none; border-radius: 3px; color: var(--tq); cursor: pointer;
-  transition: color .15s, background .15s;
+  background: none; border: none; border-radius: 2px; color: var(--tq); cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
 }
 .ff-ico:hover { color: var(--pri); background: var(--su3); }
 .ff-ico:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; }
@@ -678,8 +678,8 @@ select.settings-input {
 .ff-whisper {
   position: absolute; right: 11px; top: 50%; transform: translateY(-50%);
   font-size: 10px; color: var(--pri); background: var(--su2);
-  padding: 1px 3px 1px 10px; border-radius: 3px; pointer-events: none;
-  opacity: 0; transition: opacity .2s;
+  padding: 1px 3px 1px 10px; border-radius: 2px; pointer-events: none;
+  opacity: 0; transition: opacity var(--t-mid);
 }
 .ff-whisper.show { opacity: 1; }
 
@@ -688,7 +688,7 @@ select.settings-input {
   border: none;
   color: var(--tq);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   padding: 2px 4px;
   flex-shrink: 0;
   line-height: 1;
@@ -700,7 +700,7 @@ select.settings-input {
 
 .fb-path {
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   word-break: break-all;
   margin-bottom: 12px;
@@ -717,7 +717,7 @@ select.settings-input {
 
 .fb-item {
   padding: 9px 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--tm);
   cursor: pointer;
   border-bottom: 1px solid var(--su2);
@@ -737,7 +737,7 @@ select.settings-input {
 
 .fb-empty, .fb-loading, .fb-error {
   color: var(--tq);
-  font-size: 13px;
+  font-size: 12px;
   padding: 24px 0;
   text-align: center;
 }
@@ -780,7 +780,7 @@ select.settings-input {
   width: 36px;
   height: 55px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: 2px;
   flex-shrink: 0;
   background: var(--su2);
 }
@@ -788,7 +788,7 @@ select.settings-input {
 .wizard-result-text { flex: 1; min-width: 0; }
 
 .wizard-result-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--tp);
   white-space: nowrap;
@@ -797,7 +797,7 @@ select.settings-input {
 }
 
 .wizard-result-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   margin-top: 2px;
 }
@@ -829,7 +829,7 @@ select.settings-input {
 
 .sort-toggle {
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   padding: 4px 6px;
   opacity: 0.7;
@@ -838,7 +838,7 @@ select.settings-input {
 
 .issue-tab {
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--tq);
@@ -854,7 +854,7 @@ select.settings-input {
 .tab-badge {
   display: inline-block;
   margin-left: 5px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
   padding: 2px 5px;
@@ -916,7 +916,7 @@ select.settings-input {
 
 .issue-tile-num {
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--tq);
   text-align: center;
   margin-top: 4px;
@@ -928,7 +928,7 @@ select.settings-input {
 .issue-tile-xt {
   display: block;
   color: var(--pri);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: .04em;
   margin-bottom: 1px;
   overflow: hidden;
@@ -961,7 +961,7 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   z-index: 2;
 }
 
@@ -1023,13 +1023,13 @@ select.settings-input {
   padding: 0 4px;
   margin-left: 7px;
   border-radius: 8px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   vertical-align: middle;
 }
 .nav-badge.green { background: var(--pri);  color: var(--ink); }
 .nav-badge.amber { background: var(--amb);  color: var(--ink); }
-.nav-badge.red   { background: var(--pink); color: #fff; }
+.nav-badge.red   { background: var(--pink); color: var(--tp); }
 
 /* --- pull-to-refresh indicator --- */
 #ptr {
@@ -1046,10 +1046,10 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 12px;
   font-family: var(--font);
   z-index: 300;
-  transition: transform .15s ease, color .1s, border-color .1s;
+  transition: transform var(--t-fast) ease, color var(--t-fast), border-color var(--t-fast);
   pointer-events: none;
 }
 #ptr.ready { color: var(--pri); border-color: var(--pri); }
@@ -1152,7 +1152,7 @@ select.settings-input {
 
 .pull-series {
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 12px;
   color: var(--tp);
   white-space: nowrap;
   overflow: hidden;
@@ -1193,8 +1193,8 @@ select.settings-input {
    28x16 pill track, 12px thumb, lime-on-black when on, grey when off. */
 .toggle-switch { position: relative; display: inline-flex; width: 28px; height: 16px; flex: none; cursor: pointer; }
 .toggle-switch input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.toggle-track { position: absolute; inset: 0; border-radius: 999px; background: var(--su3); transition: background .15s ease; }
-.toggle-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--tq); transition: transform .15s ease, background .15s ease; }
+.toggle-track { position: absolute; inset: 0; border-radius: 999px; background: var(--su3); transition: background var(--t-fast) ease; }
+.toggle-thumb { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--tq); transition: transform var(--t-fast) ease, background var(--t-fast) ease; }
 .toggle-switch input:checked ~ .toggle-track { background: var(--pri); }
 .toggle-switch input:checked ~ .toggle-track .toggle-thumb { transform: translateX(12px); background: var(--bg); }
 .toggle-switch input:focus-visible ~ .toggle-track { outline: 2px solid var(--pri); outline-offset: 2px; }
@@ -1206,7 +1206,7 @@ select.settings-input {
   margin: 36px 0 14px;
 }
 .settings-section-title {
-  font-family: var(--font); font-size: 11px; font-weight: 700;
+  font-family: var(--font); font-size: 12px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.14em; color: var(--tp);
   display: flex; align-items: baseline; gap: 8px;
 }
@@ -1254,7 +1254,7 @@ select.settings-input {
 .settings-whisper.err { color: var(--pink); font-style: normal; }
 
 /* integration status: ● verified · ○ configured-unverified · ✗ test failed */
-.settings-dot { font-size: 11px; }
+.settings-dot { font-size: 12px; }
 .settings-dot.ok  { color: var(--pri); }
 .settings-dot.cfg { color: var(--tq); }
 .settings-dot.bad { color: var(--pink); }
@@ -1262,12 +1262,12 @@ select.settings-input {
 .btn-link {
   background: none; border: none; padding: 0;
   color: var(--tq); font-family: var(--font);
-  font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
   cursor: pointer;
 }
 .btn-link:hover { color: var(--tp); }
 
-.settings-help { font-size: 11px; color: var(--tq); margin-top: 2px; }
+.settings-help { font-size: 12px; color: var(--tq); margin-top: 2px; }
 .settings-help.ok  { color: var(--pri); }
 .settings-help.bad { color: var(--pink); }
 .settings-input.input-bad { border-color: var(--pink); }
@@ -1287,6 +1287,10 @@ select.settings-input {
   text-transform: none;
   letter-spacing: .03em;
   color: var(--tq);
+  /* 12px italic sits in a taller line box than the 10px header — cap it to the
+     header's 14px line so a card with a "required" badge is the same height as
+     one without, and fields below stay row-aligned across columns. */
+  line-height: 14px;
 }
 
 .settings-field { margin-bottom: 22px; }
@@ -1385,7 +1389,7 @@ select.settings-input {
 
 .modal-title {
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--tp);
@@ -1407,7 +1411,7 @@ select.settings-input {
 
 .confirm-body {
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 12px;
   color: var(--tm);
   margin: 8px 0 24px;
   line-height: 1.6;
@@ -1459,7 +1463,7 @@ select.settings-input {
   background: var(--pri);
   color: var(--tp);
   border: none;
-  border-radius: 3px;
+  border-radius: 2px;
   width: 18px;
   height: 18px;
   font-size: 10px;
@@ -1488,7 +1492,7 @@ select.settings-input {
 
 .act-section-hdr {
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1501,7 +1505,7 @@ select.settings-input {
 .act-count {
   background: var(--su3);
   color: var(--tm);
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 1px 7px;
   font-size: 10px;
 }
@@ -1525,7 +1529,7 @@ select.settings-input {
 }
 
 .act-card-cover {
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
   background: var(--su2);
   width: 44px;
@@ -1545,7 +1549,7 @@ select.settings-input {
 .act-card-body { min-width: 0; }
 
 .act-card-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--tp);
   white-space: nowrap;
@@ -1587,7 +1591,7 @@ select.settings-input {
 
 .act-progress-text {
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--tq);
   margin-top: 4px;
 }
@@ -1697,12 +1701,12 @@ select.settings-input {
 
 .chip {
   font-family: var(--font);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 3px 8px;
-  border-radius: 10px;
+  border-radius: 8px;
   white-space: nowrap;
 }
 
@@ -1719,7 +1723,7 @@ select.settings-input {
 
 .locg-badge {
   display: inline-block;
-  font-size: 8px;
+  font-size: 10px;
   font-family: var(--font);
   color: var(--amb);
   border: 1px solid var(--amb);
@@ -1739,13 +1743,13 @@ select.settings-input {
    by edition so TPB/HC read at a glance. */
 .trade-tile .series-card-next-release {
   bottom: auto; left: 6px; top: 6px; transform: none;
-  font-size: 8px; padding: 2px 5px;
+  font-size: 10px; padding: 2px 5px;
 }
 .trade-tile .trade-fmt-tpb { background: var(--pri); color: var(--ink); }
 .trade-tile .trade-fmt-hc  { background: var(--blu); color: var(--ink); }
 .trade-chip-tpb { color: var(--pri); border: 1px solid var(--pri); }
 .trade-chip-hc  { color: var(--blu); border: 1px solid var(--blu); }
-.trade-owned-note { font-size: 11px; color: var(--tq); font-family: var(--font); align-self: center; }
+.trade-owned-note { font-size: 12px; color: var(--tq); font-family: var(--font); align-self: center; }
 /* Owned trade (file on disk): subdue the tile, stamp a corner check. */
 .trade-tile.owned .issue-tile-img { opacity: 0.55; }
 .trade-owned-check {
@@ -1771,7 +1775,7 @@ select.settings-input {
   width: 140px;
   aspect-ratio: 2/3;
   background: var(--su2);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -1791,40 +1795,40 @@ select.settings-input {
 
 .issue-modal-num {
   font-family: var(--font);
-  font-size: 22px;
+  font-size: 18px;
   color: var(--tp);
   line-height: 1;
   margin-bottom: 4px;
 }
 
 .issue-modal-series {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--tp);
   font-weight: 500;
   margin-bottom: 2px;
 }
 
 .issue-modal-meta {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   margin-bottom: 4px;
 }
 
 .issue-modal-date {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--blu);
   font-weight: 500;
   margin-top: 8px;
 }
 
 .issue-modal-days {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   margin-top: 3px;
 }
 
 .issue-modal-release-label {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--tq);
   margin-top: 6px;
 }
@@ -1852,14 +1856,14 @@ select.settings-input {
   display: grid;
   grid-template-columns: 82px 1fr;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .issue-modal-credit-role {
   color: var(--tq);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 9px;
+  font-size: 10px;
   padding-top: 2px;
 }
 
@@ -1898,7 +1902,7 @@ select.settings-input {
   padding-top: 12px;
 }
 .v-card {
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
   background: var(--su2);
@@ -2008,12 +2012,12 @@ select.settings-input {
   box-shadow: 0 12px 48px var(--shadow);
   display: block;
 }
-.vlb-name { font-family: var(--font); font-weight: 700; font-size: 15px; color: var(--tp); text-align: center; }
-.vlb-count { font-family: var(--font); font-size: 11px; color: var(--tq); margin-top: 3px; letter-spacing: .06em; text-align: center; }
+.vlb-name { font-family: var(--font); font-weight: 700; font-size: 12px; color: var(--tp); text-align: center; }
+.vlb-count { font-family: var(--font); font-size: 12px; color: var(--tq); margin-top: 3px; letter-spacing: .06em; text-align: center; }
 .vlb-actions { display: flex; gap: 10px; margin-top: 4px; }
 .vlb-btn {
   font-family: var(--font); font-size: 12px;
-  border-radius: 7px; padding: 8px 16px; cursor: pointer;
+  border-radius: 8px; padding: 8px 16px; cursor: pointer;
   border: 1px solid var(--bd); background: transparent; color: var(--tm);
   transition: all var(--t-fast);
 }
@@ -2024,7 +2028,7 @@ select.settings-input {
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 46px; height: 46px; border-radius: 50%;
   background: var(--su2); border: 1px solid var(--bd); color: var(--tp);
-  font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: all var(--t-fast);
 }
 .vlb-nav:hover { background: var(--su3); border-color: var(--bd-l); }
@@ -2065,7 +2069,7 @@ select.settings-input {
   display: inline-block;
   width: .85em; height: .85em;
   border: 2px solid rgba(255,255,255,.3);
-  border-top-color: #fff;
+  border-top-color: var(--tp);
   border-radius: 50%;
   margin-right: .5em;
   vertical-align: -.12em;
@@ -2075,10 +2079,10 @@ select.settings-input {
 
 /* ── Story Arc detail — cross-title reading order ── */
 .chip-collected { background: rgba(145,252,78,.12); color: var(--pri); border: 1px solid rgba(145,252,78,.3); }
-.arc-collected-note { margin: 0 0 14px; padding: 11px 14px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; color: var(--tm); cursor: pointer; transition: background .12s; }
+.arc-collected-note { margin: 0 0 14px; padding: 11px 14px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; color: var(--tm); cursor: pointer; transition: background var(--t-fast); }
 .arc-collected-note:hover { background: rgba(145,252,78,.12); }
 .arc-collected-note strong { color: var(--pri); font-weight: 600; }
-.wizard-arc-note { margin: 16px 0 4px; padding: 11px 13px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 11px; line-height: 1.5; color: var(--tm); }
+.wizard-arc-note { margin: 16px 0 4px; padding: 11px 13px; border: 1px solid rgba(145,252,78,.28); background: rgba(145,252,78,.07); border-radius: 8px; font-size: 12px; line-height: 1.5; color: var(--tm); }
 
 /* Arcs tab on a series — the events that series participates in */
 .arcs-body { padding: 4px 0 24px; }
