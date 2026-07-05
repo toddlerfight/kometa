@@ -21,7 +21,7 @@ def test_activity_shows_queue_states(app):
 
 def test_settings_renders_and_autosaves(app):
     app.locator('.nav-item[data-view="settings"]').click()
-    field = app.locator("#f-comics-root")
+    field = app.locator("#ff-root")            # the aligned folder field's input
     expect(field).to_be_visible()
     # The autosave REALLY saves — this test mutates shared session config, so
     # the new value must be a directory that exists or comics_root_ok flips

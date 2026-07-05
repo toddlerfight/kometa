@@ -639,29 +639,40 @@ select.settings-input {
   flex-shrink: 0;
 }
 
+/* --- Folder Field — the one aligned pattern (series / settings / wizard / setup) ---
+   Icon-in-box that browses + editable input + autosave whisper. Empty = the
+   icon glows lime + placeholder; hover is the same subtle grey everywhere so
+   lime stays reserved for the icon-glow and focus. */
+/* storyline/arc detail rows reuse this for their read-only note (no folder to pick) */
 .detail-folder-path {
-  font-family: var(--font);
-  font-size: 11px;
-  color: var(--tm);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-family: var(--font); font-size: 11px; color: var(--tm);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.detail-folder-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--su2);
-  border: 1px solid var(--bd);
-  color: var(--tp);
-  font-family: var(--font);
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 2px;
+.folder-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.detail-folder-row .folder-field { flex: 1; }
+.ff-box {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  background: var(--su2); border: 1px solid var(--bd); border-radius: 3px;
+  padding: 5px 10px; transition: border-color .15s;
 }
-
-.detail-folder-input:focus { outline: none; border-color: var(--pri); }
+.ff-box:hover { border-color: var(--bd-l); }        /* editable field — subtle */
+.ff-box:focus-within { border-color: var(--pri); }
+.ff-ico {
+  flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-left: -3px;
+  background: none; border: none; border-radius: 3px; color: var(--tq); cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.ff-ico:hover { color: var(--pri); background: var(--su3); }
+.ff-ico:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; }
+.folder-field.empty .ff-ico { color: var(--pri); }  /* needs a folder — the lone lime cue */
+.ff-input {
+  flex: 1; min-width: 0; background: none; border: none; color: var(--tp);
+  font-family: var(--font); font-size: 11px; padding: 2px 0;
+}
+.ff-input:focus { outline: none; }
+.ff-input::placeholder { color: var(--tq); }
+.ff-whisper { flex: none; font-size: 10px; color: var(--pri); opacity: 0; transition: opacity .2s; }
+.ff-whisper.show { opacity: 1; }
 
 .btn-icon {
   background: none;

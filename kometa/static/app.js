@@ -858,9 +858,10 @@ async function renderSeriesDetail(id) {
       </div>
     </div>
     <div class="detail-folder-row" id="folder-row">
-      <button class="btn-icon" title="Browse for folder" aria-label="Browse for folder" onclick="browseFolderPath(${s.id})"><svg aria-hidden="true" width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></button>
-      <span class="detail-folder-path">${esc(s.folder_path || 'Not set')}</span>
-      <button class="btn-icon" title="Edit folder path" aria-label="Edit folder path" onclick="editFolderPath(${s.id})">✎</button>
+      ${folderField('series' + s.id, s.folder_path, 'library', async (path) => {
+        await api.patch(`/api/series/${s.id}/folder`, { folder_path: path || null });
+        renderSeriesDetail(s.id);
+      })}
       <div class="detail-folder-actions">
         ${pullBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
@@ -1149,7 +1150,6 @@ async function togglePullList(id, on) {
 }
 
 
-let _fbSeriesId = null;
 let _fbPath = null;
 let _fbCallback = null;
 let _fbScope = 'library';   // 'library' = sandboxed to comics root, 'fs' = whole filesystem
@@ -1205,7 +1205,8 @@ function showAddWizard() {
   setTimeout(() => document.getElementById('wizard-search')?.focus(), 50);
 }
 
-function _showComicsRootSetup() {
+function _showComicsRootSetup(prefill) {
+  const cur = prefill != null ? prefill : (_appConfig.comics_root || '');
   showModal(`
     <div class="modal-title">Set your comics folder</div>
     <div style="font-size:12px;color:var(--tq);margin:8px 0 14px;line-height:1.5">
@@ -1214,12 +1215,7 @@ function _showComicsRootSetup() {
     </div>
     <div class="settings-field">
       <div class="settings-field-label">Comics library path</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <input class="search-input" id="setup-comics-root" value="${esc(_appConfig.comics_root || '')}"
-          placeholder="/comics" style="flex:1;margin:0;box-sizing:border-box"
-          onkeydown="if(event.key==='Enter')saveComicsRoot(document.getElementById('setup-root-btn'))">
-        <button class="btn btn-ghost btn-sm" onclick="browseComicsRoot()">Browse</button>
-      </div>
+      ${folderField('setup', cur, 'fs', () => {}, { whisper: false, reopen: (picked) => _showComicsRootSetup(picked) })}
     </div>
     <div id="setup-root-err" style="font-size:11px;color:var(--amb);margin-top:6px;min-height:14px"></div>
     <div class="modal-footer">
@@ -1227,42 +1223,7 @@ function _showComicsRootSetup() {
       <button class="btn btn-primary" id="setup-root-btn" onclick="saveComicsRoot(this)">Save &amp; Continue</button>
     </div>
   `);
-  setTimeout(() => document.getElementById('setup-comics-root')?.focus(), 50);
-}
-
-function browseSettingsRoot() {
-  // Same filesystem browser (with New Folder), but for the Settings field:
-  // selecting fills the input and autosaves it like any other edit.
-  _fbScope = 'fs';
-  _fbCallback = (path) => {
-    closeModal();
-    const i = document.getElementById('f-comics-root');
-    if (i) { i.value = path; _settingsChanged(i); }
-  };
-  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
-  _fbNav('');
-}
-
-function browseComicsRoot() {
-  // Pick the comics root by browsing the whole filesystem (scope='fs') — it's not
-  // inside the comics root yet, so the sandboxed library browse can't reach it.
-  _fbScope = 'fs';
-  _fbCallback = async (path) => {
-    // Selecting a folder IS the choice — commit and continue, no second click.
-    try {
-      if (await _commitComicsRoot(path)) { showAddWizard(); return; }
-    } catch (e) { console.error(e); }
-    // not usable (e.g. read-only mount) — fall back to the form with it filled in
-    _showComicsRootSetup();
-    setTimeout(() => {
-      const i = document.getElementById('setup-comics-root');
-      if (i) i.value = path;
-      const err = document.getElementById('setup-root-err');
-      if (err) err.textContent = "That folder isn't writable — pick another or check permissions.";
-    }, 20);
-  };
-  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
-  _fbNav('');
+  setTimeout(() => document.getElementById('ff-setup')?.focus(), 50);
 }
 
 // PATCH the comics root and refresh health. Returns true if it's now usable.
@@ -1273,7 +1234,7 @@ async function _commitComicsRoot(path) {
 }
 
 async function saveComicsRoot(btn) {
-  const path = document.getElementById('setup-comics-root').value.trim();
+  const path = document.getElementById('ff-setup').value.trim();
   const err = document.getElementById('setup-root-err');
   if (!path) { err.textContent = 'Enter a path.'; return; }
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -1452,10 +1413,10 @@ function wizardPickSeries(idx) {
     <div class="wizard-arc-note">◆ Story arc — Kometa tracks the reading order across every participating title. It owns no folder; the collected edition lands in its main series' Trades.</div>`
     : `
     <div class="step-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
-    <div style="display:flex;gap:6px;align-items:center">
-      <input class="search-input" id="wizard-folder" placeholder="Resolving…" style="flex:1;margin:0">
-      <button class="btn btn-ghost btn-sm" onclick="wizardBrowseFolder()">Browse</button>
-    </div>
+    ${folderField('wizard', '', 'library', () => {}, { whisper: false, reopen: (picked) => {
+      wizardPickSeries(idx);   // browsing replaced the wizard modal — rebuild it, then drop the pick in
+      setTimeout(() => { const i = document.getElementById('ff-wizard'); if (i) { i.value = picked; _ffDirty('wizard'); } }, 20);
+    } })}
     <div id="wizard-folder-hint" style="margin-top:6px;font-size:10px;color:var(--tq)">&nbsp;</div>`;
   document.getElementById('modal').innerHTML = `
     <div class="modal-title">Add ${isArc ? 'Story Arc' : 'Series'}</div>
@@ -1485,33 +1446,19 @@ async function _previewFolder(r) {
   const title = r.series || r.name || '';
   try {
     const res = await api.get(`/api/fs/resolve?publisher=${encodeURIComponent(pub)}&title=${encodeURIComponent(title)}`);
-    const input = document.getElementById('wizard-folder');
+    const input = document.getElementById('ff-wizard');
     const hint = document.getElementById('wizard-folder-hint');
     if (!input) return;
     input.placeholder = res.path;
-    if (!input.value) input.value = res.path;   // pre-fill, still editable
+    if (!input.value) { input.value = res.path; _ffDirty('wizard'); }   // pre-fill, still editable
     if (hint) {
       hint.textContent = res.exists ? '✓ Existing folder — owned issues will be detected' : 'New folder — will be created on first download';
       hint.style.color = res.exists ? 'var(--pri)' : 'var(--tq)';
     }
   } catch (e) {
-    const input = document.getElementById('wizard-folder');
+    const input = document.getElementById('ff-wizard');
     if (input) input.placeholder = '/comics/Publisher/Series Name';
   }
-}
-
-function wizardBrowseFolder() {
-  const { idx } = _wizardState;
-  _fbScope = 'library';
-  _fbCallback = (path) => {
-    wizardPickSeries(idx);
-    setTimeout(() => {
-      const inp = document.getElementById('wizard-folder');
-      if (inp) inp.value = path;
-    }, 20);
-  };
-  showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
-  _fbNav('');
 }
 
 // Following a storyline is the arc-first move: you don't add the arc, you add the
@@ -1573,7 +1520,7 @@ async function wizardConfirm() {
   }
   if (!locgId && !cvArcId) return;
   const r = _wizardResults[_wizardState.idx];
-  const folder = (document.getElementById('wizard-folder')?.value || '').trim() || null;
+  const folder = (document.getElementById('ff-wizard')?.value || '').trim() || null;
   const onPullList = document.getElementById('wizard-pull')?.checked ?? true;
   const btn = document.getElementById('wizard-add-btn');
   btn.disabled = true; btn.textContent = 'Adding…';
@@ -1607,10 +1554,69 @@ async function wizardConfirm() {
   }
 }
 
-async function browseFolderPath(seriesId) {
-  _fbSeriesId = seriesId;
+// --- Folder Field: ONE aligned pattern for every place you pick a folder ---
+// Icon-in-box browses via the shared modal; the input autosaves on blur; an
+// empty field glows the icon lime. Each field registers its save() by id; the
+// modal, the browse flow, and the "saved" whisper are shared.
+const _FF_SVG = '<svg aria-hidden="true" width="15" height="14" viewBox="0 0 15 14" fill="none"><path d="M1 3h4.5l1.2 1.8H14V12H1V3z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+const _ffReg = {};
+
+function folderField(id, path, scope, save, opts = {}) {
+  _ffReg[id] = { scope, save, whisper: opts.whisper !== false, reopen: opts.reopen };
+  const p = path || '';
+  return `<div class="folder-field${p ? '' : ' empty'}" data-ffid="${id}">
+    <div class="ff-box">
+      <button class="ff-ico" type="button" title="Browse for folder" aria-label="Browse for folder" onclick="_ffBrowse('${id}')">${_FF_SVG}</button>
+      <input class="ff-input" id="ff-${id}" value="${esc(p)}" placeholder="Choose a folder…"
+        autocomplete="off" spellcheck="false"
+        oninput="_ffDirty('${id}')" onchange="_ffCommit('${id}')"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
+    </div>
+    <span class="ff-whisper" id="ffw-${id}">saved</span>
+  </div>`;
+}
+
+function _ffDirty(id) {   // typing un-empties the field (kills the lime glow)
+  const f = document.querySelector(`.folder-field[data-ffid="${id}"]`);
+  if (f) f.classList.toggle('empty', !(document.getElementById('ff-' + id)?.value || '').trim());
+}
+
+function _ffBrowse(id) {
+  const reg = _ffReg[id];
+  if (!reg) return;
+  _fbScope = reg.scope;
+  // Open one level UP from the current folder, so you land among its siblings
+  // (the current one included) rather than inside a usually-empty leaf. Empty
+  // field → the scope's default landing spot.
+  const cur = (document.getElementById('ff-' + id)?.value || '').trim();
+  const start = cur ? cur.replace(/\/[^/]*$/, '') : '';
+  // reopen: for a field that lives INSIDE a modal (first-run setup), the picker
+  // replaced the host — restore it with the pick instead of writing to a gone input.
+  _fbCallback = (picked) => { closeModal(); if (reg.reopen) reg.reopen(picked); else _ffApply(id, picked); };
   showModal('<div class="modal-title">Select Folder</div><div class="fb-loading">Loading…</div>');
-  await _fbNav('');
+  _fbNav(start);
+}
+
+async function _ffCommit(id) {   // input blur / Enter → save what's typed
+  await _ffApply(id, (document.getElementById('ff-' + id)?.value || '').trim());
+}
+
+async function _ffApply(id, path) {
+  const reg = _ffReg[id];
+  if (!reg) return;
+  const inp = document.getElementById('ff-' + id);
+  if (inp) inp.value = path;
+  const f = document.querySelector(`.folder-field[data-ffid="${id}"]`);
+  if (f) f.classList.toggle('empty', !path);
+  try {
+    await reg.save(path);
+    if (reg.whisper) {
+      const w = document.getElementById('ffw-' + id);
+      if (w) { w.classList.add('show'); setTimeout(() => w.classList.remove('show'), 1600); }
+    }
+  } catch (e) {
+    showToast('Folder update failed'); console.error(e);
+  }
 }
 
 async function _fbNav(path) {
@@ -1659,43 +1665,10 @@ async function _fbMkdir() {
   }
 }
 
-async function _fbSelect() {
-  if (_fbCallback) {
-    const cb = _fbCallback;
-    _fbCallback = null;
-    cb(_fbPath);
-    return;
-  }
-  await api.patch(`/api/series/${_fbSeriesId}/folder`, { folder_path: _fbPath });
-  closeModal();
-  renderSeriesDetail(_fbSeriesId);
-}
-
-function editFolderPath(id) {
-  // Same apostrophe trap as confirmDelete — read the path from state, don't
-  // thread it through an inline-JS string param.
-  const current = _detailSeries?.folder_path || '';
-  const row = document.getElementById('folder-row');
-  if (!row) return;
-  row.innerHTML = `
-    <svg width="13" height="12" viewBox="0 0 13 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 2.5h4l1 1.5h6v6.5H1V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" style="color:var(--tq)"/></svg>
-    <input class="detail-folder-input" id="folder-input" value="${esc(current)}" placeholder="/comics/Publisher/Series">
-    <div class="detail-folder-actions">
-      <button class="btn btn-primary btn-sm" onclick="saveFolderPath(${id})">Save</button>
-      <button class="btn btn-ghost btn-sm" onclick="renderSeriesDetail(${id})">Cancel</button>
-    </div>
-  `;
-  document.getElementById('folder-input').focus();
-}
-
-async function saveFolderPath(id) {
-  const val = (document.getElementById('folder-input')?.value || '').trim();
-  try {
-    await api.patch(`/api/series/${id}/folder`, { folder_path: val || null });
-  } catch (e) {
-    showToast('Folder update failed'); console.error(e); return;
-  }
-  renderSeriesDetail(id);
+function _fbSelect() {   // "Select This Folder" — hands the current dir to the field's callback
+  const cb = _fbCallback;
+  _fbCallback = null;
+  if (cb) cb(_fbPath); else closeModal();
 }
 
 
@@ -2313,14 +2286,12 @@ async function renderSettings() {
         <div class="settings-card">
           ${_settingsHeader('Comics Library', 'required', 'library')}
           <div class="settings-field">
-            <label class="settings-field-label" for="f-comics-root">Library path</label>
-            <div style="display:flex;gap:6px;align-items:center">
-              <input class="settings-input" id="f-comics-root" value="${esc(cfg.comics_root || '')}"
-                data-last="${esc(cfg.comics_root || '')}" placeholder="/comics"
-                autocomplete="off" spellcheck="false" style="flex:1;margin:0"
-                onchange="_settingsChanged(this)">
-              <button class="btn btn-ghost btn-sm" onclick="browseSettingsRoot()">Browse</button>
-            </div>
+            <label class="settings-field-label" for="ff-root">Library path</label>
+            ${folderField('root', cfg.comics_root, 'fs', async (path) => {
+              const c = await api.patch('/api/config', { comics_root: path });
+              _appConfig = { ..._appConfig, comics_root: path, comics_root_ok: c.comics_root_ok };
+              _updateRootStatus(c.comics_root_ok);
+            })}
           </div>
           <div class="settings-help" id="root-status"></div>
         </div>
@@ -2387,7 +2358,6 @@ async function renderSettings() {
 // input id → config key, owning card (for the 'saved' whisper), and which
 // integration to re-verify after the value changes.
 const _SETTINGS_FIELDS = {
-  'f-comics-root': { card: 'library',   key: 'comics_root' },
   'f-komga-url':   { card: 'komga',     key: 'komga_url',        test: 'komga' },
   'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
   'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
