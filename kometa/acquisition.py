@@ -454,7 +454,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     import shutil as _shutil
     from kometa.downloader import (
         _pick_issue_file, _safe, _resolve_dir, _fix_extension,
-        _verify_single_issue, WrongIssueError,
+        _verify_single_issue, WrongIssueError, force_readable_tree,
     )
 
     def _place(src: str, dst: str) -> str:
@@ -497,6 +497,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         db.update_queue_state(qid, "done", path=DB_PATH)
         if not item.get("folder_path") and placed:
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        force_readable_tree(dest_dir)
         _komga_scan_safe()
         return
 
@@ -524,6 +525,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         db.complete_trade(qid, path=DB_PATH)
         if not item.get("folder_path") and placed:
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
+        force_readable_tree(dest_dir)
         _komga_scan_safe()
         # Re-stamp owned on the cached trades now, so the tile flips right away.
         try:
@@ -575,6 +577,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         set_folder_path=dest_dir if not item.get("folder_path") else None,
         path=DB_PATH,
     )
+    force_readable_tree(dest_dir)
     _komga_scan_safe()
 
 

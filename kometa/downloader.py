@@ -439,6 +439,65 @@ def _get_with_retries(url: str, label: str):
     raise last_exc or RuntimeError(f"{label} failed after retries: {url[:80]}")
 
 
+# Komga runs as a non-root user (uid 1026) — anything we drop into the library has
+# to be world-traversable/readable or the scanner walks straight past it and the
+# issue never appears. We used to trust upstream perms: WRONG. SAB, bsdtar, and
+# shutil.copy2's copystat have all handed us mode-000 files, and makedirs(exist_ok)
+# flat-out REFUSES to re-chmod a dir already sitting at 000 — so a single poisoned
+# download could bury a whole series behind a 000 folder (that's the Absolute Catwoman
+# ghost). So we stop trusting anyone. Every finalize stamps the perms itself: dirs
+# 755, comic files 644, walked from the library root all the way down. Belt AND braces.
+_LIBRARY_DIR_MODE = 0o755
+_LIBRARY_FILE_MODE = 0o644
+
+
+def force_readable_tree(dest_dir: str) -> None:
+    """Force Komga-readable perms across a just-touched library folder — the placed
+    file, any pack-extracted siblings, cover-injected repackages — plus every
+    ancestor up to the library root so the scanner can actually walk in. Idempotent,
+    best-effort: a chmod we're not allowed to do is logged and skipped, never fatal."""
+    try:
+        root = os.path.realpath(sources.comics_root())
+        p = os.path.realpath(dest_dir)
+        # Walk the ancestor chain root..dest_dir and make each component traversable —
+        # this is what un-buries a series dir some earlier download left at 000.
+        chain = []
+        while p.startswith(root):
+            chain.append(p)
+            if p == root:
+                break
+            parent = os.path.dirname(p)
+            if parent == p:
+                break
+            p = parent
+        for d in chain:
+            try:
+                os.chmod(d, _LIBRARY_DIR_MODE)
+            except OSError as e:
+                logger.warning(f"chmod dir {d} failed: {e}")
+        # Then the folder's own contents.
+        for r, dirs, files in os.walk(dest_dir):
+            for d in dirs:
+                try:
+                    os.chmod(os.path.join(r, d), _LIBRARY_DIR_MODE)
+                except OSError:
+                    pass
+            for f in files:
+                if os.path.splitext(f)[1].lower() not in _COMIC_LIB_EXTS:
+                    continue
+                try:
+                    os.chmod(os.path.join(r, f), _LIBRARY_FILE_MODE)
+                except OSError as e:
+                    logger.warning(f"chmod file {f} failed: {e}")
+    except Exception as e:  # never let a perm-stamp kill a finished download
+        logger.warning(f"force_readable_tree({dest_dir}) failed: {e}")
+
+
+# Extensions Komga actually serves — the set we bother re-stamping. Kept local and
+# explicit rather than importing the divergent COMIC_EXTS zoo scattered elsewhere.
+_COMIC_LIB_EXTS = ('.cbz', '.cbr', '.cb7', '.pdf', '.epub')
+
+
 def download_issue(
     url: str,
     title: str,
@@ -576,6 +635,10 @@ def download_issue(
         if rar_dir:
             shutil.rmtree(rar_dir, ignore_errors=True)
 
+    # Stamp Komga-readable perms before we tell Komga to look — otherwise a 000
+    # file/dir from the move or a cover-inject repackage stays invisible.
+    force_readable_tree(dest_dir)
+
     try:
         komga_scan_fn()
     except Exception as e:
@@ -640,6 +703,8 @@ def download_trade(
         os.remove(dest_path)
         placed = extracted
         logger.info(f"Trade pack: {len(extracted)} file(s) from {os.path.basename(dest_path)}")
+
+    force_readable_tree(dest_dir)
 
     if komga_scan_fn:
         try:
