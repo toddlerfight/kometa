@@ -224,3 +224,56 @@ class TestFinalizeUsenetDownload:
 
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "failed"
+
+
+class TestPageMaxOverride:
+    """Head Lopper's law: a 72-page quarterly is a real single issue, not a
+    webtoon collection. page_max lifts the page-count guard per series; every
+    other guard stays armed."""
+
+    def _cbz_with_pages(self, path, n):
+        import zipfile
+        with zipfile.ZipFile(path, "w") as zf:
+            for i in range(n):
+                zf.writestr(f"p{i:03d}.jpg", b"x")
+        return str(path)
+
+    def test_default_ceiling_rejects_oversized(self, tmp_path):
+        from kometa.downloader import _verify_single_issue, WrongIssueError
+        cbz = self._cbz_with_pages(tmp_path / "Head Lopper 001.cbz", 72)
+        with pytest.raises(WrongIssueError, match="72 pages"):
+            _verify_single_issue(cbz, 1.0, "Head Lopper 001.cbz")
+
+    def test_page_max_override_accepts_oversized(self, tmp_path):
+        from kometa.downloader import _verify_single_issue
+        cbz = self._cbz_with_pages(tmp_path / "Head Lopper 001.cbz", 72)
+        _verify_single_issue(cbz, 1.0, "Head Lopper 001.cbz", page_max=150)
+
+    def test_override_ceiling_still_rejects_collections(self, tmp_path):
+        from kometa.downloader import _verify_single_issue, WrongIssueError
+        cbz = self._cbz_with_pages(tmp_path / "Head Lopper 001.cbz", 300)
+        with pytest.raises(WrongIssueError, match="300 pages"):
+            _verify_single_issue(cbz, 1.0, "Head Lopper 001.cbz", page_max=150)
+
+    def test_finalize_honors_series_page_max(self, wired, monkeypatch, tmp_path):
+        """End-to-end through the usenet finalize: the queue join carries
+        s.page_max, and the oversized issue lands instead of failing."""
+        db_path, series = wired
+        db.set_page_max(series, 150, db_path)
+        storage = tmp_path / "sab" / "Head Lopper 001"
+        storage.mkdir(parents=True)
+        self._cbz_with_pages(storage / "Saga 001.cbz", 72)
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        item = {"id": qid, "issue_number": 1.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": None, "tracked_series_id": series,
+                "page_max": db.get_series_by_id(series, db_path)["page_max"]}
+
+        acq._finalize_usenet_download(item, qid, str(storage))
+
+        assert (dest / "Saga #001.cbz").exists()
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"

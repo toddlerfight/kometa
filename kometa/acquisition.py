@@ -277,6 +277,7 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
         dest_dir=item.get("folder_path") or None,
         tracked_series_id=item["tracked_series_id"],
         db_path=DB_PATH,
+        page_max=item.get("page_max"),
     )
     clear_progress(qid)
     # Mark done + record ownership in one transaction — no crash-gap re-download.
@@ -551,7 +552,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     # BEFORE we stamp our canonical name on it. The usenet route used to skip every
     # check, so a mislabeled collection/webtoon release got accepted as the print issue.
     try:
-        _verify_single_issue(target, issue_number, os.path.basename(target))
+        _verify_single_issue(target, issue_number, os.path.basename(target),
+                             page_max=item.get("page_max"))
     except WrongIssueError as e:
         db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
         return

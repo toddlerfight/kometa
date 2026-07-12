@@ -818,7 +818,21 @@ async function renderSeriesDetail(id) {
   const pullBtn = `<button class="btn btn-sm ${s.on_pull_list ? 'btn-primary' : 'btn-ghost'}"
     onclick="togglePullList(${s.id}, ${!s.on_pull_list})">Pull</button>`;
 
-  const tabs = ['all','owned','missing','upcoming','trades','arcs'].map(t => {
+  // Oversized = lift the single-issue page-count guard to 150 for this series.
+  // For the quarterly bricks (Head Lopper et al.) whose legit issues bust the
+  // default 70-page webtoon/collection ceiling and get rejected on repeat.
+  const oversizedBtn = `<button class="btn btn-sm ${s.page_max ? 'btn-primary' : 'btn-ghost'}"
+    title="${s.page_max ? `Page limit raised to ${s.page_max}` : 'Raise the single-issue page limit for oversized formats'}"
+    onclick="toggleOversized(${s.id}, ${!s.page_max})">Oversized</button>`;
+
+  // Arcs are a ComicVine feature — no CV, no arc tab. Coerce a stale 'arcs'
+  // selection (toggle flipped off while it was the active tab) back to 'all'.
+  const _arcsOn = !!_appConfig.comicvine_enabled;
+  if (detailTab === 'arcs' && !_arcsOn) detailTab = 'all';
+  const _tabList = _arcsOn
+    ? ['all','owned','missing','upcoming','trades','arcs']
+    : ['all','owned','missing','upcoming','trades'];
+  const tabs = _tabList.map(t => {
     // Trades tab carries a count badge when collected editions exist (from cache).
     const badge = (t === 'trades' && s.trade_count)
       ? `<span class="tab-badge">${s.trade_count}</span>`
@@ -864,6 +878,7 @@ async function renderSeriesDetail(id) {
       })}
       <div class="detail-folder-actions">
         ${pullBtn}
+        ${oversizedBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
       </div>
@@ -1146,6 +1161,16 @@ async function togglePullList(id, on) {
   } catch (e) {
     showToast('Pull-list update failed'); console.error(e); return;
   }
+  renderSeriesDetail(id);
+}
+
+async function toggleOversized(id, on) {
+  try {
+    await api.patch(`/api/series/${id}/page-max`, { page_max: on ? 150 : null });
+  } catch (e) {
+    showToast('Oversized update failed'); console.error(e); return;
+  }
+  showToast(on ? 'Oversized format: page limit raised to 150' : 'Oversized format off');
   renderSeriesDetail(id);
 }
 
@@ -2343,7 +2368,7 @@ async function renderSettings() {
           </div></div>
         </div>
         <div class="settings-section ${cfg.comicvine_enabled ? '' : 'section-off'}" id="sec-comicvine" style="margin-top:32px">
-          ${_settingsSectionHead('ComicVine', 'metadata', 't-comicvine', cfg.comicvine_enabled)}
+          ${_settingsSectionHead('ComicVine', 'storylines', 't-comicvine', cfg.comicvine_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
               ${_settingsField('f-cv-apikey', 'API Key', '', { set: cfg.comicvine_configured, ph: 'Enter API key', test: { cardId: 'comicvine', configured: cfg.comicvine_configured } })}

@@ -639,6 +639,22 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
     return db.get_series_by_id(series_id, DB_PATH)
 
 
+class PageMaxRequest(BaseModel):
+    page_max: int | None = None
+
+
+@app.patch("/api/series/{series_id}/page-max", status_code=200)
+def set_page_max(series_id: int, req: PageMaxRequest):
+    """Per-series single-issue page ceiling for oversized formats (e.g. Head
+    Lopper's 72-page quarterly). None reverts to the global default."""
+    if not db.get_series_by_id(series_id, DB_PATH):
+        raise HTTPException(404)
+    if req.page_max is not None and not (1 <= req.page_max <= 1000):
+        raise HTTPException(422, "page_max must be 1-1000 or null")
+    db.set_page_max(series_id, req.page_max, DB_PATH)
+    return db.get_series_by_id(series_id, DB_PATH)
+
+
 # --- search ---
 
 @app.get("/api/search/locg")

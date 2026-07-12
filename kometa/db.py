@@ -188,6 +188,11 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_arc_id TEXT")
         if "cv_volume_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
+        # Per-series single-issue page ceiling. NULL = the global default (70).
+        # Exists because Head Lopper is a 72-page quarterly and the webtoon guard
+        # kept executing it for the crime of being exactly what it says it is.
+        if "page_max" not in ts_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN page_max INTEGER")
 
         # arc_issues gained cv_volume_id (the authoritative CV volume per issue, for
         # routing each issue to the right tracked run — e.g. Batman 1940, not 2016).
@@ -695,6 +700,15 @@ def set_pull_list(series_id, on_pull_list, path=DB_PATH):
         )
 
 
+def set_page_max(series_id, page_max, path=DB_PATH):
+    """Per-series single-issue page ceiling; None reverts to the global default."""
+    with _connect(path) as conn:
+        conn.execute(
+            "UPDATE tracked_series SET page_max = ? WHERE id = ?",
+            (page_max, series_id),
+        )
+
+
 def mark_synced(series_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
@@ -927,7 +941,7 @@ def reset_stuck_queue_items(path=DB_PATH):
 def get_queued_items(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began, s.folder_path
+            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began, s.folder_path, s.page_max
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'queued'
@@ -941,7 +955,7 @@ def get_pending_usenet_items(path=DB_PATH):
     """Items waiting on SABnzbd to finish downloading."""
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path
+            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path, s.page_max
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'pending_usenet' AND q.sab_nzo_id IS NOT NULL
@@ -960,7 +974,7 @@ def get_pending_torrent_items(path=DB_PATH):
     """Items waiting on qBittorrent to finish downloading — twin of the usenet one."""
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path
+            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path, s.page_max
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'pending_torrent' AND q.torrent_hash IS NOT NULL

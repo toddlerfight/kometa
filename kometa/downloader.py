@@ -394,13 +394,15 @@ def _extract_rar_once(path: str) -> str | None:
 
 
 def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
-                         extracted_dir: str | None = None) -> None:
+                         extracted_dir: str | None = None, page_max: int | None = None) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
     by both the GetComics and usenet paths so they accept/reject identically.
     extracted_dir: pre-extracted contents of path (RAR one-shot extract) — the
-    ComicInfo and page-count guards read it instead of re-opening the archive."""
+    ComicInfo and page-count guards read it instead of re-opening the archive.
+    page_max: per-series ceiling override for oversized formats (Head Lopper's
+    quarterly is a legit 72-page single issue); None = the global default."""
     name = source_name or os.path.basename(path)
     fnum = _num_from_filename(name)
     if fnum is not None and fnum != issue_number:
@@ -409,10 +411,11 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     if cnum is not None and cnum != issue_number:
         raise WrongIssueError(f"ComicInfo reports #{int(cnum)}, expected #{int(issue_number)}")
     pages = _count_images_in_dir(extracted_dir) if extracted_dir else _count_archive_images(path)
-    if pages is not None and pages > _SINGLE_ISSUE_PAGE_MAX:
+    limit = page_max or _SINGLE_ISSUE_PAGE_MAX
+    if pages is not None and pages > limit:
         raise WrongIssueError(
-            f"{pages} pages — looks like a collection or vertical/webtoon edition, "
-            f"not single issue #{int(issue_number)}")
+            f"{pages} pages (limit {limit}) — looks like a collection or vertical/webtoon "
+            f"edition, not single issue #{int(issue_number)}")
 
 
 def _get_with_retries(url: str, label: str):
@@ -510,11 +513,13 @@ def download_issue(
     dest_dir: str | None = None,
     tracked_series_id: int | None = None,
     db_path: str | None = None,
+    page_max: int | None = None,
 ) -> str:
     """
     Download from url, place in library, trigger Komga scan.
     Returns the final file path. Raises on failure.
     Pass tracked_series_id + db_path to enable automatic variant injection.
+    page_max: per-series single-issue page ceiling (oversized formats); None = default.
     """
     os.makedirs(sources.staging_dir(), exist_ok=True)
 
@@ -580,7 +585,8 @@ def download_issue(
         # webtoon edition (page count). Shared with the usenet finalize so both sources
         # reject the same bad content. Clean up the staging file on rejection.
         try:
-            _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir)
+            _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
+                                 page_max=page_max)
         except WrongIssueError:
             os.remove(staging_path)
             raise
