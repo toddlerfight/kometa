@@ -254,6 +254,11 @@ def get_series_arcs(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
+    # Arcs are a ComicVine feature — toggle off means no arcs, period. Return empty
+    # instead of leaking the Wikipedia discovery fallback out the API. The UI already
+    # hides the tab; this shuts the direct-call door so "off" actually means off.
+    if db.get_config(DB_PATH).get("comicvine_enabled", "1") == "0":
+        return {"arcs": []}
     from kometa.arc import arc_includes_series, titles_match
     svid = _series_cv_volume(s)        # the series' run, resolved + cached
     if svid:
