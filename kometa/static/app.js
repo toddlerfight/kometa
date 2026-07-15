@@ -676,12 +676,16 @@ function _arcShortTitle(t, primary) {
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
-  // No special back-link — renderSeriesDetail already set the plain '← Library'
-  // topbar every other detail page uses. A one-off 'back to origin' button here
-  // looked like a tab-bar peer but behaved like leaving the app; killed rather
-  // than patched (2026-07-15).
   const ai = s.arc_issues || [];
   const total = ai.length;
+  // Back to the ORIGIN series' Arcs tab specifically — not just 'somewhere in
+  // Detective Comics'. Reuses tracked_series_id already resolved on the first
+  // reading-order row (same one showIssueModal's tiles use) instead of a
+  // separate backend lookup. Lives in the tab-row spot, styled like a real tab,
+  // because that's the one thing that spot should ever do — not a topbar
+  // ghost-button, not a fake single-item tab pretending there's a choice.
+  const originId = ai[0]?.tracked_series_id || null;
+  const originTitle = ai[0]?.source_title || s.title;
   // The storyline's HOME run = the most-represented title; everything else is a
   // cross-title appearance and gets the lime tag.
   const counts = {};
@@ -752,7 +756,10 @@ function renderArcDetail(s) {
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
     </div>
-    <div class="issue-tabs-row"></div>
+    <div class="issue-tabs-row">${originId ? `<div class="issue-tab active" tabindex="0" role="button"
+        onclick="detailTab='arcs';navigate('series-detail',{id:${originId}})"
+        onkeydown="if(event.key==='Enter'||event.key===' '){detailTab='arcs';navigate('series-detail',{id:${originId}})}">
+        ← Back to ${esc(originTitle)} Arcs</div>` : ''}</div>
     ${collBanner}
     ${body}
   `);
