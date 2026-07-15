@@ -717,7 +717,7 @@ function renderArcDetail(s) {
     <div class="detail-folder-row">
       <span class="detail-folder-path u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
       <div class="detail-folder-actions">
-        <button class="btn btn-primary btn-sm" onclick="fulfillArc(${s.id}, this)">Get this storyline</button>
+        <button class="btn btn-primary btn-sm" id="arc-fulfill-btn" onclick="confirmFulfillArc(${s.id})">Get this storyline</button>
         <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
@@ -732,11 +732,30 @@ function renderArcDetail(s) {
   }, 4000);
 }
 
-async function fulfillArc(id, btn) {
-  // GET is a deliberate, destructive action: it materialises every participating run
-  // (creating series + folders for Detective, Showcase, …) and queues downloads. Warn
-  // before doing any of that — no silent folder creation.
-  if (!confirm('Get this storyline?\n\nThis creates a tracked series + folder for every participating run (Detective Comics, Showcase \'93, …) and queues downloads of the missing issues into them. Nothing is created until you confirm.')) return;
+// GET is a deliberate, destructive action: it materialises every participating run
+// (creating series + folders for Detective, Showcase, …) and queues downloads. Warn
+// before doing any of that — no silent folder creation. Themed modal, not a native
+// confirm() — the browser dialog was the one stock-white popup in an otherwise
+// fully-skinned app.
+function confirmFulfillArc(id) {
+  const title = _detailSeries?.title || 'this storyline';
+  showModal(`
+    <div class="modal-title">Get this storyline?</div>
+    <div class="confirm-body">
+      Get <strong style="color:var(--tp)">${esc(title)}</strong>?
+      <div class="confirm-note">Creates a tracked series + folder for every participating run
+        and queues downloads of the missing issues into them. Nothing is created until you confirm.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="doFulfillArc(${id})">Get this storyline</button>
+    </div>
+  `);
+}
+
+async function doFulfillArc(id) {
+  closeModal();
+  const btn = document.getElementById('arc-fulfill-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Queueing…'; }
   try {
     const r = await api.post(`/api/series/${id}/fulfill`, {});
@@ -745,9 +764,9 @@ async function fulfillArc(id, btn) {
     } else {
       showToast(`Fulfilling arc — queued ${r.queued} missing issue${r.queued === 1 ? '' : 's'} into their runs`);
     }
-    if (btn) { btn.disabled = false; btn.textContent = 'Get this storyline'; }
   } catch (e) {
     showToast('Fulfill failed — ' + (e?.message || e), 'error');
+  } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Get this storyline'; }
   }
 }
