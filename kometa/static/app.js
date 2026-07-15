@@ -747,7 +747,7 @@ function renderArcDetail(s) {
   setApp(`
     <div class="series-header-row">
       <div class="series-title-cluster">
-        <div class="series-title-sm">${esc(s.title)}</div>
+        <div class="page-heading">${esc(s.title)}</div>
         <div class="chips-row">${chips}</div>
       </div>
       <div class="detail-folder-actions">
@@ -927,7 +927,7 @@ async function renderSeriesDetail(id) {
   setApp(`
     <div class="series-header-row">
       <div class="series-title-cluster">
-        <div class="series-title-sm">${esc(s.title)}</div>
+        <div class="page-heading">${esc(s.title)}</div>
         <div class="chips-row">${chips}</div>
       </div>
       <div class="detail-folder-actions">
@@ -2392,7 +2392,7 @@ async function renderSettings() {
   const komgaCfg  = !!(cfg.komga_url && cfg.komga_user);
 
   setApp(`
-    <div class="page-title">Settings</div>
+    <div class="page-heading">Settings</div>
     <div class="settings-grid">
       <div>
         <div class="settings-card">

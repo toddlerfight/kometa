@@ -143,15 +143,9 @@ body {
   flex-shrink: 0;
 }
 
-/* Prominent, same weight as any page heading — not the quiet .u-label caption
-   style it used to borrow. Bare font-size/weight/color, none of .page-title's
-   margin/padding/border-bottom (that's content-section spacing; the topbar
-   already has its own border and layout). */
-#topbar-title {
-  font-size: var(--fs-head);
-  font-weight: 700;
-  color: var(--tp);
-}
+/* #topbar-title's typography comes from .page-heading (see 'Page heading' below),
+   applied directly in index.html's markup — one shared definition, not a second
+   copy that happened to match by coincidence. */
 
 /* Nothing to show (series-detail, Settings) — collapse the bar entirely instead
    of an empty strip + divider line reserving space for nothing. Specificity
@@ -348,15 +342,15 @@ textarea:focus-visible {
   .card-cascade, .wizard-result-enter { animation: none; opacity: 1; }
 }
 
-/* ---- Page section header ---- */
-
-.page-title {
+/* ---- Page heading ---- ONE definition, every context: #topbar-title (Library/
+   Pull List/Activity, set directly in index.html) and any in-content title
+   (Settings, Series/Arc Detail — topbar collapses on those, so it lives here
+   instead). No divider/spacing baked in — Pencil's spec has none, and each
+   context adds its own layout around it. */
+.page-heading {
   font-weight: 700;
   font-size: var(--fs-head);
   color: var(--tp);
-  margin-bottom: var(--sp-lg);
-  padding-bottom: var(--sp-lg);
-  border-bottom: 1px solid var(--bd);
 }
 
 
@@ -628,12 +622,6 @@ select.settings-input {
   gap: var(--sp-md);
   min-width: 0;
   flex-wrap: wrap;
-}
-
-.series-title-sm {
-  font-weight: 700;
-  font-size: var(--fs-head);
-  color: var(--tp);
 }
 
 .chips-row { display: flex; gap: 6px; flex-wrap: wrap; }
