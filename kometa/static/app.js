@@ -940,10 +940,7 @@ async function renderSeriesDetail(id) {
       </div>
     </div>
     <div class="detail-folder-row" id="folder-row">
-      ${folderField('series' + s.id, s.folder_path, 'library', async (path) => {
-        await api.patch(`/api/series/${s.id}/folder`, { folder_path: path || null });
-        renderSeriesDetail(s.id);
-      })}
+      <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
       <div class="detail-folder-actions">
         ${pullBtn}
         ${oversizedBtn}
@@ -1221,6 +1218,26 @@ function _tradeBtnReset(btn, isArrow) {
   btn.disabled = false;
   btn.classList.remove('btn-working');
   btn.textContent = isArrow ? '↓' : 'Download';
+}
+
+function showFolderPathModal(seriesId) {
+  const s = _detailSeries;
+  showModal(`
+    <div class="modal-title">Folder Path</div>
+    <div class="confirm-body">
+      Where this series lives on disk. Kometa uses this to detect what you already
+      own — changing it re-scans the new location.
+    </div>
+    <div style="margin-top:12px">
+      ${folderField('series' + seriesId, s?.folder_path, 'library', async (path) => {
+        await api.patch(`/api/series/${seriesId}/folder`, { folder_path: path || null });
+        renderSeriesDetail(seriesId);
+      })}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>
+  `);
 }
 
 async function togglePullList(id, on) {
