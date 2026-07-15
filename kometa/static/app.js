@@ -1917,10 +1917,15 @@ async function pullDownload(seriesId, number, btn) {
 }
 
 async function renderPullList() {
-  setTopbar(`
+  // Title lives in the topbar next to its action, matching Library — not as a
+  // separate .page-title in the content below (that was a duplicate-of-nowhere
+  // split: title down here, action up there, for no reason).
+  document.getElementById('topbar').classList.remove('topbar-empty');
+  document.getElementById('topbar-title').textContent = 'Pull List';
+  document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-sm ${_pullShowPast ? 'btn-primary' : 'btn-ghost'}"
       onclick="_togglePullPast(this)">+ Past 4 Weeks</button>
-  `);
+  `;
   setApp('<div class="state-msg">Loading...</div>');
   await _renderPullListContent();
 }
@@ -1939,7 +1944,7 @@ async function _renderPullListContent() {
   _pullItems = items;
 
   if (!items.length) {
-    setApp('<div class="page-title">Pull List</div><div class="state-msg">Nothing on your pull list.</div>');
+    setApp('<div class="state-msg">Nothing on your pull list.</div>');
     return;
   }
 
@@ -1984,7 +1989,7 @@ async function _renderPullListContent() {
       </div>
     `).join('');
 
-  setApp(`<div class="page-title">Pull List</div>${html}`);
+  setApp(html);
 }
 
 // --- Activity / Queue ---
@@ -2065,11 +2070,15 @@ async function renderActivity() {
   clearTimeout(_activityPollTimer);
   _activitySig = null;          // force a full rebuild when entering the view
   _activityPrevStates = null;   // fresh entry = no per-item fades on first paint
-  setTopbar(`
+  // Title lives in the topbar next to its actions, matching Library/Pull List —
+  // this page never had one anywhere before.
+  document.getElementById('topbar').classList.remove('topbar-empty');
+  document.getElementById('topbar-title').textContent = 'Activity';
+  document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
     <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
     <button class="btn btn-ghost btn-sm" onclick="clearHistory(this)">Clear History</button>
-  `);
+  `;
   setApp('<div class="state-msg">Loading...</div>');
   await _refreshActivity();
 }
