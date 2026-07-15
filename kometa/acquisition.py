@@ -7,9 +7,10 @@ main imports it back for the progress routes.
 """
 import os
 import json
+import time
 import logging
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import kometa.db as db
 import kometa.downloader as downloader
@@ -151,7 +152,15 @@ def _process_queue_locked():
         return
     gc = GetComicsClient()
     downloaded_urls = set()
-    for item in items:
+    # A multi-item batch (arc fulfill, deep pull-list catch-up) processing
+    # back-to-back is exactly the burst pattern that tips a GetComics file-host
+    # mirror into Cloudflare's bot-challenge mode — confirmed live: a 31-issue
+    # storyline fulfill got 8 clean comicfiles.ru downloads, then a hard wall for
+    # the rest of the session, still up an hour later. A couple of seconds between
+    # items costs nothing on the common single-item case (pace=False, no sleep)
+    # and meaningfully de-bursts a multi-item run without touching source order.
+    pace = len(items) > 1
+    for i, item in enumerate(items):
         qid = item["id"]
         db.update_queue_state(qid, "searching", path=DB_PATH)
         try:
@@ -163,7 +172,6 @@ def _process_queue_locked():
             else:
                 _acquire_issue(item, qid, gc, downloaded_urls)
         except GCRateLimitError as e:
-            from datetime import timedelta
             # A rate limit is "not yet", not "failed" — park the job and let the
             # 5-minute queue worker pick it back up after the cooldown. Real 429s
             # bump the attempt counter; gate refusals (no HTTP ever happened)
@@ -185,7 +193,6 @@ def _process_queue_locked():
                 logger.info(f"Queue item {qid}: rate limited — parked until {retry_at} UTC")
             break  # we're blocked either way — stop hammering with the rest of the queue
         except DuplicateIssueError as e:
-            from datetime import timedelta
             retry_at = (_utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
             db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
             logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
@@ -193,6 +200,8 @@ def _process_queue_locked():
             db.update_queue_state(qid, "failed", error=str(e), path=DB_PATH)
         finally:
             clear_search_status(qid)
+        if pace and i < len(items) - 1:
+            time.sleep(2)
 
 
 def _try_torrent(item, qid) -> bool:
@@ -233,10 +242,10 @@ def _try_torrent(item, qid) -> bool:
 
 def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
     """Try usenet then torrent. Returns True if something was queued (caller should
-    stop), False if neither panned out. Shared by two call sites: 'GetComics found
-    nothing' and 'GetComics found a link but the file host wouldn't serve it' — what
-    GetComics does or doesn't have says nothing about whether the other two sources
-    can deliver this issue/trade. nzb_search_fn takes the resolved prowlarr client
+    stop), False if neither panned out. Three call sites: 'GetComics found nothing',
+    'GetComics found a link but the file host wouldn't serve it', and — for issues
+    old enough that GetComics' same-week edge doesn't matter — the PRIMARY attempt,
+    tried before GetComics at all. nzb_search_fn takes the resolved prowlarr client
     and returns an nzb url or None (each caller closes over its own search args)."""
     prowlarr = _prowlarr()
     sab = _sabnzbd()
@@ -253,29 +262,43 @@ def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
     return _try_torrent(item, qid)
 
 
-def _acquire_issue(item, qid, gc, downloaded_urls):
-    """Search (GetComics → usenet → torrent) and place a single issue. Raises
-    GCRateLimitError / DuplicateIssueError up to the shared handler in the queue loop."""
-    issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
-    issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
-    store_date = issue_row["store_date"] if issue_row else None
-    nzb_name = f"{item['title']} #{int(item['issue_number'])}"
+# An issue this old has had months to propagate through usenet retention and
+# torrent seeding — GetComics' one real edge (same-day/same-week posting) is
+# gone by then, but its file-host mirrors are the one link in the cascade a
+# big batch can burst into a Cloudflare wall (comicfiles.ru, live tonight: 8
+# clean downloads then a hard block that held for over an hour). A story-arc
+# fulfill is exactly a batch of legacy issues, so old ones search usenet/torrent
+# FIRST and fall back to GetComics as the last resort, not the first attempt.
+_OLD_ISSUE_DAYS = 90
 
-    def _search_nzb(prowlarr):
-        return search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
 
+def _is_old_issue(store_date: str | None) -> bool:
+    if not store_date:
+        return False  # no date on record — don't assume old, keep GetComics-first
+    cutoff = (date.today() - timedelta(days=_OLD_ISSUE_DAYS)).isoformat()
+    return store_date < cutoff
+
+
+def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, str | None]:
+    """Search + download via GetComics. Returns (handled, error):
+    - (True, None): fully handled — placed, or correctly marked not_found as an
+      already-grabbed pack dupe. Caller stops.
+    - (False, None): GetComics has nothing at all (search miss) — caller tries
+      other sources; landing on 'not_found' if they also come up empty.
+    - (False, msg): GetComics found a link but the download itself failed — caller
+      still tries other sources, but if THOSE also fail, this is a 'failed' with
+      a real cause, not a bare 'not_found' (something exists, delivery broke).
+    Raises DuplicateIssueError up to the shared queue-loop handler unchanged
+    (6h-park, not a 'try another source' case)."""
     set_search_status(qid, "GetComics…")
     dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
                                       status_fn=lambda s, qid=qid: set_search_status(qid, s))
     if not dl_url:
-        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
-            return
-        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
-        return
+        return False, None
 
     if dl_url in downloaded_urls:
         db.update_queue_state(qid, "not_found", error="Pack already downloaded for this series", path=DB_PATH)
-        return
+        return True, None
     downloaded_urls.add(dl_url)
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
@@ -295,18 +318,14 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
             page_max=item.get("page_max"),
         )
     except DuplicateIssueError:
-        raise  # existing 6h-park handling in the queue loop — not a "try another source" case
+        raise
     except Exception as e:
         # GetComics served a link, but the FILE HOST (not GetComics itself) failed to
-        # hand over the bytes — dead mirror, hotlink block, host-level rate limit (the
-        # comicfiles.ru wall that ate a whole storyline batch is exactly this). A broken
-        # download says nothing about whether usenet/torrent has this issue too.
-        logger.info(f"GetComics download failed for {nzb_name}: {e} — trying usenet/torrent")
+        # hand over the bytes — dead mirror, hotlink block, host-level rate limit.
+        logger.info(f"GetComics download failed for {item['title']!r} #{item['issue_number']}: {e}")
         clear_progress(qid)
-        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
-            return
-        db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
-        return
+        return False, str(e)
+
     clear_progress(qid)
     # Mark done + record ownership in one transaction — no crash-gap re-download.
     db.complete_download(
@@ -315,6 +334,45 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
         set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
         path=DB_PATH,
     )
+    return True, None
+
+
+def _acquire_issue(item, qid, gc, downloaded_urls):
+    """Search and place a single issue. Order depends on age: a RECENT issue
+    tries GetComics first (its edge is same-week posting, before usenet/torrent
+    have caught up); an issue older than _OLD_ISSUE_DAYS tries usenet/torrent
+    first and only falls back to GetComics as a last resort — a backlog batch
+    (arc fulfill, deep pull-list sweep) shouldn't burst-hammer the one source
+    whose file-host mirrors are Cloudflare-sensitive to exactly that pattern.
+    Raises GCRateLimitError / DuplicateIssueError up to the shared handler."""
+    issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
+    issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
+    store_date = issue_row["store_date"] if issue_row else None
+    nzb_name = f"{item['title']} #{int(item['issue_number'])}"
+
+    def _search_nzb(prowlarr):
+        return search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
+
+    if _is_old_issue(store_date):
+        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
+            return
+        handled, gc_error = _try_getcomics(item, qid, gc, downloaded_urls, store_date)
+        if handled:
+            return
+    else:
+        handled, gc_error = _try_getcomics(item, qid, gc, downloaded_urls, store_date)
+        if handled:
+            return
+        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
+            return
+
+    # Nothing panned out. A GetComics download failure (a real link, delivery
+    # broke) is a 'failed' with the actual cause; a pure search miss everywhere
+    # is a bare 'not_found' — same distinction the pre-reorder code preserved.
+    if gc_error:
+        db.update_queue_state(qid, "failed", error=f"GetComics: {gc_error}", path=DB_PATH)
+    else:
+        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
 
 
 def _acquire_trade(item, qid, gc, downloaded_urls):

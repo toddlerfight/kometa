@@ -5,6 +5,8 @@ the queue/issue rows land where they should.
 _finalize_usenet_download gets the heaviest coverage here — it moves real files
 on disk and was the one extracted function with zero prior exercise.
 """
+from datetime import date
+
 import pytest
 
 import kometa.db as db
@@ -43,7 +45,11 @@ def wired(db_path, series, monkeypatch):
 class TestProcessQueue:
     def test_getcomics_hit_marks_done_and_owns_issue(self, wired, monkeypatch):
         db_path, series = wired
-        db.upsert_issue_status(series, 1.0, "2012-03-14", owned=False, path=db_path)
+        # Recent store_date, not incidental: _acquire_issue tries GetComics FIRST
+        # only for recent issues (see TestSourceOrderByAge) — an old date here
+        # would route through the usenet/torrent-first branch instead, testing
+        # something this happy-path test isn't about.
+        db.upsert_issue_status(series, 1.0, str(date.today()), owned=False, path=db_path)
         db.queue_issue(series, 1.0, db_path)
 
         class FakeGC:
@@ -362,3 +368,120 @@ class TestGetComicsDownloadFallback:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "queued"          # parked for retry, not failed
         assert q["retry_after"] is not None
+
+
+class TestSourceOrderByAge:
+    """A story-arc 'Get this storyline' fulfill queues a batch of legacy issues —
+    exactly the traffic pattern that tipped comicfiles.ru into a Cloudflare wall
+    live (8 clean downloads, then blocked for the rest of the session). Old
+    issues should try usenet/torrent FIRST; GetComics only as a last resort."""
+
+    def test_is_old_issue_boundary(self):
+        from datetime import date, timedelta
+        today = date.today()
+        assert acq._is_old_issue(None) is False
+        assert acq._is_old_issue(str(today)) is False
+        assert acq._is_old_issue(str(today - timedelta(days=acq._OLD_ISSUE_DAYS - 1))) is False
+        assert acq._is_old_issue(str(today - timedelta(days=acq._OLD_ISSUE_DAYS + 1))) is True
+
+    def test_old_issue_never_touches_getcomics_when_usenet_succeeds(self, wired, monkeypatch):
+        db_path, series = wired
+        db.upsert_issue_status(series, 1.0, "2012-03-14", owned=False, path=db_path)
+        db.queue_issue(series, 1.0, db_path)
+
+        class StrictGC:
+            def search(self, *a, **k):
+                raise AssertionError("GetComics should not be tried first for an old issue")
+        monkeypatch.setattr(acq, "GetComicsClient", StrictGC)
+
+        class FakeSab:
+            def add_nzb_url(self, url, nzb_name=None):
+                return "nzo1"
+        monkeypatch.setattr(acq, "_prowlarr", lambda: object())
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+        monkeypatch.setattr(acq, "search_usenet", lambda *a, **k: "http://nzb/saga-1.nzb")
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "pending_usenet"
+
+    def test_old_issue_falls_back_to_getcomics_as_last_resort(self, wired, monkeypatch):
+        db_path, series = wired
+        db.upsert_issue_status(series, 1.0, "2012-03-14", owned=False, path=db_path)
+        db.queue_issue(series, 1.0, db_path)
+        # wired stubs _prowlarr/_qbittorrent to None already
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://dl/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq.downloader, "download_issue",
+                            lambda **kw: "/comics/Image/Saga/Saga #001.cbz")
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+
+    def test_recent_issue_still_tries_getcomics_first(self, wired, monkeypatch):
+        db_path, series = wired
+        db.upsert_issue_status(series, 1.0, str(date.today()), owned=False, path=db_path)
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://dl/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq.downloader, "download_issue",
+                            lambda **kw: "/comics/Image/Saga/Saga #001.cbz")
+
+        # If usenet/torrent were (wrongly) tried first, this would blow up on the
+        # wired fixture's unstubbed real _sabnzbd() hitting the container DB path.
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+
+
+class TestQueuePacing:
+    """A multi-item batch paces itself between items (de-bursts the exact
+    pattern that trips Cloudflare on a file-host mirror); a lone item doesn't
+    pay that cost."""
+
+    def test_no_pace_for_single_item(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return (None, None)
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        slept = []
+        monkeypatch.setattr(acq.time, "sleep", lambda s: slept.append(s))
+
+        acq._process_queue()
+        assert slept == []
+
+    def test_paces_between_items_in_a_batch(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+        db.queue_issue(series, 2.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return (None, None)
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        slept = []
+        monkeypatch.setattr(acq.time, "sleep", lambda s: slept.append(s))
+
+        acq._process_queue()
+        assert slept == [2]   # one pause between the two items, none trailing
