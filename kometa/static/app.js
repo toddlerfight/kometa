@@ -635,6 +635,21 @@ function flipIssueSort(id) {
 const _autoSynced = new Set();   // series auto-synced this session — fire once each
 let _detailPollId = null;        // the ONE live auto-populate poller (see renderSeriesDetail)
 
+// Arc ownership is a resolved SNAPSHOT (matched against Komga's book list), not a
+// live join against issue_status — so "Get this storyline" queues downloads but the
+// arc page's X/N counter sits frozen until something re-resolves it. Auto-fire once
+// per arc per session on page view (mirrors _autoSynced) so revisiting the page after
+// a grab shows current ownership without the user having to find the manual button.
+const _autoArcResolved = new Set();
+async function _autoResolveArc(id) {
+  if (_autoArcResolved.has(id)) return;
+  _autoArcResolved.add(id);
+  try {
+    await api.post(`/api/series/${id}/resolve-arc`, {});
+    if (currentView === 'series-detail' && currentParams.id === id) renderSeriesDetail(id);
+  } catch (e) { /* silent — the manual Refresh Ownership button still works */ }
+}
+
 // A source title minus the run it shares with the storyline's home, upper-cased for
 // the cross-title tag: ('Detective Comics', 'Batman') -> 'DETECTIVE';
 // ('Batman: Shadow of the Bat', 'Batman') -> 'SHADOW OF THE BAT'.
@@ -730,6 +745,7 @@ function renderArcDetail(s) {
   if (!total) setTimeout(() => {
     if (currentView === 'series-detail' && currentParams.id === s.id) renderSeriesDetail(s.id);
   }, 4000);
+  if (total) _autoResolveArc(s.id);
 }
 
 // GET is a deliberate, destructive action: it materialises every participating run
