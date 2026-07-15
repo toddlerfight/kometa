@@ -116,6 +116,9 @@ function updateNav() {
 function setTopbar(actionsHTML = '') {
   document.getElementById('topbar-title').textContent = '';
   document.getElementById('topbar-actions').innerHTML = actionsHTML;
+  // Nothing in it (series-detail, Settings) → collapse the bar entirely instead
+  // of leaving an empty strip + divider line reserving space for nothing.
+  document.getElementById('topbar').classList.toggle('topbar-empty', !actionsHTML);
 }
 
 function setApp(html) {
@@ -303,6 +306,10 @@ async function syncSeries(id, btn, pre = null) {
 let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
+  // Bypasses setTopbar() (needs a title, which that always clears) — so it has
+  // to drop the empty-collapse class itself too, or a stale one from whatever
+  // view was active before (series-detail, Settings) hides this bar's own content.
+  document.getElementById('topbar').classList.remove('topbar-empty');
   document.getElementById('topbar-title').textContent = 'Library';
   // No Sync All button — the scheduler syncs everything at 5/12/17, stale series
   // self-sync on view, and series detail has its own Sync. The machine does the

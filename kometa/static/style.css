@@ -143,6 +143,18 @@ body {
   flex-shrink: 0;
 }
 
+/* Nothing to show (series-detail, Settings) — collapse the bar entirely instead
+   of an empty strip + divider line reserving space for nothing. Specificity
+   (id + class) beats the plain #topbar rules in every breakpoint, including
+   the responsive height:auto/min-height override below. */
+#topbar.topbar-empty {
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border-bottom: none;
+  overflow: hidden;
+}
+
 #topbar-actions {
   display: flex;
   gap: var(--sp-sm);
