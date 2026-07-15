@@ -609,57 +609,47 @@ select.settings-input {
   mask-composite: intersect;
 }
 
-.detail-hero {
-  position: relative;
-  height: 150px;
-  flex-shrink: 0;
-  margin: calc(-1 * var(--app-pad)) calc(-1 * var(--app-pad)) 0;
-  z-index: 1;
-}
-
-.detail-hero-gradient {
-  position: absolute;
-  inset: 0;
-}
-
-.detail-hero-content {
-  position: absolute;
-  inset: 0;
+/* Series/Arc detail header — flat, no hero/backdrop block: title + chips left,
+   primary actions right, one row. Matches Library/Pull List/Activity's own
+   title+action topbar pattern, just relocated into content since these pages'
+   topbar has nothing to justify existing (2026-07-15, replaced .detail-hero). */
+.series-header-row {
   display: flex;
-  align-items: flex-end;
-  padding: 0 var(--sp-xl) 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-md);
+  flex-wrap: wrap;
+  padding-top: var(--sp-md);
 }
 
-.detail-hero-text { flex: 1; min-width: 0; }
+.series-title-cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  min-width: 0;
+  flex-wrap: wrap;
+}
 
-.detail-hero-publisher {
+.series-title-sm {
+  font-weight: 700;
+  font-size: var(--fs-head);
+  color: var(--tp);
+}
+
+.chips-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.series-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: var(--sp-sm) 0 var(--sp-md);
+}
+
+.series-meta-text {
   font-size: var(--fs-label);
   text-transform: uppercase;
   letter-spacing: var(--track-wide);
   color: var(--tq);
-  margin-bottom: 6px;
-}
-
-.detail-hero-title {
-  font-weight: 700;
-  font-size: var(--fs-display);
-  line-height: 1.1;
-  color: var(--tp);
-  margin-bottom: 10px;
-}
-
-.detail-hero-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-
-.detail-folder-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-sm);
-  padding: 0 var(--app-pad);
-  height: 40px;
-  border-bottom: 1px solid var(--bd);
-  margin: 0 calc(-1 * var(--app-pad));
-  position: relative;
-  z-index: 1;
 }
 
 .detail-folder-actions {
@@ -674,13 +664,7 @@ select.settings-input {
    Icon-in-box that browses + editable input + autosave whisper. Empty = the
    icon glows lime + placeholder; hover is the same subtle grey everywhere so
    lime stays reserved for the icon-glow and focus. */
-/* storyline/arc detail rows reuse this for their read-only note (no folder to pick) */
-.detail-folder-path {
-  font-size: var(--fs-body); color: var(--tm);
-  min-width: 0;
-}
 .folder-field { position: relative; display: flex; align-items: center; gap: var(--sp-sm); min-width: 0; }
-.detail-folder-row .folder-field { flex: 1; }
 /* Same box chrome as .settings-input / .search-input / .browse-search
    (su2 · bd · radius 2 · 8/12 padding · 12px text) so every field is one height. */
 /* chrome (bg/border/radius/padding) comes from the shared "One input box" rule */

@@ -679,7 +679,7 @@ function _arcShortTitle(t, primary) {
 // Story arc detail — its issues span titles (Batman, Detective, …) and live in
 // arc_issues, not issue_status. Per the spec it renders like the rest of the app:
 // the SAME issue-tile grid as a series, with cross-title issues tagged in lime and
-// the actions living in the detail-folder-row (the app's consistent action bar).
+// the actions living in .detail-folder-actions (the app's consistent action bar).
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
@@ -745,23 +745,19 @@ function renderArcDetail(s) {
     ? `<div class="issue-grid">${tiles}</div>`
     : `<div class="state-msg" style="padding:28px 0;font-size:12px;color:var(--tq)">Pulling reading order from ComicVine…</div>`;
   setApp(`
-    <div class="detail-hero">
-      <div class="detail-hero-gradient"></div>
-      <div class="detail-hero-content">
-        <div class="detail-hero-text">
-          <div class="detail-hero-publisher">${esc(meta)}</div>
-          <div class="detail-hero-title">${esc(s.title)}</div>
-          <div class="detail-hero-chips">${chips}</div>
-        </div>
+    <div class="series-header-row">
+      <div class="series-title-cluster">
+        <div class="series-title-sm">${esc(s.title)}</div>
+        <div class="chips-row">${chips}</div>
       </div>
-    </div>
-    <div class="detail-folder-row">
-      <span class="detail-folder-path u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
       <div class="detail-folder-actions">
         <button class="btn btn-primary btn-sm" id="arc-fulfill-btn" onclick="confirmFulfillArc(${s.id})">Get this storyline</button>
         <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
+    </div>
+    <div class="series-meta-row">
+      <span class="series-meta-text u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
     </div>
     <div class="issue-tabs-row">${originId ? `<div class="issue-tab active" tabindex="0" role="button"
         onclick="detailTab='arcs';navigate('series-detail',{id:${originId}})"
@@ -929,24 +925,21 @@ async function renderSeriesDetail(id) {
   seriesBg.classList.remove('hidden');
 
   setApp(`
-    <div class="detail-hero">
-      <div class="detail-hero-gradient"></div>
-      <div class="detail-hero-content">
-        <div class="detail-hero-text">
-          <div class="detail-hero-publisher">${esc(meta)}</div>
-          <div class="detail-hero-title">${esc(s.title)}</div>
-          <div class="detail-hero-chips">${chips}</div>
-        </div>
+    <div class="series-header-row">
+      <div class="series-title-cluster">
+        <div class="series-title-sm">${esc(s.title)}</div>
+        <div class="chips-row">${chips}</div>
       </div>
-    </div>
-    <div class="detail-folder-row" id="folder-row">
-      <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
       <div class="detail-folder-actions">
         ${pullBtn}
         ${oversizedBtn}
         ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
       </div>
+    </div>
+    <div class="series-meta-row">
+      <span class="series-meta-text">${esc(meta)}</span>
+      <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
     </div>
     <div class="issue-tabs-row">
       <div class="issue-tabs">${tabs}</div>
