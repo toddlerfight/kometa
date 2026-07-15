@@ -349,6 +349,15 @@ def get_series(series_id: int):
     if s.get("kind") == "arc":
         # An arc's cross-title reading order lives in arc_issues, not issue_status.
         arc_issues = db.get_arc_reading_order(series_id, DB_PATH)
+        # Each row's OWN home series id — an arc spans titles, so the frontend needs
+        # this to open the REAL issue modal (showIssueModal) scoped to the run that
+        # issue actually belongs to, not the arc's own pseudo-series id. Same
+        # cv_volume_id -> tracked_series resolution fulfill_arc already does.
+        vids = {r.get("cv_volume_id") for r in arc_issues if r.get("cv_volume_id")}
+        vid_map = {vid: db.get_series_by_cv_volume(vid, DB_PATH) for vid in vids}
+        for r in arc_issues:
+            run = vid_map.get(r.get("cv_volume_id"))
+            r["tracked_series_id"] = run["id"] if run else None
         owned = sum(1 for i in arc_issues if i["owned"])
         # 'collected' = a trade that collects this arc is ACTUALLY OWNED ON DISK. Disk
         # is the only ownership source — a Komga metadata entry named after the arc does

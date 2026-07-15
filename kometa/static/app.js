@@ -512,11 +512,10 @@ function browseSearch(val) {
 let _detailSeries = null;
 let _pendingIssueOpen = null;   // {seriesId, number} — open this issue once its run renders
 
-// Click an arc issue → its details in place (a modal), not a navigation. Owned
-// + resolved in Komga → straight to the reader, same link every other owned-issue
-// modal in the app uses. Otherwise the issue's own run is one button away ("Open
-// in its run"), for full details + variants + getting it. Reads the arc_issue
-// already loaded in _detailSeries.
+// FALLBACK ONLY — arc tiles call the real showIssueModal directly now (same
+// modal, Download button, variants, everything every series page gets), scoped
+// to the row's resolved tracked_series_id. This thin version only fires if that
+// resolution somehow comes back empty (a participating run not yet tracked).
 function showArcIssueModal(readingOrder) {
   const s = _detailSeries;
   const i = (s?.arc_issues || []).find(x => x.reading_order === readingOrder);
@@ -711,9 +710,16 @@ function renderArcDetail(s) {
       ? `<img src="${esc(i.image_url)}" alt="${num}" loading="lazy" onerror="this.remove()">`
       : '';
     const ttl = `${esc(i.source_title || '')} ${num}${i.story_title ? ' — ' + esc(i.story_title) : ''}`;
+    // The REAL issue modal (showIssueModal) — same one every series page uses, same
+    // Download button, variants, LOCG details — scoped to the row's OWN home series
+    // (tracked_series_id, resolved server-side). Falls back to the thin arc-only
+    // modal only in the rare case a participating run somehow isn't resolved yet.
+    const openIssue = i.tracked_series_id
+      ? `showIssueModal(${i.tracked_series_id}, ${Number(i.number)})`
+      : `showArcIssueModal(${i.reading_order})`;
     return `<div class="issue-tile" title="${ttl}" tabindex="0" role="button"
-      onclick="showArcIssueModal(${i.reading_order})"
-      onkeydown="if(event.key==='Enter'||event.key===' ')showArcIssueModal(${i.reading_order})">
+      onclick="${openIssue}"
+      onkeydown="if(event.key==='Enter'||event.key===' ')${openIssue}">
       <div class="issue-tile-img${stateCls}">${cover}${covBadge}</div>
       <div class="issue-tile-num">${xt}${num}</div>
     </div>`;
@@ -2717,6 +2723,8 @@ let _issueVariantSelected = new Set();
 let _issueVariantPrimary  = null;
 let _issueVariantSeriesId = null;
 let _issueVariantNumber   = null;
+let _issueVariantOwned    = false;  // cached at modal-open — don't re-derive via
+                                     // _detailSeries.issues, which is empty for arcs
 
 // Tween the issue modal's height around a DOM change so async content (details,
 // variants) eases in instead of popping. Measures before/after, animates between.
@@ -2769,17 +2777,33 @@ function _renderIssueDetails(desc, credits) {
 
 async function showIssueModal(seriesId, number) {
   clearTimeout(_issueModalPollTimer);
-  const issue = _detailSeries?.issues?.find(i => i.number === number);
-  if (!issue) return;
+  // Fast path: already viewing this series, its issues are cached on _detailSeries.
+  // Called from elsewhere (an arc's cross-title reading order) — _detailSeries is
+  // the ARC's payload, not this issue's own series — fetch it fresh instead of
+  // silently no-op'ing, so the SAME real modal works from any context.
+  let homeSeries = _detailSeries?.id === seriesId ? _detailSeries : null;
+  let issue = homeSeries?.issues?.find(i => i.number === number);
+  if (!issue) {
+    try {
+      homeSeries = await api.get(`/api/series/${seriesId}`);
+    } catch (e) {
+      showToast('Couldn’t load issue — ' + (e?.message || e), 'error');
+      return;
+    }
+    issue = homeSeries?.issues?.find(i => i.number === number);
+    if (!issue) return;
+  }
+
+  const st = issueStatus(issue);
 
   _issueVariantCovers   = [];
   _issueVariantSelected = new Set();
   _issueVariantPrimary  = null;
   _issueVariantSeriesId = seriesId;
   _issueVariantNumber   = number;
+  _issueVariantOwned    = st === 'owned';
 
-  const s = _detailSeries;
-  const st = issueStatus(issue);
+  const s = homeSeries;
   const num = `#${fmtNum(number)}`;
 
   // variant_cover = your saved variant pick (only present on not-yet-downloaded
@@ -3071,9 +3095,7 @@ function _lbSetCover() {
   _imRefreshCards();
   _imUpdateHint();
   _lbControls();
-  const issue = _detailSeries?.issues?.find(i => i.number === _issueVariantNumber);
-  const isOwned = issue ? issueStatus(issue) === 'owned' : false;
-  _imApplyVariants(_issueVariantSeriesId, _issueVariantNumber, isOwned);
+  _imApplyVariants(_issueVariantSeriesId, _issueVariantNumber, _issueVariantOwned);
 }
 
 async function _imApplyVariants(seriesId, number, isOwned) {
