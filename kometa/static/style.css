@@ -143,6 +143,16 @@ body {
   flex-shrink: 0;
 }
 
+/* Prominent, same weight as any page heading — not the quiet .u-label caption
+   style it used to borrow. Bare font-size/weight/color, none of .page-title's
+   margin/padding/border-bottom (that's content-section spacing; the topbar
+   already has its own border and layout). */
+#topbar-title {
+  font-size: var(--fs-head);
+  font-weight: 700;
+  color: var(--tp);
+}
+
 /* Nothing to show (series-detail, Settings) — collapse the bar entirely instead
    of an empty strip + divider line reserving space for nothing. Specificity
    (id + class) beats the plain #topbar rules in every breakpoint, including
