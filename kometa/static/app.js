@@ -752,7 +752,7 @@ function renderArcDetail(s) {
         <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
       </div>
     </div>
-    <div class="issue-tabs-row"><div class="issue-tabs"><div class="issue-tab active">reading order</div></div></div>
+    <div class="issue-tabs-row"></div>
     ${collBanner}
     ${body}
   `);
