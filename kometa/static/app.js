@@ -668,10 +668,10 @@ function _arcShortTitle(t, primary) {
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
-  // Back-link to the origin series (the arc lives under its Arcs tab), not just Library.
-  if (s.origin) {
-    setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('series-detail',{id:${s.origin.series_id}})">← ${esc(s.origin.title)}</button>`);
-  }
+  // No special back-link — renderSeriesDetail already set the plain '← Library'
+  // topbar every other detail page uses. A one-off 'back to origin' button here
+  // looked like a tab-bar peer but behaved like leaving the app; killed rather
+  // than patched (2026-07-15).
   const ai = s.arc_issues || [];
   const total = ai.length;
   // The storyline's HOME run = the most-represented title; everything else is a
