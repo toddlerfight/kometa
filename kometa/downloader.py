@@ -235,7 +235,7 @@ class WrongIssueError(DuplicateIssueError):
 # Matches "#135", "#135.1" — strips leading zeros
 _NUM_FROM_FNAME_RE = re.compile(r'#\s*0*(\d+(?:\.\d+)?)')
 # Matches bare "001 (2016)" style — used as fallback for pack filenames without #
-_NUM_FROM_FNAME_BARE_RE = re.compile(r'(?<!\d)0*(\d{1,3})(?!\d)')
+_NUM_FROM_FNAME_BARE_RE = re.compile(r'(?<!\d)0*(\d{1,4})(?!\d)')
 
 
 def _num_from_filename(name: str) -> float | None:
@@ -244,11 +244,16 @@ def _num_from_filename(name: str) -> float | None:
 
 
 def _num_from_filename_broad(name: str) -> float | None:
-    """Fallback for pack files like 'Batman 001 (2016)...' — finds first non-year 1-3 digit number."""
+    """Fallback for pack files like 'Batman 001 (2016)...' — finds the first non-year
+    1-4 digit number. Years are stripped by PARENTHESES, not by digit-count: a bare
+    \\b\\d{4}\\b strip would (and used to) eat a genuine 4-digit issue number just as
+    happily as a year — Detective Comics is a legacy-numbered run past #1000, and every
+    real scan-group filename observed wraps the year in parens ("(2024)"), so this is
+    strictly narrower without losing any real years."""
     base = re.sub(r'\.\w+$', '', os.path.basename(name))
     if re.search(r'\bannual\b', base, re.IGNORECASE):
         return None
-    base = re.sub(r'\b\d{4}\b', '', base)  # remove 4-digit years first
+    base = re.sub(r'\(\d{4}\)', '', base)  # remove PARENTHESIZED years only
     m = _NUM_FROM_FNAME_BARE_RE.search(base)
     if m:
         return float(m.group(1))
