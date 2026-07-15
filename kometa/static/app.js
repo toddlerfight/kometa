@@ -835,7 +835,11 @@ async function refreshArcOwnership(id, btn) {
 }
 
 async function renderSeriesDetail(id) {
-  setTopbar(`<button class="btn btn-ghost btn-sm" onclick="navigate('library')">← Library</button>`);
+  // No topbar back-button — LIBRARY already lives permanently in the sidebar nav,
+  // so a second '← Library' here was pure duplication, not a distinct nav need.
+  // Still clear the topbar (drops stale actions from whatever view was active
+  // before — Activity's Sweep/Start Queue buttons, etc.).
+  setTopbar();
   setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
