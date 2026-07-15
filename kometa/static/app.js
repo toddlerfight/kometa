@@ -2519,7 +2519,7 @@ async function _toggleSource(el) {
   // made the fold look broken (it lagged the toggle, then snapped).
   _collapseSection(sec, !on, true);
   try {
-    await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
+    _appConfig = await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
     showToast(`${t.label} ${on ? 'enabled' : 'disabled'}`);
   } catch (e) {
     el.checked = !on;                  // revert toggle + fold
@@ -2574,6 +2574,11 @@ async function _settingsChanged(el) {
 
   try {
     const cfg = await api.patch('/api/config', { [f.key]: val });
+    // Settings autosave changes what the SERVER knows, but every render decision
+    // gated on _appConfig (Arcs tab, "Open in Komga" links, …) was reading the
+    // STALE snapshot from boot() until a hard reload — a toggle could report
+    // 'enabled' via toast while the UI it unlocks stayed invisible all session.
+    _appConfig = cfg;
     el.dataset.last = val;
     if (f.secret) { el.value = ''; el.placeholder = 'Leave blank to keep current'; }
     _whisper(f.card, 'saved');
