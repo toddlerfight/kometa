@@ -277,3 +277,88 @@ class TestPageMaxOverride:
         assert (dest / "Saga #001.cbz").exists()
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "done"
+
+
+class TestGetComicsDownloadFallback:
+    """A GetComics SEARCH hit doesn't guarantee the linked file host will actually
+    serve the file — dead mirror, hotlink block, host-level rate limit (the
+    comicfiles.ru wall that ate a whole Detective Comics arc-fulfill batch live was
+    exactly this). A download-step failure should fall back to usenet/torrent the
+    same as a search-miss does, not hard-fail immediately — except DuplicateIssueError,
+    which means 'we probably already have this' and keeps its own 6h-park handling."""
+
+    def test_download_failure_falls_back_to_usenet(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://dead-host/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        def _boom(**kw):
+            raise Exception("403 Client Error: Forbidden for url: http://dead-host/saga-1.cbz")
+        monkeypatch.setattr(acq.downloader, "download_issue", _boom)
+
+        class FakeSab:
+            def add_nzb_url(self, url, nzb_name=None):
+                return "nzo123"
+        monkeypatch.setattr(acq, "_prowlarr", lambda: object())
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+        monkeypatch.setattr(acq, "search_usenet", lambda *a, **k: "http://nzb/saga-1.nzb")
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "pending_usenet"
+        assert q["sab_nzo_id"] == "nzo123"
+
+    def test_download_failure_with_no_fallback_source_fails(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://dead-host/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        def _boom(**kw):
+            raise Exception("403 Client Error: Forbidden")
+        monkeypatch.setattr(acq.downloader, "download_issue", _boom)
+        # wired fixture stubs _prowlarr/_qbittorrent to None already; _sabnzbd isn't
+        # short-circuited away by that (same gotcha test_no_source_marks_not_found
+        # hits), so stub it too — otherwise the real accessor tries the container DB.
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+        assert "403" in q["error"]
+
+    def test_duplicate_issue_error_parks_instead_of_falling_back(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://host/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        from kometa.downloader import DuplicateIssueError
+
+        def _dupe(**kw):
+            raise DuplicateIssueError("already exists")
+        monkeypatch.setattr(acq.downloader, "download_issue", _dupe)
+        # No usenet/torrent stubs — if fallback were (wrongly) attempted with the
+        # wired fixture's None _prowlarr, it would land 'failed' rather than 'queued'
+        # below, so this also proves the fallback path was never entered.
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "queued"          # parked for retry, not failed
+        assert q["retry_after"] is not None

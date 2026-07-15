@@ -231,30 +231,44 @@ def _try_torrent(item, qid) -> bool:
     return True
 
 
+def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
+    """Try usenet then torrent. Returns True if something was queued (caller should
+    stop), False if neither panned out. Shared by two call sites: 'GetComics found
+    nothing' and 'GetComics found a link but the file host wouldn't serve it' — what
+    GetComics does or doesn't have says nothing about whether the other two sources
+    can deliver this issue/trade. nzb_search_fn takes the resolved prowlarr client
+    and returns an nzb url or None (each caller closes over its own search args)."""
+    prowlarr = _prowlarr()
+    sab = _sabnzbd()
+    if _prowlarr_on() and _usenet_on() and prowlarr and sab:
+        set_search_status(qid, "Usenet: searching…")
+        nzb_url = nzb_search_fn(prowlarr)
+        if nzb_url:
+            nzo_id = sab.add_nzb_url(nzb_url, nzb_name=nzb_name)
+            if nzo_id:
+                db.update_queue_state(qid, "pending_usenet", source_url=nzb_url, path=DB_PATH)
+                db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
+                logger.info(f"Usenet: submitted nzo_id={nzo_id} for {nzb_name}")
+                return True
+    return _try_torrent(item, qid)
+
+
 def _acquire_issue(item, qid, gc, downloaded_urls):
     """Search (GetComics → usenet → torrent) and place a single issue. Raises
     GCRateLimitError / DuplicateIssueError up to the shared handler in the queue loop."""
     issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
     issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
     store_date = issue_row["store_date"] if issue_row else None
+    nzb_name = f"{item['title']} #{int(item['issue_number'])}"
+
+    def _search_nzb(prowlarr):
+        return search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
 
     set_search_status(qid, "GetComics…")
     dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
                                       status_fn=lambda s, qid=qid: set_search_status(qid, s))
     if not dl_url:
-        prowlarr = _prowlarr()
-        sab = _sabnzbd()
-        if _prowlarr_on() and _usenet_on() and prowlarr and sab:
-            set_search_status(qid, "Usenet: searching…")
-            nzb_url = search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
-            if nzb_url:
-                nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{item['title']} #{int(item['issue_number'])}")
-                if nzo_id:
-                    db.update_queue_state(qid, "pending_usenet", source_url=nzb_url, path=DB_PATH)
-                    db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
-                    logger.info(f"Usenet: submitted nzo_id={nzo_id} for {item['title']} #{int(item['issue_number'])}")
-                    return
-        if _try_torrent(item, qid):
+        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
             return
         db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
         return
@@ -265,20 +279,34 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     downloaded_urls.add(dl_url)
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
-    dest = downloader.download_issue(
-        url=dl_url,
-        title=item["title"],
-        publisher=item["publisher"],
-        issue_number=item["issue_number"],
-        store_date=store_date,
-        hint_filename=hint_filename,
-        komga_scan_fn=_komga_scan,
-        progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
-        dest_dir=item.get("folder_path") or None,
-        tracked_series_id=item["tracked_series_id"],
-        db_path=DB_PATH,
-        page_max=item.get("page_max"),
-    )
+    try:
+        dest = downloader.download_issue(
+            url=dl_url,
+            title=item["title"],
+            publisher=item["publisher"],
+            issue_number=item["issue_number"],
+            store_date=store_date,
+            hint_filename=hint_filename,
+            komga_scan_fn=_komga_scan,
+            progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+            dest_dir=item.get("folder_path") or None,
+            tracked_series_id=item["tracked_series_id"],
+            db_path=DB_PATH,
+            page_max=item.get("page_max"),
+        )
+    except DuplicateIssueError:
+        raise  # existing 6h-park handling in the queue loop — not a "try another source" case
+    except Exception as e:
+        # GetComics served a link, but the FILE HOST (not GetComics itself) failed to
+        # hand over the bytes — dead mirror, hotlink block, host-level rate limit (the
+        # comicfiles.ru wall that ate a whole storyline batch is exactly this). A broken
+        # download says nothing about whether usenet/torrent has this issue too.
+        logger.info(f"GetComics download failed for {nzb_name}: {e} — trying usenet/torrent")
+        clear_progress(qid)
+        if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
+            return
+        db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
+        return
     clear_progress(qid)
     # Mark done + record ownership in one transaction — no crash-gap re-download.
     db.complete_download(
@@ -306,24 +334,16 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         db.update_queue_state(qid, "failed", error="No folder set for this series", path=DB_PATH)
         return
 
+    query = f"{title} {label}".strip()
+
+    def _search_nzb(prowlarr):
+        return search_usenet_pack(prowlarr, query, series_year=item.get("year_began"))
+
     set_search_status(qid, "GetComics…")
     dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
                                    status_fn=lambda s, qid=qid: set_search_status(qid, s))
     if not dl_url:
-        prowlarr = _prowlarr()
-        sab = _sabnzbd()
-        if _prowlarr_on() and _usenet_on() and prowlarr and sab:
-            set_search_status(qid, "Usenet: searching…")
-            query = f"{title} {label}".strip()
-            nzb_url = search_usenet_pack(prowlarr, query, series_year=item.get("year_began"))
-            if nzb_url:
-                nzo_id = sab.add_nzb_url(nzb_url, nzb_name=query)
-                if nzo_id:
-                    db.update_queue_state(qid, "pending_usenet", source_url=nzb_url, path=DB_PATH)
-                    db.set_sab_nzo_id(qid, nzo_id, path=DB_PATH)
-                    logger.info(f"Usenet: submitted nzo_id={nzo_id} for trade {query!r}")
-                    return
-        if _try_torrent(item, qid):
+        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
             return
         db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
         return
@@ -334,11 +354,21 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     downloaded_urls.add(dl_url)
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
-    downloader.download_trade(
-        dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
-        progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
-        komga_scan_fn=_komga_scan,
-    )
+    try:
+        downloader.download_trade(
+            dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
+            progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+            komga_scan_fn=_komga_scan,
+        )
+    except DuplicateIssueError:
+        raise
+    except Exception as e:
+        logger.info(f"GetComics trade download failed for {query!r}: {e} — trying usenet/torrent")
+        clear_progress(qid)
+        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
+            return
+        db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
+        return
     clear_progress(qid)
     db.complete_trade(qid, path=DB_PATH)
     # Re-stamp owned on the cached trades now (folder scan), so the tile flips to
