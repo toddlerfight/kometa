@@ -512,9 +512,11 @@ function browseSearch(val) {
 let _detailSeries = null;
 let _pendingIssueOpen = null;   // {seriesId, number} — open this issue once its run renders
 
-// Click an arc issue → its details in place (a modal), not a navigation. The issue's
-// own run is one button away ("Open in its run"), which is where full details +
-// variants + getting live. Reads the arc_issue already loaded in _detailSeries.
+// Click an arc issue → its details in place (a modal), not a navigation. Owned
+// + resolved in Komga → straight to the reader, same link every other owned-issue
+// modal in the app uses. Otherwise the issue's own run is one button away ("Open
+// in its run"), for full details + variants + getting it. Reads the arc_issue
+// already loaded in _detailSeries.
 function showArcIssueModal(readingOrder) {
   const s = _detailSeries;
   const i = (s?.arc_issues || []).find(x => x.reading_order === readingOrder);
@@ -525,6 +527,14 @@ function showArcIssueModal(readingOrder) {
     : covered ? '<span class="chip chip-collected">◆ Covered by a trade</span>'
     : '<span class="chip chip-missing">Missing</span>';
   const num = `#${esc(String(i.number ?? '?'))}`;
+  const canReadInKomga = owned && i.komga_book_id && _appConfig.komga_url;
+  const detailText = canReadInKomga
+    ? `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>.`
+    : `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
+       details, variants and to get it.`;
+  const footerAction = canReadInKomga
+    ? `<a class="btn btn-primary" href="${komgaBase()}/book/${esc(i.komga_book_id)}/read" target="_blank" rel="noopener">Open in Komga</a>`
+    : `<button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>`;
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
@@ -535,14 +545,13 @@ function showArcIssueModal(readingOrder) {
         ${i.story_title ? `<div class="issue-modal-meta">${esc(i.story_title)}</div>` : ''}
         <div style="margin:10px 0">${statusChip}</div>
         <div class="issue-modal-details" style="font-size:12px;color:var(--tm);line-height:1.5">
-          This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
-          details, variants and to get it.
+          ${detailText}
         </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-      <button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>
+      ${footerAction}
     </div>
   `);
 }
