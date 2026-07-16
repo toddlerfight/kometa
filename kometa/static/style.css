@@ -133,42 +133,66 @@ body {
   position: relative;
 }
 
+/* Sizes to its content, not a fixed bar — Series/Arc Detail stack a second
+   row (meta text, storyline eyebrow) under the title row, everyone else is
+   just the one row. Matches Pencil: Topbar always holds the full page-header
+   cluster (title, chips, actions), Content starts fresh below it. */
 #topbar {
-  height: var(--tb);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+  padding: var(--sp-xl);
   border-bottom: 1px solid var(--bd);
+  flex-shrink: 0;
+  /* Lift above #series-bg (absolute, z-index 0) — the dead .detail-hero used to
+     carry this; without it the blurred backdrop PAINTS OVER the chips/buttons
+     and everything looks like it's drowning in swamp water. #app has the same. */
+  position: relative;
+  z-index: 1;
+}
+
+#topbar-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--sp-xl);
-  flex-shrink: 0;
+  gap: var(--sp-sm);
+}
+
+#topbar-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-lg);
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 /* #topbar-title's typography comes from .page-heading (see 'Page heading' below),
    applied directly in index.html's markup — one shared definition, not a second
    copy that happened to match by coincidence. */
 
-/* Nothing to show (series-detail, Settings) — collapse the bar entirely instead
-   of an empty strip + divider line reserving space for nothing. Specificity
-   (id + class) beats the plain #topbar rules in every breakpoint, including
-   the responsive height:auto/min-height override below. */
-#topbar.topbar-empty {
-  height: 0;
-  min-height: 0;
-  padding: 0;
-  border-bottom: none;
-  overflow: hidden;
-}
+#topbar-chips:empty { display: none; }
 
 #topbar-actions {
   display: flex;
   gap: var(--sp-sm);
   align-items: center;
+  flex-shrink: 0;
 }
+
+/* Series/Arc Detail's meta text + folder trigger, or storyline eyebrow.
+   Empty everywhere else — collapses out of #topbar's column gap instead of
+   leaving a dead 8px strip. */
+#topbar-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+}
+#topbar-sub:empty { display: none; }
 
 #app {
   flex: 1;
   overflow-y: auto;
-  padding: var(--app-pad);
+  padding: var(--sp-lg) var(--app-pad) var(--app-pad);
   position: relative;
   z-index: 1;
 }
@@ -507,7 +531,7 @@ select.settings-input {
 /* Cover image base — fills its frame, zooms on the parent's hover. The hover
    scale amount lives per-component (--zoom vs --zoom-lg); this is just the
    shared fill+transition so those four don't drift apart. */
-.series-card-cover, .issue-tile-img img, .act-card-cover img, .act-row-cover img {
+.series-card-cover, .issue-tile-img img, .act-row-cover img, .pull-thumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -603,49 +627,13 @@ select.settings-input {
   mask-composite: intersect;
 }
 
-/* Series/Arc detail header — flat, no hero/backdrop block: title + chips left,
-   primary actions right, one row. Matches Library/Pull List/Activity's own
-   title+action topbar pattern, just relocated into content since these pages'
-   topbar has nothing to justify existing (2026-07-15, replaced .detail-hero). */
-.series-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-md);
-  flex-wrap: wrap;
-  padding-top: var(--sp-md);
-}
-
-.series-title-cluster {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-md);
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
 .chips-row { display: flex; gap: 6px; flex-wrap: wrap; }
-
-.series-meta-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-sm);
-  padding: var(--sp-sm) 0 var(--sp-md);
-}
 
 .series-meta-text {
   font-size: var(--fs-label);
   text-transform: uppercase;
   letter-spacing: var(--track-wide);
   color: var(--tq);
-}
-
-.detail-folder-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-left: auto;
-  flex-shrink: 0;
 }
 
 /* --- Folder Field — the one aligned pattern (series / settings / wizard / setup) ---
@@ -956,21 +944,15 @@ select.settings-input {
 
 .pull-group { margin-bottom: 0; }
 
-.pull-group-label {
-  background: var(--su2);
-  padding: 7px 0;
-  border-top: 1px solid var(--bd);
-  border-bottom: 1px solid var(--bd);
-  margin: 0 calc(-1 * var(--app-pad));
-  padding-left: var(--app-pad);
-}
+/* .pull-group-label's styling comes from .act-section-hdr (see 'Activity Queue'
+   below) — one shared definition, so "THIS WEEK" and "COMPLETED" always match. */
 
 .pull-row {
   display: grid;
-  grid-template-columns: 28px 1fr 60px 90px 28px;
+  grid-template-columns: 44px 1fr 90px 28px;
   align-items: center;
   gap: var(--sp-lg);
-  padding: 14px 0;
+  padding: var(--sp-sm) 0;
   border-bottom: 1px solid var(--su2);
   cursor: pointer;
 }
@@ -1041,7 +1023,7 @@ select.settings-input {
    minmax(0,1fr) pins the track to the viewport no matter what's inside. */
 #layout { grid-template-columns: var(--nw) minmax(0, 1fr); }
 #app { overflow-x: hidden; }
-#topbar { flex-wrap: wrap; row-gap: 6px; height: auto; min-height: var(--tb); }
+#topbar-row { flex-wrap: wrap; row-gap: 6px; }
 
 /* --- narrow desktop / iPad landscape --- */
 @media (max-width: 1100px) {
@@ -1075,7 +1057,7 @@ select.settings-input {
     width: auto; height: 2px;
   }
 
-  #topbar { padding: var(--sp-sm) 14px; }
+  #topbar { padding: var(--sp-sm) 14px var(--sp-xs); }
   :root { --app-pad: 14px; }
 
   .browse-header { flex-wrap: wrap; }
@@ -1091,12 +1073,10 @@ select.settings-input {
   .issue-modal-layout { grid-template-columns: 100px minmax(0, 1fr); gap: 14px; }
 
   /* pull rows: tighter columns, status stays visible */
-  .pull-row { grid-template-columns: 28px minmax(0, 1fr) auto 28px; gap: 10px; }
+  .pull-row { grid-template-columns: 44px minmax(0, 1fr) auto 28px; gap: 10px; }
   .pull-issue { display: none; }
 
   /* activity: chips drop below the title instead of fighting for width */
-  .act-card { grid-template-columns: 36px minmax(0, 1fr); }
-  .act-card-side { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
   .act-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
   .act-row-actions { flex-wrap: wrap; justify-content: flex-end; }
 
@@ -1113,30 +1093,36 @@ select.settings-input {
   .issue-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: var(--sp-md) var(--sp-sm); }
   .issue-modal-layout { grid-template-columns: minmax(0, 1fr); }
   .pull-row { grid-template-columns: minmax(0, 1fr) auto 28px; }
-  .pull-thumb { display: none; }
+  .pull-thumb-wrap { display: none; }
   .settings-grid { gap: 28px; }
 }
 
 .pull-row:hover .pull-series { color: var(--pri); }
 
-.pull-thumb {
-  width: 28px;
-  height: 42px;
-  object-fit: cover;
-  border-radius: var(--r-sm);
+.pull-thumb-wrap {
+  width: 44px;
+  aspect-ratio: 2/3;
   background: var(--su2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
   flex-shrink: 0;
-  display: block;
 }
+
+.pull-row:hover .pull-thumb-wrap .pull-thumb { transform: scale(var(--zoom-lg)); }
+
+.pull-meta { min-width: 0; }
 
 .pull-series {
   font-size: var(--fs-body);
   color: var(--tp);
 }
 
+/* Stacked under the title, not a separate column — matches .act-row-issue
+   so an issue number sits in the same spot on both screens. */
 .pull-issue {
-  font-size: var(--fs-body);
-  color: var(--tm);
+  font-size: var(--fs-label);
+  color: var(--tq);
+  margin-top: 2px;
 }
 
 .pull-status {
@@ -1383,7 +1369,7 @@ select.settings-input {
   .v-card { opacity: 1; }
   #issue-modal-details { animation: none !important; }
   /* JS removes rows instantly under reduced motion, but kill any transition just in case. */
-  .act-row.act-removing, .act-card.act-removing { transition: none; }
+  .act-row.act-removing { transition: none; }
 }
 
 .modal-title {
@@ -1470,7 +1456,8 @@ select.settings-input {
   gap: 32px;
 }
 
-.act-section-hdr {
+.act-section-hdr,
+.pull-group-label {
   font-size: var(--fs-body);
   color: var(--tq);
   text-transform: uppercase;
@@ -1481,66 +1468,7 @@ select.settings-input {
   gap: var(--sp-sm);
 }
 
-.act-count {
-  background: var(--su3);
-  color: var(--tm);
-  border-radius: var(--r-lg);
-  padding: 1px 7px;
-  font-size: var(--fs-label);
-}
-
-.act-card {
-  background: var(--su1);
-  border: 1px solid var(--bd);
-  border-radius: var(--r-md);
-  display: grid;
-  grid-template-columns: 44px 1fr auto;
-  gap: 14px;
-  padding: var(--sp-md);
-  margin-bottom: var(--sp-sm);
-  align-items: start;
-}
-
-.act-card.compact {
-  grid-template-columns: 44px 1fr auto;
-  padding: var(--sp-sm) var(--sp-md);
-  align-items: center;
-}
-
-.act-card-cover {
-  border-radius: var(--r-sm);
-  overflow: hidden;
-  background: var(--su2);
-  width: 44px;
-  aspect-ratio: 2/3;
-}
-
-
-.act-card:hover .act-card-cover img { transform: scale(var(--zoom-lg)); }
-
-.act-card-body { min-width: 0; }
-
-.act-card-title {
-  font-size: var(--fs-body);
-  font-weight: 500;
-  color: var(--tp);
-}
-
-.act-card.compact .act-card-title { font-size: var(--fs-body); }
-
-.act-card-meta {
-  font-size: var(--fs-label);
-  color: var(--tq);
-  margin-top: 3px;
-}
-
-.act-card-side {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-sm);
-}
-
-.act-card-progress { margin-top: 10px; }
+.act-row-progress { margin-top: 10px; }
 
 .act-progress-track {
   width: 100%;
@@ -1578,8 +1506,7 @@ select.settings-input {
 /* Graceful exit — fade + collapse instead of an abrupt yank. JS pins max-height to the
    row's measured px first, then adds this class to drive it shut. The .done override is
    needed because completed rows already sit at opacity 0.4, so 0.4 → 0 is the real fade. */
-.act-row.act-removing,
-.act-card.act-removing {
+.act-row.act-removing {
   overflow: hidden;
   opacity: 0;
   max-height: 0 !important;

@@ -113,12 +113,11 @@ function updateNav() {
   });
 }
 
-function setTopbar(actionsHTML = '') {
+function setTopbar() {
   document.getElementById('topbar-title').textContent = '';
-  document.getElementById('topbar-actions').innerHTML = actionsHTML;
-  // Nothing in it (series-detail, Settings) → collapse the bar entirely instead
-  // of leaving an empty strip + divider line reserving space for nothing.
-  document.getElementById('topbar').classList.toggle('topbar-empty', !actionsHTML);
+  document.getElementById('topbar-chips').innerHTML = '';
+  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('topbar-sub').innerHTML = '';
 }
 
 function setApp(html) {
@@ -306,10 +305,7 @@ async function syncSeries(id, btn, pre = null) {
 let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
-  // Bypasses setTopbar() (needs a title, which that always clears) — so it has
-  // to drop the empty-collapse class itself too, or a stale one from whatever
-  // view was active before (series-detail, Settings) hides this bar's own content.
-  document.getElementById('topbar').classList.remove('topbar-empty');
+  setTopbar();
   document.getElementById('topbar-title').textContent = 'Library';
   // No Sync All button — the scheduler syncs everything at 5/12/17, stale series
   // self-sync on view, and series detail has its own Sync. The machine does the
@@ -679,7 +675,7 @@ function _arcShortTitle(t, primary) {
 // Story arc detail — its issues span titles (Batman, Detective, …) and live in
 // arc_issues, not issue_status. Per the spec it renders like the rest of the app:
 // the SAME issue-tile grid as a series, with cross-title issues tagged in lime and
-// the actions living in .detail-folder-actions (the app's consistent action bar).
+// the actions living in #topbar-actions (the app's consistent action bar).
 function renderArcDetail(s) {
   const seriesBg = document.getElementById('series-bg');
   if (seriesBg) seriesBg.classList.add('hidden');
@@ -744,21 +740,17 @@ function renderArcDetail(s) {
   const body = total
     ? `<div class="issue-grid">${tiles}</div>`
     : `<div class="state-msg" style="padding:28px 0;font-size:12px;color:var(--tq)">Pulling reading order from ComicVine…</div>`;
+  document.getElementById('topbar-title').textContent = s.title;
+  document.getElementById('topbar-chips').innerHTML = chips;
+  document.getElementById('topbar-actions').innerHTML = `
+    <button class="btn btn-primary btn-sm" id="arc-fulfill-btn" onclick="confirmFulfillArc(${s.id})">Get this storyline</button>
+    <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
+    <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
+  `;
+  document.getElementById('topbar-sub').innerHTML =
+    `<span class="series-meta-text u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>`;
+
   setApp(`
-    <div class="series-header-row">
-      <div class="series-title-cluster">
-        <div class="page-heading">${esc(s.title)}</div>
-        <div class="chips-row">${chips}</div>
-      </div>
-      <div class="detail-folder-actions">
-        <button class="btn btn-primary btn-sm" id="arc-fulfill-btn" onclick="confirmFulfillArc(${s.id})">Get this storyline</button>
-        <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
-        <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
-      </div>
-    </div>
-    <div class="series-meta-row">
-      <span class="series-meta-text u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>
-    </div>
     <div class="issue-tabs-row">${originId ? `<div class="issue-tab active" tabindex="0" role="button"
         onclick="detailTab='arcs';navigate('series-detail',{id:${originId}})"
         onkeydown="if(event.key==='Enter'||event.key===' '){detailTab='arcs';navigate('series-detail',{id:${originId}})}">
@@ -924,23 +916,20 @@ async function renderSeriesDetail(id) {
   seriesBgImg.style.backgroundImage = `url("${_bg}")`;
   seriesBg.classList.remove('hidden');
 
+  document.getElementById('topbar-title').textContent = s.title;
+  document.getElementById('topbar-chips').innerHTML = chips;
+  document.getElementById('topbar-actions').innerHTML = `
+    ${pullBtn}
+    ${oversizedBtn}
+    ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
+    <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
+  `;
+  document.getElementById('topbar-sub').innerHTML = `
+    <span class="series-meta-text">${esc(meta)}</span>
+    <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
+  `;
+
   setApp(`
-    <div class="series-header-row">
-      <div class="series-title-cluster">
-        <div class="page-heading">${esc(s.title)}</div>
-        <div class="chips-row">${chips}</div>
-      </div>
-      <div class="detail-folder-actions">
-        ${pullBtn}
-        ${oversizedBtn}
-        ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
-      </div>
-    </div>
-    <div class="series-meta-row">
-      <span class="series-meta-text">${esc(meta)}</span>
-      <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
-    </div>
     <div class="issue-tabs-row">
       <div class="issue-tabs">${tabs}</div>
       <button class="btn-icon sort-toggle" title="${detailSortDesc ? 'Newest first' : 'Oldest first'}"
@@ -1910,10 +1899,7 @@ async function pullDownload(seriesId, number, btn) {
 }
 
 async function renderPullList() {
-  // Title lives in the topbar next to its action, matching Library — not as a
-  // separate .page-title in the content below (that was a duplicate-of-nowhere
-  // split: title down here, action up there, for no reason).
-  document.getElementById('topbar').classList.remove('topbar-empty');
+  setTopbar();
   document.getElementById('topbar-title').textContent = 'Pull List';
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-sm ${_pullShowPast ? 'btn-primary' : 'btn-ghost'}"
@@ -1960,17 +1946,19 @@ async function _renderPullListContent() {
     .filter(([, entries]) => entries.length > 0)
     .map(([label, entries]) => `
       <div class="pull-group">
-        <div class="pull-group-label u-label">${label.toUpperCase()}</div>
+        <div class="pull-group-label">${label.toUpperCase()}</div>
         ${entries.map(e => {
           const sid = e.id;
           return `
             <div class="pull-row" tabindex="0" role="button"
               onclick="navigate('series-detail', {id: ${sid}})"
               onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})">
-              <img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
-                loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null">
-              <div class="pull-series u-truncate">${esc(e.title)}</div>
-              <div class="pull-issue">#${fmtNum(e.number)}</div>
+              <div class="pull-thumb-wrap"><img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
+                loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null"></div>
+              <div class="pull-meta">
+                <div class="pull-series u-truncate">${esc(e.title)}</div>
+                <div class="pull-issue">#${fmtNum(e.number)}</div>
+              </div>
               ${_pullStatus(e)}
               <span class="pull-act">${(!e.owned && e.store_date < _usToday())
                 ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue" aria-label="Download issue ${fmtNum(e.number)}"
@@ -2063,9 +2051,7 @@ async function renderActivity() {
   clearTimeout(_activityPollTimer);
   _activitySig = null;          // force a full rebuild when entering the view
   _activityPrevStates = null;   // fresh entry = no per-item fades on first paint
-  // Title lives in the topbar next to its actions, matching Library/Pull List —
-  // this page never had one anywhere before.
-  document.getElementById('topbar').classList.remove('topbar-empty');
+  setTopbar();
   document.getElementById('topbar-title').textContent = 'Activity';
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
@@ -2210,17 +2196,17 @@ function _buildActivityHtml(queue) {
   let html = '<div class="act-wrap">';
 
   if (inProgress.length) {
-    const cards = inProgress.map(q => {
+    const rows = inProgress.map(q => {
       const numStr = _actLabel(q);
       const thumb = _actThumb(q);
       const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet' || q.state === 'pending_torrent';
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
       const detail = esc(_actProgressDetail(q));
       const progress = q.state === 'searching' ? `
-        <div class="act-card-progress">
+        <div class="act-row-progress">
           <div class="act-progress-text" id="actsearch-${q.id}">${esc(q.search_status || 'Searching…')}</div>
         </div>` : isDownloading ? `
-        <div class="act-card-progress">
+        <div class="act-row-progress">
           <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
           <div class="act-progress-text" id="acttext-${q.id}">${pct}%${detail}</div>
         </div>` : '';
@@ -2232,19 +2218,19 @@ function _buildActivityHtml(queue) {
             <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">✕</button>` : '';
       return `
-        <div class="act-card${isDownloading ? '' : ' compact'}" data-qid="${q.id}"${errTip}>
-          <div class="act-card-cover">${thumb}</div>
-          <div class="act-card-body"${nav}>
-            <div class="act-card-title u-truncate">${esc(q.title)}</div>
-            <div class="act-card-meta">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
+        <div class="act-row" data-qid="${q.id}"${errTip}>
+          <div class="act-row-cover">${thumb}</div>
+          <div class="act-row-meta"${nav}>
+            <div class="act-row-title u-truncate">${esc(q.title)}</div>
+            <div class="act-row-issue">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
             ${progress}
           </div>
-          <div class="act-card-side">${_actChip(q.state)}${actions}</div>
+          <div class="act-row-actions">${_actChip(q.state)}${actions}</div>
         </div>`;
     }).join('');
     html += `<div class="act-section">
-      <div class="act-section-hdr">In Progress <span class="act-count">${inProgress.length}</span></div>
-      ${cards}
+      <div class="act-section-hdr">In Progress</div>
+      ${rows}
     </div>`;
   }
 
@@ -2273,7 +2259,6 @@ function _buildActivityHtml(queue) {
         </div>`;
     }).join('');
     html += `<div class="act-section">
-      <div class="act-section-hdr">Completed <span class="act-count">${completed.length}</span></div>
       ${rows}
     </div>`;
   }
@@ -2344,7 +2329,7 @@ async function clearHistory(btn) {
   await Promise.all(rows.map(_animateRowOut));
   // The Completed section header is now stranded with no rows — yank it too.
   document.querySelectorAll('.act-section').forEach(sec => {
-    if (!sec.querySelector('.act-row, .act-card')) sec.remove();
+    if (!sec.querySelector('.act-row')) sec.remove();
   });
   _activitySig = null;
   _activityRemoving = false;
@@ -2367,32 +2352,32 @@ async function retryQueue(id, btn) {
 async function removeQueue(id, btn) {
   btn.disabled = true;
   await api.del(`/api/queue/${id}`);
-  // Animate ONLY this row/card out — don't rebuild the list (that flashes every cover).
+  // Animate ONLY this row out — don't rebuild the list (that flashes every cover).
   // Drop the sig so the next poll rebuilds from scratch without trying to re-add the
   // row we just collapsed.
-  const el = btn.closest('.act-row, .act-card');
+  const el = btn.closest('.act-row');
   _activitySig = null;
   _activityRemoving = true;
   await _animateRowOut(el);
   // If that emptied a section (header left dangling), clear the stragglers.
   document.querySelectorAll('.act-section').forEach(sec => {
-    if (!sec.querySelector('.act-row, .act-card')) sec.remove();
+    if (!sec.querySelector('.act-row')) sec.remove();
   });
   _activityRemoving = false;
-  if (!document.querySelector('.act-row, .act-card')) _refreshActivity();
+  if (!document.querySelector('.act-row')) _refreshActivity();
 }
 
 // --- Settings ---
 
 async function renderSettings() {
   setTopbar();
+  document.getElementById('topbar-title').textContent = 'Settings';
   setApp('<div class="state-msg">Loading...</div>');
 
   const cfg = await api.get('/api/config');
   const komgaCfg  = !!(cfg.komga_url && cfg.komga_user);
 
   setApp(`
-    <div class="page-heading">Settings</div>
     <div class="settings-grid">
       <div>
         <div class="settings-card">
