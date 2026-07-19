@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH="ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST"
-DOCKER="/var/packages/ContainerManager/target/usr/bin/docker"
+# NAS connection details live OUTSIDE this repo — it's public.
+# Put them in .env (gitignored) or export them before running:
+#   NAS_HOST=... NAS_PORT=... NAS_USER=... NAS_KEY=~/.ssh/your_key ./deploy.sh
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$ROOT/.env" ] && set -a && . "$ROOT/.env" && set +a
+
+NAS_HOST="${NAS_HOST:?NAS_HOST not set — see .env.example}"
+NAS_USER="${NAS_USER:?NAS_USER not set — see .env.example}"
+NAS_PORT="${NAS_PORT:-22}"
+NAS_KEY="${NAS_KEY:-$HOME/.ssh/id_ed25519}"
+
+SSH="ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST"
+DOCKER="/var/packages/ContainerManager/target/usr/bin/docker"
 
 pipe() {
   cat "$ROOT/$1" | $SSH "$DOCKER exec -i kometa sh -c 'cat > /app/$1'"

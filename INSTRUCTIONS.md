@@ -91,15 +91,17 @@ Deploys do not require per-change approval while the NAS is the active test
 environment (rule changed 2026-06-10). The non-negotiable safety net: **every
 deploy is preceded by a commit pushed to the canonical remote**, so there is
 always a point-in-time to roll back to. Remotes (set 2026-06-18):
-- `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **private**, canonical) — `git push origin main` is the pre-deploy rollback point.
-- `gitea` → `ssh://git@$NAS_HOST:2222/<nas-user>/kometa.git` (NAS Gitea, fast local mirror). Push here too when convenient: `git push gitea main`.
+- `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **PUBLIC**, canonical) — `git push origin main` is the pre-deploy rollback point.
+  **This repo is public. Never commit hosts, ports, usernames, keys, or IDs** — they
+  go in `.env` (gitignored). Placeholders like `$NAS_HOST` in these docs are deliberate.
+- `gitea` → `ssh://git@$NAS_HOST:2222/<you>/kometa.git` (NAS Gitea, fast local mirror). Push here too when convenient: `git push gitea main`.
 
 Rollback = `git checkout <commit> -- <files>`, re-sync, restart. Destructive
 operations (anything that touches library files or the DB schema) still need
 explicit approval.
 
 Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
-NAS access: `ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST`. Docker binary:
+NAS access: `ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST`. Docker binary:
 `/var/packages/ContainerManager/target/usr/bin/docker`. No rsync/scp — use `tar`-pipe.
 
 **Deploying off the home network (Tailscale):** the `$NAS_HOST` host below is
@@ -116,9 +118,9 @@ the 2026-06-09 git history of frustration). Pick the path by what changed:
 
 - **Python change** → tar-sync the changed file(s) into the live mount, then restart:
   ```bash
-  tar czf - kometa/sync.py kometa/main.py | ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 \
-    <nas-user>@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
-  ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST \
+  tar czf - kometa/sync.py kometa/main.py | ssh -p $NAS_PORT -i $NAS_KEY \
+    $NAS_USER@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
+  ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST \
     'cd /volume1/docker/kometa && /var/packages/ContainerManager/target/usr/bin/docker compose restart kometa'
   ```
   **Syncing the whole `kometa/` dir** (many files changed): the NAS-side extraction
@@ -126,7 +128,7 @@ the 2026-06-09 git history of frustration). Pick the path by what changed:
   root-owned (written by the container). Exclude the junk and macOS metadata:
   ```bash
   COPYFILE_DISABLE=1 tar czf - --exclude '__pycache__' --exclude '.DS_Store' kometa | \
-    ssh -p $NAS_PORT -i ~/.ssh/id_ed25519 <nas-user>@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
+    ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
   ```
   ("Ignoring unknown extended header keyword" warnings from the NAS tar are harmless.)
 - **Static change** (`static/app.js`, `style.css`, `index.html`) → tar-sync only;

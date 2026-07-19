@@ -24,7 +24,7 @@ class QBittorrentClient:
     torrent acquisition branch and poller stay symmetric with the usenet ones.
 
     Reach it from the NAS host / Kometa container via the LAN IP (e.g.
-    http://$NAS_HOST:8090) — qBit's WebUI rejects the Tailscale hostname and
+    http://<nas-lan-ip>:8090) — qBit's WebUI rejects the Tailscale hostname and
     requires auth even on localhost. Use a dedicated category ('kometa') so our
     torrents never collide with the Sonarr/Radarr torrents sharing this client.
     """

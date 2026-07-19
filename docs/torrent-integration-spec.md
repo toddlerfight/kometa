@@ -28,7 +28,7 @@ Kometa's own scraper). Komga import is unchanged.
 ## Known infrastructure (verified 2026-06-25)
 
 - **qBittorrent:** container `qbittorrent`, WebUI host port **8090**, user
-  `<nas-user>`. API requires auth even on localhost (no localhost-bypass) and rejects
+  `<qbit-user>`. API requires auth even on localhost (no localhost-bypass) and rejects
   the Tailscale hostname — drive it from the NAS via `127.0.0.1:8090`. Config:
   `/volume1/docker/config/qbittorrent/qBittorrent.conf`.
 - **Shared downloads volume:** `kometa`, `sabnzbd`, AND `qbittorrent` all mount
