@@ -104,6 +104,17 @@ Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
 NAS access: `ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST`. Docker binary:
 `/var/packages/ContainerManager/target/usr/bin/docker`. No rsync/scp — use `tar`-pipe.
 
+**Where those `$NAS_*` values live:** a gitignored `.env` in the repo root, read by
+`deploy.sh` (see `.env.example`). They are NOT in the repo and must never be — this
+is a public GitHub repo. The NAS has its own separate `.env` at
+`/volume1/docker/kometa/.env` holding the app's `KOMGA_*` / `METRON_*` / `CV_API_KEY`;
+the two files are unrelated, don't confuse them.
+
+The deploy key is `~/.ssh/nas_kometa` — dedicated to this box, not a general-purpose
+personal key. Rotated 2026-07-20; the old key was removed from the NAS
+`authorized_keys` (backup at `~/.ssh/authorized_keys.bak` on the NAS). Note Gitea keeps
+its OWN key registry (port 2222) — rotating the NAS shell key does not touch it.
+
 **Deploying off the home network (Tailscale):** the `$NAS_HOST` host below is
 LAN-only. When remote, swap every SSH/tar host to `$NAS_TS_HOST`
 (same port $NAS_PORT, same key); add `-o StrictHostKeyChecking=accept-new` on first
