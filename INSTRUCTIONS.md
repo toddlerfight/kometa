@@ -94,6 +94,16 @@ always a point-in-time to roll back to. Remotes (set 2026-06-18):
 - `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **PUBLIC**, canonical) — `git push origin main` is the pre-deploy rollback point.
   **This repo is public. Never commit hosts, ports, usernames, keys, or IDs** — they
   go in `.env` (gitignored). Placeholders like `$NAS_HOST` in these docs are deliberate.
+
+  A pre-commit hook enforces this (`.githooks/pre-commit`). It is NOT active until you
+  point git at it — `core.hooksPath` is local config and does not survive a clone:
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+  Run that once per clone. It blocks staged changes containing the NAS IP, tailnet
+  host, SSH port, username, library ID, iCloud aliases, private-key blocks, 32-hex API
+  keys or inline credentials. Verified zero false positives against the current tree.
+  `--no-verify` bypasses it; that is almost never the right answer.
 - `gitea` → `ssh://git@$NAS_HOST:2222/<you>/kometa.git` (NAS Gitea, fast local mirror). Push here too when convenient: `git push gitea main`.
 
 Rollback = `git checkout <commit> -- <files>`, re-sync, restart. Destructive

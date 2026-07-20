@@ -1,0 +1,14 @@
+# Site-specific secret patterns for the pre-commit hook.
+#
+# Copy to `patterns.local` (gitignored) and fill in YOUR real values. This
+# example file is committed; patterns.local is not — that split exists because
+# the first version of the hook committed the real literals to a public repo,
+# which leaked the very things it was written to protect.
+#
+# Format: label|extended-regex — one per line. Remember to escape dots in
+# hostnames and IDs, or `.` matches any character.
+#
+# NAS username|myusername@|/Users/myusername|homes/myusername
+# tailnet name|mytailnet[a-z0-9]+
+# Komga library ID|MYLIBRARYID123
+# NAS SSH port|(-p|Port)[[:space:]]+12345
