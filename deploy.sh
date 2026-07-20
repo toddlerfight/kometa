@@ -21,6 +21,8 @@ pipe() {
 }
 
 echo "deploying..."
+"$ROOT/stamp.sh"
+pipe kometa/_build.json
 pipe kometa/main.py
 pipe kometa/db.py
 pipe kometa/metron_client.py

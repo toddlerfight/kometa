@@ -122,6 +122,17 @@ connect. Also: the pre-deploy `git push gitea main` rollback push FAILS off-LAN
 (the `gitea` remote is the LAN IP) — only `git push origin main` (GitHub) works
 remote, and that's the one that matters. Push to `gitea` later from home.
 
+**ALWAYS run `./stamp.sh` first**, whichever path you take. It writes
+`kometa/_build.json` (gitignored) with the commit SHA, branch and a dirty flag, and
+warns if you're shipping uncommitted work. `deploy.sh` calls it automatically; the
+tar-sync path below does NOT, so run it by hand and include `kometa/_build.json` in
+the tar. Skip it and `GET /api/version` reports a stale commit — worse than no answer,
+because you'll believe it.
+
+Check what's actually live any time: `curl http://$NAS_HOST:6969/api/version`. If
+`restart_may_be_needed` is true, files were synced but the process wasn't restarted —
+the running Python is not the Python on disk.
+
 **The source is now BIND-MOUNTED** (`/volume1/docker/kometa/kometa:/app/kometa` in
 `docker-compose.yml`), so code is NOT baked into the image. This makes deploys a
 **few-second restart, not a rebuild** (the old rebuild caused ~1-2 min downtime — see
@@ -129,7 +140,8 @@ the 2026-06-09 git history of frustration). Pick the path by what changed:
 
 - **Python change** → tar-sync the changed file(s) into the live mount, then restart:
   ```bash
-  tar czf - kometa/sync.py kometa/main.py | ssh -p $NAS_PORT -i $NAS_KEY \
+  ./stamp.sh
+  tar czf - kometa/_build.json kometa/sync.py kometa/main.py | ssh -p $NAS_PORT -i $NAS_KEY \
     $NAS_USER@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
   ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST \
     'cd /volume1/docker/kometa && /var/packages/ContainerManager/target/usr/bin/docker compose restart kometa'

@@ -17,6 +17,7 @@ from kometa.arcs import (
     router as _arcs_router, _owned_collection, _add_arc,
 )
 from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
+from kometa.version import build_info as _build_info
 import kometa.db as db
 from kometa.sources import (
     komga as _komga, comics_root as _comics_root, comicvine as _comicvine,
@@ -241,6 +242,18 @@ def disconnect_integration(integration: str):
         raise HTTPException(404)
     db.set_config({k: "" for k in keys}, DB_PATH)
     return get_config()
+
+
+# --- version ---
+
+@app.get("/api/version")
+def get_version():
+    """What commit is this, and is the running process actually it?
+
+    The honest answer to "did my deploy land", which nothing else here could
+    give you.
+    """
+    return _build_info()
 
 
 # --- config ---
