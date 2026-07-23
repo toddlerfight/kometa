@@ -204,6 +204,17 @@ def _process_queue_locked():
             time.sleep(2)
 
 
+def _issue_store_date(item) -> str | None:
+    """The issue's store_date, looked up from issue_status — download_queue rows
+    don't carry it. None for trades/packs (no single date) or unknown issues;
+    None just means the stale-age demotion stands down."""
+    if item.get("kind") == "trade" or item.get("issue_number") in (None, -1):
+        return None
+    issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
+    row = next((i for i in issues if i["number"] == item["issue_number"]), None)
+    return row["store_date"] if row else None
+
+
 def _try_torrent(item, qid) -> bool:
     """Last rung of the cascade: acquire via torrent (Prowlarr aggregate search →
     qBittorrent). Fired when GetComics+Usenet find nothing AND when a usenet job
@@ -224,7 +235,8 @@ def _try_torrent(item, qid) -> bool:
                                    series_year=item.get("year_began"))
     else:
         cand = search_torrent(prowlarr, item["title"], item["issue_number"],
-                              series_year=item.get("year_began"))
+                              series_year=item.get("year_began"),
+                              store_date=_issue_store_date(item))
     if not cand:
         return False
     source = cand.get("magnet") or cand.get("url")
@@ -345,13 +357,12 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     (arc fulfill, deep pull-list sweep) shouldn't burst-hammer the one source
     whose file-host mirrors are Cloudflare-sensitive to exactly that pattern.
     Raises GCRateLimitError / DuplicateIssueError up to the shared handler."""
-    issues = db.get_issues_for_series(item["tracked_series_id"], DB_PATH)
-    issue_row = next((i for i in issues if i["number"] == item["issue_number"]), None)
-    store_date = issue_row["store_date"] if issue_row else None
+    store_date = _issue_store_date(item)
     nzb_name = f"{item['title']} #{int(item['issue_number'])}"
 
     def _search_nzb(prowlarr):
-        return search_usenet(prowlarr, item["title"], item["issue_number"], series_year=item.get("year_began"))
+        return search_usenet(prowlarr, item["title"], item["issue_number"],
+                             series_year=item.get("year_began"), store_date=store_date)
 
     if _is_old_issue(store_date):
         if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):

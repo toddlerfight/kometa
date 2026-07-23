@@ -2,8 +2,10 @@
 Keith Urban 'Ripcord' (2016) ALBUM for issue #0 of the Ripcord (2026) comic.
 Name-substring alone hit the acceptance bar, seeders could vault any combined
 threshold, and nothing looked at the year. These lock all three doors."""
+from datetime import date, timedelta
+
 from kometa.usenet_client import year_mismatch, _nzb_score
-from kometa.prowlarr_client import search_torrent
+from kometa.prowlarr_client import _is_stale, search_torrent, search_usenet
 
 
 class TestYearMismatch:
@@ -98,3 +100,76 @@ class TestMediaNoiseDisqualified:
     def test_wrong_issue_number_not_matched(self):
         assert _nzb_score("Ripcord 001 (2026) (Digital)", "Ripcord", 0.0) == 10   # 001 is #1, not #0
         assert _nzb_score("Ripcord 001 (2026) (Digital)", "Ripcord", 1.0) == 15
+
+
+def _nzb(title, age, grabs=0, size=120_000_000):
+    return {"title": title, "protocol": "usenet", "magnet": "", "url": f"http://nzb/{age}",
+            "seeders": 0, "grabs": grabs, "size": size, "age": age, "indexer": "test"}
+
+
+class TestStaleAgeDemotion:
+    """The Absolute Superman #21 grab, act two. The legacy newznab path dropped
+    posts older than store_date−45d; the Prowlarr migration never read `age`, so
+    a 312-day-old webtoon tied yesterday's print rip on score and won the
+    grabs/size coin flip. Staleness now DEMOTES in the sort — it never rejects,
+    because sometimes the ancient post is genuinely all that's left."""
+
+    def test_is_stale_reads_prowlarr_age_against_store_date(self):
+        store = str(date.today() - timedelta(days=1))
+        assert _is_stale(_nzb("x", age=312), store)          # the live offender
+        assert not _is_stale(_nzb("x", age=2), store)        # posted with the issue
+        assert not _is_stale(_nzb("x", age=30), store)       # early digital leak — fine
+
+    def test_is_stale_boundary_sits_at_the_grace_window(self):
+        store = str(date.today())
+        assert not _is_stale(_nzb("x", age=60), store)   # exactly grace — not stale
+        assert _is_stale(_nzb("x", age=61), store)       # one past — stale
+
+    def test_missing_age_or_store_date_never_flags(self):
+        assert not _is_stale(_nzb("x", age=None), str(date.today()))
+        assert not _is_stale(_nzb("x", age=312), None)
+        assert not _is_stale({"title": "x"}, "not-a-date")   # garbage degrades, no crash
+
+    def test_stale_loses_to_fresh_despite_better_tiebreaks(self):
+        # The exact live shape: both score 15, the stale one has more grabs and
+        # more bytes — the old sort handed it the win.
+        store = str(date.today() - timedelta(days=1))
+        stale = _nzb("Absolute Superman 021 [2025] [webtoon-rip]", age=312, grabs=900, size=500_000_000)
+        fresh = _nzb("Absolute Superman 021 [2026] [Digital]", age=1, grabs=3)
+        p = _FakeProwlarr([stale, fresh])
+        assert search_usenet(p, "Absolute Superman", 21.0, store_date=store) == fresh["url"]
+
+    def test_stale_still_wins_when_alone(self):
+        # Demotion, not rejection: a back-catalog issue whose only surviving
+        # post is ancient must still be grabbable.
+        store = str(date.today() - timedelta(days=1))
+        stale = _nzb("Absolute Superman 021 [2025] [old-post]", age=312)
+        p = _FakeProwlarr([stale])
+        assert search_usenet(p, "Absolute Superman", 21.0, store_date=store) == stale["url"]
+
+    def test_no_store_date_degrades_to_the_old_ordering(self):
+        # Without a store_date there is nothing to be stale against — the
+        # grabs tiebreak decides, exactly as before.
+        stale = _nzb("Absolute Superman 021 [2025]", age=312, grabs=900)
+        fresh = _nzb("Absolute Superman 021 [2026]", age=1, grabs=3)
+        p = _FakeProwlarr([stale, fresh])
+        assert search_usenet(p, "Absolute Superman", 21.0, store_date=None) == stale["url"]
+
+    def test_fresh_but_worthless_cannot_shadow_a_stale_real_hit(self):
+        # Score bar applies before the stale sort: a fresh result that flunks
+        # the evidence gate must not block the stale one that passes it.
+        store = str(date.today() - timedelta(days=1))
+        junk = _nzb("Something Unrelated Entirely", age=1)
+        stale = _nzb("Absolute Superman 021 [2025]", age=312)
+        p = _FakeProwlarr([junk, stale])
+        assert search_usenet(p, "Absolute Superman", 21.0, store_date=store) == stale["url"]
+
+    def test_torrent_path_demotes_stale_too(self):
+        store = str(date.today() - timedelta(days=1))
+        stale = _result("Absolute Superman 021 [2025] [webtoon-rip]", 100)
+        stale["age"] = 312
+        fresh = _result("Absolute Superman 021 [2026] [Digital]", 3)
+        fresh["age"] = 1
+        p = _FakeProwlarr([stale, fresh])
+        got = search_torrent(p, "Absolute Superman", 21.0, store_date=store)
+        assert got is not None and "[2026]" in got["title"]

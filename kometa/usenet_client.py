@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 # a DIFFERENT, older printing wearing the same number — the mislabeled-webtoon-as-#21
 # / "398 days old" trap. This slams it shut at search time so the page-count guard
 # downstream never has to be the last line of defense.
+#
+# ⚠ HISTORY LESSON, READ BEFORE TRUSTING THIS FILE: the comment above claimed the
+# trap was closed, and it WAS — on THIS legacy per-feed newznab path, which the
+# Prowlarr migration then quietly stopped calling. Nothing in the Prowlarr path
+# read `age`, so the exact 312-day-old webtoon this guard was built for walked
+# right back in. The LIVE guard is prowlarr_client._is_stale (a sort demotion,
+# not a drop); _drop_stale below only defends a path nothing dials anymore.
 _AGE_GRACE_DAYS = 45
 
 

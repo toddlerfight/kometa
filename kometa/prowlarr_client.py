@@ -8,6 +8,7 @@ Reuses the usenet scoring (_norm/_nzb_score/_pack_score) for title relevance and
 layers a seeder weight on top — a healthy torrent completes, a 0-seeder one is a
 corpse.
 """
+import datetime
 import logging
 import requests
 
@@ -19,6 +20,33 @@ logger = logging.getLogger(__name__)
 def _seed_bonus(seeders: int) -> int:
     """+1 per 10 seeders, capped at +10. Tilts ties toward what will actually finish."""
     return min(int(seeders or 0), 100) // 10
+
+
+# How many days BEFORE an issue's store date a release can plausibly be that
+# issue. Same idea as the legacy newznab _drop_stale (45d on pubDate), but the
+# Prowlarr migration silently LOST that guard — nothing here ever read the
+# `age` field, which is how a 312-day-old [digital-mobile] webtoon chapter got
+# ranked as equal to yesterday's print issue. Slightly more generous than the
+# legacy 45 because `age` is indexer-side and fuzzier than a pubDate.
+_STALE_GRACE_DAYS = 60
+
+
+def _is_stale(result: dict, store_date: str | None) -> bool:
+    """True when Prowlarr's `age` (days since the release was posted) says it
+    existed well before the issue's store date — an older printing/webtoon
+    wearing the same number. Missing age or store date never flags: this
+    DEMOTES in the sort, it does not reject, and unknown data must not demote."""
+    if not store_date:
+        return False
+    age = result.get("age")
+    if age is None:
+        return False
+    try:
+        sd = datetime.date.fromisoformat(str(store_date)[:10])
+        posted = datetime.date.today() - datetime.timedelta(days=float(age))
+    except (TypeError, ValueError):
+        return False
+    return posted < sd - datetime.timedelta(days=_STALE_GRACE_DAYS)
 
 
 class ProwlarrClient:
@@ -84,21 +112,31 @@ class ProwlarrClient:
         return out
 
 
-def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 10) -> dict | None:
+def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 10,
+                               store_date: str | None = None) -> dict | None:
     """Pick the highest-scoring torrent we can act on — has a download handle
     (a magnet OR a .torrent url; many indexers give the latter, no magnet) and at
-    least one live seeder. Returns the result dict or None."""
+    least one live seeder. Returns the result dict or None.
+
+    Stale releases (posted long before store_date — see _is_stale) sort BELOW
+    every fresh one regardless of score, but stay selectable when they're all
+    there is: a demotion, not a rejection. The score bar is applied BEFORE the
+    stale sort so a fresh-but-worthless hit can't shadow a stale-but-real one."""
     viable = [r for r in results if (r.get("magnet") or r.get("url")) and (r.get("seeders") or 0) >= 1]
     if not viable:
         return None
-    scored = sorted(
-        [(r, score_fn(r)) for r in viable],
-        key=lambda x: (-x[1], -(x[0].get("seeders") or 0), -(x[0].get("size") or 0)),
-    )
-    best, score = scored[0]
-    if score < min_score:
-        logger.info(f"Prowlarr torrent: best score {score} below {min_score} — skipping")
+    scored = [(r, score_fn(r)) for r in viable]
+    passing = [(r, s) for r, s in scored if s >= min_score]
+    if not passing:
+        logger.info(f"Prowlarr torrent: best score {max(s for _, s in scored)} "
+                    f"below {min_score} — skipping")
         return None
+    passing.sort(key=lambda x: (_is_stale(x[0], store_date), -x[1],
+                                -(x[0].get("seeders") or 0), -(x[0].get("size") or 0)))
+    best, score = passing[0]
+    if _is_stale(best, store_date):
+        logger.info(f"Prowlarr torrent: every candidate is stale for store_date {store_date} "
+                    f"— taking the best of them anyway")
     logger.info(f"Prowlarr torrent: {best['title']!r} score={score} "
                 f"seeders={best['seeders']} from {best['indexer']}")
     return best
@@ -127,7 +165,8 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) 
         results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
 
 
-def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None) -> dict | None:
+def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
+                   store_date: str | None = None) -> dict | None:
     """Best torrent for a single issue. Returns the result dict or None. Twin of
     usenet_client.search_usenet.
 
@@ -135,7 +174,10 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
     evidence (+5) BEFORE seeders count for anything — name-substring alone used
     to hit the old bar of 10 exactly (and seeders could have vaulted it over any
     combined threshold), which is how a well-seeded music album containing the
-    word 'Ripcord' got queued for issue #0."""
+    word 'Ripcord' got queued for issue #0.
+
+    store_date (ISO 'YYYY-MM-DD') demotes releases posted well before the issue
+    existed — see _is_stale."""
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
     results = _drop_year_mismatches(results, title, series_year)
@@ -148,34 +190,47 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
             return 0
         return base + _seed_bonus(r["seeders"])
 
-    return _best_downloadable_torrent(results, _score, min_score=15)
+    return _best_downloadable_torrent(results, _score, min_score=15, store_date=store_date)
 
 
-def _best_usenet(results: list[dict], score_fn, min_score: int) -> dict | None:
+def _best_usenet(results: list[dict], score_fn, min_score: int,
+                 store_date: str | None = None) -> dict | None:
     """Pick the highest-scoring usenet result we can act on. Usenet has no
     seeders — a post is either retained or it isn't, and we can't know until SAB
-    tries — so viability is just "has an NZB url", and grabs/size break ties."""
+    tries — so viability is just "has an NZB url", and grabs/size break ties.
+
+    Same stale demotion as the torrent picker: a release posted long before
+    store_date sorts below every fresh one but survives as a last resort. This
+    is THE fix for the Absolute Superman #21 grab — the 312-day-old webtoon tied
+    the day-old print rip on score and won the grabs tiebreak; now it can only
+    win an empty room."""
     viable = [r for r in results if r.get("url")]
     if not viable:
         return None
-    scored = sorted(
-        [(r, score_fn(r)) for r in viable],
-        key=lambda x: (-x[1], -(x[0].get("grabs") or 0), -(x[0].get("size") or 0)),
-    )
-    best, score = scored[0]
-    if score < min_score:
-        logger.info(f"Prowlarr usenet: best score {score} below {min_score} — skipping")
+    scored = [(r, score_fn(r)) for r in viable]
+    passing = [(r, s) for r, s in scored if s >= min_score]
+    if not passing:
+        logger.info(f"Prowlarr usenet: best score {max(s for _, s in scored)} "
+                    f"below {min_score} — skipping")
         return None
+    passing.sort(key=lambda x: (_is_stale(x[0], store_date), -x[1],
+                                -(x[0].get("grabs") or 0), -(x[0].get("size") or 0)))
+    best, score = passing[0]
+    if _is_stale(best, store_date):
+        logger.info(f"Prowlarr usenet: every candidate is stale for store_date {store_date} "
+                    f"— taking the best of them anyway")
     logger.info(f"Prowlarr usenet: {best['title']!r} score={score} "
                 f"grabs={best['grabs']} from {best['indexer']}")
     return best
 
 
-def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None) -> str | None:
+def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
+                  store_date: str | None = None) -> str | None:
     """Best usenet NZB for a single issue. Returns the NZB download URL or None —
     a drop-in for usenet_client.search_usenet, but sourced through Prowlarr so it
     sees every usenet indexer Prowlarr aggregates. Same evidence bar as the
-    torrent twin: series name (+10) AND issue-number evidence (+5) before we act."""
+    torrent twin: series name (+10) AND issue-number evidence (+5) before we act.
+    store_date demotes releases that predate the issue — see _is_stale."""
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
     results = _drop_year_mismatches(results, title, series_year)
@@ -184,7 +239,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     def _score(r):
         base = _nzb_score(r["title"], title, issue_number)
         return base if base >= 15 else 0     # name+number or nothing
-    best = _best_usenet(results, _score, min_score=15)
+    best = _best_usenet(results, _score, min_score=15, store_date=store_date)
     return best["url"] if best else None
 
 
