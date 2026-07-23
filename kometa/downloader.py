@@ -349,7 +349,10 @@ def _read_cbz_number(path: str) -> float | None:
         elif magic[:4] == b'Rar!':  # RAR — real CBR or mislabeled .cbz
             try:
                 import rarfile
-                rarfile.UNRAR_TOOL = 'bsdtar'
+                # No forced UNRAR_TOOL: rarfile auto-detects unrar/unar/bsdtar.
+                # The old hard-pin to bsdtar predates unar in the image; with a
+                # full RAR5 backend available, pinning the partial one (bsdtar
+                # chokes on compressed/solid v5) would be self-sabotage.
                 with rarfile.RarFile(path, 'r') as rf:
                     xml = _read_archive_comicinfo(rf)
             except Exception:
