@@ -92,31 +92,19 @@ def _read_archive_pages(path: str, extracted_dir: str | None = None):
                 yield name, src.read(name)
 
 
-def inject_covers(cbz_path: str, selected: list, primary_id: str,
-                  extracted_dir: str | None = None) -> int:
-    """
-    Prepend selected variant cover images to cbz_path. Writes back in place
-    (atomically — a temp file next to the target, then os.replace).
-    CBR input is converted to CBZ and the source .cbr is removed once the
-    rebuilt archive verifies. Returns count of images injected.
-    selected: [{"id": str, "name": str}, ...]
-    primary_id: id of the cover that should sort first
-    extracted_dir: pre-extracted contents of cbz_path (RAR one-shot extract) —
-    read pages from there instead of extracting the archive all over again
-    """
-    # Bare requests.get per thread — no shared session state to trip over
-    ids = [c['id'] for c in selected]
-    with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
-        datas = list(ex.map(_download_cover, ids))
-    variant_pages = [(c['id'], c.get('name', c['id']), d)
-                     for c, d in zip(selected, datas) if d]
+def _rebuild_as_cbz(src_path: str, variant_pages: list, extracted_dir: str | None = None) -> str:
+    """THE archive-rebuild seam — one verified, atomic CBZ rewrite that both
+    variant injection and plain CBR→CBZ conversion go through (variant_pages=[]
+    is a straight repack: every entry name preserved, byte-for-byte, ZIP_STORED).
 
-    variant_pages.sort(key=lambda x: (0 if x[0] == primary_id else 1, x[1]))
-
-    # Build the rebuilt archive in a temp file beside the target, then os.replace
-    # it into place. The original is bit-for-bit untouched until the swap —
-    # a crash mid-write leaves a stray .tmp, never a truncated comic.
-    out_path = re.sub(r'\.cbr$', '.cbz', cbz_path, flags=re.IGNORECASE)
+    Build in a temp file beside the target, then os.replace it into place. The
+    original is bit-for-bit untouched until the swap — a crash mid-write leaves
+    a stray .tmp, never a truncated comic. A .cbr source is removed only AFTER
+    the rebuilt .cbz verifies and lands. Returns the final on-disk path.
+    variant_pages: [(id, name, jpeg_bytes), ...] already sorted, may be empty.
+    extracted_dir: pre-extracted contents of src_path (RAR one-shot extract) —
+    read pages from there instead of extracting the archive all over again."""
+    out_path = re.sub(r'\.cbr$', '.cbz', src_path, flags=re.IGNORECASE)
     tmp_path = out_path + '.kometa-tmp'
     try:
         with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_STORED) as zf:
@@ -128,10 +116,14 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str,
                 cover_names.append(fname)
 
             comic_info_data = None
-            for name, data in _read_archive_pages(cbz_path, extracted_dir):
-                if name.lower() == 'comicinfo.xml':
+            source_entries = 0
+            for name, data in _read_archive_pages(src_path, extracted_dir):
+                source_entries += 1
+                if name.lower() == 'comicinfo.xml' and cover_names:
+                    # Held back for patching — only when we're actually adding
+                    # covers. A plain repack writes it through untouched.
                     comic_info_data = data
-                elif re.match(r'\d{3}_cover_', name):
+                elif re.match(r'\d{3}_cover_', name) and cover_names:
                     # Drop covers WE injected on a previous apply — replace, don't stack.
                     # Never matches the comic's own pages (they're not named NNN_cover_…),
                     # so the original cover + interior pages are always preserved.
@@ -143,6 +135,13 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str,
                 comic_info_data = _patch_comic_info(comic_info_data, len(cover_names))
                 zf.writestr('ComicInfo.xml', comic_info_data)
             entry_count = len(zf.namelist())
+
+        # Zero entries out of the source is NOT a successful read — it's bsdtar
+        # (libarchive) exiting 0 on an archive it couldn't actually parse
+        # (observed live with a truncated RAR5 header). Swap that in and we'd
+        # replace a real comic with an empty shell, then delete the original.
+        if source_entries == 0:
+            raise RuntimeError("source archive yielded no entries — refusing the swap")
 
         # Verify the rebuild BEFORE it replaces anything (and long before the
         # source .cbr is allowed to die). Paranoia is free; re-downloading a
@@ -162,14 +161,65 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str,
     # CBR→CBZ conversion: the verified replacement is on disk, so the source
     # .cbr is now a 180MB duplicate that makes Komga see two books for one
     # issue. Remove it — failure here is logged, never fatal.
-    if out_path != cbz_path:
+    if out_path != src_path:
         try:
-            os.remove(cbz_path)
-            logger.info(f"inject_covers: converted CBR→CBZ, removed source {cbz_path}")
+            os.remove(src_path)
+            logger.info(f"_rebuild_as_cbz: converted CBR→CBZ, removed source {src_path}")
         except OSError as e:
-            logger.warning(f"inject_covers: could not remove source CBR {cbz_path}: {e}")
+            logger.warning(f"_rebuild_as_cbz: could not remove source CBR {src_path}: {e}")
 
-    return len(variant_pages)
+    return out_path
+
+
+def inject_covers(cbz_path: str, selected: list, primary_id: str,
+                  extracted_dir: str | None = None) -> tuple[int, str]:
+    """
+    Prepend selected variant cover images to cbz_path. Writes back in place
+    (atomically, via _rebuild_as_cbz). CBR input is converted to CBZ and the
+    source .cbr is removed once the rebuilt archive verifies.
+    Returns (count of images injected, final on-disk path) — the path MATTERS:
+    a CBR input comes back as a different filename, and recording the dead .cbr
+    is how a queue row ends up pointing at a file that no longer exists.
+    selected: [{"id": str, "name": str}, ...]
+    primary_id: id of the cover that should sort first
+    extracted_dir: pre-extracted contents of cbz_path (RAR one-shot extract) —
+    read pages from there instead of extracting the archive all over again
+    """
+    # Bare requests.get per thread — no shared session state to trip over.
+    # (Empty selection used to hand ThreadPoolExecutor max_workers=0, which is
+    # a ValueError — now it's just a repack with zero covers.)
+    ids = [c['id'] for c in selected]
+    datas = []
+    if ids:
+        with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
+            datas = list(ex.map(_download_cover, ids))
+    variant_pages = [(c['id'], c.get('name', c['id']), d)
+                     for c, d in zip(selected, datas) if d]
+
+    variant_pages.sort(key=lambda x: (0 if x[0] == primary_id else 1, x[1]))
+
+    out_path = _rebuild_as_cbz(cbz_path, variant_pages, extracted_dir)
+    return len(variant_pages), out_path
+
+
+def ensure_cbz(path: str, extracted_dir: str | None = None) -> str:
+    """Repack a RAR-backed comic (magic bytes, not extension) as a verified CBZ;
+    ZIPs pass through untouched. Best-effort by design: the swap only happens
+    after the rebuild verifies, so a failed repack leaves the original .cbr
+    exactly where it was and we ship that instead — a conversion hiccup must
+    never kill a download that already succeeded. Returns the final path."""
+    try:
+        with open(path, 'rb') as fh:
+            is_rar = fh.read(4) == b'Rar!'
+    except OSError:
+        return path
+    if not is_rar:
+        return path
+    try:
+        return _rebuild_as_cbz(path, [], extracted_dir)
+    except Exception as e:
+        logger.warning(f"ensure_cbz: CBR→CBZ repack failed for {path} — keeping the CBR: {e}")
+        return path
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -372,6 +422,85 @@ def _count_archive_images(path: str) -> int | None:
     return None
 
 
+# Webtoon-vs-print, by the numbers. Measured from the live Absolute Superman #21
+# incident: the [digital-mobile] webtoon chapter's pages are 800x1280 (ratio 1.60),
+# a real print digital rip runs ~1988x3057 (ratio 1.54). Ratio ALONE cannot tell
+# them apart — 1.54 vs 1.60 is a rounding error — so the rule takes BOTH prongs:
+# phone-width pages (≤1000px; print rips run 1600-2100) AND a tall page shape.
+# Medians, not means: one odd spread/credits page must not swing the verdict.
+_WEBTOON_MAX_MEDIAN_WIDTH = 1000
+_WEBTOON_MIN_MEDIAN_RATIO = 1.5
+_DIM_SAMPLE_PAGES = 9
+_DIM_MIN_PAGES = 3   # fewer measurable pages than this = not enough signal to condemn
+
+
+def _sample_page_dims(path: str, extracted_dir: str | None = None) -> list[tuple[int, int]]:
+    """(width, height) for up to _DIM_SAMPLE_PAGES images spread evenly through
+    the book. Reads the extracted dir when the caller already paid for the RAR
+    extract; ZIPs are read member-by-member. Empty list on ANY trouble — no
+    Pillow, unreadable archive, un-decodable images — because the dimension
+    guard must never reject a file it couldn't actually measure."""
+    try:
+        from io import BytesIO
+        from PIL import Image
+    except ImportError:
+        return []
+
+    def _dims(blobs) -> list[tuple[int, int]]:
+        out = []
+        for data in blobs:
+            try:
+                with Image.open(BytesIO(data)) as im:
+                    out.append((im.width, im.height))
+            except Exception:
+                continue
+        return out
+
+    def _spread(names: list) -> list:
+        if len(names) <= _DIM_SAMPLE_PAGES:
+            return names
+        step = len(names) / _DIM_SAMPLE_PAGES
+        return [names[int(i * step)] for i in range(_DIM_SAMPLE_PAGES)]
+
+    try:
+        if extracted_dir:
+            files = []
+            for root, _dirs, fnames in os.walk(extracted_dir):
+                files.extend(os.path.join(root, f) for f in fnames
+                             if f.lower().endswith(_IMG_EXTS))
+            files.sort()
+
+            def _read(p):
+                with open(p, 'rb') as fh:
+                    return fh.read()
+            return _dims(_read(p) for p in _spread(files))
+
+        with open(path, 'rb') as fh:
+            if fh.read(2) != b'PK':
+                return []   # RAR with no pre-extracted dir — measuring would mean
+                            # a second full extract; the caller's job to provide it
+        with zipfile.ZipFile(path, 'r') as zf:
+            names = sorted(n for n in zf.namelist() if n.lower().endswith(_IMG_EXTS))
+            return _dims(zf.read(n) for n in _spread(names))
+    except Exception:
+        return []
+
+
+def _webtoon_verdict(dims: list[tuple[int, int]]) -> str | None:
+    """The human-readable reason this measures as a webtoon, or None if it
+    passes. Both prongs must fire — see the constants above for why."""
+    import statistics
+    dims = [(w, h) for w, h in dims if w > 0]
+    if len(dims) < _DIM_MIN_PAGES:
+        return None
+    med_w = statistics.median(w for w, _h in dims)
+    med_r = statistics.median(h / w for w, h in dims)
+    if med_w <= _WEBTOON_MAX_MEDIAN_WIDTH and med_r >= _WEBTOON_MIN_MEDIAN_RATIO:
+        return (f"pages measure ~{int(med_w)}px wide (h/w {med_r:.2f}) — "
+                f"a vertical/webtoon (mobile) rip")
+    return None
+
+
 def _extract_rar_once(path: str) -> str | None:
     """If path is a RAR (magic bytes, not extension), extract it ONCE to a temp
     dir and return the dir. This is the fix for the triple-extract shame spiral:
@@ -421,6 +550,12 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
         raise WrongIssueError(
             f"{pages} pages (limit {limit}) — looks like a collection or vertical/webtoon "
             f"edition, not single issue #{int(issue_number)}")
+    # Fourth guard: page DIMENSIONS. The Absolute Superman #21 webtoon chapter
+    # was 44 pages — sailed under the count ceiling wearing the right number, so
+    # the only tell left is the pages themselves: phone-width and tall.
+    verdict = _webtoon_verdict(_sample_page_dims(path, extracted_dir))
+    if verdict:
+        raise WrongIssueError(f"{verdict} — not print issue #{int(issue_number)}")
 
 
 def _get_with_retries(url: str, label: str):
@@ -636,12 +771,18 @@ def download_issue(
                 from kometa import db as _db
                 prefs = _db.get_variant_prefs(tracked_series_id, issue_number, db_path)
                 if prefs:
-                    added = inject_covers(dest_path, prefs["selected"], prefs["primary_id"],
-                                          extracted_dir=rar_dir)
+                    added, dest_path = inject_covers(dest_path, prefs["selected"], prefs["primary_id"],
+                                                     extracted_dir=rar_dir)
                     _db.clear_variant_prefs(tracked_series_id, issue_number, db_path)
                     logger.info(f"Injected {added} variant cover(s) into {dest_path}")
             except Exception as e:
                 logger.warning(f"Variant injection failed: {e}")
+
+        # No prefs? The CBR still converts — every finalize ships a CBZ. Same
+        # verified rebuild seam as injection; a repack failure keeps the CBR.
+        # rar_dir belongs to the DOWNLOADED archive: valid for dest_path unless
+        # the pack branch above swapped dest_path for an extracted member.
+        dest_path = ensure_cbz(dest_path, extracted_dir=None if extracted else rar_dir)
     finally:
         if rar_dir:
             shutil.rmtree(rar_dir, ignore_errors=True)
@@ -714,6 +855,9 @@ def download_trade(
         os.remove(dest_path)
         placed = extracted
         logger.info(f"Trade pack: {len(extracted)} file(s) from {os.path.basename(dest_path)}")
+
+    # New arrivals ship as CBZ — same verified rebuild seam, best-effort.
+    placed = [ensure_cbz(p) for p in placed]
 
     force_readable_tree(dest_dir)
 

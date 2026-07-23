@@ -1058,7 +1058,9 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
             raise HTTPException(404, detail="File not found on disk")
         try:
             from kometa.downloader import inject_covers
-            added = inject_covers(file_path, req.selected, req.primary_id)
+            # inject_covers returns the FINAL path too — a .cbr input comes back
+            # as .cbz and the old path is gone from disk.
+            added, file_path = inject_covers(file_path, req.selected, req.primary_id)
             # Persist the pick as a display override too. The CBZ now has the cover,
             # but Komga's thumbnail (what we display) is frozen until it re-scans — so
             # stamp variant_cover so Kometa shows YOUR pick immediately regardless.

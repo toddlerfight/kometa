@@ -553,8 +553,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     single issue (find + verify + place under canonical name)."""
     import shutil as _shutil
     from kometa.downloader import (
-        _pick_issue_file, _safe, _resolve_dir, _fix_extension,
-        _verify_single_issue, WrongIssueError, force_readable_tree,
+        _pick_issue_file, _safe, _resolve_dir, _fix_extension, _extract_rar_once,
+        _verify_single_issue, WrongIssueError, force_readable_tree, ensure_cbz,
     )
 
     def _place(src: str, dst: str) -> str:
@@ -591,7 +591,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             if os.path.exists(dst):
                 logger.info(f"Pack: skipping {fname} — already in library")
                 continue
-            _place(src, dst)
+            # Repack CBRs on the way in (best-effort) — new arrivals ship as CBZ.
+            ensure_cbz(_place(src, dst))
             placed += 1
         logger.info(f"{label} pack: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
         db.update_queue_state(qid, "done", path=DB_PATH)
@@ -619,7 +620,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             if os.path.exists(dst):
                 logger.info(f"Trade: skipping {name} — already in library")
                 continue
-            _place(src, dst)
+            # Same CBZ-on-arrival rule as the pack path — trades included.
+            ensure_cbz(_place(src, dst))
             placed += 1
         logger.info(f"{label} trade: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
         db.complete_trade(qid, path=DB_PATH)
@@ -650,27 +652,49 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     # Parity with the GetComics path: verify the file is actually this single issue
     # BEFORE we stamp our canonical name on it. The usenet route used to skip every
     # check, so a mislabeled collection/webtoon release got accepted as the print issue.
+    # A RAR pays its full extract ONCE here — the verify guards (ComicInfo, page
+    # count, page dimensions) and the CBR→CBZ repack below all sip from this dir
+    # instead of each running their own bsdtar pass over the same archive.
+    rar_dir = _extract_rar_once(target)
     try:
-        _verify_single_issue(target, issue_number, os.path.basename(target),
-                             page_max=item.get("page_max"))
-    except WrongIssueError as e:
-        db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
-        return
-
-    # Rename to Kometa format
-    ext = os.path.splitext(target)[1].lower()
-    dest_name = f"{_safe(title)} #{int(issue_number):03d}{ext}"
-    os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, dest_name)
-
-    if not os.path.exists(dest_path):
         try:
-            dest_path = _place(target, dest_path)
-        except Exception as e:
-            verb = "copy" if keep_source else "move"
-            db.update_queue_state(qid, "failed", error=f"{label} {verb} failed: {e}", path=DB_PATH)
+            _verify_single_issue(target, issue_number, os.path.basename(target),
+                                 extracted_dir=rar_dir, page_max=item.get("page_max"))
+        except WrongIssueError as e:
+            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
+            # Clean up the rejected download so it can't be re-scanned or hand-shelved
+            # by accident — but ONLY when the source is disposable (usenet job dir).
+            # A torrent's payload stays put: it's still seeding.
+            if not keep_source:
+                try:
+                    os.remove(target)
+                    logger.info(f"{label}: removed rejected file {target}")
+                except OSError as rm_err:
+                    logger.warning(f"{label}: could not remove rejected file {target}: {rm_err}")
             return
-        logger.info(f"{label}: placed {dest_path}")
+
+        # Rename to Kometa format
+        ext = os.path.splitext(target)[1].lower()
+        dest_name = f"{_safe(title)} #{int(issue_number):03d}{ext}"
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, dest_name)
+
+        if not os.path.exists(dest_path):
+            try:
+                dest_path = _place(target, dest_path)
+            except Exception as e:
+                verb = "copy" if keep_source else "move"
+                db.update_queue_state(qid, "failed", error=f"{label} {verb} failed: {e}", path=DB_PATH)
+                return
+            logger.info(f"{label}: placed {dest_path}")
+
+        # Nothing shelves as .cbr anymore — repack through the shared verified
+        # rebuild seam (same one variant injection uses). Best-effort: a failed
+        # repack keeps the .cbr, and complete_download records whatever landed.
+        dest_path = ensure_cbz(dest_path, extracted_dir=rar_dir)
+    finally:
+        if rar_dir:
+            _shutil.rmtree(rar_dir, ignore_errors=True)
 
     db.complete_download(
         qid, item["tracked_series_id"], issue_number, item.get("store_date"),

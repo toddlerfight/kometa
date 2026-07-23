@@ -485,3 +485,88 @@ class TestQueuePacing:
 
         acq._process_queue()
         assert slept == [2]   # one pause between the two items, none trailing
+
+
+class TestFinalizeWebtoonGuard:
+    """The dimension guard, end-to-end through the usenet finalize: a 44-page
+    [digital-mobile] webtoon fits under the page-count ceiling, so the pages
+    themselves (800x1280 — phone-width, tall) are what must trip the wire."""
+
+    def _cbz_with_dims(self, path, dims, n):
+        import io
+        import zipfile
+        from PIL import Image
+        with zipfile.ZipFile(path, "w") as zf:
+            for i in range(n):
+                buf = io.BytesIO()
+                Image.new("RGB", dims, (30, 30, 30)).save(buf, "PNG")
+                zf.writestr(f"p{i:03d}.png", buf.getvalue())
+        return str(path)
+
+    def _run(self, wired, tmp_path, dims):
+        db_path, series = wired
+        storage = tmp_path / "sab" / "Saga 001"
+        storage.mkdir(parents=True)
+        self._cbz_with_dims(storage / "Saga 001.cbz", dims, 8)
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        item = {"id": qid, "issue_number": 1.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": None, "tracked_series_id": series}
+        acq._finalize_usenet_download(item, qid, str(storage))
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        return q, storage, dest
+
+    def test_webtoon_parks_with_a_clear_error_and_cleans_the_staging(self, wired, tmp_path):
+        q, storage, dest = self._run(wired, tmp_path, (800, 1280))
+        assert q["state"] == "failed"
+        assert "webtoon" in q["error"]
+        # Never shelved — and the rejected file is gone from the job dir too
+        # (usenet source is disposable; a torrent's would stay for seeding).
+        assert list(dest.iterdir()) == []
+        assert not (storage / "Saga 001.cbz").exists()
+
+    def test_print_rip_still_lands(self, wired, tmp_path):
+        q, _storage, dest = self._run(wired, tmp_path, (1988, 3057))
+        assert q["state"] == "done"
+        assert (dest / "Saga #001.cbz").exists()
+
+
+class TestFinalizeConvertsCbr:
+    def test_cbr_lands_as_cbz_and_the_row_tracks_it(self, wired, monkeypatch, tmp_path):
+        """No .cbr survives a finalize: the placed file repacks through the
+        verified rebuild seam and complete_download records the .cbz — not the
+        dead .cbr path. Real RARs need a real extractor, so the one-shot
+        extract is stubbed with the 'extracted' pages, exactly the shape
+        production hands the seam."""
+        import zipfile
+
+        import kometa.downloader as downloader
+
+        db_path, series = wired
+        storage = tmp_path / "sab" / "Saga 001"
+        storage.mkdir(parents=True)
+        (storage / "Saga 001.cbr").write_bytes(b"Rar!\x1a\x07\x01\x00 stub")
+        extracted = tmp_path / "rar-extract"
+        extracted.mkdir()
+        for i in range(3):
+            (extracted / f"p{i:03d}.jpg").write_bytes(b"\xff\xd8\xff fakejpeg")
+        monkeypatch.setattr(downloader, "_extract_rar_once", lambda p: str(extracted))
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        item = {"id": qid, "issue_number": 1.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": None, "tracked_series_id": series}
+
+        acq._finalize_usenet_download(item, qid, str(storage))
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+        assert (dest / "Saga #001.cbz").exists()
+        assert not (dest / "Saga #001.cbr").exists()
+        assert q["filename"].endswith("Saga #001.cbz")
+        with zipfile.ZipFile(dest / "Saga #001.cbz") as zf:
+            assert sorted(zf.namelist()) == ["p000.jpg", "p001.jpg", "p002.jpg"]

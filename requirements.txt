@@ -10,6 +10,7 @@ cloudscraper==1.2.71
 rarfile==4.2
 defusedxml==0.7.1
 curl_cffi==0.15.0
+Pillow==12.3.0     # page-dimension guard (webtoon-vs-print) at finalize
 
 # Transitive-dep security floors (pip-audit, 2026-07-03). These are pulled in by
 # fastapi/requests/anyio/cloudscraper; pinning a MINIMUM (not ==) closes known
