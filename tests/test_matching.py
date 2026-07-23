@@ -81,6 +81,15 @@ class TestMediaNoiseDisqualified:
     def test_real_issue_zero_still_scores_full(self):
         assert _nzb_score("Ripcord 000 [2026] [Digital] [DR & Quinch-Empire]", "Ripcord", 0.0) == 15
 
+    def test_webtoon_digital_mobile_rejected(self):
+        # The live Absolute Superman #21 grab: a [digital-mobile] Infinite
+        # Edition (vertical 800x1280 webtoon) scored 15 as the print issue.
+        assert _nzb_score("Absolute Superman 021 [2025] [digital-mobile] [Son of Ultron-Empire]",
+                          "Absolute Superman", 21.0) == 0
+        # ...while a plain [Digital] print rip still scores full.
+        assert _nzb_score("Absolute Superman 021 [2026] [Digital] [Shan-Empire]",
+                          "Absolute Superman", 21.0) == 15
+
     def test_stray_zero_no_longer_buys_the_number_point(self):
         # bare '2 0' with no media markers: name matches (+10) but the number
         # must be next to the series — a floating '0' no longer counts.

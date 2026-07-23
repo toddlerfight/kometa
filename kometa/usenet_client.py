@@ -77,7 +77,9 @@ def year_mismatch(title: str, series_year) -> bool:
 # TV/movie/music/ebook release markers. A comic NZB never carries these, so any
 # hit disqualifies — this is what finally shuts the 'Ripcord' trap: the Keith
 # Urban ALBUM (flac/kbps), the Shazam & Andy Richter TV EPISODES (SxxExx/720p),
-# and the Scott Pratt EPUB all die before they can score.
+# and the Scott Pratt EPUB all die before they can score. digital-mobile is a
+# comic, technically — a vertical 800px webtoon strip wearing a print issue's
+# number (the Absolute Superman #21 Infinite Edition grab). Never what we want.
 _MEDIA_NOISE_RE = re.compile(
     r'\b(?:'
     r's\d{1,2}e\d{1,2}'                                   # TV episode  S02E05
@@ -86,6 +88,7 @@ _MEDIA_NOISE_RE = re.compile(
     r'|x26[45]|hevc|xvid|remux'                           # video codecs
     r'|flac|mp3|aac|ac3|dts|ddp?5|\d{3}kbps'             # audio codecs
     r'|epub|mobi|azw3?'                                   # ebooks
+    r'|digital[ ._-]?mobile'                              # vertical webtoon rips
     r')\b', re.I)
 
 
