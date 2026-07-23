@@ -134,6 +134,11 @@ def sync_one(series: dict):
             for b in komga_books:
                 if b.get("media", {}).get("status") == "ERROR":
                     continue
+                # Trashed twin trap: a re-grabbed issue leaves the old book
+                # soft-deleted in Komga (empty-trash is off-limits), it sorts
+                # first, and first-seen wins — the ghost keeps the book id.
+                if b.get("deleted"):
+                    continue
                 fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
                 if fn_num is not None:
                     key, src = fn_num, "name"
