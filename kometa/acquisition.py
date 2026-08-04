@@ -490,6 +490,40 @@ def _sweep_missing():
             db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
 
 
+def _gc_rescue(item, qid) -> bool:
+    """Last-ditch GetComics swing for a usenet corpse the torrent net also missed.
+    Here's the trap this closes: an OLD issue skips GetComics on the way IN —
+    usenet won the search, so GetComics was never even asked. Then the NZB turns
+    out to be retention-rotted, torrent shrugs, and the item dies 'failed' with
+    one whole source still sitting on the bench. Not on my watch. We ask
+    GetComics right here in the poller, WITHOUT requeueing — a requeue would
+    just re-find the same rotten NZB and ride that carousel forever.
+    Single issues only: trades/packs have their own search shapes and no
+    store_date to hand over. Returns True if the item was fully handled."""
+    if item.get("kind") == "trade" or item.get("issue_number") in (None, -1):
+        return False
+    set_search_status(qid, "GetComics (usenet failed)…")
+    try:
+        handled, gc_error = _try_getcomics(
+            item, qid, GetComicsClient(), set(), _issue_store_date(item))
+    except GCRateLimitError:
+        # Gate's closed. No park semantics out here in the poller — let the
+        # caller stamp it failed; the per-row Retry button is the road back.
+        logger.info(f"GC rescue for qid {qid}: rate limited — standing down")
+        return False
+    except DuplicateIssueError as e:
+        # File's already on disk — same 6h park the queue loop gives dupes, so
+        # the next sync can stamp `owned` and the sweep stops caring.
+        retry_at = (_utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+        db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
+        return True
+    finally:
+        clear_search_status(qid)
+    if gc_error:
+        logger.info(f"GC rescue for qid {qid}: link found but delivery broke: {gc_error}")
+    return handled
+
+
 def _poll_usenet_jobs():
     """Check SABnzbd for completed pending_usenet queue items and finalize them."""
     from datetime import datetime, timedelta
@@ -535,6 +569,9 @@ def _poll_usenet_jobs():
                 # the healthy torrent catches it.
                 if _try_torrent(item, qid):
                     logger.info(f"Usenet job {nzo_id} failed; fell back to torrent for qid {qid}")
+                    continue
+                if _gc_rescue(item, qid):
+                    logger.info(f"Usenet job {nzo_id} failed; GetComics rescue landed qid {qid}")
                     continue
                 db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
         except Exception as e:

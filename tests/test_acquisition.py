@@ -124,6 +124,77 @@ class TestUsenetProgressTracking:
         assert q["state"] == "failed"
 
 
+class TestGCRescueOnUsenetFailure:
+    """A failed SAB job on a single issue must try GetComics before dying —
+    old issues skip GC on the way in, so the poller is GC's only shot."""
+
+    def _make_pending_issue(self, db_path, series):
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        db.update_queue_state(qid, "pending_usenet", path=db_path)
+        db.set_sab_nzo_id(qid, "nzo-dead", path=db_path)
+        return qid
+
+    def _fail_sab(self, monkeypatch):
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "failed", "error": "repair impossible"}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+
+    def test_gc_rescue_lands_the_issue(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._make_pending_issue(db_path, series)
+        self._fail_sab(monkeypatch)
+
+        class FakeGC:
+            def search(self, title, number, store_date, series_year=None, status_fn=None):
+                return ("http://dl/saga-1.cbz", "saga-1.cbz")
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq.downloader, "download_issue",
+                            lambda **kw: "/comics/Image/Saga/Saga #001.cbz")
+
+        acq._poll_usenet_jobs()
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+        issue = next(i for i in db.get_issues_for_series(series, db_path) if i["number"] == 1.0)
+        assert issue["owned"] == 1
+
+    def test_gc_miss_still_fails_with_usenet_error(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._make_pending_issue(db_path, series)
+        self._fail_sab(monkeypatch)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return (None, None)
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        acq._poll_usenet_jobs()
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+        assert "repair impossible" in q["error"]
+
+    def test_pack_failure_skips_gc_rescue(self, wired, monkeypatch):
+        """Packs (issue_number == -1) have no single-issue GC search shape —
+        the rescue must stand aside and let the pack fail honestly."""
+        db_path, series = wired
+        db.queue_pack(series, "nzo-dead", "http://nzb", db_path)
+        qid = _qid_for(db_path, series, -1.0)
+        self._fail_sab(monkeypatch)
+
+        class ExplodingGC:
+            def search(self, *a, **k):
+                raise AssertionError("GC rescue must not run for packs")
+        monkeypatch.setattr(acq, "GetComicsClient", ExplodingGC)
+
+        acq._poll_usenet_jobs()
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+
+
 class TestFinalizeUsenetDownload:
     """The big one — moves SABnzbd output into the library and marks it done."""
 
