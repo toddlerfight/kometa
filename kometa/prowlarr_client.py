@@ -165,8 +165,18 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) 
         results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
 
 
+def _drop_failed_sources(results: list[dict], exclude_urls) -> list[dict]:
+    """Drop releases whose delivery already failed for this queue row (rotted
+    NZBs, dead magnets). The whole point of a retry is to NOT buy the same
+    corpse twice — the next-best release gets its shot instead."""
+    if not exclude_urls:
+        return results
+    return [r for r in results
+            if r.get("url") not in exclude_urls and r.get("magnet") not in exclude_urls]
+
+
 def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
-                   store_date: str | None = None) -> dict | None:
+                   store_date: str | None = None, exclude_urls=None) -> dict | None:
     """Best torrent for a single issue. Returns the result dict or None. Twin of
     usenet_client.search_usenet.
 
@@ -181,6 +191,7 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_failed_sources(results, exclude_urls)
     if not results:
         return None
 
@@ -225,7 +236,7 @@ def _best_usenet(results: list[dict], score_fn, min_score: int,
 
 
 def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
-                  store_date: str | None = None) -> str | None:
+                  store_date: str | None = None, exclude_urls=None) -> str | None:
     """Best usenet NZB for a single issue. Returns the NZB download URL or None —
     a drop-in for usenet_client.search_usenet, but sourced through Prowlarr so it
     sees every usenet indexer Prowlarr aggregates. Same evidence bar as the
@@ -234,6 +245,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_failed_sources(results, exclude_urls)
     if not results:
         return None
     def _score(r):

@@ -294,6 +294,14 @@ def _migrate(path=DB_PATH):
         dq_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
         if "torrent_hash" not in dq_cols2:
             conn.execute("ALTER TABLE download_queue ADD COLUMN torrent_hash TEXT")
+        if "failed_sources" not in dq_cols2:
+            # JSON list of release URLs (NZB/magnet) that FAILED DELIVERY for this
+            # row — retention-rotted NZBs, dead torrents. Retries feed these to the
+            # searches as exclusions so a reattempt tries the next-best release
+            # instead of re-buying the same corpse. GetComics links are deliberately
+            # NOT recorded: their failures (host 403 walls) are transient and the
+            # same link often works an hour later.
+            conn.execute("ALTER TABLE download_queue ADD COLUMN failed_sources TEXT")
 
         # Indexes matching the actual hot query shapes: queue pollers filter on
         # state; the backdrop/upcoming/missing queries filter+order issue_status
@@ -960,6 +968,31 @@ def get_pending_usenet_items(path=DB_PATH):
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'pending_usenet' AND q.sab_nzo_id IS NOT NULL
         """)]
+
+
+def add_failed_source(queue_id, url, path=DB_PATH):
+    """Record a release URL that failed DELIVERY for this queue row, so the next
+    search attempt excludes it. Deduped, capped at 20 — a row that burns twenty
+    releases has bigger problems than list growth."""
+    if not url:
+        return
+    import json as _json
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT failed_sources FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+        if row is None:
+            return
+        try:
+            sources = _json.loads(row[0]) if row[0] else []
+        except (ValueError, TypeError):
+            sources = []
+        if url in sources:
+            return
+        sources = (sources + [url])[-20:]
+        conn.execute(
+            "UPDATE download_queue SET failed_sources = ?, updated_at = datetime('now') WHERE id = ?",
+            (_json.dumps(sources), queue_id),
+        )
 
 
 def set_sab_nzo_id(queue_id, nzo_id, path=DB_PATH):

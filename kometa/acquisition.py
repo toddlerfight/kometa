@@ -215,6 +215,16 @@ def _issue_store_date(item) -> str | None:
     return row["store_date"] if row else None
 
 
+def _failed_sources(item) -> set:
+    """Release URLs whose delivery already died for this row — fed to the
+    searches as exclusions so a retry buys a different release, not the same
+    corpse on a loop."""
+    try:
+        return set(json.loads(item.get("failed_sources") or "[]"))
+    except (ValueError, TypeError):
+        return set()
+
+
 def _try_torrent(item, qid) -> bool:
     """Last rung of the cascade: acquire via torrent (Prowlarr aggregate search →
     qBittorrent). Fired when GetComics+Usenet find nothing AND when a usenet job
@@ -236,7 +246,8 @@ def _try_torrent(item, qid) -> bool:
     else:
         cand = search_torrent(prowlarr, item["title"], item["issue_number"],
                               series_year=item.get("year_began"),
-                              store_date=_issue_store_date(item))
+                              store_date=_issue_store_date(item),
+                              exclude_urls=_failed_sources(item))
     if not cand:
         return False
     source = cand.get("magnet") or cand.get("url")
@@ -362,7 +373,8 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
 
     def _search_nzb(prowlarr):
         return search_usenet(prowlarr, item["title"], item["issue_number"],
-                             series_year=item.get("year_began"), store_date=store_date)
+                             series_year=item.get("year_began"), store_date=store_date,
+                             exclude_urls=_failed_sources(item))
 
     if _is_old_issue(store_date):
         if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
@@ -564,6 +576,10 @@ def _poll_usenet_jobs():
                 clear_progress(qid)
                 err = result.get("error") or f"SABnzbd status: {status}"
                 logger.warning(f"Usenet job {nzo_id} failed: {err}")
+                # This NZB is a proven corpse (retention rot doesn't heal) —
+                # blacklist it for this row so a retry buys the next-best
+                # release instead of riding the same carousel.
+                db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
                 # Usenet couldn't DELIVER (retention/repair) — fall to torrent before
                 # giving up. This is what makes vintage land: the old NZB repair-fails,
                 # the healthy torrent catches it.
@@ -783,6 +799,7 @@ def _poll_torrent_jobs():
                     age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
                     if age > timedelta(hours=2):
                         clear_progress(qid)
+                        db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
                         db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
                         continue
                 set_progress(qid, result.get("pct", 0), 100)
@@ -802,6 +819,7 @@ def _poll_torrent_jobs():
                 clear_progress(qid)
                 err = result.get("error") or f"qBittorrent status: {status}"
                 logger.warning(f"Torrent {ih} failed: {err}")
+                db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
                 db.update_queue_state(qid, "failed", error=f"Torrent: {err}", path=DB_PATH)
         except Exception as e:
             logger.warning(f"Torrent poll: {ih} (qid {qid}) raised — skipping this tick: {e}")

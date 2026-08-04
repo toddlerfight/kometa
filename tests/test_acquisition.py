@@ -195,6 +195,57 @@ class TestGCRescueOnUsenetFailure:
         assert q["state"] == "failed"
 
 
+class TestFailedSourceBlacklist:
+    """A delivery-failed release must be recorded on the row and excluded from
+    the next search — retries buy the next-best release, not the same corpse."""
+
+    def test_usenet_failure_records_source_url(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        db.update_queue_state(qid, "pending_usenet", source_url="http://nzb/rotten", path=db_path)
+        db.set_sab_nzo_id(qid, "nzo-dead", path=db_path)
+
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "failed", "error": "repair impossible"}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return (None, None)
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        acq._poll_usenet_jobs()
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+        assert acq._failed_sources(q) == {"http://nzb/rotten"}
+
+    def test_add_failed_source_dedupes(self, wired):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        db.add_failed_source(qid, "http://nzb/a", path=db_path)
+        db.add_failed_source(qid, "http://nzb/a", path=db_path)
+        db.add_failed_source(qid, "http://nzb/b", path=db_path)
+        db.add_failed_source(qid, None, path=db_path)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert acq._failed_sources(q) == {"http://nzb/a", "http://nzb/b"}
+
+    def test_search_excludes_failed_sources(self):
+        from kometa.prowlarr_client import _drop_failed_sources
+        results = [{"url": "http://nzb/rotten", "title": "Saga 001"},
+                   {"url": "http://nzb/fresh", "title": "Saga 001 (2012)"}]
+        kept = _drop_failed_sources(results, {"http://nzb/rotten"})
+        assert [r["url"] for r in kept] == ["http://nzb/fresh"]
+        # magnet-keyed torrents are excluded by magnet too
+        torrents = [{"url": "http://t/x", "magnet": "magnet:?xt=dead", "title": "Saga"}]
+        assert _drop_failed_sources(torrents, {"magnet:?xt=dead"}) == []
+        # no exclusions = untouched
+        assert _drop_failed_sources(results, set()) == results
+
+
 class TestFinalizeUsenetDownload:
     """The big one — moves SABnzbd output into the library and marks it done."""
 
