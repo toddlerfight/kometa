@@ -294,6 +294,13 @@ def _migrate(path=DB_PATH):
         dq_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
         if "torrent_hash" not in dq_cols2:
             conn.execute("ALTER TABLE download_queue ADD COLUMN torrent_hash TEXT")
+        if "failed_channels" not in dq_cols2:
+            # JSON list of CHANNELS ('usenet'/'torrent') whose DELIVERY failed for
+            # this row. A channel that already proved it can't deliver gets benched
+            # on the next attempt — the cascade starts at the next rung instead of
+            # re-buying a SAB/qBit cycle. GetComics is never benched (last rung,
+            # transient failures).
+            conn.execute("ALTER TABLE download_queue ADD COLUMN failed_channels TEXT")
         if "failed_sources" not in dq_cols2:
             # JSON list of release URLs (NZB/magnet) that FAILED DELIVERY for this
             # row — retention-rotted NZBs, dead torrents. Retries feed these to the
@@ -992,6 +999,27 @@ def add_failed_source(queue_id, url, path=DB_PATH):
         conn.execute(
             "UPDATE download_queue SET failed_sources = ?, updated_at = datetime('now') WHERE id = ?",
             (_json.dumps(sources), queue_id),
+        )
+
+
+def add_failed_channel(queue_id, channel, path=DB_PATH):
+    """Bench a delivery channel ('usenet'/'torrent') for this queue row — the
+    next attempt skips it and starts at the next rung of the cascade."""
+    import json as _json
+    with _connect(path) as conn:
+        row = conn.execute(
+            "SELECT failed_channels FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+        if row is None:
+            return
+        try:
+            channels = _json.loads(row[0]) if row[0] else []
+        except (ValueError, TypeError):
+            channels = []
+        if channel in channels:
+            return
+        conn.execute(
+            "UPDATE download_queue SET failed_channels = ?, updated_at = datetime('now') WHERE id = ?",
+            (_json.dumps(channels + [channel]), queue_id),
         )
 
 

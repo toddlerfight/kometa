@@ -233,6 +233,53 @@ class TestFailedSourceBlacklist:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert acq._failed_sources(q) == {"http://nzb/a", "http://nzb/b"}
 
+    def test_usenet_failure_benches_channel(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        db.update_queue_state(qid, "pending_usenet", source_url="http://nzb/rotten", path=db_path)
+        db.set_sab_nzo_id(qid, "nzo-dead", path=db_path)
+
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "failed", "error": "repair impossible"}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return (None, None)
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+
+        acq._poll_usenet_jobs()
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert acq._failed_channels(q) == {"usenet"}
+
+    def test_benched_usenet_skipped_on_next_attempt(self, wired, monkeypatch):
+        """A row whose usenet delivery already died must not touch usenet again —
+        the cascade starts at torrent. Prowlarr/SAB are wired LIVE here so the
+        usenet rung would genuinely run if the bench didn't hold."""
+        db_path, series = wired
+        monkeypatch.setattr(acq, "_prowlarr", lambda: object())
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: object())
+        monkeypatch.setattr(acq, "_prowlarr_on", lambda: True)
+        monkeypatch.setattr(acq, "_usenet_on", lambda: True)
+
+        def _boom(prowlarr):
+            raise AssertionError("usenet search ran on a benched channel")
+
+        item = {"id": 1, "kind": "issue", "issue_number": 1.0, "title": "Saga",
+                "failed_channels": '["usenet"]'}
+        # torrent rung: _try_torrent sees _torrent_on unforced → config read would
+        # die on the container path; bench torrent too so the call chain stays pure.
+        item["failed_channels"] = '["usenet", "torrent"]'
+        assert acq._fallback_usenet_torrent(item, 1, _boom, "Saga #1") is False
+
+    def test_benched_torrent_skips_search(self, wired):
+        item = {"id": 1, "kind": "issue", "issue_number": 1.0, "title": "Saga",
+                "failed_channels": '["torrent"]'}
+        assert acq._try_torrent(item, 1) is False
+
     def test_search_excludes_failed_sources(self):
         from kometa.prowlarr_client import _drop_failed_sources
         results = [{"url": "http://nzb/rotten", "title": "Saga 001"},

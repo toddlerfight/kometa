@@ -225,6 +225,15 @@ def _failed_sources(item) -> set:
         return set()
 
 
+def _failed_channels(item) -> set:
+    """Channels whose delivery already died for this row — benched on the next
+    attempt so the cascade starts where there's still hope."""
+    try:
+        return set(json.loads(item.get("failed_channels") or "[]"))
+    except (ValueError, TypeError):
+        return set()
+
+
 def _try_torrent(item, qid) -> bool:
     """Last rung of the cascade: acquire via torrent (Prowlarr aggregate search →
     qBittorrent). Fired when GetComics+Usenet find nothing AND when a usenet job
@@ -232,6 +241,8 @@ def _try_torrent(item, qid) -> bool:
     deliver", not just "couldn't find". Sets state → pending_torrent + stores the
     hash; the torrent poller finalizes. Returns True if a torrent was queued."""
     if not (_prowlarr_on() and _torrent_on()):
+        return False
+    if "torrent" in _failed_channels(item):
         return False
     prowlarr = _prowlarr()
     qbit = _qbittorrent()
@@ -272,7 +283,8 @@ def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
     and returns an nzb url or None (each caller closes over its own search args)."""
     prowlarr = _prowlarr()
     sab = _sabnzbd()
-    if _prowlarr_on() and _usenet_on() and prowlarr and sab:
+    if (_prowlarr_on() and _usenet_on() and prowlarr and sab
+            and "usenet" not in _failed_channels(item)):
         set_search_status(qid, "Usenet: searching…")
         nzb_url = nzb_search_fn(prowlarr)
         if nzb_url:
@@ -577,9 +589,11 @@ def _poll_usenet_jobs():
                 err = result.get("error") or f"SABnzbd status: {status}"
                 logger.warning(f"Usenet job {nzo_id} failed: {err}")
                 # This NZB is a proven corpse (retention rot doesn't heal) —
-                # blacklist it for this row so a retry buys the next-best
-                # release instead of riding the same carousel.
+                # blacklist it for this row, and bench the whole usenet channel:
+                # the next attempt starts at torrent/GetComics instead of buying
+                # yet another SAB cycle on a graveyard.
                 db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+                db.add_failed_channel(qid, "usenet", path=DB_PATH)
                 # Usenet couldn't DELIVER (retention/repair) — fall to torrent before
                 # giving up. This is what makes vintage land: the old NZB repair-fails,
                 # the healthy torrent catches it.
@@ -800,6 +814,7 @@ def _poll_torrent_jobs():
                     if age > timedelta(hours=2):
                         clear_progress(qid)
                         db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+                        db.add_failed_channel(qid, "torrent", path=DB_PATH)
                         db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
                         continue
                 set_progress(qid, result.get("pct", 0), 100)
@@ -820,6 +835,7 @@ def _poll_torrent_jobs():
                 err = result.get("error") or f"qBittorrent status: {status}"
                 logger.warning(f"Torrent {ih} failed: {err}")
                 db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+                db.add_failed_channel(qid, "torrent", path=DB_PATH)
                 db.update_queue_state(qid, "failed", error=f"Torrent: {err}", path=DB_PATH)
         except Exception as e:
             logger.warning(f"Torrent poll: {ih} (qid {qid}) raised — skipping this tick: {e}")
