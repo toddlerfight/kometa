@@ -220,3 +220,20 @@ class TestArcParticipantGate:
         assert arcs._arc_participant_allowed(None, "DC Comics")
         assert arcs._arc_participant_allowed("", "DC Comics")
         assert arcs._arc_participant_allowed("DC Comics", None)
+
+
+def test_add_with_claimed_komga_id_lands_unlinked(tmp_path, monkeypatch):
+    """A Komga id the auto-link picked but another tracked series already owns
+    must be dropped, not INSERTed — komga_series_id is UNIQUE and the collision
+    used to 500 the whole add (live repro: adding a 'Feral' one-shot while the
+    Feral series already claimed that Komga id)."""
+    root = tmp_path / "comics"
+    root.mkdir()
+    dbp = _wire(monkeypatch, tmp_path, root)
+    db.add_series("K123", title="Feral", publisher="Image Comics", path=dbp)
+
+    added = main.add_series(AddSeriesRequest(title="Feral: Wildcats", publisher_name="Image Comics",
+                                             komga_id="K123", on_pull_list=False))
+
+    assert added["id"] is not None
+    assert added["komga_series_id"] is None

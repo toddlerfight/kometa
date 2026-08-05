@@ -593,6 +593,17 @@ def add_series(req: AddSeriesRequest):
         except Exception:
             pass
 
+    # A Komga id already claimed by another tracked series must not reach the
+    # INSERT — komga_series_id is UNIQUE, so it would 500 the whole add. This
+    # happens legitimately: the auto-link title-matches a Komga series that an
+    # existing row (same franchise, adjacent title) already owns. The sync-time
+    # linker refuses duplicates gracefully; the add path gets the same manners.
+    if komga_series_id and any(
+            s.get("komga_series_id") == str(komga_series_id)
+            for s in db.get_all_series(DB_PATH)):
+        logger.info(f"Add {title!r}: Komga series {komga_series_id} already linked elsewhere — leaving unlinked")
+        komga_series_id = None
+
     # No folder yet (no Komga, or Komga had none)? Derive it from publisher+title.
     # _resolve_dir finds an existing on-disk folder (variation-tolerant) or returns
     # the canonical new path, so the first sync reconciles owned-vs-missing correctly
