@@ -40,6 +40,18 @@ from kometa.acquisition import (
 
 logger = logging.getLogger(__name__)
 
+# Without this, app loggers fall through to Python's last-resort handler and
+# only WARNING+ ever reaches `docker logs` — every INFO breadcrumb (sync steps,
+# cascade decisions, guarded-exception context) silently vanishes. We debugged
+# blind for months because of that. KOMETA_LOG_LEVEL overrides (e.g. DEBUG).
+logging.basicConfig(
+    level=os.environ.get("KOMETA_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+# APScheduler narrates every 5-second poller tick at INFO — that's not
+# observability, that's a firehose aimed at the one log we just unclogged.
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 DB_PATH = db.DB_PATH
 
 def _sync_all_job():
