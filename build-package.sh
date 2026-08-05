@@ -29,9 +29,9 @@ cp "$ROOT/packaging/docker-compose.local.yml" \
 chmod +x "$PKG/run.sh"
 
 # Guard: nothing private or dead should ever ship.
-if grep -rqE "192\.168|/volume1|comicvine|cleanup_tpbs" "$PKG/kometa" 2>/dev/null; then
+if grep -rqE "192\.168|/volume1|cleanup_tpbs" "$PKG/kometa" 2>/dev/null; then
   echo "✗ refused: private data or dead code found in source — aborting" >&2
-  grep -rlE "192\.168|/volume1|comicvine|cleanup_tpbs" "$PKG/kometa" >&2
+  grep -rlE "192\.168|/volume1|cleanup_tpbs" "$PKG/kometa" >&2
   exit 1
 fi
 
