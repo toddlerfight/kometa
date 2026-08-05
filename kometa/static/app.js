@@ -302,7 +302,7 @@ async function syncSeries(id, btn, pre = null) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, filter: 'all', _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -314,7 +314,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.filter  = 'monitored';
+  browseState.toggles = { upcoming: false, missing: false };
   browseState._cache  = null;
   browseState.sortKey = 'date';
   browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
@@ -322,27 +322,32 @@ async function renderLibraryBrowse() {
   await _loadBrowsePage();
 }
 
-const BROWSE_FILTERS = [
-  { key: 'monitored', label: 'Monitored' },
-  { key: 'upcoming',  label: 'Upcoming' },
-  { key: 'missing',   label: 'Missing' },
-  { key: 'all',       label: 'All' },
+// Default view is everything — no tab to click. Upcoming/Missing are
+// independent toggles that narrow it down, not exclusive tabs: both on
+// shows the union (anything needing attention), not just series matching
+// both at once — see _renderBrowseResults.
+const BROWSE_TOGGLES = [
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'missing',  label: 'Missing' },
 ];
 
 function _browseFilterTabs() {
   return `<div class="browse-filters">
-    ${BROWSE_FILTERS.map(f => `
-      <button class="browse-filter-tab u-label${browseState.filter === f.key ? ' active' : ''}"
+    ${BROWSE_TOGGLES.map(f => `
+      <button class="browse-filter-tab u-label${browseState.toggles[f.key] ? ' active' : ''}"
         onclick="browseFilter('${f.key}')">${f.label}</button>
     `).join('')}
   </div>`;
 }
 
 function browseFilter(key) {
-  browseState.filter = key;
-  document.querySelectorAll('.browse-filter-tab').forEach(b =>
-    b.classList.toggle('active', b.textContent.toLowerCase() === key)
-  );
+  browseState.toggles[key] = !browseState.toggles[key];
+  // Tabs render once on first paint (see _loadBrowsePage) and _renderBrowseResults
+  // only touches #browse-results — so a toggle click has to update ITS OWN
+  // button's active class by hand instead of a full re-render finding it.
+  document.querySelectorAll('.browse-filter-tab').forEach(b => {
+    if (b.textContent.toLowerCase() === key) b.classList.toggle('active', browseState.toggles[key]);
+  });
   _renderBrowseResults();
 }
 
@@ -428,16 +433,19 @@ async function _loadBrowsePage() {
 let _autoWizardTimer = null;
 
 function _renderBrowseResults() {
-  const { filter, search, sortKey, sortDir, _cache: all } = browseState;
+  const { toggles, search, sortKey, sortDir, _cache: all } = browseState;
   if (!all) return;
 
   const q = search.toLowerCase();
+  const anyToggleOn = toggles.upcoming || toggles.missing;
   let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
-    if (filter === 'monitored') return !!s.on_pull_list;
-    if (filter === 'upcoming')  return (s.upcoming ?? 0) > 0;
-    if (filter === 'missing')   return (s.missing ?? 0) > 0;
-    return true;
+    // Neither toggle on -> no narrowing (the default, everything). Either on ->
+    // UNION: "needs attention" (upcoming release OR missing issue), not the
+    // (much rarer, and less useful) intersection of both at once.
+    if (!anyToggleOn) return true;
+    return (toggles.upcoming && (s.upcoming ?? 0) > 0)
+        || (toggles.missing && (s.missing ?? 0) > 0);
   });
 
   if (sortKey === 'alpha') {
