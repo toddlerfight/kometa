@@ -55,6 +55,21 @@ logging.getLogger("apscheduler").setLevel(logging.WARNING)
 DB_PATH = db.DB_PATH
 
 def _sync_all_job():
+    # DEAD MOUNT CHECK. /comics rides an SMB share now, and a container that
+    # wins the post-reboot race against macOS's mounter sees a perfectly
+    # healthy, perfectly EMPTY directory where 900 series used to live. Sync
+    # against that void and every folder scan reads as "gone" — states flip,
+    # the queue fills with downloads for books sitting right there on the NAS.
+    # An empty comics root is not a library; it's a mount that hasn't shown up
+    # to work yet. Refuse the whole job and let the next cron slot try again.
+    root = _comics_root()
+    try:
+        populated = any(os.scandir(root))
+    except OSError:
+        populated = False
+    if not populated:
+        logger.error(f"Comics root {root} is missing or empty — mount not up? Refusing to sync/sweep.")
+        return
     # One full sweep at a time. A deploy near a cron hour fires BOTH the startup
     # catch-up and the scheduler; without this they interleave 47 series' worth
     # of SQLite writes and someone hits "database is locked".

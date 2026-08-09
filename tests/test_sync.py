@@ -194,3 +194,51 @@ class TestLastScheduledSyncSlot:
         s = last_scheduled_sync_utc()
         assert "" < s          # missing stamp always reads as "missed"
         assert s < "9999-01-01 00:00:00"
+
+
+class TestEmptyRootGuard:
+    """The dead-mount tripwire. /comics is an SMB share; a container that beats
+    the mounter after a reboot sees an empty dir where the library lives. The
+    full-sync job must refuse to scan/sweep against that void."""
+
+    def _wire(self, monkeypatch, tmp_path, root):
+        import kometa.main as main
+        dbp = str(tmp_path / "kometa_test.db")
+        db.init_db(dbp)
+        monkeypatch.setattr(main, "DB_PATH", dbp)
+        monkeypatch.setattr(main, "_comics_root", lambda: str(root))
+        synced = []
+        monkeypatch.setattr(main, "sync_one_guarded", lambda s, fn: synced.append(s) or True)
+        monkeypatch.setattr(main.db, "get_all_series", lambda p: [{"id": 1, "title": "Saga"}])
+        swept = []
+        monkeypatch.setattr(main, "_sweep_missing", lambda: swept.append(True))
+        return main, synced, swept
+
+    def test_empty_root_refuses_to_sync_or_sweep(self, tmp_path, monkeypatch):
+        root = tmp_path / "comics"
+        root.mkdir()  # exists, readable, EMPTY — the unmounted-share signature
+        main, synced, swept = self._wire(monkeypatch, tmp_path, root)
+        main._sync_all_job()
+        assert synced == [] and swept == []
+
+    def test_missing_root_refuses_too(self, tmp_path, monkeypatch):
+        main, synced, swept = self._wire(monkeypatch, tmp_path, tmp_path / "nope")
+        main._sync_all_job()
+        assert synced == [] and swept == []
+
+    def test_refusal_leaves_last_full_sync_unstamped(self, tmp_path, monkeypatch):
+        # The stamp is the catch-up's memory: an aborted run must still read
+        # as "missed" so the next startup or cron slot retries it.
+        root = tmp_path / "comics"
+        root.mkdir()
+        main, _, _ = self._wire(monkeypatch, tmp_path, root)
+        main._sync_all_job()
+        assert "last_full_sync" not in db.get_config(main.DB_PATH)
+
+    def test_populated_root_syncs_normally(self, tmp_path, monkeypatch):
+        root = tmp_path / "comics"
+        (root / "Image" / "Saga").mkdir(parents=True)
+        main, synced, swept = self._wire(monkeypatch, tmp_path, root)
+        main._sync_all_job()
+        assert len(synced) == 1 and swept == [True]
+        assert db.get_config(main.DB_PATH).get("last_full_sync")
