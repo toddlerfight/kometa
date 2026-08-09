@@ -1,21 +1,29 @@
-"""Library grid — render, the Monitored default, search, error/Retry."""
+"""Library grid — render, the everything-default + attention toggles, search,
+error/Retry."""
 from playwright.sync_api import expect
 
 
-def test_grid_defaults_to_monitored_and_all_shows_everything(app):
-    # renderLibraryBrowse deliberately resets the filter to Monitored on every
-    # entry — only pull-list series show by default. (The first draft of this
-    # test assumed 'All' and the suite immediately taught us otherwise.)
-    expect(app.locator(".series-card")).to_have_count(1)
-    expect(app.locator(".series-card-title")).to_have_text("Test Comic Alpha")
+def test_grid_defaults_to_all_and_toggles_narrow(app):
+    # Since eb57cdb the browse view has no Monitored tab: everything shows by
+    # default, and Upcoming/Missing are independent toggle chips. Both on is a
+    # UNION (needs-attention view), not an intersection.
+    expect(app.locator(".series-card")).to_have_count(3)
     alpha = app.locator(".series-card", has_text="Test Comic Alpha")
     expect(alpha.locator(".series-card-count")).to_have_text("2/3")
-    app.locator(".browse-filter-tab", has_text="All").click()
+    # Upcoming → alpha alone (#4/#5 are future); beta complete, gamma has no dates ahead
+    app.locator(".browse-filter-tab", has_text="Upcoming").click()
+    expect(app.locator(".series-card")).to_have_count(1)
+    expect(app.locator(".series-card-title")).to_have_text("Test Comic Alpha")
+    # + Missing → union pulls gamma (its one issue is unowned) in beside alpha
+    app.locator(".browse-filter-tab", has_text="Missing").click()
+    expect(app.locator(".series-card")).to_have_count(2)
+    # Both back off → everything again
+    app.locator(".browse-filter-tab", has_text="Upcoming").click()
+    app.locator(".browse-filter-tab", has_text="Missing").click()
     expect(app.locator(".series-card")).to_have_count(3)
 
 
 def test_search_filters_grid(app):
-    app.locator(".browse-filter-tab", has_text="All").click()
     expect(app.locator(".series-card")).to_have_count(3)
     app.locator("#browse-search").fill("beta")
     expect(app.locator(".series-card")).to_have_count(1)
@@ -34,4 +42,4 @@ def test_api_failure_paints_retry_and_recovers(app_server, page):
     expect(retry).to_be_visible()
     page.unroute("**/api/series")
     retry.click()
-    expect(page.locator(".series-card")).to_have_count(1)   # monitored default
+    expect(page.locator(".series-card")).to_have_count(3)   # everything-default

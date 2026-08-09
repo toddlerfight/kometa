@@ -2908,7 +2908,7 @@ async function showIssueModal(seriesId, number) {
         <div class="issue-modal-panel" id="impanel-variants">
           <div id="variant-area" class="variant-loading">Loading covers from LOCG…</div>
           <div id="variant-footer" class="variant-footer" style="display:none">
-            <div class="variant-hint" id="variant-hint">Select variants to include, ★ one as the cover.</div>
+            <div class="variant-hint" id="variant-hint">Click a cover to view it large — include or ★ it from there.</div>
             <button class="btn btn-primary btn-sm" id="variant-apply-btn" disabled
               onclick="_imApplyVariants(${seriesId}, ${number}, ${st === 'owned' ? 'true' : 'false'})">Apply</button>
           </div>
@@ -2998,13 +2998,11 @@ function _imRenderVariants() {
   area.className = '';
   area.innerHTML = `<div class="variant-grid">${
     _issueVariantCovers.map((c, i) => `
-      <div class="v-card" id="vc-${esc(c.id)}" style="animation-delay:${i*STAGGER_MS}ms" onclick="_imToggleVariant('${esc(c.id)}')">
+      <div class="v-card" id="vc-${esc(c.id)}" style="animation-delay:${i*STAGGER_MS}ms" onclick="_imOpenLightbox('${esc(c.id)}')">
         <div class="v-cover">
           <img src="${esc(c.thumb)}" alt="${esc(c.name)}" loading="lazy"
             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
           <div class="no-img" style="display:none">No image</div>
-          <button class="v-star" onclick="_imSetPrimary(event,'${esc(c.id)}')" title="Set as cover" aria-label="Set as cover">★</button>
-          <button class="v-mag" onclick="_imOpenLightbox('${esc(c.id)}',event)" title="View larger" aria-label="View larger"><svg aria-hidden="true" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
         </div>
         <div class="v-name">${esc(c.name)}</div>
       </div>`).join('')
@@ -3029,17 +3027,6 @@ function _imToggleVariant(id) {
   _imUpdateHint();
 }
 
-function _imSetPrimary(e, id) {
-  if (e) e.stopPropagation();   // null when called from the lightbox — no card click to contain
-  if (!_issueVariantSelected.has(id)) {
-    _issueVariantSelected.add(id);
-    if (!_issueVariantPrimary) _issueVariantPrimary = id;
-  }
-  _issueVariantPrimary = id;
-  _imRefreshCards();
-  _imUpdateHint();
-}
-
 function _imRefreshCards() {
   _issueVariantCovers.forEach(c => {
     const el = document.getElementById(`vc-${c.id}`);
@@ -3055,7 +3042,7 @@ function _imUpdateHint() {
   const hint = document.getElementById('variant-hint');
   if (!hint) return;
   const n = _issueVariantSelected.size;
-  if (n === 0) { hint.innerHTML = 'Select variants to include, ★ one as the cover.'; return; }
+  if (n === 0) { hint.innerHTML = 'Click a cover to view it large — include or ★ it from there.'; return; }
   const primary = _issueVariantCovers.find(c => c.id === _issueVariantPrimary);
   const pName = primary ? `<strong>${esc(primary.name)}</strong>` : '—';
   hint.innerHTML = `${n} variant${n > 1 ? 's' : ''} · Cover: ${pName}`;

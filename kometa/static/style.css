@@ -1777,7 +1777,7 @@ select.settings-input {
 .v-card {
   border-radius: var(--r-lg);
   overflow: hidden;
-  cursor: pointer;
+  cursor: zoom-in;   /* the card IS the lightbox trigger now — selection lives in there */
   background: var(--su2);
   border: 1px solid var(--bd);
   opacity: 0;
@@ -1809,42 +1809,6 @@ select.settings-input {
   text-align: center;
   padding: var(--sp-sm);
 }
-/* ★ set-as-cover */
-.v-star {
-  position: absolute;
-  top: 5px; left: 5px;
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  background: var(--scrim);
-  border: 1px solid var(--hairline);
-  color: var(--tq);
-  font-size: .7rem;
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 3;
-  transition: color var(--t-fast);
-}
-.v-card:hover .v-star, .v-card.selected .v-star { display: flex; }
-.v-card.is-primary .v-star { display: flex; color: var(--amb); }
-.v-star:hover { color: var(--amb); }
-/* ⌕ enlarge (opens the lightbox) */
-.v-mag {
-  position: absolute;
-  bottom: 5px; right: 5px;
-  width: 24px; height: 24px;
-  border-radius: 50%;
-  background: var(--scrim);
-  border: 1px solid var(--hairline);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  cursor: zoom-in;
-  z-index: 3;
-}
-.v-card:hover .v-mag { display: flex; }
-.v-mag svg { width: 14px; height: 14px; stroke: var(--tp); fill: none; }
 .v-name {
   padding: var(--sp-xs) 6px;
   font-size: .65rem;

@@ -35,7 +35,9 @@ def _seed(db, path):
     alpha = db.add_series(title="Test Comic Alpha", publisher="Image",
                           year_began=2024, folder_path=None, on_pull_list=True, path=path)
     db.upsert_issue_status_many([
-        (alpha, 1.0, past(300), True,  None, None, None),
+        # #1 carries a locg id so the modal renders its Details/Variants tabs —
+        # the LOCG endpoints those tabs hit are route-stubbed in `app` below.
+        (alpha, 1.0, past(300), True,  None, None, "555"),
         (alpha, 2.0, past(200), True,  None, None, None),
         (alpha, 3.0, past(100), False, None, None, None),   # missing
         (alpha, 4.0, future(3), False, None, None, None),   # upcoming (pull list)

@@ -57,3 +57,36 @@ def test_detail_tab_does_not_leak_across_series(app):
     expect(app.get_by_text("Gamma Run").first).to_be_visible()
     expect(app.locator(".issue-tab", has_text="all").first).to_have_class(
         "issue-tab active")
+
+
+# 1x1 transparent PNG — enough to fire the img load event that reveals v-cards.
+_PX = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+       "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+_TWO_COVERS = (
+    '{"covers": ['
+    f'{{"id":"1","name":"Cover A","thumb":"{_PX}","large":"{_PX}"}},'
+    f'{{"id":"2","name":"Cover B","thumb":"{_PX}","large":"{_PX}"}}'
+    '], "selected_ids": []}'
+)
+
+
+def test_variant_card_click_zooms_instead_of_selecting(app):
+    # Regression guard for the 2026-08 flow change: a grid card is a lightbox
+    # trigger, never a selector. Include/★ live exclusively in the zoomed view.
+    import re
+    app.route("**/api/series/*/issues/*/variants", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=_TWO_COVERS))
+    _open_alpha(app)
+    app.locator('.issue-tile[data-num="1"]').click()
+    app.locator("#imtab-variants").click()
+    card = app.locator("#vc-1")
+    expect(card).to_be_visible()
+    card.click()
+    expect(app.locator("#variant-lightbox")).to_be_visible()
+    # The zoom itself must not have staged a selection.
+    expect(card).not_to_have_class(re.compile(r"\bselected\b"))
+    expect(app.locator("#variant-apply-btn")).to_be_disabled()
+    # Choosing from the zoomed view drives the grid + Apply behind it.
+    app.locator("#vlb-include").click()
+    expect(card).to_have_class(re.compile(r"\bselected\b"))
+    expect(app.locator("#variant-apply-btn")).to_be_enabled()
