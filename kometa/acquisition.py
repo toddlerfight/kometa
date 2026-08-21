@@ -808,8 +808,11 @@ def _poll_torrent_jobs():
 
             if status == "downloading":
                 # Stall guard: a torrent with no seeders stuck in a stalled state for a
-                # while is dead — fail it instead of polling forever.
-                if result.get("seeders", 0) == 0 and "stalled" in result.get("state", ""):
+                # while is dead — fail it instead of polling forever. metaDL counts too:
+                # a seedless magnet never even fetches its metadata, and qBit parks it
+                # in metaDL for eternity instead of ever promoting it to stalledDL.
+                state = result.get("state", "")
+                if result.get("seeders", 0) == 0 and ("stalled" in state or state == "metaDL"):
                     age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
                     if age > timedelta(hours=2):
                         clear_progress(qid)
