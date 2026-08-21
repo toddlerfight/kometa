@@ -925,7 +925,13 @@ def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
                 if not fname:
                     continue
                 out = os.path.join(dest_dir, fname)
-                if os.path.exists(out):
+                # The pipeline converts CBR→CBZ on the way in and deletes the
+                # source, so a re-downloaded pack must recognize its own previous
+                # delivery under the NEW extension — comparing only the pack's
+                # raw name re-extracted (and re-converted) the entire pack on
+                # every retry, and the all-dupes guard below never fired.
+                stem, ext = os.path.splitext(fname)
+                if any(os.path.exists(os.path.join(dest_dir, stem + e)) for e in {ext.lower(), '.cbz'}):
                     logger.info(f"Pack: skipping {fname} — already in library")
                     continue
                 with zf.open(name) as src, open(out, 'wb') as dst:

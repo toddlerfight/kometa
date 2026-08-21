@@ -221,3 +221,14 @@ class TestPackDupeGuard:
         # mirror download_trade's guard: nothing extracted + multi-comic zip
         assert _extract_pack(p, str(dest)) == []
         assert _pack_comic_count(p) > 1
+
+    def test_skips_converted_cbz_of_same_stem(self, tmp_path):
+        # pack ships "a v01.cbr"; a previous run extracted it and ensure_cbz left
+        # "a v01.cbz" on disk — that MUST count as already-delivered
+        from kometa.downloader import _extract_pack
+        dest = tmp_path / "lib"
+        dest.mkdir()
+        (dest / "a v01.cbz").write_bytes(b"x")
+        (dest / "a v02.cbz").write_bytes(b"x")
+        p = self._pack(tmp_path, ["a v01.cbr", "a v02.cbr"])
+        assert _extract_pack(p, str(dest)) == []
