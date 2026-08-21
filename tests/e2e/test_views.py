@@ -19,6 +19,48 @@ def test_activity_shows_queue_states(app):
     expect(app.get_by_text("Not Found").first).to_be_visible()
 
 
+def test_activity_reconciles_rows_in_place(app):
+    # The motion contract: a state change morphs the EXISTING row (same DOM node,
+    # same <img> — no cover-in replay), a section hop collapses one side and grows
+    # the other, and a vanished item collapses out. Drive _reconcileActivity with
+    # synthetic queues and check the DOM keeps its identity.
+    app.locator('.nav-item[data-view="activity"]').click()
+    expect(app.locator(".act-row")).to_have_count(2)
+    result = app.evaluate(
+        """async () => {
+      const rows = [...document.querySelectorAll('.act-row[data-qid]')];
+      const [a, b] = rows.map(r => +r.dataset.qid);
+      const row = (id, state, extra = {}) => Object.assign({
+        id, state, title: 'T', publisher: 'P', kind: 'issue', issue_number: 3,
+        tracked_series_id: 1, error: null, meta_json: null, progress: null,
+      }, extra);
+      // 1) same-section morph: failed -> done. Row + img must SURVIVE.
+      const el = document.querySelector(`.act-row[data-qid="${a}"]`);
+      const img = el.querySelector('img');
+      img.__kept = true;
+      await _reconcileActivity([row(a, 'done'), row(b, 'not_found')]);
+      const el2 = document.querySelector(`.act-row[data-qid="${a}"]`);
+      const morph = {
+        sameNode: el2 === el,
+        sameImg: !!(el2.querySelector('img') && el2.querySelector('img').__kept),
+        qstate: el2.dataset.qstate,
+        dimmed: el2.classList.contains('done'),
+      };
+      // 2) section hop (a -> downloading) + removal (b gone).
+      await _reconcileActivity([row(a, 'downloading', { progress: { done: 50, total: 100 } })]);
+      return Object.assign(morph, {
+        count: document.querySelectorAll('.act-row[data-qid]').length,
+        hopped: !!document.querySelector('.act-section[data-sec="progress"] .act-row[data-qid="' + a + '"]'),
+        pct: (document.getElementById('actfill-' + a) || {style:{}}).style.width,
+      });
+    }"""
+    )
+    assert result["sameNode"] and result["sameImg"], "morph must not recreate the row/img"
+    assert result["qstate"] == "done" and result["dimmed"]
+    assert result["count"] == 1 and result["hopped"]
+    assert result["pct"] == "50%"
+
+
 def test_settings_renders_and_autosaves(app):
     app.locator('.nav-item[data-view="settings"]').click()
     field = app.locator("#ff-root")            # the aligned folder field's input

@@ -2052,13 +2052,14 @@ function _fmtBytes(n) {
 }
 
 let _activitySig = null;
-let _activityPrevStates = null;  // id → state from the last build; drives per-item fades
 let _activityRemoving = false;   // true while a row/card is animating out
+
+// States that live in the "In Progress" section; everything else is history.
+const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing'];
 
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
   _activitySig = null;          // force a full rebuild when entering the view
-  _activityPrevStates = null;   // fresh entry = no per-item fades on first paint
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Activity';
   document.getElementById('topbar-actions').innerHTML = `
@@ -2079,9 +2080,9 @@ async function _refreshActivity() {
   const queue = await api.get('/api/queue');
   _ackActivity(queue);   // you're looking at it — acknowledge + clear the badge
   // Only the progress %/bytes change between polls; the items + their states usually
-  // don't. Rebuilding the whole list every 2s recreated every <img>, which reloaded
-  // and replayed the cover-in (blur/fade) animation → the cover "flashed". So: rebuild
-  // ONLY when the item set or a state changes; otherwise just patch the bars in place.
+  // don't. When they DO change, we reconcile row-by-row IN PLACE — never a full
+  // innerHTML rebuild (that recreated every <img> and replayed the cover-in
+  // animation on 20 innocent rows because one row moved). See _reconcileActivity.
   const sig = queue.map(q => `${q.id}:${q.state}`).join('|');
   if (sig === _activitySig) {
     queue.forEach(q => {
@@ -2090,42 +2091,14 @@ async function _refreshActivity() {
       const text = document.getElementById(`acttext-${q.id}`);
       if (fill) fill.style.width = `${pct}%`;
       if (text) text.textContent = `${pct}%${_actProgressDetail(q)}`;
+      // The engine name flips mid-search (GetComics → Usenet → torrent); a bare
+      // textContent swap reads as a flash, so crossfade it instead.
       const ss = document.getElementById(`actsearch-${q.id}`);
-      if (ss && q.search_status) ss.textContent = q.search_status;
+      if (ss && q.search_status) _softText(ss, q.search_status);
     });
   } else {
-    const firstBuild = _activitySig === null;
     _activitySig = sig;
-    const newStates = {};
-    queue.forEach(q => { newStates[q.id] = q.state; });
-    const prev = _activityPrevStates;
-    _activityPrevStates = newStates;
-    const changed = (!firstBuild && prev) ? queue.filter(q => prev[q.id] !== q.state).map(q => q.id) : [];
-    const removed = (!firstBuild && prev) ? Object.keys(prev).filter(id => !(id in newStates)) : [];
-    if ((changed.length || removed.length) && document.querySelector('.act-wrap')) {
-      // Only the items whose state actually changed get the fade — everything
-      // else rebuilds in place without so much as a blink. Fading the whole
-      // list punished 20 innocent rows for one row's state change.
-      _activityRemoving = true;   // hold off re-entrant polls mid-fade
-      for (const id of [...changed, ...removed]) {
-        const el = document.querySelector(`[data-qid="${id}"]`);
-        if (el) { el.style.transition = 'opacity .18s ease'; el.style.opacity = '0'; }
-      }
-      setTimeout(() => {
-        _buildActivityHtml(queue);
-        for (const id of changed) {
-          const el = document.querySelector(`[data-qid="${id}"]`);
-          if (el) {
-            el.style.opacity = '0';
-            el.style.transition = 'opacity .3s ease';
-            requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = '1'; }));
-          }
-        }
-        _activityRemoving = false;
-      }, 190);
-    } else {
-      _buildActivityHtml(queue);
-    }
+    await _reconcileActivity(queue);
   }
   const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet','pending_torrent'].includes(q.state));
   // Within the post-retry window, keep polling while anything's still queued so
@@ -2188,9 +2161,68 @@ function _actReason(q) {
   return strip(e);                                                                   // fall back to the raw reason
 }
 
+// The variable sub-block under the title line: search status while searching, a
+// progress bar while downloading, the plain-language reason once it's history.
+function _actSubHtml(q) {
+  if (q.state === 'searching') return `
+        <div class="act-row-progress">
+          <div class="act-progress-text" id="actsearch-${q.id}">${esc(q.search_status || 'Searching…')}</div>
+        </div>`;
+  if (['downloading','pending_usenet','pending_torrent'].includes(q.state)) {
+    const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
+    return `
+        <div class="act-row-progress">
+          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
+          <div class="act-progress-text" id="acttext-${q.id}">${pct}%${esc(_actProgressDetail(q))}</div>
+        </div>`;
+  }
+  const reason = _actReason(q);
+  return reason ? `<div class="act-row-reason">${esc(reason)}</div>` : '';
+}
+
+// Chip + buttons cluster for a row's current state.
+function _actActionsHtml(q) {
+  let btns = '';
+  if (q.state === 'queued') {
+    // Queued items can stall on a retry_after backoff (dupe guard). Give the
+    // user the wheel: kick a search right now, or yank it from the queue.
+    btns = `
+            <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">✕</button>`;
+  } else if (!ACT_ACTIVE_STATES.includes(q.state)) {
+    const retry = q.state !== 'done' ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
+    btns = `
+            ${retry}
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>`;
+  }
+  return `${_actChip(q.state)}${btns}`;
+}
+
+function _actRowHtml(q) {
+  const active = ACT_ACTIVE_STATES.includes(q.state);
+  const errTip = q.error ? ` title="${esc(q.error)}"` : '';
+  const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
+  return `
+        <div class="act-row${q.state === 'done' ? ' done' : ''}" data-qid="${q.id}" data-qstate="${q.state}"${errTip}>
+          <div class="act-row-cover">${_actThumb(q)}</div>
+          <div class="act-row-meta"${nav}>
+            <div class="act-row-title u-truncate">${esc(q.title)}</div>
+            <div class="act-row-issue">${active && q.publisher ? esc(q.publisher) + ' · ' : ''}${_actLabel(q)}</div>
+            ${_actSubHtml(q)}
+          </div>
+          <div class="act-row-actions">${_actActionsHtml(q)}</div>
+        </div>`;
+}
+
+function _actRowNode(q) {
+  const t = document.createElement('template');
+  t.innerHTML = _actRowHtml(q).trim();
+  return t.content.firstElementChild;
+}
+
 function _buildActivityHtml(queue) {
-  const inProgress = queue.filter(q => ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing'].includes(q.state));
-  const completed  = queue.filter(q => ['done','not_found','failed'].includes(q.state));
+  const inProgress = queue.filter(q => ACT_ACTIVE_STATES.includes(q.state));
+  const completed  = queue.filter(q => !ACT_ACTIVE_STATES.includes(q.state));
 
   if (!queue.length) {
     setApp(`<div class="act-empty">
@@ -2202,77 +2234,155 @@ function _buildActivityHtml(queue) {
   }
 
   let html = '<div class="act-wrap">';
-
   if (inProgress.length) {
-    const rows = inProgress.map(q => {
-      const numStr = _actLabel(q);
-      const thumb = _actThumb(q);
-      const isDownloading = q.state === 'downloading' || q.state === 'pending_usenet' || q.state === 'pending_torrent';
-      const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
-      const detail = esc(_actProgressDetail(q));
-      const progress = q.state === 'searching' ? `
-        <div class="act-row-progress">
-          <div class="act-progress-text" id="actsearch-${q.id}">${esc(q.search_status || 'Searching…')}</div>
-        </div>` : isDownloading ? `
-        <div class="act-row-progress">
-          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
-          <div class="act-progress-text" id="acttext-${q.id}">${pct}%${detail}</div>
-        </div>` : '';
-      const errTip = q.error ? ` title="${esc(q.error)}"` : '';
-      const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
-      // Queued items can stall on a retry_after backoff (dupe guard). Give the
-      // user the wheel: kick a search right now, or yank it from the queue.
-      const actions = q.state === 'queued' ? `
-            <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">✕</button>` : '';
-      return `
-        <div class="act-row" data-qid="${q.id}"${errTip}>
-          <div class="act-row-cover">${thumb}</div>
-          <div class="act-row-meta"${nav}>
-            <div class="act-row-title u-truncate">${esc(q.title)}</div>
-            <div class="act-row-issue">${q.publisher ? esc(q.publisher) + ' · ' : ''}${numStr}</div>
-            ${progress}
-          </div>
-          <div class="act-row-actions">${_actChip(q.state)}${actions}</div>
-        </div>`;
-    }).join('');
-    html += `<div class="act-section">
+    html += `<div class="act-section" data-sec="progress">
       <div class="act-section-hdr">In Progress</div>
-      ${rows}
+      ${inProgress.map(_actRowHtml).join('')}
     </div>`;
   }
-
   if (completed.length) {
-    const rows = completed.map(q => {
-      const numStr = _actLabel(q);
-      const thumb = _actThumb(q);
-      const isDone = q.state === 'done';
-      const reason = _actReason(q);
-      const errTip = q.error ? ` title="${esc(q.error)}"` : '';
-      const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
-      const retry = !isDone ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
-      return `
-        <div class="act-row${isDone ? ' done' : ''}" data-qid="${q.id}"${errTip}>
-          <div class="act-row-cover">${thumb}</div>
-          <div class="act-row-meta"${nav}>
-            <div class="act-row-title u-truncate">${esc(q.title)}</div>
-            <div class="act-row-issue">${numStr}</div>
-            ${reason ? `<div class="act-row-reason">${esc(reason)}</div>` : ''}
-          </div>
-          <div class="act-row-actions">
-            ${_actChip(q.state)}
-            ${retry}
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>
-          </div>
-        </div>`;
-    }).join('');
-    html += `<div class="act-section">
-      ${rows}
+    html += `<div class="act-section" data-sec="completed">
+      ${completed.map(_actRowHtml).join('')}
     </div>`;
   }
-
   html += '</div>';
   setApp(html);
+}
+
+// Crossfade a text swap instead of hard-cutting it. No-op when nothing changed.
+function _softText(el, text) {
+  if (el.textContent === text) return;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { el.textContent = text; return; }
+  el.style.transition = `opacity var(--t-fast) ease`;
+  el.style.opacity = '0';
+  setTimeout(() => { el.textContent = text; el.style.opacity = '1'; }, 160);
+}
+
+// Grow a freshly inserted row open (the mirror of _animateRowOut): measure its
+// natural height, pin it shut, then transition open and unpin.
+function _animateRowIn(el) {
+  return new Promise(resolve => {
+    if (!el) { resolve(); return; }
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { resolve(); return; }
+    const h = el.offsetHeight;               // natural height, measured pre-collapse
+    el.classList.add('act-adding');          // collapsed start state (no transition yet)
+    void el.offsetHeight;                    // commit the collapsed frame
+    el.classList.add('act-anim');
+    el.classList.remove('act-adding');
+    el.style.maxHeight = `${h}px`;
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      el.classList.remove('act-anim');
+      el.style.maxHeight = '';
+      resolve();
+    };
+    el.addEventListener('transitionend', ev => { if (ev.propertyName === 'max-height') finish(); });
+    setTimeout(finish, 360);                 // belt-and-suspenders, same as row-out
+  });
+}
+
+// A row changed state but stayed in its section: morph it in place. The row node
+// and its <img> survive untouched — that's the whole point (recreating the img is
+// what replayed the cover-in animation and flashed).
+function _morphActRow(el, q) {
+  el.dataset.qstate = q.state;
+  el.classList.toggle('done', q.state === 'done');
+  if (q.error) el.setAttribute('title', q.error); else el.removeAttribute('title');
+  const actions = el.querySelector('.act-row-actions');
+  if (actions) {
+    actions.innerHTML = _actActionsHtml(q);
+    actions.classList.remove('act-fade-in');
+    void actions.offsetWidth;                // restart the fade even on back-to-back morphs
+    actions.classList.add('act-fade-in');
+  }
+  // Swap the sub-block (search line / progress bar / failure reason); the
+  // replacement animates open via the act-sub-in keyframe in CSS.
+  el.querySelectorAll('.act-row-progress, .act-row-reason').forEach(n => n.remove());
+  const sub = _actSubHtml(q);
+  const meta = el.querySelector('.act-row-meta');
+  if (sub && meta) {
+    meta.insertAdjacentHTML('beforeend', sub);
+    meta.lastElementChild.classList.add('act-sub-in');   // grow open, don't shove
+  }
+}
+
+// Keyed row-by-row reconcile: removed rows collapse out (neighbors slide up on the
+// same transition), new rows grow in, state changes morph the existing node, and a
+// section hop (In Progress → history) is a collapse on one side + a grow on the
+// other. Nothing here ever rebuilds an untouched row.
+async function _reconcileActivity(queue) {
+  const wrap = document.querySelector('.act-wrap');
+  if (!wrap) { _buildActivityHtml(queue); return; }
+
+  _activityRemoving = true;   // hold off re-entrant polls while rows are mid-flight
+  try {
+    if (!queue.length) {
+      const rows = Array.from(wrap.querySelectorAll('.act-row'));
+      rows.forEach((row, i) => { row.style.transitionDelay = `${i * 30}ms`; });
+      await Promise.all(rows.map(_animateRowOut));
+      _buildActivityHtml(queue);   // the empty state
+      return;
+    }
+
+    const want = {
+      progress:  queue.filter(q => ACT_ACTIVE_STATES.includes(q.state)),
+      completed: queue.filter(q => !ACT_ACTIVE_STATES.includes(q.state)),
+    };
+    const wantIds = new Set(queue.map(q => String(q.id)));
+    const anims = [];
+
+    // Rows that left the queue entirely.
+    wrap.querySelectorAll('.act-row[data-qid]').forEach(el => {
+      if (!wantIds.has(el.dataset.qid) && !el.classList.contains('act-removing')) anims.push(_animateRowOut(el));
+    });
+
+    for (const sec of ['progress', 'completed']) {
+      const items = want[sec];
+      if (!items.length) continue;   // empty sections are swept after the animations settle
+      let secEl = wrap.querySelector(`.act-section[data-sec="${sec}"]`);
+      if (!secEl) {
+        const t = document.createElement('template');
+        t.innerHTML = sec === 'progress'
+          ? '<div class="act-section act-fade-in" data-sec="progress"><div class="act-section-hdr">In Progress</div></div>'
+          : '<div class="act-section act-fade-in" data-sec="completed"></div>';
+        secEl = t.content.firstElementChild;
+        sec === 'progress' ? wrap.prepend(secEl) : wrap.append(secEl);
+      }
+      const hdr = secEl.querySelector('.act-section-hdr');
+      let anchor = null;   // the last row we placed; the next one goes right after it
+      for (const q of items) {
+        let el = wrap.querySelector(`.act-row[data-qid="${q.id}"]:not(.act-removing)`);
+        if (el && el.closest('.act-section') !== secEl) {
+          anims.push(_animateRowOut(el));   // hopped sections: collapse the old side...
+          el = null;                        // ...and grow a fresh row on the new side
+        }
+        if (!el) {
+          el = _actRowNode(q);
+          secEl.insertBefore(el, anchor ? anchor.nextSibling : (hdr ? hdr.nextSibling : secEl.firstChild));
+          anims.push(_animateRowIn(el));
+        } else {
+          if (el.dataset.qstate !== q.state) _morphActRow(el, q);
+          // Keep DOM order in step with the queue (skipping rows mid-collapse).
+          let prev = el.previousElementSibling;
+          while (prev && prev.classList.contains('act-removing')) prev = prev.previousElementSibling;
+          if (prev !== (anchor || hdr)) secEl.insertBefore(el, anchor ? anchor.nextSibling : (hdr ? hdr.nextSibling : secEl.firstChild));
+        }
+        anchor = el;
+      }
+    }
+
+    await Promise.all(anims);
+    // Sections left with no rows (header dangling): collapse them away too.
+    wrap.querySelectorAll('.act-section').forEach(sec => {
+      if (!sec.querySelector('.act-row')) anims.push(_animateRowOut(sec));
+    });
+    await Promise.all(anims);
+  } finally {
+    _activityRemoving = false;
+  }
 }
 
 async function triggerSweep(btn) {
@@ -2332,7 +2442,7 @@ async function clearHistory(btn) {
   // section would flash). Stagger them a touch for a tidy cascade, then drop the sig so
   // the next poll reconciles cleanly.
   _activityRemoving = true;
-  const rows = Array.from(document.querySelectorAll('.act-row'));
+  const rows = Array.from(document.querySelectorAll('.act-section[data-sec="completed"] .act-row'));
   rows.forEach((row, i) => { row.style.transitionDelay = `${i * 30}ms`; });
   await Promise.all(rows.map(_animateRowOut));
   // The Completed section header is now stranded with no rows — yank it too.

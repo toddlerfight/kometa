@@ -1369,7 +1369,10 @@ select.settings-input {
   .v-card { opacity: 1; }
   #issue-modal-details { animation: none !important; }
   /* JS removes rows instantly under reduced motion, but kill any transition just in case. */
-  .act-row.act-removing { transition: none; }
+  .act-row.act-removing, .act-section.act-removing { transition: none; }
+  .act-row.act-anim, .act-section.act-anim { transition: none; }
+  .act-row { transition: none; }
+  .act-fade-in, .act-sub-in { animation: none; }
 }
 
 .modal-title {
@@ -1506,7 +1509,8 @@ select.settings-input {
 /* Graceful exit — fade + collapse instead of an abrupt yank. JS pins max-height to the
    row's measured px first, then adds this class to drive it shut. The .done override is
    needed because completed rows already sit at opacity 0.4, so 0.4 → 0 is the real fade. */
-.act-row.act-removing {
+.act-row.act-removing,
+.act-section.act-removing {
   overflow: hidden;
   opacity: 0;
   max-height: 0 !important;
@@ -1519,6 +1523,40 @@ select.settings-input {
               padding var(--t-slow) var(--ease-in-out),
               margin var(--t-slow) var(--ease-in-out);
 }
+
+/* Graceful entry — the mirror of .act-removing. JS inserts the row pinned shut
+   (.act-adding), then swaps to .act-anim with a measured max-height so the row
+   grows open and its neighbors slide down on the same transition. No teleports. */
+.act-row.act-adding,
+.act-section.act-adding {
+  overflow: hidden;
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+.act-row.act-anim,
+.act-section.act-anim {
+  overflow: hidden;
+  transition: opacity var(--t-mid) var(--ease-out) 80ms,
+              max-height var(--t-slow) var(--ease-in-out),
+              padding var(--t-slow) var(--ease-in-out);
+}
+
+/* State-change morphs happen INSIDE the surviving row: the chip/buttons cluster
+   crossfades, and the new sub-block (search line / progress bar / reason) grows
+   open instead of shoving the rows below down in one frame. */
+@keyframes act-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.act-fade-in { animation: act-fade-in var(--t-mid) var(--ease-out); }
+@keyframes act-sub-grow {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 48px; }
+}
+.act-sub-in { overflow: hidden; animation: act-sub-grow var(--t-slow) var(--ease-out); }
+
+/* Smooth the .done dim (0.4 opacity) when a row morphs into history. */
+.act-row { transition: opacity var(--t-mid) var(--ease-out); }
 
 .act-row-cover {
   width: 44px;
