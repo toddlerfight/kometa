@@ -30,7 +30,7 @@ from kometa.sync import (
     _best_komga_match, _komga_all_series,
 )
 from kometa.acquisition import _process_queue
-from kometa.naming import _resolve_dir, norm_key as _norm, parse_issue_number as _parse_issue_number
+from kometa.naming import _resolve_dir, norm_key as _norm, parse_issue_number as _parse_issue_number, OWNED_EXTS
 from kometa.models import AddSeriesRequest
 
 logger = logging.getLogger(__name__)
@@ -38,8 +38,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DB_PATH = db.DB_PATH
-
-_COMIC_EXTS = (".cbz", ".cbr", ".cb7", ".cbt", ".pdf")
 
 
 def _arc_collection(arc_title: str, komga, all_series=None):
@@ -77,7 +75,7 @@ def _folder_has_comics(folder: str | None) -> bool:
         return False
     try:
         for root, _dirs, files in os.walk(folder):
-            if any(f.lower().endswith(_COMIC_EXTS) for f in files):
+            if any(os.path.splitext(f)[1].lower() in OWNED_EXTS for f in files):
                 return True
     except OSError:
         pass

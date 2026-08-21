@@ -4,6 +4,8 @@ import logging
 import cloudscraper
 from bs4 import BeautifulSoup, Tag
 
+from kometa.naming import PIPELINE_EXTS
+
 logger = logging.getLogger(__name__)
 
 BASE = "https://getcomics.org"
@@ -348,7 +350,7 @@ class GetComicsClient:
         # Strategy 3: any link ending in a comic file extension
         for a in body.find_all("a", href=True):
             href = a["href"]
-            if any(href.lower().endswith(ext) for ext in (".cbz", ".cbr", ".zip")):
+            if any(href.lower().endswith(ext) for ext in PIPELINE_EXTS):
                 fname = href.rsplit("/", 1)[-1]
                 logger.info(f"GetComics: direct file link {href[:80]}")
                 return href, fname

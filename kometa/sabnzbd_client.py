@@ -2,9 +2,9 @@ import os
 import logging
 import requests
 
-logger = logging.getLogger(__name__)
+from kometa.naming import PIPELINE_EXTS
 
-_COMIC_EXTS = {'.cbz', '.cbr', '.zip', '.rar'}
+logger = logging.getLogger(__name__)
 
 
 class SABnzbdClient:
@@ -103,6 +103,6 @@ def find_comics_in_dir(directory: str) -> list[str]:
         out.extend(
             os.path.join(root, f)
             for f in sorted(files)
-            if os.path.splitext(f)[1].lower() in _COMIC_EXTS
+            if os.path.splitext(f)[1].lower() in PIPELINE_EXTS
         )
     return out
