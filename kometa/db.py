@@ -944,12 +944,14 @@ def get_queue(path=DB_PATH):
 
 
 def reset_stuck_queue_items(path=DB_PATH):
-    """Reset searching/downloading items left orphaned by a container restart."""
+    """Reset searching/downloading/processing items left orphaned by a container
+    restart. 'processing' counts: a crash mid-finalize would otherwise strand the
+    row in a state nothing ever advances."""
     with _connect(path) as conn:
         conn.execute("""
             UPDATE download_queue
             SET state = 'queued', error = NULL, sab_nzo_id = NULL, updated_at = datetime('now')
-            WHERE state IN ('searching', 'downloading')
+            WHERE state IN ('searching', 'downloading', 'processing')
         """)
 
 

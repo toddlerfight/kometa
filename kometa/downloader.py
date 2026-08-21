@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
-from kometa.naming import _safe, _resolve_dir
+from kometa.naming import _safe, _resolve_dir, OWNED_EXTS, PIPELINE_EXTS
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -639,9 +639,10 @@ def force_readable_tree(dest_dir: str) -> None:
         logger.warning(f"force_readable_tree({dest_dir}) failed: {e}")
 
 
-# Extensions Komga actually serves — the set we bother re-stamping. Kept local and
-# explicit rather than importing the divergent COMIC_EXTS zoo scattered elsewhere.
-_COMIC_LIB_EXTS = ('.cbz', '.cbr', '.cb7', '.pdf', '.epub')
+# Extensions we bother re-stamping: everything ownership counts, plus .epub —
+# Komga serves those even though no scanner claims them. (The zoo this comment
+# used to disavow is dead; naming.py holds the one true set now.)
+_COMIC_LIB_EXTS = OWNED_EXTS | {'.epub'}
 
 
 def download_issue(
@@ -657,6 +658,7 @@ def download_issue(
     tracked_series_id: int | None = None,
     db_path: str | None = None,
     page_max: int | None = None,
+    on_bytes_done=None,
 ) -> str:
     """
     Download from url, place in library, trigger Komga scan.
@@ -711,6 +713,13 @@ def download_issue(
                 done += len(chunk)
                 if progress_fn:
                     progress_fn(done, total)
+
+    # Bytes complete — extract/verify/inject below is finalize, not downloading.
+    if on_bytes_done:
+        try:
+            on_bytes_done()
+        except Exception:
+            pass
 
     size = os.path.getsize(staging_path)
     if size < 1024:
@@ -809,6 +818,7 @@ def download_trade(
     fallback_name: str | None = None,
     progress_fn=None,
     komga_scan_fn=None,
+    on_bytes_done=None,
 ) -> list[str]:
     """Download a collected edition (TPB/HC) into dest_dir. The 'dumb' path: NO
     issue-number validation (a trade has no single number; a 'Vol 1-6' bundle
@@ -837,6 +847,15 @@ def download_trade(
                 if progress_fn:
                     progress_fn(done, total)
 
+    # Bytes are all here — everything below is finalize (extract, CBZ rebuild),
+    # which on a 1GB pack grinds for minutes. Let the caller flip the queue row
+    # off "downloading" so a 100% bar doesn't read as stuck.
+    if on_bytes_done:
+        try:
+            on_bytes_done()
+        except Exception:
+            pass
+
     size = os.path.getsize(staging_path)
     if size < 1024:
         os.remove(staging_path)
@@ -858,6 +877,12 @@ def download_trade(
         os.remove(dest_path)
         placed = extracted
         logger.info(f"Trade pack: {len(extracted)} file(s) from {os.path.basename(dest_path)}")
+    elif _pack_comic_count(dest_path) > 1:
+        # A pack whose every file was already in the library: nothing new, and
+        # leaving the raw multi-comic ZIP behind plants a fake "trade" Komga
+        # can't read. Remove it and report the dupe honestly.
+        os.remove(dest_path)
+        raise DuplicateIssueError("Pack contained no files not already in library")
 
     # New arrivals ship as CBZ — same verified rebuild seam, best-effort.
     placed = [ensure_cbz(p) for p in placed]
@@ -872,6 +897,18 @@ def download_trade(
     return placed
 
 
+def _pack_comic_count(zip_path: str) -> int:
+    """How many comic files a ZIP holds (0 for a non-ZIP / plain comic archive)."""
+    try:
+        if not zipfile.is_zipfile(zip_path):
+            return 0
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            return sum(1 for n in zf.namelist()
+                       if os.path.splitext(n)[1].lower() in PIPELINE_EXTS and not n.startswith('__'))
+    except Exception:
+        return 0
+
+
 def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
     """If zip_path is a ZIP of comic files, extract new ones. Returns paths of extracted files."""
     try:
@@ -879,7 +916,7 @@ def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
             return []
         with zipfile.ZipFile(zip_path, 'r') as zf:
             comics = [n for n in zf.namelist()
-                      if os.path.splitext(n)[1].lower() in set(_COMIC_EXTS) and not n.startswith('__')]
+                      if os.path.splitext(n)[1].lower() in PIPELINE_EXTS and not n.startswith('__')]
             if len(comics) <= 1:
                 return []
             extracted = []
@@ -902,9 +939,6 @@ def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
         return []
 
 
-_COMIC_EXTS = ('.cbz', '.cbr', '.zip', '.rar')
-
-
 def _server_filename(response, hint_filename: str | None, url: str) -> str | None:
     """Return the real filename from the server, or None if unresolvable."""
     from urllib.parse import unquote
@@ -913,12 +947,12 @@ def _server_filename(response, hint_filename: str | None, url: str) -> str | Non
         m = re.search(r"filename\*?=(?:UTF-8'')?[\"']?([^\"'\n;]+)", cd, re.IGNORECASE)
         if m:
             name = unquote(m.group(1).strip().strip("\"'"))
-            if name and any(name.lower().endswith(e) for e in _COMIC_EXTS):
+            if name and any(name.lower().endswith(e) for e in PIPELINE_EXTS):
                 return name
-    if hint_filename and any(hint_filename.lower().endswith(e) for e in _COMIC_EXTS):
+    if hint_filename and any(hint_filename.lower().endswith(e) for e in PIPELINE_EXTS):
         return hint_filename
     basename = url.rsplit("/", 1)[-1].split("?")[0]
-    if basename and any(basename.lower().endswith(e) for e in _COMIC_EXTS):
+    if basename and any(basename.lower().endswith(e) for e in PIPELINE_EXTS):
         return basename
     return None
 
@@ -929,6 +963,8 @@ def _detect_ext(response, hint_filename: str | None, url: str) -> str:
         hint_filename or "",
         url,
     ]:
+        # Ordered substring probe, NOT a membership test — don't swap in
+        # PIPELINE_EXTS (sets don't order, and priority here is deliberate).
         for ext in (".cbz", ".cbr", ".zip", ".rar"):
             if ext in source.lower():
                 return ".cbz" if ext == ".zip" else ext

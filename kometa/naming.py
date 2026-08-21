@@ -5,6 +5,18 @@ names). No DB, no clients, no app state — trivially testable in isolation.
 import os
 import re
 
+# The extension zoo, consolidated. Eight modules each kept their own drifting
+# copy of "what's a comic" — so a .cb7 counted toward an arc but was invisible
+# to the series it belonged to. Two sets, two questions. Pick the one that
+# answers YOURS, and never define a new one.
+#
+# Does this file on disk count as a comic you OWN? Broad — folder is truth no
+# matter how the file got there (grabbed, ripped, hand-dropped in 2019).
+OWNED_EXTS = frozenset({'.cbz', '.cbr', '.cb7', '.cbt', '.zip', '.rar', '.pdf'})
+# Can the download pipeline open and repack it? Narrow — only what the extract/
+# rebuild tooling actually speaks. Everything it ships lands as .cbz.
+PIPELINE_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
+
 
 def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     name = os.path.splitext(filename)[0]
@@ -28,11 +40,10 @@ def parse_issue_number(filename: str, series_title: str = "") -> float | None:
 
 
 def scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
-    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
     numbers = set()
     try:
         for name in os.listdir(folder_path):
-            if os.path.splitext(name)[1].lower() in exts:
+            if os.path.splitext(name)[1].lower() in OWNED_EXTS:
                 num = parse_issue_number(name, series_title)
                 if num is not None:
                     numbers.add(num)
@@ -62,17 +73,36 @@ def scan_folder_volumes(folder_path: str) -> set[int]:
     """Volume numbers of collected editions present on disk — same folder-is-truth
     model as scan_folder_numbers, just for trades. A trade counts as owned when its
     volume turns up here."""
-    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
-    vols = set()
+    return {v for v, _ in scan_folder_volume_entries(folder_path)}
+
+
+def scan_folder_volume_entries(folder_path: str) -> list[tuple[int, str]]:
+    """(volume, lowercased filename) pairs for the collected editions on disk.
+    The name rides along so callers can tell EDITIONS apart — an Absolute Vol 1
+    and a plain Vol 1 TPB share a volume number but are different books."""
+    entries = []
     try:
         for name in os.listdir(folder_path):
-            if os.path.splitext(name)[1].lower() in exts:
+            if os.path.splitext(name)[1].lower() in OWNED_EXTS:
                 v = parse_volume_number(name)
                 if v is not None:
-                    vols.add(v)
+                    entries.append((v, name.lower()))
     except Exception:
         pass
-    return vols
+    return entries
+
+
+# Words that mark a DIFFERENT collected edition of the same volume number — an
+# "Absolute Vol. 1" is not a "Vol. 1 TP", no matter what the vol digit says.
+_EDITION_WORDS = ("absolute", "omnibus", "deluxe", "compendium")
+
+
+def edition_keywords(name: str) -> frozenset:
+    """The special-edition words present in a trade title / filename. Ownership and
+    Komga matching require the trade's set to EQUAL the file's set: a plain TPB
+    (empty set) never claims an Absolute file, and vice versa."""
+    low = name.lower()
+    return frozenset(w for w in _EDITION_WORDS if w in low)
 
 
 def find_issue_file(folder_path: str, series_title: str, number: float) -> str | None:
@@ -81,7 +111,7 @@ def find_issue_file(folder_path: str, series_title: str, number: float) -> str |
         return None
     for fname in os.listdir(folder_path):
         ext = os.path.splitext(fname)[1].lower()
-        if ext not in {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}:
+        if ext not in OWNED_EXTS:
             continue
         parsed = parse_issue_number(fname, series_title)
         if parsed is not None and parsed == number:

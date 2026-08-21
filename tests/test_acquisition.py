@@ -739,3 +739,30 @@ class TestFinalizeConvertsCbr:
         assert q["filename"].endswith("Saga #001.cbz")
         with zipfile.ZipFile(dest / "Saga #001.cbz") as zf:
             assert sorted(zf.namelist()) == ["p000.jpg", "p001.jpg", "p002.jpg"]
+
+
+class TestTradePackDelivered:
+    """A range post that lies ('Vol. 1-10' shipping only 1-5) must not mark a
+    Vol 9 row done — the pack content check is the only honesty gate."""
+
+    def test_requested_vol_present(self):
+        placed = [f"/c/Transmetropolitan v0{i}.cbz" for i in (1, 2, 9)]
+        assert acq._trade_pack_delivered(placed, 9, None, {}) is True
+
+    def test_requested_vol_missing(self):
+        placed = [f"/c/Transmetropolitan v0{i}.cbz" for i in (1, 2, 3, 4, 5)]
+        assert acq._trade_pack_delivered(placed, 9, None, {}) is False
+
+    def test_absolute_request_rejects_plain_files(self):
+        placed = ["/c/Transmetropolitan v01.cbz"]
+        meta = {"edition_title": "Absolute Transmetropolitan Vol. 1 HC"}
+        assert acq._trade_pack_delivered(placed, 1, None, meta) is False
+
+    def test_range_needs_every_volume(self):
+        placed = [f"/c/Transmetropolitan v0{i}.cbz" for i in (1, 2, 3)]
+        assert acq._trade_pack_delivered(placed, None, [1, 5], {}) is False
+        placed = [f"/c/Transmetropolitan v0{i}.cbz" for i in (1, 2, 3, 4, 5)]
+        assert acq._trade_pack_delivered(placed, None, [1, 5], {}) is True
+
+    def test_ogn_is_unverifiable_and_trusted(self):
+        assert acq._trade_pack_delivered(["/c/Gigs.cbz"], None, None, {}) is True

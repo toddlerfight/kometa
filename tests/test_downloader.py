@@ -184,3 +184,40 @@ class TestInjectCoversEmptySelection:
         assert (added, out) == (0, cbz)
         with zipfile.ZipFile(out) as zf:
             assert sorted(zf.namelist()) == ["p000.png", "p001.png"]
+
+
+class TestPackDupeGuard:
+    """A multi-comic pack whose every file already exists must NOT be left in the
+    library as a fake 1GB 'trade' — _pack_comic_count is the gate's eyes."""
+
+    def _pack(self, tmp_path, names):
+        p = tmp_path / "pack.zip"
+        with zipfile.ZipFile(p, "w") as zf:
+            for n in names:
+                zf.writestr(n, b"comic-bytes")
+        return str(p)
+
+    def test_counts_comics_in_zip(self, tmp_path):
+        p = self._pack(tmp_path, ["a v01.cbz", "a v02.cbz", "notes.txt"])
+        from kometa.downloader import _pack_comic_count
+        assert _pack_comic_count(p) == 2
+
+    def test_single_comic_archive_is_not_a_pack(self, tmp_path):
+        # a plain .cbz full of page images counts 0 — never mistaken for a pack
+        p = tmp_path / "trade.cbz"
+        with zipfile.ZipFile(p, "w") as zf:
+            zf.writestr("page01.jpg", b"x")
+        from kometa.downloader import _pack_comic_count
+        assert _pack_comic_count(str(p)) == 0
+
+    def test_all_dupes_pack_raises_and_removes(self, tmp_path):
+        import os
+        from kometa.downloader import _extract_pack, _pack_comic_count, DuplicateIssueError
+        dest = tmp_path / "lib"
+        dest.mkdir()
+        (dest / "a v01.cbz").write_bytes(b"x")
+        (dest / "a v02.cbz").write_bytes(b"x")
+        p = self._pack(tmp_path, ["a v01.cbz", "a v02.cbz"])
+        # mirror download_trade's guard: nothing extracted + multi-comic zip
+        assert _extract_pack(p, str(dest)) == []
+        assert _pack_comic_count(p) > 1

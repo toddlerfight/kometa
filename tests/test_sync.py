@@ -242,3 +242,55 @@ class TestEmptyRootGuard:
         main._sync_all_job()
         assert len(synced) == 1 and swept == [True]
         assert db.get_config(main.DB_PATH).get("last_full_sync")
+
+
+class TestEnrichTradesEditions:
+    """Ownership is edition-aware: a plain Vol 1 TPB on disk must NOT stamp
+    'Absolute Vol. 1 HC' owned (that false tick made the sweep skip the real
+    book forever — the Transmetropolitan incident, 2026-08-21)."""
+
+    def _series(self, folder):
+        return {"id": 1, "title": "Transmetropolitan", "folder_path": str(folder), "komga_series_id": None}
+
+    def test_tpb_does_not_claim_absolute(self, tmp_path):
+        (tmp_path / "Transmetropolitan v01 - Back On the Street.cbz").write_bytes(b"x")
+        trades = [
+            {"title": "Transmetropolitan Vol. 1: Back on the Street TP", "vol": 1, "vol_range": None},
+            {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
+        ]
+        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        assert out[0]["owned"] is True
+        assert out[1]["owned"] is False
+
+    def test_absolute_file_claims_only_absolute(self, tmp_path):
+        (tmp_path / "Absolute Transmetropolitan v01.cbz").write_bytes(b"x")
+        trades = [
+            {"title": "Transmetropolitan Vol. 1: Back on the Street TP", "vol": 1, "vol_range": None},
+            {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
+        ]
+        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        assert out[0]["owned"] is False
+        assert out[1]["owned"] is True
+
+    def test_komga_book_mapping_is_edition_aware(self, tmp_path):
+        (tmp_path / "Transmetropolitan v01.cbz").write_bytes(b"x")
+        (tmp_path / "Absolute Transmetropolitan v01.cbz").write_bytes(b"x")
+        books = [
+            {"id": "TPB1", "name": "Transmetropolitan v01"},
+            {"id": "ABS1", "name": "Absolute Transmetropolitan v01"},
+        ]
+        trades = [
+            {"title": "Transmetropolitan Vol. 1 TP", "vol": 1, "vol_range": None},
+            {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
+        ]
+        out = sync.enrich_trades(self._series(tmp_path), trades, books=books)
+        assert out[0]["komga_book_id"] == "TPB1"
+        assert out[1]["komga_book_id"] == "ABS1"
+
+    def test_vol_range_requires_all_same_edition(self, tmp_path):
+        (tmp_path / "Transmetropolitan v01.cbz").write_bytes(b"x")
+        (tmp_path / "Absolute Transmetropolitan v02.cbz").write_bytes(b"x")
+        trades = [{"title": "Transmetropolitan Vol. 1-2", "vol": None, "vol_range": [1, 2]}]
+        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        # v02 on disk is the Absolute — doesn't complete a plain-edition range
+        assert out[0]["owned"] is False

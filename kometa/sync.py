@@ -15,8 +15,10 @@ import threading
 from kometa.sources import komga as _komga
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
-    scan_folder_volumes as _scan_folder_volumes, parse_volume_number as _parse_volume_number,
-    norm_key as _norm_name,
+    scan_folder_volume_entries as _scan_folder_volume_entries,
+    parse_volume_number as _parse_volume_number,
+    edition_keywords as _edition_keywords,
+    norm_key as _norm_name, OWNED_EXTS,
 )
 from kometa.locg_client import (
     get_issues_anon, get_trades_anon, select_editions, find_series_id_anon,
@@ -280,12 +282,11 @@ def _scan_folder_edition_names(folder_path: str) -> set[str]:
     """Normalized stems of NON-volume-numbered comic files on disk — the ownership
     key for no-volume editions (OGNs, Compendiums, year HCs) that carry no volume
     number for scan_folder_volumes to see."""
-    exts = {'.cbz', '.cbr', '.zip', '.rar', '.pdf'}
     names = set()
     try:
         for name in os.listdir(folder_path):
             stem, ext = os.path.splitext(name)
-            if ext.lower() in exts and _parse_volume_number(name) is None:
+            if ext.lower() in OWNED_EXTS and _parse_volume_number(name) is None:
                 names.add(_norm_name(stem))
     except Exception:
         pass
@@ -302,10 +303,16 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     books: pass the series' Komga book list if already fetched (sync_one pulls it
     for the issue book map) to avoid a second full paginated get_books."""
     folder = series.get("folder_path")
-    owned_vols = _scan_folder_volumes(folder) if folder else set()
+    vol_entries = _scan_folder_volume_entries(folder) if folder else []
     owned_names = _scan_folder_edition_names(folder) if folder else set()
 
-    kbook_by_vol, kbook_by_name = {}, {}
+    # Volume ownership is EDITION-AWARE: the trade's special-edition words
+    # (absolute/omnibus/…) must equal the file's, or a plain Vol 1 TPB on disk
+    # stamps "Absolute Vol. 1 HC" owned and the sweep never fetches the real one.
+    def _vol_owned(vol, kws):
+        return any(v == vol and _edition_keywords(name) == kws for v, name in vol_entries)
+
+    kbook_by_volkey, kbook_by_name = {}, {}
     if books is None:
         komga = _komga()
         if komga and series.get("komga_series_id"):
@@ -317,16 +324,17 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
         name = b.get("name", "")
         v = _parse_volume_number(name)
         if v is not None:
-            kbook_by_vol[v] = b["id"]
+            kbook_by_volkey[(v, _edition_keywords(name))] = b["id"]
         kbook_by_name[_norm_name(name)] = b["id"]
 
     for t in trades:
+        kws = _edition_keywords(t.get("title", ""))
         if t.get("vol") is not None:
-            t["owned"] = t["vol"] in owned_vols
-            t["komga_book_id"] = kbook_by_vol.get(t["vol"])
+            t["owned"] = _vol_owned(t["vol"], kws)
+            t["komga_book_id"] = kbook_by_volkey.get((t["vol"], kws))
         elif t.get("vol_range"):
             lo, hi = t["vol_range"]
-            t["owned"] = all(v in owned_vols for v in range(lo, hi + 1))
+            t["owned"] = all(_vol_owned(v, kws) for v in range(lo, hi + 1))
             t["komga_book_id"] = None  # a range spans multiple books — no single link
         else:
             # No volume number — an OGN / one-shot ("Gigs TP"). It can't match by

@@ -118,3 +118,54 @@ class TestResolveDir:
     def test_brand_new_publisher_and_title_computes_safe_path(self, tmp_path):
         assert naming._resolve_dir(str(tmp_path), "Oni Press", "Rick & Morty") == \
             str(tmp_path / "Oni Press" / "Rick & Morty")
+
+
+class TestExtensionSets:
+    """The zoo stays dead. Every module imports these two sets; nobody gets to
+    grow a private opinion about what a comic file is ever again."""
+
+    def test_pipeline_is_subset_of_owned(self):
+        # anything the pipeline can produce/handle must count as owned on disk
+        assert naming.PIPELINE_EXTS <= naming.OWNED_EXTS
+
+    def test_owned_covers_the_historic_drift(self):
+        # the exact extensions that used to flip between visible and invisible
+        # depending on which scanner looked at them (arcs vs series vs sync)
+        assert {'.cb7', '.cbt', '.zip', '.rar', '.pdf'} <= naming.OWNED_EXTS
+
+    def test_pipeline_excludes_unprocessable(self):
+        # the extract/rebuild tooling doesn't speak these — owned-only formats
+        assert not {'.cb7', '.cbt', '.pdf'} & naming.PIPELINE_EXTS
+
+    def test_scanners_see_cb7_now(self, tmp_path):
+        # a hand-dropped .cb7 counts toward series ownership — this was the bug
+        (tmp_path / "Saga #003.cb7").write_bytes(b"x")
+        assert naming.scan_folder_numbers(str(tmp_path), "Saga") == {3.0}
+
+    def test_scanners_still_ignore_non_comics(self, tmp_path):
+        (tmp_path / "Saga #003.jpg").write_bytes(b"x")
+        (tmp_path / "Saga #004.nfo").write_bytes(b"x")
+        assert naming.scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+
+class TestEditionKeywords:
+    """A vol digit is not an identity. 'Absolute Vol. 1' and 'Vol. 1 TP' share a
+    number and NOTHING else — the keyword set is what tells them apart."""
+
+    def test_plain_trade_is_empty_set(self):
+        assert naming.edition_keywords("Transmetropolitan Vol. 1: Back on the Street TP") == frozenset()
+
+    def test_absolute_detected(self):
+        assert naming.edition_keywords("Absolute Transmetropolitan Vol. 1 HC") == {"absolute"}
+
+    def test_omnibus_and_deluxe_detected(self):
+        assert naming.edition_keywords("Saga Deluxe Omnibus Vol 2") == {"deluxe", "omnibus"}
+
+    def test_volume_entries_carry_names(self, tmp_path):
+        (tmp_path / "Transmetropolitan v01 - Back On the Street.cbz").write_bytes(b"x")
+        (tmp_path / "Absolute Transmetropolitan v01.cbz").write_bytes(b"x")
+        entries = naming.scan_folder_volume_entries(str(tmp_path))
+        assert len(entries) == 2
+        assert {v for v, _ in entries} == {1}
+        # the two vol-1 files remain distinguishable by their edition words
+        assert {naming.edition_keywords(n) for _, n in entries} == {frozenset(), frozenset({"absolute"})}

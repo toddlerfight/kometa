@@ -351,6 +351,7 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
             tracked_series_id=item["tracked_series_id"],
             db_path=DB_PATH,
             page_max=item.get("page_max"),
+            on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
         )
     except DuplicateIssueError:
         raise
@@ -410,6 +411,21 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
         db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
 
 
+def _trade_pack_delivered(placed: list, vol, vol_range, meta: dict) -> bool:
+    """Did an expanded pack actually deliver the requested volume(s)? Matching is
+    edition-aware via the same keyword rule as ownership (naming.edition_keywords)."""
+    from kometa.naming import parse_volume_number, edition_keywords
+    want_kws = edition_keywords(meta.get("edition_title") or "")
+    got = {parse_volume_number(os.path.basename(p)) for p in placed
+           if edition_keywords(os.path.basename(p)) == want_kws}
+    if vol is not None:
+        return vol in got
+    if vol_range:
+        lo, hi = vol_range
+        return all(v in got for v in range(lo, hi + 1))
+    return True   # OGN / no-volume edition — nothing checkable
+
+
 def _acquire_trade(item, qid, gc, downloaded_urls):
     """Search (GetComics → usenet) and place a collected edition. Same shape as
     _acquire_issue — search_trade instead of search, download_trade instead of
@@ -448,10 +464,11 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
     try:
-        downloader.download_trade(
+        placed = downloader.download_trade(
             dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
             progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
             komga_scan_fn=_komga_scan,
+            on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
         )
     except DuplicateIssueError:
         raise
@@ -463,6 +480,19 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
         return
     clear_progress(qid)
+    # Content check: when the grab was a PACK, the volume we asked for must be
+    # among the extracted files. GetComics range posts lie ("Vol. 1 – 10" shipping
+    # only 1–5) and download_trade has no number validation of its own — without
+    # this, a Vol 9 row goes 'done' with no Vol 9 on disk. Edition words count
+    # too: a plain-TPB pack never satisfies an Absolute/Omnibus request. A
+    # single-file grab is unverifiable (we named the file ourselves) — trust it.
+    if len(placed) > 1 and not _trade_pack_delivered(placed, vol, vol_range, meta):
+        db.add_failed_source(qid, dl_url, path=DB_PATH)
+        logger.info(f"Trade pack for {query!r} didn't contain {label} — trying usenet/torrent")
+        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
+            return
+        db.update_queue_state(qid, "failed", error=f"GetComics: pack didn't contain {label}", path=DB_PATH)
+        return
     db.complete_trade(qid, path=DB_PATH)
     # Re-stamp owned on the cached trades now (folder scan), so the tile flips to
     # owned right away instead of waiting for the next sync.
@@ -610,6 +640,8 @@ def _poll_usenet_jobs():
 
 def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, keep_source: bool):
     """The ONE finalize engine behind both the usenet and torrent wrappers —
+    flips the row to 'processing' on entry: the bytes are down, but extract/verify/
+    place can grind for minutes and a frozen 100% "downloading" reads as stuck —
     they were 90-line near-twins whose only real difference was file placement.
     keep_source=False MOVES (usenet: the job dir is disposable), keep_source=True
     COPIES via copy2 (torrent: the original must stay put so it can seed; the
@@ -623,6 +655,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         _pick_issue_file, _safe, _resolve_dir, _fix_extension, _extract_rar_once,
         _verify_single_issue, WrongIssueError, force_readable_tree, ensure_cbz,
     )
+
+    db.update_queue_state(qid, "processing", path=DB_PATH)
 
     def _place(src: str, dst: str) -> str:
         if keep_source:
