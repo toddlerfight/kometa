@@ -237,3 +237,41 @@ def test_add_with_claimed_komga_id_lands_unlinked(tmp_path, monkeypatch):
 
     assert added["id"] is not None
     assert added["komga_series_id"] is None
+
+
+def test_duplicate_locg_add_returns_existing_row(tmp_path, monkeypatch):
+    """Adding the same LOCG series twice must return the FIRST row, not mint a
+    twin. Live repro: The Foundry added twice 41 min apart → two tracked_series
+    rows syncing off locg 210251, two identical calendar cards."""
+    root = tmp_path / "comics"
+    root.mkdir()
+    _wire(monkeypatch, tmp_path, root)
+
+    first = main.add_series(AddSeriesRequest(locg_id=210251, title="The Foundry",
+                                             publisher_name="Dark Horse Comics",
+                                             on_pull_list=False))
+    second = main.add_series(AddSeriesRequest(locg_id=210251, title="The Foundry",
+                                              publisher_name="Dark Horse Comics",
+                                              on_pull_list=False))
+
+    assert second["id"] == first["id"]
+    all_series = db.get_all_series(main.DB_PATH)
+    assert len([s for s in all_series if str(s.get("locg_series_id")) == "210251"]) == 1
+
+
+def test_duplicate_add_via_claimed_komga_id_returns_existing_row(tmp_path, monkeypatch):
+    """No LOCG id to dedupe on, but the Komga id resolves to a row whose title
+    MATCHES this add — that's the same series, not an adjacent franchise title.
+    Return the existing row instead of inserting an unlinked twin."""
+    root = tmp_path / "comics"
+    root.mkdir()
+    dbp = _wire(monkeypatch, tmp_path, root)
+    existing_id = db.add_series("K900", title="The Foundry",
+                                publisher="Dark Horse Comics", path=dbp)
+
+    added = main.add_series(AddSeriesRequest(title="The Foundry (2026)",
+                                             publisher_name="Dark Horse Comics",
+                                             komga_id="K900", on_pull_list=False))
+
+    assert added["id"] == existing_id
+    assert len(db.get_all_series(dbp)) == 1

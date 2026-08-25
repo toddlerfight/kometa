@@ -589,6 +589,18 @@ def add_series(req: AddSeriesRequest):
         locg_series_id = sid
         title = re.sub(r"\s*#\s*\d+.*$", "", title).strip()  # drop the '#1' issue suffix
 
+    # Idempotent add, plain-path edition. The storyline path above dedupes by CV
+    # volume; this path had NOTHING — add the same run twice 41 minutes apart and
+    # you got twin rows syncing off the same LOCG id (hi, The Foundry ×2). Same
+    # LOCG series id = same run, full stop. Return the row we already have.
+    if locg_series_id:
+        for s in db.get_all_series(DB_PATH):
+            if (s.get("kind") != "arc"
+                    and str(s.get("locg_series_id") or "") == str(locg_series_id)):
+                logger.info(f"Add {title!r}: LOCG series {locg_series_id} already tracked "
+                            f"as #{s['id']} — returning existing, not minting a twin")
+                return s
+
     komga = _komga()
     if komga_series_id and komga:
         try:
@@ -609,15 +621,26 @@ def add_series(req: AddSeriesRequest):
             pass
 
     # A Komga id already claimed by another tracked series must not reach the
-    # INSERT — komga_series_id is UNIQUE, so it would 500 the whole add. This
-    # happens legitimately: the auto-link title-matches a Komga series that an
-    # existing row (same franchise, adjacent title) already owns. The sync-time
-    # linker refuses duplicates gracefully; the add path gets the same manners.
-    if komga_series_id and any(
-            s.get("komga_series_id") == str(komga_series_id)
-            for s in db.get_all_series(DB_PATH)):
-        logger.info(f"Add {title!r}: Komga series {komga_series_id} already linked elsewhere — leaving unlinked")
-        komga_series_id = None
+    # INSERT — komga_series_id is UNIQUE, so it would 500 the whole add. Two ways
+    # to land here:
+    #   1) SAME series, added again — the claiming row title-matches this add.
+    #      "Already linked elsewhere" is not a nuisance here, it's the smoking gun
+    #      of a duplicate. Return the existing row; do NOT insert an unlinked twin
+    #      (the old behavior dropped the evidence and did exactly that).
+    #   2) Adjacent franchise title — the auto-link loosely matched a Komga series
+    #      an honestly-different row owns. Leave THIS add unlinked and proceed,
+    #      same graceful manners as the sync-time linker.
+    if komga_series_id:
+        claimer = db.get_series_by_komga_id(str(komga_series_id), DB_PATH)
+        if claimer:
+            from kometa.arc import base_series_title, titles_match
+            if titles_match(claimer.get("title") or "", base_series_title(title)):
+                logger.info(f"Add {title!r}: Komga series {komga_series_id} already tracked "
+                            f"as #{claimer['id']} — returning existing, not minting a twin")
+                return claimer
+            logger.info(f"Add {title!r}: Komga series {komga_series_id} already linked to "
+                        f"{claimer.get('title')!r} — leaving unlinked")
+            komga_series_id = None
 
     # No folder yet (no Komga, or Komga had none)? Derive it from publisher+title.
     # _resolve_dir finds an existing on-disk folder (variation-tolerant) or returns
