@@ -5,6 +5,7 @@ the queue/issue rows land where they should.
 _finalize_usenet_download gets the heaviest coverage here — it moves real files
 on disk and was the one extracted function with zero prior exercise.
 """
+import json
 from datetime import date
 
 import pytest
@@ -53,7 +54,7 @@ class TestProcessQueue:
         db.queue_issue(series, 1.0, db_path)
 
         class FakeGC:
-            def search(self, title, number, store_date, series_year=None, status_fn=None):
+            def search(self, title, number, store_date, series_year=None, status_fn=None, **k):
                 return ("http://dl/saga-1.cbz", "saga-1.cbz")
 
         monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
@@ -147,7 +148,7 @@ class TestGCRescueOnUsenetFailure:
         self._fail_sab(monkeypatch)
 
         class FakeGC:
-            def search(self, title, number, store_date, series_year=None, status_fn=None):
+            def search(self, title, number, store_date, series_year=None, status_fn=None, **k):
                 return ("http://dl/saga-1.cbz", "saga-1.cbz")
         monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
         monkeypatch.setattr(acq.downloader, "download_issue",
@@ -766,3 +767,137 @@ class TestTradePackDelivered:
 
     def test_ogn_is_unverifiable_and_trusted(self):
         assert acq._trade_pack_delivered(["/c/Gigs.cbz"], None, None, {}) is True
+
+
+class TestPackDupCascade:
+    """The same lying pack URL matching every row in a batch used to strand all
+    the later rows on not_found ('Already downloaded for this series') without
+    ever asking usenet or torrents. The whole Transmetropolitan wall, live.
+    Now: vol already on disk from the earlier grab → done on the spot; not on
+    disk → blacklist the pack for this row and run the cascade like any miss."""
+
+    PACK_URL = "http://dl/transmetro-pack"
+
+    def _trade_series(self, db_path, folder):
+        return db.add_series(
+            komga_series_id=None, title="Transmetropolitan",
+            publisher="DC", year_began=1997, folder_path=str(folder),
+            on_pull_list=True, path=db_path,
+        )
+
+    def _queue_trade(self, db_path, sid, vol):
+        db.queue_trade(sid, f"loc{vol}", "Transmetropolitan", vol=vol,
+                       edition_title=f"Transmetropolitan Vol. {vol} TP", path=db_path)
+        return next(i for i in db.get_queued_items(db_path)
+                    if i.get("kind") == "trade")
+
+    class FakeGC:
+        def __init__(self, url):
+            self.url = url
+            self.seen_excludes = None
+
+        def search_trade(self, title, vol=None, vol_range=None, status_fn=None, exclude_urls=None):
+            self.seen_excludes = set(exclude_urls or ())
+            if self.url in self.seen_excludes:
+                return (None, None)
+            return (self.url, None)
+
+    def test_dup_url_with_vol_on_disk_completes(self, wired, monkeypatch, tmp_path):
+        db_path, _ = wired
+        folder = tmp_path / "Transmetropolitan"
+        folder.mkdir()
+        _make_comic(folder / "Transmetropolitan v05.cbz")
+        sid = self._trade_series(db_path, folder)
+        item = self._queue_trade(db_path, sid, 5)
+
+        def _no_download(*a, **k):
+            raise AssertionError("must not re-download a pack we already have")
+        monkeypatch.setattr(acq.downloader, "download_trade", _no_download)
+
+        acq._acquire_trade(item, item["id"], self.FakeGC(self.PACK_URL), {self.PACK_URL})
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == item["id"])
+        assert q["state"] == "done"
+
+    def test_dup_url_missing_vol_blacklists_and_cascades(self, wired, monkeypatch, tmp_path):
+        db_path, _ = wired
+        folder = tmp_path / "Transmetropolitan"
+        folder.mkdir()
+        _make_comic(folder / "Transmetropolitan v05.cbz")   # pack delivered 5, we want 8
+        sid = self._trade_series(db_path, folder)
+        item = self._queue_trade(db_path, sid, 8)
+
+        fallbacks = []
+        monkeypatch.setattr(acq, "_fallback_usenet_torrent",
+                            lambda *a, **k: fallbacks.append(a) or False)
+        monkeypatch.setattr(acq.downloader, "download_trade",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no re-download")))
+
+        acq._acquire_trade(item, item["id"], self.FakeGC(self.PACK_URL), {self.PACK_URL})
+
+        assert len(fallbacks) == 1, "usenet/torrent cascade must run on a pack dupe"
+        q = next(x for x in db.get_queue(db_path) if x["id"] == item["id"])
+        assert q["state"] == "not_found"
+        assert self.PACK_URL in json.loads(q["failed_sources"])
+
+    def test_blacklisted_pack_is_excluded_on_retry(self, wired, monkeypatch, tmp_path):
+        db_path, _ = wired
+        folder = tmp_path / "Transmetropolitan"
+        folder.mkdir()
+        sid = self._trade_series(db_path, folder)
+        item = self._queue_trade(db_path, sid, 8)
+        db.add_failed_source(item["id"], self.PACK_URL, path=db_path)
+        item = next(i for i in db.get_queued_items(db_path) if i["id"] == item["id"])
+
+        gc = self.FakeGC(self.PACK_URL)
+        monkeypatch.setattr(acq, "_fallback_usenet_torrent", lambda *a, **k: False)
+
+        acq._acquire_trade(item, item["id"], gc, set())
+
+        assert self.PACK_URL in gc.seen_excludes, "failed_sources must reach search_trade"
+        q = next(x for x in db.get_queue(db_path) if x["id"] == item["id"])
+        assert q["state"] == "not_found"
+
+    def test_issue_dup_url_cascades_instead_of_dead_ending(self, wired, monkeypatch):
+        db_path, series = wired
+        db.upsert_issue_status(series, 2.0, str(date.today()), owned=False, path=db_path)
+        db.queue_issue(series, 2.0, db_path)
+        qid = _qid_for(db_path, series, 2.0)
+        item = next(i for i in db.get_queued_items(db_path) if i["id"] == qid)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://dl/pack", "pack.zip")
+
+        monkeypatch.setattr(acq.downloader, "download_issue",
+                            lambda **kw: (_ for _ in ()).throw(AssertionError("no re-download")))
+
+        handled, err = acq._try_getcomics(item, qid, FakeGC(), {"http://dl/pack"}, str(date.today()))
+
+        assert (handled, err) == (False, None)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] != "not_found", "caller owns the final state, not the dup guard"
+
+
+class TestClientExcludeUrls:
+    """GetComicsClient must skip a post whose download link is on the row's
+    blacklist — otherwise every retry re-buys the same lying pack in full."""
+
+    def _client(self, monkeypatch, post="http://gc/post", url="http://dl/pack"):
+        from kometa.getcomics_client import GetComicsClient
+        c = GetComicsClient.__new__(GetComicsClient)   # skip cloudscraper setup
+        monkeypatch.setattr(GetComicsClient, "_search_page", lambda *a, **k: post, raising=True)
+        monkeypatch.setattr(GetComicsClient, "_search_trade_page", lambda *a, **k: post, raising=True)
+        monkeypatch.setattr(GetComicsClient, "_extract_download", lambda *a, **k: (url, "f.cbz"), raising=True)
+        return c
+
+    def test_search_skips_excluded(self, monkeypatch):
+        c = self._client(monkeypatch)
+        assert c.search("Saga", 1.0, exclude_urls={"http://dl/pack"}) == (None, None)
+        assert c.search("Saga", 1.0) == ("http://dl/pack", "f.cbz")
+
+    def test_search_trade_skips_excluded(self, monkeypatch):
+        c = self._client(monkeypatch)
+        assert c.search_trade("Transmetropolitan", vol=8,
+                              exclude_urls={"http://dl/pack"}) == (None, None)
+        assert c.search_trade("Transmetropolitan", vol=8) == ("http://dl/pack", "f.cbz")

@@ -165,11 +165,16 @@ class GetComicsClient:
             raise GCRateLimitError("Rate limited by GetComics", retry_after=cooldown)
         return r
 
-    def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None, status_fn=None) -> tuple[str | None, str | None]:
+    def search(self, title: str, issue_number: float, store_date: str | None = None, series_year: int | None = None, status_fn=None,
+               exclude_urls=None) -> tuple[str | None, str | None]:
         """
         Returns (download_url, hint_filename) or (None, None).
         Tries progressively looser queries until a match is found.
+        exclude_urls: download links already proven worthless for this row
+        (dead delivery, lying pack) — a post resolving to one is skipped, so a
+        retry buys a DIFFERENT release instead of the same corpse on a loop.
         """
+        exclude_urls = exclude_urls or set()
         num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
         num_str = str(num_int)  # no zero-padding — GC titles use "#25" not "#025"
         year = store_date[:4] if store_date else None
@@ -194,15 +199,23 @@ class GetComicsClient:
             post_url = self._search_page(query, title, issue_number)
             if post_url:
                 url, fname = self._extract_download(post_url)
+                if url and url in exclude_urls:
+                    logger.info(f"GetComics: {post_url} resolves to an excluded download — skipping")
+                    continue
                 if url:
                     return url, fname
 
         return None, None
 
-    def search_trade(self, title: str, vol=None, vol_range=None, status_fn=None) -> tuple[str | None, str | None]:
+    def search_trade(self, title: str, vol=None, vol_range=None, status_fn=None,
+                     exclude_urls=None) -> tuple[str | None, str | None]:
         """Find a collected edition on GetComics. Returns (download_url, filename)
         or (None, None). 'TPB' is the magic word — 'Volume' returns nothing — and a
-        single 'Vol 1 – 6' post can be the jackpot covering many volumes at once."""
+        single 'Vol 1 – 6' post can be the jackpot covering many volumes at once.
+        exclude_urls: downloads already proven worthless for this row — above all
+        the lying range pack ('Vol 1-10' shipping five files) that a retry would
+        otherwise re-download in full, verify, and reject, forever."""
+        exclude_urls = exclude_urls or set()
         title = re.sub(r'\s*\(\d{4}\)\s*$', '', title).strip()
         queries = []
         if vol is not None:
@@ -223,6 +236,9 @@ class GetComicsClient:
             post_url = self._search_trade_page(query, title_norm, vol, vol_range)
             if post_url:
                 url, fname = self._extract_download(post_url)
+                if url and url in exclude_urls:
+                    logger.info(f"GetComics trade: {post_url} resolves to an excluded download — skipping")
+                    continue
                 if url:
                     return url, fname
         return None, None

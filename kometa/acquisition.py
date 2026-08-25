@@ -316,10 +316,12 @@ def _is_old_issue(store_date: str | None) -> bool:
 
 def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, str | None]:
     """Search + download via GetComics. Returns (handled, error):
-    - (True, None): fully handled — placed, or correctly marked not_found as an
-      already-grabbed pack dupe. Caller stops.
-    - (False, None): GetComics has nothing at all (search miss) — caller tries
-      other sources; landing on 'not_found' if they also come up empty.
+    - (True, None): fully handled — placed. Caller stops.
+    - (False, None): GetComics has nothing usable — a search miss, or the only
+      hit is a pack this batch already pulled (re-downloading the same pack N
+      times in one run helps nobody; if the pack HAD this issue, ownership
+      already reflects it). Caller tries other sources, landing on 'not_found'
+      if they also come up empty.
     - (False, msg): GetComics found a link but the download itself failed — caller
       still tries other sources, but if THOSE also fail, this is a 'failed' with
       a real cause, not a bare 'not_found' (something exists, delivery broke).
@@ -327,13 +329,17 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
     (6h-park, not a 'try another source' case)."""
     set_search_status(qid, "GetComics…")
     dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
-                                      status_fn=lambda s, qid=qid: set_search_status(qid, s))
+                                      status_fn=lambda s, qid=qid: set_search_status(qid, s),
+                                      exclude_urls=_failed_sources(item))
     if not dl_url:
         return False, None
 
     if dl_url in downloaded_urls:
-        db.update_queue_state(qid, "not_found", error="Pack already downloaded for this series", path=DB_PATH)
-        return True, None
+        # This run already pulled this exact pack for another row, and this
+        # issue is STILL queued — the grab didn't settle it. Dead-ending here
+        # as not_found (the old move) silently benched usenet/torrent; treat it
+        # as a GC miss instead and let the cascade earn its keep.
+        return False, None
     downloaded_urls.add(dl_url)
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
@@ -450,7 +456,8 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
 
     set_search_status(qid, "GetComics…")
     dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
-                                   status_fn=lambda s, qid=qid: set_search_status(qid, s))
+                                   status_fn=lambda s, qid=qid: set_search_status(qid, s),
+                                   exclude_urls=_failed_sources(item))
     if not dl_url:
         if _fallback_usenet_torrent(item, qid, _search_nzb, query):
             return
@@ -458,7 +465,29 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         return
 
     if dl_url in downloaded_urls:
-        db.update_queue_state(qid, "not_found", error="Already downloaded for this series", path=DB_PATH)
+        # This batch already pulled this exact pack for another row. If that
+        # grab actually delivered OUR volume, the file is sitting on disk right
+        # now — complete, no second download. Otherwise the pack is a proven
+        # dud for this row: blacklist it (retries must stop re-buying the same
+        # lie) and cascade to usenet/torrent like any other GetComics miss. The
+        # old dead-end here ("Already downloaded for this series") skipped the
+        # cascade entirely and stranded the row on not_found. Volume-less
+        # editions can't be disk-verified (_trade_pack_delivered trusts them
+        # blind), so they go straight to the cascade.
+        if (vol is not None or vol_range) and os.path.isdir(dest_dir):
+            placed = [os.path.join(dest_dir, f) for f in os.listdir(dest_dir)]
+            if _trade_pack_delivered(placed, vol, vol_range, meta):
+                db.complete_trade(qid, path=DB_PATH)
+                try:
+                    from kometa.sync import refresh_trades_owned
+                    refresh_trades_owned(item["tracked_series_id"])
+                except Exception as e:
+                    logger.warning(f"Trade owned-refresh failed: {e}")
+                return
+        db.add_failed_source(qid, dl_url, path=DB_PATH)
+        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
+            return
+        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
         return
     downloaded_urls.add(dl_url)
 
