@@ -93,7 +93,8 @@ deploy is preceded by a commit pushed to the canonical remote**, so there is
 always a point-in-time to roll back to. Remotes (set 2026-06-18):
 - `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **PUBLIC**, canonical) — `git push origin main` is the pre-deploy rollback point.
   **This repo is public. Never commit hosts, ports, usernames, keys, or IDs** — they
-  go in `.env` (gitignored). Placeholders like `$NAS_HOST` in these docs are deliberate.
+  go in `.env` (gitignored). Placeholders like `$KOMETA_HOST` / `$NAS_HOST` in these
+  docs are deliberate.
 
   A pre-commit hook enforces this (`.githooks/pre-commit`). It is NOT active until you
   point git at it — `core.hooksPath` is local config and does not survive a clone:
@@ -104,33 +105,44 @@ always a point-in-time to roll back to. Remotes (set 2026-06-18):
   host, SSH port, username, library ID, iCloud aliases, private-key blocks, 32-hex API
   keys or inline credentials. Verified zero false positives against the current tree.
   `--no-verify` bypasses it; that is almost never the right answer.
-- `gitea` → `ssh://git@$NAS_HOST:2222/<you>/kometa.git` (NAS Gitea, fast local mirror). Push here too when convenient: `git push gitea main`.
+- `gitea` → `ssh://git@$KOMETA_HOST:2222/<you>/kometa.git` (Gitea on ginbako, fast local mirror). Push here too when convenient: `git push gitea main`.
 
 Rollback = `git checkout <commit> -- <files>`, re-sync, restart. Destructive
 operations (anything that touches library files or the DB schema) still need
 explicit approval.
 
-Live runs as a Docker container on the NAS (container name `kometa`, port 6969).
-NAS access: `ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST`. Docker binary:
-`/var/packages/ContainerManager/target/usr/bin/docker`. No rsync/scp — use `tar`-pipe.
+**The app moved off the Synology NAS to ginbako (M4 Mac mini) in Aug 2026.** Any
+`/volume1/...` path or `/var/packages/ContainerManager/...` docker binary you find
+in older notes or git history is dead. The NAS still hosts SABnzbd, qBittorrent and
+Prowlarr — those references are still live.
 
-**Where those `$NAS_*` values live:** a gitignored `.env` in the repo root, read by
+Live runs as a Docker container on ginbako (container name `kometa`, port 6969).
+Host access: `ssh -o IdentitiesOnly=yes -p $KOMETA_PORT -i $KOMETA_KEY $KOMETA_USER@$KOMETA_HOST`.
+Docker is OrbStack's at `$KOMETA_DOCKER` (`/usr/local/bin/docker` — NOT on `PATH`
+over a non-interactive ssh, so always use the absolute path). No rsync/scp — use
+`tar`-pipe.
+
+Layout on ginbako:
+- `$KOMETA_COMPOSE_DIR` (`~/docker`) — holds `compose.yml` for every app on the box
+  (komga, seerr, gitea, backlog, ...). `docker compose` commands must run from here.
+- `$KOMETA_APP_DIR` (`~/docker/apps/kometa`) — the deploy target. The bind mount is
+  `./apps/kometa/kometa:/app/kometa`, so the tar extracts into `$KOMETA_APP_DIR` and
+  the `kometa/` dir inside it *is* the live code.
+- The DB is at `/data/kometa.db` inside the container.
+
+**Where those `$KOMETA_*` values live:** a gitignored `.env` in the repo root, read by
 `deploy.sh` (see `.env.example`). They are NOT in the repo and must never be — this
-is a public GitHub repo. The NAS has its own separate `.env` at
-`/volume1/docker/kometa/.env` holding the app's `KOMGA_*` / `METRON_*` / `CV_API_KEY`;
-the two files are unrelated, don't confuse them.
+is a public GitHub repo. The host has its own separate `.env` under `$KOMETA_APP_DIR`
+holding the app's `KOMGA_*` / `METRON_*` / `CV_API_KEY`; the two files are unrelated,
+don't confuse them. (`deploy.sh` still honours the legacy `NAS_*` names as a fallback
+so an old `.env` keeps working, but `KOMETA_*` wins.)
 
-The deploy key is `~/.ssh/nas_kometa` — dedicated to this box, not a general-purpose
-personal key. Rotated 2026-07-20; the old key was removed from the NAS
-`authorized_keys` (backup at `~/.ssh/authorized_keys.bak` on the NAS). Note Gitea keeps
-its OWN key registry (port 2222) — rotating the NAS shell key does not touch it.
-
-**Deploying off the home network (Tailscale):** the `$NAS_HOST` host below is
-LAN-only. When remote, swap every SSH/tar host to `$NAS_TS_HOST`
-(same port $NAS_PORT, same key); add `-o StrictHostKeyChecking=accept-new` on first
-connect. Also: the pre-deploy `git push gitea main` rollback push FAILS off-LAN
-(the `gitea` remote is the LAN IP) — only `git push origin main` (GitHub) works
-remote, and that's the one that matters. Push to `gitea` later from home.
+**Deploying off the home network (Tailscale):** `$KOMETA_HOST` is LAN-only. When
+remote, swap every SSH/tar host to `$KOMETA_TS_HOST` (same port, same key);
+add `-o StrictHostKeyChecking=accept-new` on first connect. Also: the pre-deploy
+`git push gitea main` rollback push FAILS off-LAN (the `gitea` remote is the LAN IP)
+— only `git push origin main` (GitHub) works remote, and that's the one that matters.
+Push to `gitea` later from home.
 
 **ALWAYS run `./stamp.sh` first**, whichever path you take. It writes
 `kometa/_build.json` (gitignored) with the commit SHA, branch and a dirty flag, and
@@ -139,47 +151,48 @@ tar-sync path below does NOT, so run it by hand and include `kometa/_build.json`
 the tar. Skip it and `GET /api/version` reports a stale commit — worse than no answer,
 because you'll believe it.
 
-Check what's actually live any time: `curl http://$NAS_HOST:6969/api/version`. If
+Check what's actually live any time: `curl http://$KOMETA_HOST:6969/api/version`. If
 `restart_may_be_needed` is true, files were synced but the process wasn't restarted —
 the running Python is not the Python on disk.
 
-**The source is now BIND-MOUNTED** (`/volume1/docker/kometa/kometa:/app/kometa` in
-`docker-compose.yml`), so code is NOT baked into the image. This makes deploys a
-**few-second restart, not a rebuild** (the old rebuild caused ~1-2 min downtime — see
-the 2026-06-09 git history of frustration). Pick the path by what changed:
+**The source is BIND-MOUNTED** (`./apps/kometa/kometa:/app/kometa` in `compose.yml`),
+so code is NOT baked into the image. This makes deploys a **few-second restart, not a
+rebuild** (the old rebuild caused ~1-2 min downtime — see the 2026-06-09 git history
+of frustration). Pick the path by what changed:
 
-- **Python change** → tar-sync the changed file(s) into the live mount, then restart:
+- **Python change** → `./deploy.sh`. It stamps, tar-syncs the whole `kometa/` package
+  into the live mount, and restarts. Do NOT hand-enumerate files: an earlier version
+  of `deploy.sh` piped a per-file list, a module got renamed, and `set -e` aborted it
+  *after* it had already overwritten `main.py` — a half-deploy that never restarted.
+  The equivalent by hand, if you need it:
   ```bash
   ./stamp.sh
-  tar czf - kometa/_build.json kometa/sync.py kometa/main.py | ssh -p $NAS_PORT -i $NAS_KEY \
-    $NAS_USER@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
-  ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST \
-    'cd /volume1/docker/kometa && /var/packages/ContainerManager/target/usr/bin/docker compose restart kometa'
-  ```
-  **Syncing the whole `kometa/` dir** (many files changed): the NAS-side extraction
-  dies with "Permission denied" on `kometa/__pycache__/` — those .pyc files are
-  root-owned (written by the container). Exclude the junk and macOS metadata:
-  ```bash
   COPYFILE_DISABLE=1 tar czf - --exclude '__pycache__' --exclude '.DS_Store' kometa | \
-    ssh -p $NAS_PORT -i $NAS_KEY $NAS_USER@$NAS_HOST 'cd /volume1/docker/kometa && tar xzf -'
+    ssh -o IdentitiesOnly=yes -p $KOMETA_PORT -i $KOMETA_KEY \
+    $KOMETA_USER@$KOMETA_HOST "cd $KOMETA_APP_DIR && tar xzf -"
+  ssh -o IdentitiesOnly=yes -p $KOMETA_PORT -i $KOMETA_KEY $KOMETA_USER@$KOMETA_HOST \
+    "cd $KOMETA_COMPOSE_DIR && $KOMETA_DOCKER compose restart kometa"
   ```
-  ("Ignoring unknown extended header keyword" warnings from the NAS tar are harmless.)
+  Excludes matter: `__pycache__` .pyc files are root-owned (written by the container)
+  and the extract dies on them; `.DS_Store`/`COPYFILE_DISABLE` is macOS being macOS.
 - **Static change** (`static/app.js`, `style.css`, `index.html`) → tar-sync only;
-  it's served live, **no restart needed**. Tell the user to hard-refresh (Cmd+Shift+R)
-  — the SPA is browser-cached (`Cache-Control` on assets), so a stale cached app.js is
-  what makes "old UI / wrong behaviour persists after a fix" appear.
-- **requirements.txt / Dockerfile / docker-compose.yml change** → still a real
-  recreate: `docker compose up -d` (compose change) or `... build && ... up -d` (deps).
-- **NEVER** `rm -rf /volume1/docker/kometa/kometa` while the container is up — it's the
-  live mount; deleting it yanks the code out from under the running app. Sync files in
-  place (tar extract overwrites). `compose restart` needs `cd /volume1/docker/kometa`
+  it's served live, **no restart needed**. Bump BOTH `app.js?v=` and `style.css?v=` in
+  `index.html`. Tell the user to hard-refresh (Cmd+Shift+R) — the SPA is browser-cached
+  (`Cache-Control` on assets), so a stale cached app.js is what makes "old UI / wrong
+  behaviour persists after a fix" appear.
+- **requirements.txt / Dockerfile / compose.yml change** → still a real recreate:
+  `docker compose up -d` (compose change) or `... build && ... up -d` (deps). Deps are
+  baked into the image — a requirements change does NOT land via a restart.
+- **NEVER** `rm -rf $KOMETA_APP_DIR/kometa` while the container is up — it's the live
+  mount; deleting it yanks the code out from under the running app. Sync files in
+  place (tar extract overwrites). `compose restart` needs `cd $KOMETA_COMPOSE_DIR`
   first (or `-f`), or you get "no configuration file provided".
 
-Always: after, `curl http://$NAS_HOST:6969/api/series` → 200, and confirm the new
+Always: after, `curl http://$KOMETA_HOST:6969/api/series` → 200, and confirm the new
 code is actually live, e.g. `docker exec kometa grep -c <new-symbol> /app/kometa/<file>`.
 Note: app-level Python loggers do NOT reach `docker logs` (only uvicorn access logs are
 wired up) — verify behaviour through the API/DB, not by grepping logs for logger.info
-lines. Validate locally first (`ruff check kometa/`, `pytest -q` = 92 unit tests,
+lines. Validate locally first (`ruff check kometa/`, `pytest -q` = 196 unit tests,
 `node --check kometa/static/app.js` for JS). **For any frontend or route change,
 also run the browser smoke suite:** `.venv/bin/python -m pytest -m e2e -q`
 (11 tests, ~11s, headless Chromium against a real in-process server on a fixture
@@ -204,11 +217,18 @@ no longer loses it — `lifespan` compares the `last_full_sync` config stamp aga
 most recent scheduled slot and runs a catch-up sync at boot if one was missed. Expect
 a full sync (and its auto-grabs) right after any deploy that crossed a sync hour.
 
-## NAS runtime integrations
+## Runtime integrations
 
-- **Komga** (reader + cover source): `http://$NAS_HOST:8585`. Creds in
-  `/volume1/docker/kometa/.env`. Linked per-series via folder-path match (Komga's
-  `series.url` == Kometa `folder_path`) — unambiguous, unlike title matching.
+Split across two boxes since the Aug 2026 move. **Komga runs on ginbako**
+(`$KOMETA_HOST`) alongside Kometa; **SABnzbd, qBittorrent and Prowlarr are still on
+the NAS** (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those.
+
+- **Komga** (reader + cover source): `http://$KOMETA_HOST:8585` (also reachable over
+  the tailnet at `https://$KOMETA_TS_HOST`). **Creds live in the DB `config`
+  table, NOT in any `.env`** — the `KOMGA_*` env keys are vestigial and ignored. Change
+  them via `PATCH /api/config`, never a raw DB write. Linked per-series via folder-path
+  match (Komga's `series.url` == Kometa `folder_path`) — unambiguous, unlike title
+  matching.
 - **Komga numberSort lies**: Komga's own issue-number parsing is unreliable (counts
   TPBs/dupes, mis-parses mixed naming). Kometa derives the true number from the FILENAME
   and (a) keys its book map on it, (b) pushes it back to Komga on every sync via
