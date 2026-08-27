@@ -449,6 +449,26 @@ def fetch_variants(locg_issue_id: str) -> dict:
     return _fetch_variants_with_get(locg_issue_id, _anon_get_fn())
 
 
+# LOCG's own chrome that has no business being an issue description. The login
+# modal blurb is 113 chars, which beat the "longest paragraph" fallback every
+# time a real solicit ran short -- so half the library was advertising a signup
+# form instead of telling you what the comic is about. Never again.
+_BOILERPLATE = (
+    "already have an account",
+    "league of comic geeks",
+    "could not find",
+    "sign up",
+    "sign in",
+    "log in",
+    "create an account",
+)
+
+
+def _is_site_boilerplate(text: str) -> bool:
+    t = (text or "").lower()
+    return any(phrase in t for phrase in _BOILERPLATE)
+
+
 def _parse_issue_details(html: str) -> dict:
     """Pull description + credits (with roles + people ids) from a LOCG issue page.
     Returns {"desc": str, "credits": [{"role","name","people_id"}]}. Powers the
@@ -456,15 +476,18 @@ def _parse_issue_details(html: str) -> dict:
     kometa-recommend project consumes from this cache."""
     soup = BeautifulSoup(html, "lxml")
     desc = ""
-    for sel in ("[itemprop=description]", "div.copy", "section.copy", "div.comic-description"):
+    for sel in (".listing-description", "[itemprop=description]", "div.copy",
+                "section.copy", "div.comic-description"):
         el = soup.select_one(sel)
         if el and el.get_text(strip=True):
             desc = el.get_text(" ", strip=True)
             break
     if not desc:  # fallback: the longest real paragraph
         ps = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
-        ps = [t for t in ps if len(t) > 60 and "could not find" not in t.lower()]
+        ps = [t for t in ps if len(t) > 60 and not _is_site_boilerplate(t)]
         desc = max(ps, key=len) if ps else ""
+    if _is_site_boilerplate(desc):
+        desc = ""
 
     credits, seen = [], set()
     for name_el in soup.select(".name"):

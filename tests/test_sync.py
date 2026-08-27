@@ -106,6 +106,24 @@ class TestIssueDetailsParser:
         assert d["desc"] == "Just a synopsis."
         assert d["credits"] == []
 
+    def test_reads_listing_description(self):
+        # LOCG's live markup — the old selectors are all gone
+        html = '<p class="col-12 listing-description">ENTER: GOLDFACE!</p>'
+        assert locg_client._parse_issue_details(html)["desc"] == "ENTER: GOLDFACE!"
+
+    def test_login_blurb_never_becomes_a_description(self):
+        # The signup CTA is 113 chars and used to win the longest-paragraph
+        # fallback against any solicit shorter than that.
+        blurb = ("Already have an account with the League of Comic Geeks? "
+                 "Let's get you back to tracking and discussing your comics!")
+        assert locg_client._parse_issue_details(f"<p>{blurb}</p>")["desc"] == ""
+
+    def test_real_description_wins_over_longer_boilerplate(self):
+        blurb = ("Already have an account with the League of Comic Geeks? "
+                 "Let's get you back to tracking and discussing your comics!")
+        html = (f'<p class="listing-description">Short but real.</p><p>{blurb}</p>')
+        assert locg_client._parse_issue_details(html)["desc"] == "Short but real."
+
 
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
