@@ -810,7 +810,20 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, dest_name)
 
-        if not os.path.exists(dest_path):
+        # "Something is already sitting there" was treated as "we already have
+        # it" — placement skipped, complete_download called anyway, issue marked
+        # owned. When the occupant was a truncated CBR or the wrong season's
+        # file, the good download we'd just paid for went in the bin and the
+        # junk kept its seat, forever, on every retry. Ask whether the occupant
+        # is actually the comic before yielding the spot to it.
+        from kometa.naming import counts_as_owned
+        occupied = os.path.exists(dest_path)
+        if occupied and counts_as_owned(dest_path, title):
+            logger.info(f"{label}: {dest_name} already in library — keeping what's there")
+        else:
+            if occupied:
+                logger.info(f"{label}: replacing unusable {dest_name} "
+                            f"(unreadable or wrong season) with the new download")
             try:
                 dest_path = _place(target, dest_path)
             except Exception as e:
@@ -818,6 +831,17 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
                 db.update_queue_state(qid, "failed", error=f"{label} {verb} failed: {e}", path=DB_PATH)
                 return
             logger.info(f"{label}: placed {dest_path}")
+
+        # A junk sibling under a DIFFERENT extension (#003.cbr next to the
+        # #003.cbz we just landed) would otherwise sit there forever, invisible
+        # to ownership but very visible to Komga. Only files for THIS issue, only
+        # ones that fail the same ownership test, only after a good file landed.
+        for sib in _unusable_siblings(dest_dir, dest_path, title, issue_number):
+            try:
+                os.remove(sib)
+                logger.info(f"{label}: removed superseded unusable file {sib}")
+            except OSError as e:
+                logger.warning(f"{label}: could not remove {sib}: {e}")
 
         # Nothing shelves as .cbr anymore — repack through the shared verified
         # rebuild seam (same one variant injection uses). Best-effort: a failed
@@ -835,6 +859,30 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     )
     force_readable_tree(dest_dir)
     _komga_scan_safe()
+
+
+def _unusable_siblings(dest_dir: str, keep_path: str, title: str,
+                       issue_number: float) -> list[str]:
+    """Files in dest_dir for THIS issue that are not the file we just placed and
+    that fail the ownership test — hollow archives, wrong-season leftovers. The
+    deliberate narrowness is the point: same issue number, provably unusable, and
+    only ever consulted right after a good file landed. Anything we cannot judge
+    (counts_as_owned fails open) is left alone."""
+    from kometa.naming import OWNED_EXTS, counts_as_owned, parse_issue_number
+    out = []
+    try:
+        names = os.listdir(dest_dir)
+    except OSError:
+        return out
+    for name in names:
+        full = os.path.join(dest_dir, name)
+        if full == keep_path or os.path.splitext(name)[1].lower() not in OWNED_EXTS:
+            continue
+        if parse_issue_number(name, title) != issue_number:
+            continue
+        if not counts_as_owned(full, title):
+            out.append(full)
+    return out
 
 
 def _finalize_usenet_download(item: dict, qid: int, storage: str):

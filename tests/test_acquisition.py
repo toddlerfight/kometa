@@ -901,3 +901,52 @@ class TestClientExcludeUrls:
         assert c.search_trade("Transmetropolitan", vol=8,
                               exclude_urls={"http://dl/pack"}) == (None, None)
         assert c.search_trade("Transmetropolitan", vol=8) == ("http://dl/pack", "f.cbz")
+
+
+class TestUnusableSiblings:
+    """The sweep that lets a good download evict the junk it supersedes. Narrow
+    on purpose: same issue number, provably unusable, never a file we can't
+    judge — counts_as_owned fails open and that has to survive here."""
+
+    def _cbz(self, path, page_names):
+        import io
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for n in page_names:
+                zf.writestr(n, b"\xff\xd8\xff\xe0 jpeg-ish")
+        path.write_bytes(buf.getvalue())
+        return str(path)
+
+    def test_hollow_sibling_is_swept(self, tmp_path):
+        good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
+        (tmp_path / "Saga #003.cbr").write_bytes(b"\x00" * 512)
+        assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == [
+            str(tmp_path / "Saga #003.cbr")]
+
+    def test_wrong_season_sibling_is_swept(self, tmp_path):
+        good = self._cbz(tmp_path / "Batman #001.cbz", ["001-001.jpg"])
+        self._cbz(tmp_path / "Batman #001.cbr",
+                  ["Batman - The Adventures Continue - Season Two 001-001.jpg"])
+        assert acq._unusable_siblings(
+            str(tmp_path), good, "Batman: The Adventures Continue", 1.0) == [
+            str(tmp_path / "Batman #001.cbr")]
+
+    def test_other_issues_are_untouched(self, tmp_path):
+        good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
+        (tmp_path / "Saga #004.cbr").write_bytes(b"\x00" * 512)
+        assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == []
+
+    def test_the_placed_file_is_never_swept(self, tmp_path):
+        good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
+        assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == []
+
+    def test_a_good_sibling_is_left_alone(self, tmp_path):
+        good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
+        self._cbz(tmp_path / "Saga #003.cbr", ["003-002.jpg"])
+        assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == []
+
+    def test_unjudgeable_formats_are_left_alone(self, tmp_path):
+        good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
+        (tmp_path / "Saga #003.pdf").write_bytes(b"%PDF-1.4 who knows")
+        assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == []
