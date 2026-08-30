@@ -11,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
-from kometa.naming import _safe, _resolve_dir, OWNED_EXTS, PIPELINE_EXTS
+from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
+                           _season_from_title, OWNED_EXTS, PIPELINE_EXTS)
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -280,47 +281,6 @@ class DuplicateIssueError(ValueError):
 
 class WrongIssueError(DuplicateIssueError):
     pass
-
-
-# "Season Two", "Season 2", "season three" — the word is mandatory. A bare "2"
-# floating in a filename is an issue number nine times out of ten, and guessing
-# wrong here rejects good downloads.
-_SEASON_RE = re.compile(r'\bseason\s+(one|two|three|four|five|six|1|2|3|4|5|6)\b',
-                        re.IGNORECASE)
-_SEASON_WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6}
-
-
-def _season_from_title(s: str | None) -> int | None:
-    """The season a title/filename declares, or None if it doesn't declare one."""
-    if not s:
-        return None
-    m = _SEASON_RE.search(s)
-    if not m:
-        return None
-    tok = m.group(1).lower()
-    return _SEASON_WORDS.get(tok) or int(tok)
-
-
-def _season_from_entries(extracted_dir: str | None) -> int | None:
-    """The season the archive's own page names agree on. The releases that burned
-    us named every interior page '... - Season Two 001-005.jpg' while the archive
-    itself said nothing — the pages are the honest witness. Only returns a season
-    the sampled names UNANIMOUSLY agree on; a mixed bag means we know nothing.
-    Guard reads bottom-up: pages beat filename, filename beats nothing."""
-    if not extracted_dir:
-        return None
-    seen = set()
-    count = 0
-    for root, _dirs, files in os.walk(extracted_dir):
-        for f in sorted(files):
-            seen.add(_season_from_title(f))
-            count += 1
-            if count >= 12:
-                break
-        if count >= 12:
-            break
-    seen.discard(None)
-    return seen.pop() if len(seen) == 1 else None
 
 
 # Matches "#135", "#135.1" — strips leading zeros

@@ -278,3 +278,53 @@ class TestRarReadability:
         monkeypatch.setattr(naming.subprocess, "run", boom)
         self._rar(tmp_path)
         assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+
+class TestOwnershipSeason:
+    """Readable is not the same as YOURS. Season One's folder filled with
+    perfectly intact Season Two files wearing Season One's numbering — the
+    readability guard has nothing to say about those. The pages do."""
+
+    def _cbz(self, path, page_names):
+        import io as _io
+        buf = _io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for n in page_names:
+                zf.writestr(n, b"\xff\xd8\xff\xe0 jpeg-ish")
+        path.write_bytes(buf.getvalue())
+        return path
+
+    def test_wrong_season_on_disk_is_not_owned(self, tmp_path):
+        self._cbz(tmp_path / "Batman #001.cbz",
+                  [f"Batman - The Adventures Continue - Season Two 001-00{i}.jpg"
+                   for i in range(5)])
+        assert scan_folder_numbers(
+            str(tmp_path), "Batman: The Adventures Continue") == set()
+
+    def test_right_season_on_disk_is_owned(self, tmp_path):
+        self._cbz(tmp_path / "Batman #001.cbz",
+                  [f"Batman - The Adventures Continue - Season Two 001-00{i}.jpg"
+                   for i in range(5)])
+        assert scan_folder_numbers(
+            str(tmp_path), "Batman: The Adventures Continue Season Two") == {1.0}
+
+    def test_season_one_run_names_no_season(self, tmp_path):
+        self._cbz(tmp_path / "Batman #002.cbz",
+                  [f"Batman - The Adventures Continue (2020-) 002-00{i}.jpg"
+                   for i in range(5)])
+        assert scan_folder_numbers(
+            str(tmp_path), "Batman: The Adventures Continue") == {2.0}
+
+    def test_pages_that_name_no_season_stay_owned(self, tmp_path):
+        # Generic page names are the common case. Silence is not evidence.
+        self._cbz(tmp_path / "Batman #003.cbz", [f"{i:05d}.jpeg" for i in range(5)])
+        assert scan_folder_numbers(
+            str(tmp_path), "Batman: The Adventures Continue") == {3.0}
+
+    def test_mixed_page_names_stay_owned(self, tmp_path):
+        # Disagreement among the pages means we know nothing — don't act on it.
+        self._cbz(tmp_path / "Batman #004.cbz",
+                  ["Season Two 004-001.jpg", "Season Three 004-002.jpg",
+                   "004-003.jpg"])
+        assert scan_folder_numbers(
+            str(tmp_path), "Batman: The Adventures Continue") == {4.0}

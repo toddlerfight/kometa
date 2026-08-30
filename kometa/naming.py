@@ -43,9 +43,51 @@ def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     return None
 
 
+# "Season Two", "Season 2", "season three" — the word is mandatory. A bare "2"
+# floating in a filename is an issue number nine times out of ten, and guessing
+# wrong here rejects good downloads.
+_SEASON_RE = re.compile(r'\bseason\s+(one|two|three|four|five|six|1|2|3|4|5|6)\b',
+                        re.IGNORECASE)
+_SEASON_WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6}
+
+
+def _season_from_title(s: str | None) -> int | None:
+    """The season a title/filename declares, or None if it doesn't declare one."""
+    if not s:
+        return None
+    m = _SEASON_RE.search(s)
+    if not m:
+        return None
+    tok = m.group(1).lower()
+    return _SEASON_WORDS.get(tok) or int(tok)
+
+
+def _season_from_entries_names(names) -> int | None:
+    """The season an archive's own page names agree on. The releases that burned
+    us named every interior page '... - Season Two 001-005.jpg' while the archive
+    itself said nothing — the pages are the honest witness. Only returns a season
+    the sampled names UNANIMOUSLY agree on; a mixed bag means we know nothing."""
+    seen = {_season_from_title(os.path.basename(n)) for n in list(names)[:12]}
+    seen.discard(None)
+    return seen.pop() if len(seen) == 1 else None
+
+
+def _season_from_entries(extracted_dir: str | None) -> int | None:
+    """_season_from_entries_names against an already-extracted directory — what
+    the download path has on hand after its one-shot RAR extract."""
+    if not extracted_dir:
+        return None
+    names = []
+    for _root, _dirs, files in os.walk(extracted_dir):
+        names.extend(sorted(files))
+        if len(names) >= 12:
+            break
+    return _season_from_entries_names(names)
+
+
 _IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif')
 # Formats we can't crack open cheaply. Ownership takes them at their word rather
-# than pretending to know — see the fail-open note in _archive_has_pages.
+# than pretending to know — see the None-vs-empty note in _archive_entry_names.
 _UNPROBEABLE_EXTS = frozenset({'.pdf', '.cb7', '.cbt'})
 # Extensions that CLAIM to be a zip or a rar. For these, the magic bytes are a
 # promise the file can be held to — anything else is not a comic, whatever the
@@ -53,65 +95,74 @@ _UNPROBEABLE_EXTS = frozenset({'.pdf', '.cb7', '.cbt'})
 _ZIP_OR_RAR_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
 
 
-def _archive_has_pages(path: str) -> bool:
-    """Can this file yield a single page? Ownership's honesty check.
+def _archive_entry_names(path: str) -> list[str] | None:
+    """The archive's entry names, or None when we genuinely cannot look.
 
-    A 76MB truncated CBR that lists ZERO entries was counting as an owned issue,
-    because ownership only ever looked at the NAME. The file existed, so the
-    issue was 'acquired', so nothing ever tried to fetch it again — a hole in the
-    library that hides itself. Extension and size are both liars; entries aren't.
-
-    FAILS OPEN, always. Missing lsar, an odd format, a permissions problem: we
-    return True and let the file count. Marking a real comic unowned because our
-    own tooling came up short would re-download books you already have, and
-    that's a worse failure than the one we're fixing."""
+    None means "no opinion" and every caller must treat it as innocent — a
+    missing lsar or a format we never claimed to probe must not cost you a comic
+    you already own. An empty LIST is a real verdict: we looked, there was
+    nothing. Keep the two apart; collapsing them is how the first cut of this
+    guard failed open on the exact file it was written to catch."""
     ext = os.path.splitext(path)[1].lower()
     if ext in _UNPROBEABLE_EXTS:
-        return True
+        return None
     try:
         with open(path, 'rb') as fh:
             magic = fh.read(4)
     except OSError:
-        return True
+        return None
     if magic[:2] == b'PK':
         try:
             with zipfile.ZipFile(path) as zf:
-                return any(n.lower().endswith(_IMAGE_EXTS) for n in zf.namelist())
+                return zf.namelist()
         except Exception:
-            return False        # a ZIP whose own directory won't parse is broken, full stop
+            return []       # a ZIP whose own directory won't parse is broken, full stop
     if magic == b'Rar!':
         try:
             out = subprocess.run(['lsar', path], capture_output=True, timeout=60)
         except Exception:
-            return True         # no lsar here — not our place to condemn the file
+            return None     # no lsar here — not our place to condemn the file
         # Deliberately NOT checking returncode. lsar exits non-zero on any damaged
         # archive, which is a verdict about the FILE, not about whether lsar could
-        # do its job — treating it as "couldn't tell" (the first cut of this did)
-        # fails open on exactly the corruption we're hunting, and the zero-page
-        # CBR sailed straight through. Trust the entries it managed to list: a
-        # partial listing still means real pages, an empty one means nothing.
-        names = out.stdout.decode('utf-8', 'replace').splitlines()[1:]
-        return any(n.strip().lower().endswith(_IMAGE_EXTS) for n in names)
+        # do its job. Trust the entries it managed to list: a partial listing still
+        # means real pages, an empty one means nothing.
+        return [n.strip() for n in out.stdout.decode('utf-8', 'replace').splitlines()[1:]]
     # Magic matched neither. A .cbz/.cbr is a promise to be a zip or a rar, and
     # this file isn't keeping it — the 76MB #006 was NUL bytes end to end, a
-    # download that reserved its space and never filled it. Extensions we can't
-    # probe were returned above; anything still here is a broken claim.
-    return ext not in _ZIP_OR_RAR_EXTS
+    # download that reserved its space and never filled it.
+    return [] if ext in _ZIP_OR_RAR_EXTS else None
 
 
 @functools.lru_cache(maxsize=4096)
-def _has_pages_cached(path: str, size: int, mtime: float) -> bool:
+def _entry_names_cached(path: str, size: int, mtime: float) -> tuple | None:
     # Keyed on identity-plus-fingerprint so a re-download of the same path is
     # re-probed, but a full library sync doesn't re-crack every archive it owns.
-    return _archive_has_pages(path)
+    names = _archive_entry_names(path)
+    return None if names is None else tuple(names)
 
 
-def is_readable_comic(path: str) -> bool:
+def counts_as_owned(path: str, series_title: str = "") -> bool:
+    """Is this file on disk really an issue of THIS series?
+
+    Two ways a file lies. It can be hollow — the 76MB truncated CBR that listed
+    zero entries still counted as owned, because ownership only ever read the
+    NAME, so the issue looked acquired and nothing ever fetched it again: a hole
+    in the library that hides itself. Or it can be the wrong run wearing the
+    right number — Season One's folder filled with Season Two files, all of them
+    perfectly readable, all of them not the comic you asked for.
+
+    Both checks read the same entry list, so the season test is free."""
     try:
         st = os.stat(path)
     except OSError:
         return False
-    return _has_pages_cached(path, st.st_size, st.st_mtime)
+    names = _entry_names_cached(path, st.st_size, st.st_mtime)
+    if names is None:
+        return True                                  # couldn't look; innocent
+    if not any(n.lower().endswith(_IMAGE_EXTS) for n in names):
+        return False                                 # no pages: not a comic
+    got = _season_from_entries_names(names)
+    return got is None or got == (_season_from_title(series_title) or 1)
 
 
 def scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
@@ -120,7 +171,8 @@ def scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
         for name in os.listdir(folder_path):
             if os.path.splitext(name)[1].lower() in OWNED_EXTS:
                 num = parse_issue_number(name, series_title)
-                if num is not None and is_readable_comic(os.path.join(folder_path, name)):
+                if num is not None and counts_as_owned(
+                        os.path.join(folder_path, name), series_title):
                     numbers.add(num)
     except Exception:
         pass
