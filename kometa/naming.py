@@ -80,8 +80,12 @@ def _archive_has_pages(path: str) -> bool:
             out = subprocess.run(['lsar', path], capture_output=True, timeout=60)
         except Exception:
             return True         # no lsar here — not our place to condemn the file
-        if out.returncode != 0:
-            return True
+        # Deliberately NOT checking returncode. lsar exits non-zero on any damaged
+        # archive, which is a verdict about the FILE, not about whether lsar could
+        # do its job — treating it as "couldn't tell" (the first cut of this did)
+        # fails open on exactly the corruption we're hunting, and the zero-page
+        # CBR sailed straight through. Trust the entries it managed to list: a
+        # partial listing still means real pages, an empty one means nothing.
         names = out.stdout.decode('utf-8', 'replace').splitlines()[1:]
         return any(n.strip().lower().endswith(_IMAGE_EXTS) for n in names)
     return True

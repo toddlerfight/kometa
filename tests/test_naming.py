@@ -222,3 +222,47 @@ class TestOwnershipReadability:
         make_cbz(p, pages=3)
         os.utime(p, (0, 0))
         assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+
+class TestRarReadability:
+    """lsar's exit code judges the ARCHIVE, not its own ability to run. The first
+    cut of this guard read non-zero as 'couldn't tell' and failed open — which let
+    the zero-page CBR through, the one file the guard existed to catch."""
+
+    def _fake_lsar(self, monkeypatch, stdout, returncode):
+        import subprocess as sp
+
+        class R:
+            pass
+
+        def fake_run(cmd, **kw):
+            r = R()
+            r.returncode = returncode
+            r.stdout = stdout
+            return r
+
+        monkeypatch.setattr(naming.subprocess, "run", fake_run)
+
+    def _rar(self, tmp_path):
+        p = tmp_path / "Saga #001.cbr"
+        p.write_bytes(b"Rar!\x1a\x07\x00 whatever")
+        return p
+
+    def test_damaged_but_listable_rar_counts(self, tmp_path, monkeypatch):
+        # rc=1 with real entries: partially damaged, but there are pages in there.
+        self._fake_lsar(monkeypatch, b"archive\n001.jpg\n002.jpg\n", 1)
+        self._rar(tmp_path)
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+    def test_rar_with_no_listable_entries_does_not_count(self, tmp_path, monkeypatch):
+        self._fake_lsar(monkeypatch, b"archive\n", 1)
+        self._rar(tmp_path)
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_missing_lsar_fails_open(self, tmp_path, monkeypatch):
+        def boom(cmd, **kw):
+            raise FileNotFoundError("lsar")
+
+        monkeypatch.setattr(naming.subprocess, "run", boom)
+        self._rar(tmp_path)
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
