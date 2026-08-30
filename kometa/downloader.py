@@ -62,28 +62,61 @@ def _walk_dir_pages(d: str):
             yield rel, fh.read()
 
 
+def _rar_entry_count(path: str) -> int | None:
+    """How many image entries the archive CLAIMS to hold, per lsar, or None."""
+    try:
+        out = subprocess.run(['lsar', path], capture_output=True, timeout=60)
+    except Exception:
+        return None
+    names = out.stdout.decode('utf-8', 'replace').splitlines()[1:]
+    n = sum(1 for x in names if x.strip().lower().endswith(_IMG_EXTS))
+    return n or None
+
+
 def _extract_rar_into(path: str, tmpdir: str) -> bool:
-    """Extract a RAR into tmpdir. True if anything came out.
+    """Extract a RAR into tmpdir. True if we got a COMPLETE extraction.
 
     bsdtar first — fast, and it handles most of what we see. But libarchive only
-    reads STORE-method RAR5; hand it a COMPRESSED RAR5 and it exits non-zero
-    having written nothing, which is most of what 'Son of Ultron-Empire' ships.
-    unar speaks RAR5 properly and is already in the image, so it gets the second
-    swing.
+    reads STORE-method RAR5, and on a compressed one it does the worst possible
+    thing: writes SOME entries, then dies. "Did anything land?" therefore is not
+    a success test — it green-lit a 9-page extract of a 26-page comic, and the
+    repack then sealed that into a CBZ and deleted the original. Count against
+    what lsar says should be there, and let unar have its turn whenever bsdtar
+    came up short.
 
-    Judge both by what landed on disk, never by the exit code: unar returns 1
-    while cheerfully extracting all 26 pages, and refusing that output would bin
-    a perfectly good comic — the same mistake the ownership guard made when it
-    read lsar's exit code as a verdict about lsar."""
-    for cmd in (['bsdtar', '-xf', path, '-C', tmpdir],
-                ['unar', '-q', '-D', '-o', tmpdir, path]):
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=300)
-        except Exception:
-            continue
-        if any(files for _r, _d, files in os.walk(tmpdir)):
-            return True
-    return False
+    Exit codes decide nothing here — unar returns 1 while cheerfully extracting
+    all 26 pages. Only the file count on disk does. When lsar can't tell us the
+    expected count we take the best extraction we can get, but we still run both
+    and keep the fuller one rather than trusting whoever went first."""
+    want = _rar_entry_count(path)
+    best_dir, best_n = None, 0
+    scratch = []
+    try:
+        for cmd_for in (lambda d: ['bsdtar', '-xf', path, '-C', d],
+                        lambda d: ['unar', '-q', '-D', '-o', d, path]):
+            d = tempfile.mkdtemp(prefix='kometa-x-')
+            scratch.append(d)
+            try:
+                subprocess.run(cmd_for(d), capture_output=True, timeout=300)
+            except Exception:
+                continue
+            n = _count_images_in_dir(d)
+            if n > best_n:
+                best_dir, best_n = d, n
+            if want and best_n >= want:
+                break                      # complete — no need for a second pass
+        if not best_dir or not best_n:
+            return False
+        if want and best_n < want:
+            logger.warning(f"RAR extract incomplete for {os.path.basename(path)}: "
+                           f"{best_n}/{want} pages — refusing to treat it as readable")
+            return False
+        for name in os.listdir(best_dir):
+            shutil.move(os.path.join(best_dir, name), os.path.join(tmpdir, name))
+        return True
+    finally:
+        for d in scratch:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def _read_archive_pages(path: str, extracted_dir: str | None = None):
@@ -167,6 +200,19 @@ def _rebuild_as_cbz(src_path: str, variant_pages: list, extracted_dir: str | Non
         # replace a real comic with an empty shell, then delete the original.
         if source_entries == 0:
             raise RuntimeError("source archive yielded no entries — refusing the swap")
+
+        # ZERO wasn't a tight enough bar. bsdtar on a compressed RAR5 writes SOME
+        # entries and then dies, so a 26-page comic came through as 9 pages, got
+        # sealed into a CBZ, and the original was deleted behind it. Count what
+        # the source CLAIMS to hold and refuse anything short of it — a partial
+        # rebuild is a destroyed comic wearing a valid ZIP header.
+        claimed = _rar_entry_count(src_path)
+        if claimed:
+            got = sum(1 for name in zipfile.ZipFile(tmp_path).namelist()
+                      if name.lower().endswith(_IMG_EXTS))
+            if got < claimed:
+                raise RuntimeError(
+                    f"rebuild kept only {got} of {claimed} pages — refusing the swap")
 
         # Verify the rebuild BEFORE it replaces anything (and long before the
         # source .cbr is allowed to die). Paranoia is free; re-downloading a
