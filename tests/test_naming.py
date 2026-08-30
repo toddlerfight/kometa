@@ -37,8 +37,8 @@ class TestParseIssueNumber:
 
 class TestScanFolderNumbers:
     def test_collects_comic_numbers_ignores_other_files(self, tmp_path):
-        (tmp_path / "Saga #001.cbz").write_text("x")
-        (tmp_path / "Saga #002.cbz").write_text("x")
+        make_cbz(tmp_path / "Saga #001.cbz")
+        make_cbz(tmp_path / "Saga #002.cbz")
         (tmp_path / "notes.txt").write_text("x")
         assert naming.scan_folder_numbers(str(tmp_path), "Saga") == {1.0, 2.0}
 
@@ -209,8 +209,20 @@ class TestOwnershipReadability:
         (tmp_path / "Saga #001.pdf").write_bytes(b"%PDF-1.4 whatever")
         assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
 
-    def test_unknown_format_is_taken_at_its_word(self, tmp_path):
-        (tmp_path / "Saga #001.cbz").write_bytes(b"\x00\x01\x02\x03 mystery meat")
+    def test_cbz_that_is_neither_zip_nor_rar_does_not_count(self, tmp_path):
+        # A .cbz is a promise to be a zip. Broken promise, not a comic.
+        (tmp_path / "Saga #001.cbz").write_bytes(b"\x01\x02\x03\x04 mystery meat")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_all_nul_file_does_not_count(self, tmp_path):
+        # The real one: 76MB of NUL bytes wearing a .cbr, a download that
+        # reserved its space and never filled it.
+        (tmp_path / "Saga #001.cbr").write_bytes(b"\x00" * 4096)
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_unknown_extension_is_taken_at_its_word(self, tmp_path):
+        # .pdf and friends we never claimed to be able to probe.
+        (tmp_path / "Saga #001.cbt").write_bytes(b"\x01\x02\x03\x04 tar-ish")
         assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
 
     def test_probe_result_is_refreshed_when_the_file_changes(self, tmp_path):

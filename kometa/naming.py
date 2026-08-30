@@ -47,6 +47,10 @@ _IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif')
 # Formats we can't crack open cheaply. Ownership takes them at their word rather
 # than pretending to know — see the fail-open note in _archive_has_pages.
 _UNPROBEABLE_EXTS = frozenset({'.pdf', '.cb7', '.cbt'})
+# Extensions that CLAIM to be a zip or a rar. For these, the magic bytes are a
+# promise the file can be held to — anything else is not a comic, whatever the
+# name says.
+_ZIP_OR_RAR_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
 
 
 def _archive_has_pages(path: str) -> bool:
@@ -88,7 +92,11 @@ def _archive_has_pages(path: str) -> bool:
         # partial listing still means real pages, an empty one means nothing.
         names = out.stdout.decode('utf-8', 'replace').splitlines()[1:]
         return any(n.strip().lower().endswith(_IMAGE_EXTS) for n in names)
-    return True
+    # Magic matched neither. A .cbz/.cbr is a promise to be a zip or a rar, and
+    # this file isn't keeping it — the 76MB #006 was NUL bytes end to end, a
+    # download that reserved its space and never filled it. Extensions we can't
+    # probe were returned above; anything still here is a broken claim.
+    return ext not in _ZIP_OR_RAR_EXTS
 
 
 @functools.lru_cache(maxsize=4096)
