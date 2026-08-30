@@ -6,6 +6,7 @@ _num_from_filename_broad is the pack-content matcher's last resort (after the
 the right file among several in a usenet/torrent/GetComics pack.
 """
 import io
+import pathlib
 import zipfile
 
 import pytest
@@ -296,3 +297,59 @@ class TestSeasonGuard:
         # rejecting things because a filename mentions a season.
         cbz = self._cbz(tmp_path / "legacy.cbz", [f"{i:03d}.jpg" for i in range(4)])
         _verify_single_issue(cbz, 1.0, "Some Book Season One 001.cbz")
+
+
+class TestRarExtractFallback:
+    """bsdtar only reads STORE-method RAR5. A compressed RAR5 — most of what
+    'Son of Ultron-Empire' ships — leaves it exiting non-zero with an empty dir,
+    which stranded three genuine Season One issues as unconvertible .cbr. unar
+    handles those, and returns 1 while doing it, so the exit code decides
+    nothing: what landed on disk does."""
+
+    def test_falls_back_when_first_extractor_writes_nothing(self, tmp_path, monkeypatch):
+        from kometa import downloader as dl
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd[0])
+            if cmd[0] == "unar":
+                out = cmd[cmd.index("-o") + 1]
+                (pathlib.Path(out) / "001.jpg").write_bytes(b"x")
+            class R:
+                returncode = 1
+            return R()
+
+        monkeypatch.setattr(dl.subprocess, "run", fake_run)
+        d = tmp_path / "out"
+        d.mkdir()
+        assert dl._extract_rar_into(str(tmp_path / "a.cbr"), str(d)) is True
+        assert calls == ["bsdtar", "unar"]
+
+    def test_nonzero_exit_with_real_output_is_accepted(self, tmp_path, monkeypatch):
+        # unar's own behaviour: rc=1, 26 pages on disk. Trust the pages.
+        from kometa import downloader as dl
+
+        def fake_run(cmd, **kw):
+            out = cmd[cmd.index("-C") + 1] if "-C" in cmd else cmd[cmd.index("-o") + 1]
+            (pathlib.Path(out) / "001.jpg").write_bytes(b"x")
+            class R:
+                returncode = 1
+            return R()
+
+        monkeypatch.setattr(dl.subprocess, "run", fake_run)
+        d = tmp_path / "out"
+        d.mkdir()
+        assert dl._extract_rar_into(str(tmp_path / "a.cbr"), str(d)) is True
+
+    def test_both_failing_reports_failure(self, tmp_path, monkeypatch):
+        from kometa import downloader as dl
+
+        def fake_run(cmd, **kw):
+            class R:
+                returncode = 1
+            return R()
+
+        monkeypatch.setattr(dl.subprocess, "run", fake_run)
+        d = tmp_path / "out"
+        d.mkdir()
+        assert dl._extract_rar_into(str(tmp_path / "a.cbr"), str(d)) is False

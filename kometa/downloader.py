@@ -62,6 +62,30 @@ def _walk_dir_pages(d: str):
             yield rel, fh.read()
 
 
+def _extract_rar_into(path: str, tmpdir: str) -> bool:
+    """Extract a RAR into tmpdir. True if anything came out.
+
+    bsdtar first — fast, and it handles most of what we see. But libarchive only
+    reads STORE-method RAR5; hand it a COMPRESSED RAR5 and it exits non-zero
+    having written nothing, which is most of what 'Son of Ultron-Empire' ships.
+    unar speaks RAR5 properly and is already in the image, so it gets the second
+    swing.
+
+    Judge both by what landed on disk, never by the exit code: unar returns 1
+    while cheerfully extracting all 26 pages, and refusing that output would bin
+    a perfectly good comic — the same mistake the ownership guard made when it
+    read lsar's exit code as a verdict about lsar."""
+    for cmd in (['bsdtar', '-xf', path, '-C', tmpdir],
+                ['unar', '-q', '-D', '-o', tmpdir, path]):
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=300)
+        except Exception:
+            continue
+        if any(files for _r, _d, files in os.walk(tmpdir)):
+            return True
+    return False
+
+
 def _read_archive_pages(path: str, extracted_dir: str | None = None):
     """Yield (name, bytes) for every entry, sorted by name.
 
@@ -82,8 +106,8 @@ def _read_archive_pages(path: str, extracted_dir: str | None = None):
     if is_rar:
         tmpdir = tempfile.mkdtemp(prefix='kometa-cbr-')
         try:
-            subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
-                           check=True, capture_output=True)
+            if not _extract_rar_into(path, tmpdir):
+                raise RuntimeError(f"no extractor could open {os.path.basename(path)}")
             yield from _walk_dir_pages(tmpdir)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -416,8 +440,8 @@ def _count_archive_images(path: str) -> int | None:
         if magic[:4] == b'Rar!':
             tmpdir = tempfile.mkdtemp(prefix='kometa-count-')
             try:
-                subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
-                               check=True, capture_output=True, timeout=180)
+                if not _extract_rar_into(path, tmpdir):
+                    return None
                 return _count_images_in_dir(tmpdir)
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
@@ -523,8 +547,8 @@ def _extract_rar_once(path: str) -> str | None:
         return None
     tmpdir = tempfile.mkdtemp(prefix='kometa-rar-')
     try:
-        subprocess.run(['bsdtar', '-xf', path, '-C', tmpdir],
-                       check=True, capture_output=True, timeout=180)
+        if not _extract_rar_into(path, tmpdir):
+            raise RuntimeError("no extractor could open it")
         return tmpdir
     except Exception:
         shutil.rmtree(tmpdir, ignore_errors=True)
