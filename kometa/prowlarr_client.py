@@ -12,6 +12,7 @@ import datetime
 import logging
 import requests
 
+from kometa.naming import _season_from_title
 from kometa.usenet_client import _nzb_score, _pack_score, year_mismatch
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,28 @@ def _drop_year_mismatches(results: list[dict], title: str, series_year) -> list[
     return kept
 
 
+def _drop_season_mismatches(results: list[dict], title: str) -> list[dict]:
+    """Drop releases that belong to a DIFFERENT season of this title.
+
+    'Batman: The Adventures Continue' is three runs sharing a base title and
+    sharing issue numbers 1..8, so a query for issue 1 of Season One scores
+    'Season Two 001' just as highly — the name matches, the number matches. The
+    download guard rejects those on arrival, correctly, but by then we've spent
+    the fetch and the issue just fails over and over. Cheaper and truer to never
+    pick them.
+
+    Same conservative rule the download guard uses: a release that names no
+    season is innocent (plenty don't), and a series that names no season is
+    season 1."""
+    want = _season_from_title(title) or 1
+    kept = [r for r in results
+            if (_season_from_title(r.get("title", "")) or want) == want]
+    if len(kept) < len(results):
+        logger.info(f"Prowlarr: dropped {len(results) - len(kept)} wrong-season result(s) "
+                    f"for {title!r} (want season {want})")
+    return kept
+
+
 def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> dict | None:
     """Best torrent pack/collection for a series. Returns the result dict (magnet,
     seeders, title, size) or None. Twin of usenet_client.search_usenet_pack."""
@@ -159,6 +182,7 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) 
         if results:
             break
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_season_mismatches(results, title)
     if not results:
         return None
     return _best_downloadable_torrent(
@@ -191,6 +215,7 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_season_mismatches(results, title)
     results = _drop_failed_sources(results, exclude_urls)
     if not results:
         return None
@@ -245,6 +270,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_season_mismatches(results, title)
     results = _drop_failed_sources(results, exclude_urls)
     if not results:
         return None
@@ -264,6 +290,7 @@ def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -
         if results:
             break
     results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_season_mismatches(results, title)
     if not results:
         return None
     best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"]), min_score=10)

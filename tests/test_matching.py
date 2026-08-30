@@ -173,3 +173,44 @@ class TestStaleAgeDemotion:
         p = _FakeProwlarr([stale, fresh])
         got = search_torrent(p, "Absolute Superman", 21.0, store_date=store)
         assert got is not None and "[2026]" in got["title"]
+
+
+class TestSeasonMismatchDropped:
+    """The Adventures Continue: three runs, one base title, issue numbers 1..8
+    in all three. A query for Season One #1 scores 'Season Two 001' exactly as
+    highly — right name, right number. The download guard catches those on
+    arrival, but only after paying for the fetch, and the issue then fails
+    forever. Drop them before they're ever picked."""
+
+    def test_wrong_season_is_not_picked(self):
+        p = _FakeProwlarr([_result(
+            "Batman - The Adventures Continue - Season Two 001 (2021) (Digital)", 50)])
+        assert search_torrent(p, "Batman: The Adventures Continue", 1.0) is None
+
+    def test_right_season_is_picked(self):
+        p = _FakeProwlarr([_result(
+            "Batman - The Adventures Continue - Season Two 001 (2021) (Digital)", 50)])
+        got = search_torrent(p, "Batman: The Adventures Continue Season Two", 1.0)
+        assert got is not None
+
+    def test_season_one_run_names_no_season(self):
+        p = _FakeProwlarr([_result(
+            "Batman - The Adventures Continue 001 (2020) (Digital)", 50)])
+        got = search_torrent(p, "Batman: The Adventures Continue", 1.0)
+        assert got is not None
+
+    def test_season_filter_keeps_season_silent_releases(self):
+        # The FILTER lets silence through — it only drops a stated wrong season.
+        # (The name scorer separately won't clear its bar for a Season Two series
+        # on a release that never says "Season Two": 5, under the gate of 15. So
+        # these are unreachable in practice. Documented, not asserted as good —
+        # it's fine here only because real releases do name their season.)
+        from kometa.prowlarr_client import _drop_season_mismatches
+        r = _result("Batman - The Adventures Continue 001 (2021)", 50)
+        assert _drop_season_mismatches(
+            [r], "Batman: The Adventures Continue Season Two") == [r]
+
+    def test_usenet_path_filters_too(self):
+        p = _FakeProwlarr([_nzb(
+            "Batman - The Adventures Continue Season Three 008 (2023)", age=1)])
+        assert search_usenet(p, "Batman: The Adventures Continue", 8.0) is None
