@@ -1,7 +1,13 @@
 """naming.py — pure parsers. The bread and butter: get the issue number out of
 whatever garbage a filename throws at us, and don't mistake a year for an issue.
 """
+import io
+import os
+import zipfile
+
 from kometa import naming
+from kometa.naming import scan_folder_numbers
+from tests.conftest import make_cbz
 
 
 class TestParseIssueNumber:
@@ -169,3 +175,50 @@ class TestEditionKeywords:
         assert {v for v, _ in entries} == {1}
         # the two vol-1 files remain distinguishable by their edition words
         assert {naming.edition_keywords(n) for _, n in entries} == {frozenset(), frozenset({"absolute"})}
+
+
+class TestOwnershipReadability:
+    """A file that can't produce a single page is not an issue you own. The 76MB
+    truncated CBR that listed ZERO entries counted as owned purely because its
+    NAME parsed — so nothing ever tried to fetch that issue again. A hole in the
+    library that hides itself."""
+
+    def test_real_cbz_counts(self, tmp_path):
+        make_cbz(tmp_path / "Saga #001.cbz")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+    def test_empty_archive_does_not_count(self, tmp_path):
+        buf = io.BytesIO()
+        zipfile.ZipFile(buf, "w").close()
+        (tmp_path / "Saga #001.cbz").write_bytes(buf.getvalue())
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_archive_with_no_images_does_not_count(self, tmp_path):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("readme.txt", b"nope")
+        (tmp_path / "Saga #001.cbz").write_bytes(buf.getvalue())
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_truncated_zip_does_not_count(self, tmp_path):
+        (tmp_path / "Saga #001.cbz").write_bytes(b"PK\x03\x04 and then nothing")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+
+    def test_pdf_is_taken_at_its_word(self, tmp_path):
+        # We can't cheaply probe a PDF, so we don't pretend to. Fail open.
+        (tmp_path / "Saga #001.pdf").write_bytes(b"%PDF-1.4 whatever")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+    def test_unknown_format_is_taken_at_its_word(self, tmp_path):
+        (tmp_path / "Saga #001.cbz").write_bytes(b"\x00\x01\x02\x03 mystery meat")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}
+
+    def test_probe_result_is_refreshed_when_the_file_changes(self, tmp_path):
+        # A broken file replaced by a good one must flip to owned — the cache is
+        # keyed on size+mtime, not path alone, or a re-download stays invisible.
+        p = tmp_path / "Saga #001.cbz"
+        p.write_bytes(b"PK\x03\x04 broken")
+        assert scan_folder_numbers(str(tmp_path), "Saga") == set()
+        make_cbz(p, pages=3)
+        os.utime(p, (0, 0))
+        assert scan_folder_numbers(str(tmp_path), "Saga") == {1.0}

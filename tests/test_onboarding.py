@@ -7,6 +7,7 @@ import kometa.db as db
 import kometa.main as main
 import kometa.arcs as arcs
 from kometa.main import AddSeriesRequest
+from tests.conftest import make_cbz
 
 
 def _wire(monkeypatch, tmp_path, comics_root):
@@ -25,7 +26,7 @@ def test_existing_series_resolves_to_its_on_disk_folder(tmp_path, monkeypatch):
     existing = root / "Image Comics" / "Saga"
     existing.mkdir(parents=True)
     for n in (1, 2, 3):
-        (existing / f"Saga #{n:03d}.cbz").write_bytes(b"PK\x03\x04")
+        make_cbz(existing / f"Saga #{n:03d}.cbz")
     _wire(monkeypatch, tmp_path, root)
 
     # short publisher form, no folder, no Komga

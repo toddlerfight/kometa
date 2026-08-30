@@ -1,9 +1,13 @@
 """Pure parsing helpers — identify comic issues from filenames and normalize
-search/URL strings. Text in, value out (plus directory scans that only read
-names). No DB, no clients, no app state — trivially testable in isolation.
+search/URL strings. Text in, value out (plus directory scans that read names
+and, for ownership, cheaply confirm a file isn't a hollow shell). No DB, no
+clients, no app state — trivially testable in isolation.
 """
+import functools
 import os
 import re
+import subprocess
+import zipfile
 
 # The extension zoo, consolidated. Eight modules each kept their own drifting
 # copy of "what's a comic" — so a .cb7 counted toward an arc but was invisible
@@ -39,13 +43,72 @@ def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     return None
 
 
+_IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif')
+# Formats we can't crack open cheaply. Ownership takes them at their word rather
+# than pretending to know — see the fail-open note in _archive_has_pages.
+_UNPROBEABLE_EXTS = frozenset({'.pdf', '.cb7', '.cbt'})
+
+
+def _archive_has_pages(path: str) -> bool:
+    """Can this file yield a single page? Ownership's honesty check.
+
+    A 76MB truncated CBR that lists ZERO entries was counting as an owned issue,
+    because ownership only ever looked at the NAME. The file existed, so the
+    issue was 'acquired', so nothing ever tried to fetch it again — a hole in the
+    library that hides itself. Extension and size are both liars; entries aren't.
+
+    FAILS OPEN, always. Missing lsar, an odd format, a permissions problem: we
+    return True and let the file count. Marking a real comic unowned because our
+    own tooling came up short would re-download books you already have, and
+    that's a worse failure than the one we're fixing."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _UNPROBEABLE_EXTS:
+        return True
+    try:
+        with open(path, 'rb') as fh:
+            magic = fh.read(4)
+    except OSError:
+        return True
+    if magic[:2] == b'PK':
+        try:
+            with zipfile.ZipFile(path) as zf:
+                return any(n.lower().endswith(_IMAGE_EXTS) for n in zf.namelist())
+        except Exception:
+            return False        # a ZIP whose own directory won't parse is broken, full stop
+    if magic == b'Rar!':
+        try:
+            out = subprocess.run(['lsar', path], capture_output=True, timeout=60)
+        except Exception:
+            return True         # no lsar here — not our place to condemn the file
+        if out.returncode != 0:
+            return True
+        names = out.stdout.decode('utf-8', 'replace').splitlines()[1:]
+        return any(n.strip().lower().endswith(_IMAGE_EXTS) for n in names)
+    return True
+
+
+@functools.lru_cache(maxsize=4096)
+def _has_pages_cached(path: str, size: int, mtime: float) -> bool:
+    # Keyed on identity-plus-fingerprint so a re-download of the same path is
+    # re-probed, but a full library sync doesn't re-crack every archive it owns.
+    return _archive_has_pages(path)
+
+
+def is_readable_comic(path: str) -> bool:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return _has_pages_cached(path, st.st_size, st.st_mtime)
+
+
 def scan_folder_numbers(folder_path: str, series_title: str = "") -> set[float]:
     numbers = set()
     try:
         for name in os.listdir(folder_path):
             if os.path.splitext(name)[1].lower() in OWNED_EXTS:
                 num = parse_issue_number(name, series_title)
-                if num is not None:
+                if num is not None and is_readable_comic(os.path.join(folder_path, name)):
                     numbers.add(num)
     except Exception:
         pass

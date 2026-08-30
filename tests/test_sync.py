@@ -5,6 +5,7 @@ anonymous LOCG path) so missing-issue detection and downloads work.
 import kometa.db as db
 import kometa.sync as sync
 from kometa import locg_client
+from tests.conftest import make_cbz
 
 
 class _FakeResp:
@@ -166,7 +167,7 @@ class TestKeylessSync:
         folder = tmp_path / "Image Comics" / "Saga"
         folder.mkdir(parents=True)
         for n in (1, 2):
-            (folder / f"Saga #{n:03d}.cbz").write_bytes(b"PK\x03\x04")
+            make_cbz(folder / f"Saga #{n:03d}.cbz")
 
         sid = db.add_series(komga_series_id=None, title="Saga",
                             publisher="Image", folder_path=str(folder),

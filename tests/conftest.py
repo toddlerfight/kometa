@@ -2,9 +2,24 @@
 DB, no external APIs, no NAS. Pass `path=db_path` to every db call; for the
 modules that read a module-level DB_PATH (acquisition), monkeypatch it.
 """
+import io
+import zipfile
+
 import pytest
 
 import kometa.db as db
+
+
+def make_cbz(path, pages=2):
+    """A real, readable CBZ. Ownership opens files now — it refuses to count an
+    archive that can't produce a single page — so a 4-byte 'PK\\x03\\x04' stub no
+    longer reads as a comic anyone owns. Fixtures have to be honest."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(pages):
+            zf.writestr(f"{i:03d}.jpg", b"\xff\xd8\xff\xe0 jpeg-ish")
+    path.write_bytes(buf.getvalue())
+    return path
 
 
 @pytest.fixture
