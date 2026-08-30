@@ -789,7 +789,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     try:
         try:
             _verify_single_issue(target, issue_number, os.path.basename(target),
-                                 extracted_dir=rar_dir, page_max=item.get("page_max"))
+                                 extracted_dir=rar_dir, page_max=item.get("page_max"),
+                                 series_title=title)
         except WrongIssueError as e:
             db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
             # Clean up the rejected download so it can't be re-scanned or hand-shelved

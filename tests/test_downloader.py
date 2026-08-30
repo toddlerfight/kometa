@@ -232,3 +232,67 @@ class TestPackDupeGuard:
         (dest / "a v02.cbz").write_bytes(b"x")
         p = self._pack(tmp_path, ["a v01.cbr", "a v02.cbr"])
         assert _extract_pack(p, str(dest)) == []
+
+
+class TestSeasonGuard:
+    """Three seasons of Batman: The Adventures Continue are three separate runs
+    sharing a base title AND issue numbers 1..8, so the number guards match all
+    three. Season One's folder filled up with Season Two before this existed."""
+
+    def _cbz(self, path, page_names):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for n in page_names:
+                zf.writestr(n, _png(*PRINT_DIMS))
+        path.write_bytes(buf.getvalue())
+        return str(path)
+
+    def test_wrong_season_by_filename_rejected(self, tmp_path):
+        cbz = self._cbz(tmp_path / "s2.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        with pytest.raises(WrongIssueError, match="Season 2"):
+            _verify_single_issue(
+                cbz, 1.0,
+                "Batman - The Adventures Continue - Season Two 001 (2021).cbr",
+                series_title="Batman: The Adventures Continue")
+
+    def test_unnamed_season_is_season_one(self, tmp_path):
+        # The Season One run is titled WITHOUT a season, so a "Season One" file
+        # has to satisfy it — the default is 1, not "no opinion".
+        cbz = self._cbz(tmp_path / "s1.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        _verify_single_issue(
+            cbz, 1.0, "Batman - The Adventures Continue - Season One 001.cbz",
+            series_title="Batman: The Adventures Continue")
+
+    def test_right_season_passes(self, tmp_path):
+        cbz = self._cbz(tmp_path / "s2ok.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        _verify_single_issue(
+            cbz, 1.0, "Batman - The Adventures Continue Season Two 001.cbz",
+            series_title="Batman: The Adventures Continue Season Two")
+
+    def test_silent_candidate_is_innocent(self, tmp_path):
+        # Plenty of legit releases never say which season. Not knowing is not
+        # grounds for rejection, or we'd throw away good downloads.
+        cbz = self._cbz(tmp_path / "quiet.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        _verify_single_issue(
+            cbz, 1.0, "Batman - The Adventures Continue 001 (2021).cbz",
+            series_title="Batman: The Adventures Continue Season Two")
+
+    def test_page_names_betray_wrong_season(self, tmp_path):
+        # The exact shape that got through: archive name says nothing, every
+        # interior page says Season Two. The pages are the honest witness.
+        d = tmp_path / "extracted"
+        d.mkdir()
+        for i in range(5):
+            (d / f"Batman - The Adventures Continue (2020-) - Season Two 001-00{i}.jpg"
+             ).write_bytes(_png(*PRINT_DIMS))
+        cbz = self._cbz(tmp_path / "mute.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        with pytest.raises(WrongIssueError, match="Season 2"):
+            _verify_single_issue(cbz, 1.0, "Continue 001 (2020).cbz",
+                                 extracted_dir=str(d),
+                                 series_title="Batman: The Adventures Continue")
+
+    def test_no_series_title_keeps_old_behaviour(self, tmp_path):
+        # Every other caller in the tree passes no title; they must not start
+        # rejecting things because a filename mentions a season.
+        cbz = self._cbz(tmp_path / "legacy.cbz", [f"{i:03d}.jpg" for i in range(4)])
+        _verify_single_issue(cbz, 1.0, "Some Book Season One 001.cbz")

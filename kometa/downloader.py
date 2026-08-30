@@ -282,6 +282,47 @@ class WrongIssueError(DuplicateIssueError):
     pass
 
 
+# "Season Two", "Season 2", "season three" — the word is mandatory. A bare "2"
+# floating in a filename is an issue number nine times out of ten, and guessing
+# wrong here rejects good downloads.
+_SEASON_RE = re.compile(r'\bseason\s+(one|two|three|four|five|six|1|2|3|4|5|6)\b',
+                        re.IGNORECASE)
+_SEASON_WORDS = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6}
+
+
+def _season_from_title(s: str | None) -> int | None:
+    """The season a title/filename declares, or None if it doesn't declare one."""
+    if not s:
+        return None
+    m = _SEASON_RE.search(s)
+    if not m:
+        return None
+    tok = m.group(1).lower()
+    return _SEASON_WORDS.get(tok) or int(tok)
+
+
+def _season_from_entries(extracted_dir: str | None) -> int | None:
+    """The season the archive's own page names agree on. The releases that burned
+    us named every interior page '... - Season Two 001-005.jpg' while the archive
+    itself said nothing — the pages are the honest witness. Only returns a season
+    the sampled names UNANIMOUSLY agree on; a mixed bag means we know nothing.
+    Guard reads bottom-up: pages beat filename, filename beats nothing."""
+    if not extracted_dir:
+        return None
+    seen = set()
+    count = 0
+    for root, _dirs, files in os.walk(extracted_dir):
+        for f in sorted(files):
+            seen.add(_season_from_title(f))
+            count += 1
+            if count >= 12:
+                break
+        if count >= 12:
+            break
+    seen.discard(None)
+    return seen.pop() if len(seen) == 1 else None
+
+
 # Matches "#135", "#135.1" — strips leading zeros
 _NUM_FROM_FNAME_RE = re.compile(r'#\s*0*(\d+(?:\.\d+)?)')
 # Matches bare "001 (2016)" style — used as fallback for pack filenames without #
@@ -531,7 +572,8 @@ def _extract_rar_once(path: str) -> str | None:
 
 
 def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
-                         extracted_dir: str | None = None, page_max: int | None = None) -> None:
+                         extracted_dir: str | None = None, page_max: int | None = None,
+                         series_title: str | None = None) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
@@ -541,6 +583,20 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     page_max: per-series ceiling override for oversized formats (Head Lopper's
     quarterly is a legit 72-page single issue); None = the global default."""
     name = source_name or os.path.basename(path)
+    # Season guard. Three seasons of Batman: The Adventures Continue are three
+    # separate runs wearing the same base title and the same issue numbers 1..8,
+    # so "#1" alone is not an identity — it matched all three, and Season One's
+    # folder filled up with Season Two. A series that names no season is season 1
+    # (that's what "Batman: The Adventures Continue" IS); a candidate that names
+    # no season stays innocent, because plenty of legitimate releases just don't
+    # say. We only reject when the candidate declares a season and it's the wrong
+    # one — loud, specific, and never a guess.
+    want_season = _season_from_title(series_title) or 1
+    got_season = _season_from_entries(extracted_dir) or _season_from_title(name)
+    if got_season is not None and got_season != want_season:
+        raise WrongIssueError(
+            f"file is Season {got_season}, expected Season {want_season} "
+            f"({series_title or 'this series'})")
     fnum = _num_from_filename(name)
     if fnum is not None and fnum != issue_number:
         raise WrongIssueError(f"file is #{int(fnum)}, expected #{int(issue_number)}")
@@ -738,7 +794,7 @@ def download_issue(
         # reject the same bad content. Clean up the staging file on rejection.
         try:
             _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
-                                 page_max=page_max)
+                                 page_max=page_max, series_title=title)
         except WrongIssueError:
             os.remove(staging_path)
             raise
