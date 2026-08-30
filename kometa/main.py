@@ -734,6 +734,13 @@ def set_page_max(series_id: int, req: PageMaxRequest):
 @app.get("/api/search/locg")
 def search_locg(q: str):
     raw = _locg_search_anon(q)
+    # Series before issues, THEN slice. LOCG hands back its own order, and a run whose
+    # every issue is catalogued individually will bury its own series entry under five
+    # '#7'-shaped near-misses — or shove it past the 15 entirely, which is how
+    # 'Batman: The Adventures Continue' looked like it wasn't in the catalog at all.
+    # A series row is what you can actually follow; an issue row needs a resolve hop.
+    # Stable sort, so LOCG's relevance order survives inside each bucket.
+    raw = sorted(raw, key=lambda r: bool(r.get("comic")))
     return [{
         "id":         r["id"],
         "series":     r["title"],
