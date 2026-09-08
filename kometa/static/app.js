@@ -654,6 +654,17 @@ function flipIssueSort(id) {
 const _autoSynced = new Set();   // series auto-synced this session — fire once each
 let _detailPollId = null;        // the ONE live auto-populate poller (see renderSeriesDetail)
 
+// Series whose auto-populate poll already ran to a conclusion this session.
+// Without this latch the poller eats its own tail: its terminal branch calls
+// renderSeriesDetail, that re-render hits the SAME arming gate (still 0 issues,
+// still sitting in _autoSynced — which never clears), and arms a fresh 90s poll.
+// Which times out, re-renders, arms again. Forever. The time-box that was meant
+// to be the emergency brake quietly becomes the loop's period, and the thing
+// hammers /api/series/{id} every 3s until you navigate away. A poll that reached
+// ANY of its three exits has said all it's going to say — latch it shut. Only an
+// explicit refresh earns a new one (see the pull-to-refresh handler).
+const _autoPollDone = new Set();
+
 // Arc ownership is a resolved SNAPSHOT (matched against Komga's book list), not a
 // live join against issue_status — so "Get this storyline" queues downloads but the
 // arc page's X/N counter sits frozen until something re-resolves it. Auto-fire once
@@ -982,7 +993,7 @@ async function renderSeriesDetail(id) {
   // 3s loop on top of the old one every visit.
   clearInterval(_detailPollId);
   if (s.locg_series_id && total === 0 && !s.has_trades && detailTab !== 'trades'
-      && (!s.last_synced || _autoSynced.has(id))) {
+      && (!s.last_synced || _autoSynced.has(id)) && !_autoPollDone.has(id)) {
     const _syncedAt = s.last_synced || null;
     const _stopAt = Date.now() + 90000;
     const _pollId = _detailPollId = setInterval(async () => {
@@ -991,7 +1002,9 @@ async function renderSeriesDetail(id) {
       if (!fresh) { clearInterval(_pollId); return; }
       const freshTotal = fresh.owned + fresh.missing + fresh.upcoming;
       if (freshTotal > 0 || (fresh.last_synced && fresh.last_synced !== _syncedAt) || Date.now() > _stopAt) {
-        clearInterval(_pollId); renderSeriesDetail(id);
+        clearInterval(_pollId);
+        _autoPollDone.add(id);   // spent — the re-render on the next line must NOT re-arm it
+        renderSeriesDetail(id);
       }
     }, 3000);
   }
@@ -3386,6 +3399,7 @@ function _ptrRefresh() {
   if (currentView === 'series-detail') {
     const id = currentParams.id;
     _autoSynced.add(id);          // we're syncing right now — don't double-fire
+    _autoPollDone.delete(id);     // you asked for fresh: earn a fresh auto-populate poll
     syncSeries(id, null);         // background; re-renders again if it changed anything
     showToast('Syncing series…');
     return renderSeriesDetail(id);
