@@ -307,3 +307,27 @@ class TestSeriesMatchesNumericSpinoffs:
 
     def test_word_spinoff_still_rejected(self):
         assert not _series_matches("batman", _normalize("Batman Eternal #1"))
+
+
+class TestNonLatinReleases:
+    """Live Prowlarr, 2026-09-11: the best-scoring torrent for Secret Wars #1 was
+    a Touhou doujinshi — '(ネオ例大祭8) [羊箱] 幻想郷SECRET WARS 1 (東方Project)'.
+    _norm strips non-ASCII, so by scoring time it read as '8 secret wars 1
+    project': series name present, issue number present, full marks. The
+    disqualifying evidence has to be read off the RAW title, before normalising."""
+
+    def test_the_doujinshi(self):
+        assert _nzb_score("(ネオ例大祭8) [羊箱] 幻想郷SECRET WARS 1 (東方Project)",
+                          "Secret Wars", 1.0) == 0
+
+    def test_hangul_release_rejected(self):
+        assert _nzb_score("시크릿 워즈 Secret Wars 001", "Secret Wars", 1.0) == 0
+
+    def test_plain_english_release_unaffected(self):
+        assert _nzb_score("Secret Wars (2015-) 001", "Secret Wars", 1.0) == 15
+        assert _nzb_score("Secret Wars 001 (2015) (Digital) (Zone-Empire)",
+                          "Secret Wars", 1.0) == 15
+
+    def test_accented_latin_still_fine(self):
+        # Latin-script diacritics are not a different alphabet — don't overreach.
+        assert _nzb_score("Sécret Wars 001 (2015)", "Secret Wars", 1.0) > 0

@@ -130,8 +130,24 @@ _MEDIA_NOISE_RE = re.compile(
     r')\b', re.I)
 
 
+# A release carrying Japanese, Korean or Chinese script is not the English-language
+# Marvel/DC issue we asked for — live Prowlarr served a Touhou doujinshi,
+# '(ネオ例大祭8) [羊箱] 幻想郷SECRET WARS 1 (東方Project)', as the best match for
+# Secret Wars #1. It scored full marks because _norm strips non-ASCII: by the time
+# anything looked, the title read '8 secret wars 1 project'. The evidence only
+# exists on the RAW string, so it has to be read here, like the media-noise check.
+# Latin diacritics are deliberately NOT included — an accent is not another alphabet.
+_CJK_RE = re.compile(
+    r'[\u3040-\u309f'      # hiragana
+    r'\u30a0-\u30ff'       # katakana
+    r'\u3400-\u4dbf'       # CJK unified ideographs extension A
+    r'\u4e00-\u9fff'       # CJK unified ideographs
+    r'\uac00-\ud7af]'      # hangul syllables
+)
+
+
 def _looks_non_comic(title: str) -> bool:
-    return bool(_MEDIA_NOISE_RE.search(title or ""))
+    return bool(_MEDIA_NOISE_RE.search(title or "") or _CJK_RE.search(title or ""))
 
 
 def _issue_num_present(t: str, s: str, num_int) -> bool:
