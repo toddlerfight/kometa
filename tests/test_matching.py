@@ -5,6 +5,7 @@ threshold, and nothing looked at the year. These lock all three doors."""
 from datetime import date, timedelta
 
 from kometa.usenet_client import year_mismatch, _nzb_score
+from kometa.getcomics_client import _series_matches, _normalize
 from kometa.prowlarr_client import _is_stale, search_torrent, search_usenet
 
 
@@ -214,3 +215,95 @@ class TestSeasonMismatchDropped:
         p = _FakeProwlarr([_nzb(
             "Batman - The Adventures Continue Season Three 008 (2023)", age=1)])
         assert search_usenet(p, "Batman: The Adventures Continue", 8.0) is None
+
+
+class TestYearMismatchUpperBound:
+    """Born 2026-09-11, when following Hickman's New Avengers (2013) filled the
+    folder with the 2025 relaunch. year_mismatch was one-sided: it rejected
+    releases OLDER than the series but waved through anything NEWER, so
+    'New Avengers 009 (2026)' sailed past a 2013 anchor. The issue's own
+    store_date is the missing upper bound."""
+
+    def test_newer_volume_wearing_the_same_name(self):
+        # The actual offender: 2025-run issue grabbed for the 2013 run.
+        assert year_mismatch("New Avengers 009 (2026) (Digital) (Shan-Empire)",
+                             2013, store_date="2013-11-06")
+
+    def test_older_volume_inside_the_legacy_grace(self):
+        # Bendis vol 2 #26 (2012) for Hickman #26 (released 2014). min year 2012
+        # is exactly series_year - 1, so the lower bound alone never caught it.
+        assert year_mismatch("New Avengers 026 (2012) (digital) (Megan-Empire)",
+                             2013, store_date="2014-10-01")
+
+    def test_series_start_year_convention_survives(self):
+        # Scene packs stamp the series' BIRTH year, not the issue's release year.
+        assert not year_mismatch("New Avengers (2013-) 029", 2013, store_date="2015-01-28")
+
+    def test_issue_release_year_survives(self):
+        assert not year_mismatch("New Avengers 029 (2015) (Digital)", 2013,
+                                 store_date="2015-01-28")
+
+    def test_off_by_one_release_metadata_survives(self):
+        assert not year_mismatch("Secret Wars 001 (2014) (Digital)", 2015,
+                                 store_date="2015-05-06")
+
+    def test_unrelated_book_sharing_the_name(self):
+        assert year_mismatch("What If... Secret Wars 001 (2026) (Digital)",
+                             2015, store_date="2015-05-06")
+
+    def test_no_store_date_keeps_legacy_behaviour(self):
+        # Without a store_date there is no upper bound to enforce — a later
+        # release year must still pass, or every back-issue grab breaks.
+        assert not year_mismatch("New Avengers 029 (2015) (Digital)", 2013)
+        assert year_mismatch("Keith Urban - Ripcord 2016", 2026)
+
+    def test_pack_reaching_back_past_series_birth_still_rejected(self):
+        # The lower bound stays live even when a store_date is present.
+        assert year_mismatch("Ripcord 2016-2026 MEGA pack", 2026, store_date="2026-03-04")
+
+
+class TestSearchDropsLaterVolume:
+    """The upper bound has to survive the trip through the real search entry
+    points, not just the predicate — the store_date was already sitting in both
+    signatures and simply wasn't being handed down."""
+
+    def test_torrent_search_drops_the_2025_relaunch(self):
+        p = _FakeProwlarr([_result("New Avengers 009 (2026) (Digital) (Shan-Empire)", 200)])
+        assert search_torrent(p, "New Avengers", 9.0, series_year=2013,
+                              store_date="2013-11-06") is None
+
+    def test_torrent_search_keeps_the_right_run(self):
+        p = _FakeProwlarr([_result("New Avengers (2013-) 029", 3)])
+        got = search_torrent(p, "New Avengers", 29.0, series_year=2013,
+                             store_date="2015-01-28")
+        assert got is not None
+
+    def test_usenet_search_drops_the_2025_relaunch(self):
+        p = _FakeProwlarr([{"title": "New Avengers 009 (2026) (Digital) (Shan-Empire)",
+                            "protocol": "usenet", "url": "http://nzb/1", "seeders": 0,
+                            "grabs": 50, "size": 40_000_000, "age": 2, "indexer": "test"}])
+        assert search_usenet(p, "New Avengers", 9.0, series_year=2013,
+                             store_date="2013-11-06") is None
+
+
+class TestSeriesMatchesNumericSpinoffs:
+    """Born alongside the year fix: 'Secret Wars 2099' was accepted as a post
+    about 'Secret Wars'. _series_matches strips every bare number before looking
+    for extra words, so the one token that made it a DIFFERENT book — 2099 —
+    was deleted before the comparison that would have caught it."""
+
+    def test_numeric_spinoff_rejected(self):
+        assert not _series_matches("secret wars", _normalize("Secret Wars 2099 002 (2015)"))
+
+    def test_the_real_series_still_matches(self):
+        assert _series_matches("secret wars", _normalize("Secret Wars #002 (2015)"))
+
+    def test_publication_year_still_stripped(self):
+        # A real year is incidental packaging, not part of the name.
+        assert _series_matches("new avengers", _normalize("New Avengers #009 (2014)"))
+
+    def test_issue_number_still_stripped(self):
+        assert _series_matches("new avengers", _normalize("New Avengers 029"))
+
+    def test_word_spinoff_still_rejected(self):
+        assert not _series_matches("batman", _normalize("Batman Eternal #1"))

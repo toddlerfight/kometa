@@ -1,6 +1,7 @@
 import re
 import time
 import logging
+from datetime import date
 import cloudscraper
 from bs4 import BeautifulSoup, Tag
 
@@ -63,12 +64,36 @@ def _post_covers_issue(text: str, issue_number: float) -> bool | None:
     return None
 
 
+# A bare number in a post title is usually packaging — the issue number, the
+# publication year — and gets stripped before we look for words that would make
+# this a DIFFERENT book. But Marvel names books after far-future years, and
+# 'Secret Wars 2099' is not Secret Wars. Stripping every digit deleted the one
+# token that told them apart, so the spinoff matched and got downloaded. Only
+# strip what is actually incidental: issue numbers, and years a comic could
+# plausibly have been published in. 2099 is neither — it's the title.
+_PLAUSIBLE_YEAR_MIN = 1930
+
+
+def _strip_incidental_numbers(text: str) -> str:
+    max_year = date.today().year + 2   # solicitations run ahead of the calendar
+
+    def _repl(m: re.Match) -> str:
+        n = int(m.group(0))
+        if n < 1000:                                    # issue number
+            return ''
+        if _PLAUSIBLE_YEAR_MIN <= n <= max_year:        # publication year
+            return ''
+        return m.group(0)                               # 2099, 3000 — part of the name
+
+    return re.sub(r'\b\d+\b', _repl, text)
+
+
 def _series_matches(title_norm: str, post_norm: str) -> bool:
     """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
     if title_norm not in post_norm:
         return False
-    # Strip numbers and years, find extra words in the post beyond the series title
-    stripped = re.sub(r'\b\d+\b', '', post_norm)
+    # Strip incidental numbers, find extra words in the post beyond the series title
+    stripped = _strip_incidental_numbers(post_norm)
     post_words = {w for w in stripped.split() if w}
     title_words = set(title_norm.split())
     extra = post_words - title_words - _TITLE_NOISE

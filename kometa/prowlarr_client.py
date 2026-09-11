@@ -143,11 +143,17 @@ def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 1
     return best
 
 
-def _drop_year_mismatches(results: list[dict], title: str, series_year) -> list[dict]:
-    kept = [r for r in results if not year_mismatch(r.get("title", ""), series_year)]
+def _drop_year_mismatches(results: list[dict], title: str, series_year,
+                          store_date: str | None = None) -> list[dict]:
+    """store_date is what closes the UPWARD door — without it year_mismatch can
+    only reject releases older than the series, and a same-named later volume
+    (New Avengers 2013 vs the 2025 relaunch) walks straight in. Pack searches
+    have no single issue date and pass None, keeping the lower-bound-only rule."""
+    kept = [r for r in results
+            if not year_mismatch(r.get("title", ""), series_year, store_date=store_date)]
     if len(kept) < len(results):
         logger.info(f"Prowlarr: dropped {len(results) - len(kept)} year-mismatched result(s) "
-                    f"for {title!r} (series began {series_year})")
+                    f"for {title!r} (series began {series_year}, issue shipped {store_date})")
     return kept
 
 
@@ -214,7 +220,7 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
     existed — see _is_stale."""
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
-    results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
     results = _drop_season_mismatches(results, title)
     results = _drop_failed_sources(results, exclude_urls)
     if not results:
@@ -269,7 +275,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     store_date demotes releases that predate the issue — see _is_stale."""
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
-    results = _drop_year_mismatches(results, title, series_year)
+    results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
     results = _drop_season_mismatches(results, title)
     results = _drop_failed_sources(results, exclude_urls)
     if not results:

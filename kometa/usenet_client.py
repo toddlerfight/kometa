@@ -67,18 +67,49 @@ def _drop_stale(results: list[dict], store_date: str | None, num_int, title: str
 _TITLE_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
-def year_mismatch(title: str, series_year) -> bool:
-    """A result whose title carries a year well BEFORE the series began is a
-    different release wearing the same name — the lesson of the Keith Urban
-    'Ripcord' (2016) ALBUM getting grabbed for the Ripcord (2026) comic. Uses
-    the EARLIEST year in the title (packs legitimately span ranges forward,
-    never backward past the series' birth). Only a known mismatch rejects:
-    no year in the title, or no known series year, passes — this is a
-    tripwire, not a gate."""
-    if not series_year:
-        return False
+def year_mismatch(title: str, series_year, store_date: str | None = None) -> bool:
+    """A result whose title carries a year the series can't account for is a
+    different release wearing the same name. Two doors, and the name needed both.
+
+    DOWNWARD — the Keith Urban 'Ripcord' (2016) ALBUM grabbed for the Ripcord
+    (2026) comic. Uses the EARLIEST year in the title (packs legitimately span
+    ranges forward, never backward past the series' birth).
+
+    UPWARD — the door that was standing wide open until 2026-09-11: following
+    Hickman's New Avengers (2013) hoovered up the 2025 relaunch, because
+    'New Avengers 009 (2026)' is not older than 2013 and nothing else looked.
+    Marvel and DC recycle a title every few years; 'began in 2013' says nothing
+    about how far forward a name stays in print. The issue's own store_date is
+    the bound that was missing — #9 shipped in 2013, so a 2026 stamp on it is a
+    lie no matter what the series year says.
+
+    A title year is plausible if it is either the series' BIRTH year (scene packs
+    stamp '(2013-)', not the issue's release year) or within a year of when this
+    issue actually shipped. No store_date means no upper bound to enforce — back
+    issues of a long run must still pass — so that case keeps the old behaviour.
+
+    Only a known mismatch rejects: no year in the title, or nothing to anchor
+    against, passes. This is a tripwire, not a gate."""
     years = [int(m.group(0)) for m in _TITLE_YEAR_RE.finditer(title or "")]
-    return bool(years) and min(years) < int(series_year) - 1
+    if not years:
+        return False
+
+    # Downward door. Stays live even when a store_date gives us an upper bound —
+    # a pack reaching back past the series' birth is still a different thing.
+    if series_year and min(years) < int(series_year) - 1:
+        return True
+
+    try:
+        release_year = int(str(store_date)[:4]) if store_date else None
+    except ValueError:
+        release_year = None
+    if release_year is None:
+        return False
+
+    plausible = {release_year - 1, release_year, release_year + 1}
+    if series_year:
+        plausible.add(int(series_year))
+    return not any(y in plausible for y in years)
 
 
 # TV/movie/music/ebook release markers. A comic NZB never carries these, so any
