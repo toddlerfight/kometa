@@ -104,6 +104,46 @@ def _series_matches(title_norm: str, post_norm: str) -> bool:
     return len(extra) == 0
 
 
+# A complete-run pack is the right answer for a big backlog, and the single-issue
+# matcher can never find one — _series_matches rejects 'vol' as a format word, by
+# design. Following Hickman's New Avengers (2013) therefore fell through to 33
+# separate single-issue searches, each free to grab whichever volume of the name
+# it liked, while 'New Avengers Vol. 3 #1 - 33 + Extras (2013-2015)' sat on
+# GetComics the whole time.
+#
+# Identifying WHICH volume a pack is can't lean on the volume ordinal: ComicVine
+# numbers Hickman's Avengers vol 4, GetComics doesn't number it at all (it files
+# the run under the creator), and the two disagree on start year besides. What
+# both ends DO agree on is the shape of the run — it starts at #1, it has N
+# issues, and it ran in a particular window. That's what we match on.
+_PACK_ISSUE_RANGE_RE = re.compile(r'#\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
+_POST_YEAR_RANGE_RE = re.compile(r'\((\d{4})(?:\s*[-–—]\s*(\d{4}))?\)')
+# .NOW issues, point-ones and 'extras' make our issue count and the pack's differ
+# by a couple either way. More than a few apart is a different run, not drift.
+_PACK_COUNT_TOLERANCE = 3
+
+
+def _pack_post_matches(title_norm: str, post_raw: str, issue_count: int,
+                       series_year=None) -> bool:
+    """True if this post is a complete-run pack for OUR volume of the title."""
+    if title_norm not in _normalize(post_raw):
+        return False
+    # Read the range off the RAW title — _normalize eats the '#', and without it
+    # a collected-edition range ('Vol. 1 - 3') is indistinguishable from issues.
+    m = _PACK_ISSUE_RANGE_RE.search(post_raw)
+    if not m:
+        return False
+    lo, hi = int(m.group(1)), int(m.group(2))
+    if lo != 1 or hi <= lo:
+        return False          # not a complete run from the start
+    if issue_count and abs(hi - issue_count) > _PACK_COUNT_TOLERANCE:
+        return False          # a different run of the same name
+    ym = _POST_YEAR_RANGE_RE.search(post_raw)
+    if ym and series_year and abs(int(ym.group(1)) - int(series_year)) > 1:
+        return False
+    return True
+
+
 def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None, post_raw: str = "") -> bool:
     """Trade-aware post matcher — the mirror image of _series_matches, which
     REJECTS format editions. Here we REQUIRE one: the post must name the series,
@@ -231,6 +271,57 @@ class GetComicsClient:
                     return url, fname
 
         return None, None
+
+    def search_series_pack(self, title: str, issue_count: int, series_year=None,
+                           status_fn=None, exclude_urls=None) -> tuple[str | None, str | None]:
+        """Find the complete-run pack for this volume — the one grab that settles a
+        whole backlog. Returns (download_url, filename) or (None, None). Deliberately
+        NOT reachable from the single-issue path, which rejects packs on purpose;
+        this is the route a big backlog should take before it resorts to N separate
+        single-issue searches that can each land a different volume of the name."""
+        exclude_urls = exclude_urls or set()
+        title = re.sub(r'\s*\(\d{4}\)\s*$', '', title).strip()
+        title_norm = _normalize(title)
+        queries = [f"{title} #1 - {issue_count}", f"{title} complete", title]
+        seen = set()
+        for query in queries:
+            if query in seen:
+                continue
+            seen.add(query)
+            logger.info(f"GetComics pack search: {query!r}")
+            if status_fn:
+                status_fn(f"GetComics pack: \u201c{query}\u201d")
+            post_url = self._search_pack_page(query, title_norm, issue_count, series_year)
+            if post_url:
+                url, fname = self._extract_download(post_url)
+                if url and url in exclude_urls:
+                    logger.info(f"GetComics pack: {post_url} is an excluded download — skipping")
+                    continue
+                if url:
+                    return url, fname
+        return None, None
+
+    def _search_pack_page(self, query: str, title_norm: str, issue_count: int,
+                          series_year) -> str | None:
+        try:
+            r = self._get(BASE, params={"s": query})
+            r.raise_for_status()
+        except GCRateLimitError:
+            raise
+        except Exception as e:
+            logger.warning(f"GetComics pack search request failed: {e}")
+            return None
+        soup = BeautifulSoup(r.text, "lxml")
+        for article in soup.find_all("article", {"class": "post"}):
+            h1 = article.find("h1", {"class": "post-title"})
+            a = h1.find("a") if h1 else None
+            if not a:
+                continue
+            text = a.get_text(strip=True)
+            if _pack_post_matches(title_norm, text, issue_count, series_year):
+                logger.info(f"GetComics pack: matched {text!r}")
+                return a.get("href", "")
+        return None
 
     def search_trade(self, title: str, vol=None, vol_range=None, status_fn=None,
                      exclude_urls=None) -> tuple[str | None, str | None]:

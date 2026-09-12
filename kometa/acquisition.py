@@ -306,6 +306,9 @@ def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
 # FIRST and fall back to GetComics as the last resort, not the first attempt.
 _OLD_ISSUE_DAYS = 90
 
+# Stable locg_id for a complete-run pack trade — see queue_trade's ON CONFLICT.
+PACK_LOCG_SENTINEL = -1
+
 
 def _is_old_issue(store_date: str | None) -> bool:
     if not store_date:
@@ -454,10 +457,18 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     def _search_nzb(prowlarr):
         return search_usenet_pack(prowlarr, query, series_year=item.get("year_began"))
 
-    set_search_status(qid, "GetComics…")
-    dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
-                                   status_fn=lambda s, qid=qid: set_search_status(qid, s),
-                                   exclude_urls=_failed_sources(item))
+    # A complete-run pack arrives with its download already resolved by the sweep
+    # that queued it — re-searching would only give GetComics another chance to
+    # hand back a different volume of the same name.
+    pinned = meta.get("pack_url")
+    if pinned and pinned not in _failed_sources(item):
+        set_search_status(qid, "GetComics: complete run…")
+        dl_url, hint = pinned, None
+    else:
+        set_search_status(qid, "GetComics…")
+        dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
+                                       status_fn=lambda s, qid=qid: set_search_status(qid, s),
+                                       exclude_urls=_failed_sources(item))
     if not dl_url:
         if _fallback_usenet_torrent(item, qid, _search_nzb, query):
             return
@@ -566,6 +577,41 @@ def _sweep_missing():
                     db.queue_pack(series_id, nzo_id, nzb_url, DB_PATH)
                     logger.info(f"Pack submitted for {series['title']!r} ({count} missing): {nzo_id}")
                     pack_submitted.add(series_id)
+
+    # Usenet had nothing (or isn't on) — try GetComics for the complete run before
+    # falling through to N single-issue searches. That fallthrough is what filled
+    # a Hickman folder with three other volumes of the same name: each search is
+    # free to pick a different run, and the single-issue matcher can't even SEE a
+    # pack (it rejects 'vol' as a format word, correctly). One right grab beats
+    # thirty-three chances to be wrong.
+    gc_pack = None
+    for series_id, count in missing_counts.items():
+        if series_id not in checked or series_id in pack_submitted:
+            continue
+        if count < PACK_THRESHOLD or db.has_active_pack(series_id, DB_PATH):
+            continue
+        series = db.get_series_by_id(series_id, DB_PATH)
+        if not series or not series.get("folder_path") or not series.get("on_pull_list"):
+            continue
+        issue_count = len(db.get_issues_for_series(series_id, DB_PATH))
+        if not issue_count:
+            continue
+        try:
+            gc_pack = gc_pack or GetComicsClient()
+            url, _hint = gc_pack.search_series_pack(
+                series["title"], issue_count, series_year=series.get("year_began"))
+        except Exception as e:
+            logger.warning(f"Pack search failed for {series['title']!r}: {e}")
+            continue
+        if url:
+            # PACK_LOCG_SENTINEL, not None: queue_trade's ON CONFLICT is keyed on
+            # (series, locg_id), and SQLite counts NULLs as distinct — a null here
+            # would mint a fresh duplicate row on every single sweep.
+            db.queue_trade(series_id, PACK_LOCG_SENTINEL, series["title"],
+                           pack_url=url, path=DB_PATH)
+            logger.info(f"Complete-run pack queued for {series['title']!r} "
+                        f"({count} missing of {issue_count})")
+            pack_submitted.add(series_id)
 
     rows = db.get_missing_for_monitored(DB_PATH)
     for row in rows:

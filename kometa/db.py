@@ -891,13 +891,14 @@ def upsert_issue_status_bulk(rows, path=DB_PATH):
 
 
 def queue_trade(tracked_series_id, locg_id, title, vol=None, vol_range=None, cover=None,
-                edition_title=None, path=DB_PATH):
+                edition_title=None, pack_url=None, path=DB_PATH):
     """Queue a collected edition — same table, kind='trade'. meta_json carries the
     series title (for search), the edition's own title (for naming no-volume editions
     so they don't all collapse to one filename), vol info, and the cover for Activity.
     Re-queues a failed/not_found trade."""
     meta = json.dumps({"title": title, "vol": vol, "vol_range": vol_range,
-                       "cover": cover, "edition_title": edition_title})
+                       "cover": cover, "edition_title": edition_title,
+                       "pack_url": pack_url})
     with _connect(path) as conn:
         conn.execute("""
             INSERT INTO download_queue (tracked_series_id, kind, locg_id, meta_json, state)
