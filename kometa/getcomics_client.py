@@ -123,9 +123,16 @@ _POST_YEAR_RANGE_RE = re.compile(r'\((\d{4})(?:\s*[-–—]\s*(\d{4}))?\)')
 _PACK_COUNT_TOLERANCE = 3
 
 
-def _pack_post_matches(title_norm: str, post_raw: str, issue_count: int,
+def _pack_post_matches(title_norm: str, post_raw: str, last_issue: int,
                        series_year=None) -> bool:
-    """True if this post is a complete-run pack for OUR volume of the title."""
+    """True if this post is a complete-run pack for OUR volume of the title.
+
+    last_issue is the HIGHEST issue number in the run, not how many rows the
+    series has. Those differ whenever Marvel slots in a point-one: Avengers (2012)
+    ends at #44 but carries 46 issues, because 34.1 and 34.2 exist. Measured
+    against the count, the real 'Avengers Vol. 5 #1 - 41' pack looks five short
+    and gets thrown out; measured against the last issue it's off by three, which
+    is ordinary pack drift (the tail of a run often lags a collection)."""
     if title_norm not in _normalize(post_raw):
         return False
     # Read the range off the RAW title — _normalize eats the '#', and without it
@@ -134,10 +141,12 @@ def _pack_post_matches(title_norm: str, post_raw: str, issue_count: int,
     if not m:
         return False
     lo, hi = int(m.group(1)), int(m.group(2))
-    if lo != 1 or hi <= lo:
-        return False          # not a complete run from the start
-    if issue_count and abs(hi - issue_count) > _PACK_COUNT_TOLERANCE:
-        return False          # a different run of the same name
+    # #0 is a legitimate first issue — Secret Wars (2015) opens on one, and
+    # demanding lo == 1 rejected its complete collection outright.
+    if lo not in (0, 1) or hi <= lo:
+        return False
+    if last_issue and abs(hi - last_issue) > _PACK_COUNT_TOLERANCE:
+        return False          # a partial run, or a different run of the same name
     ym = _POST_YEAR_RANGE_RE.search(post_raw)
     if ym and series_year and abs(int(ym.group(1)) - int(series_year)) > 1:
         return False
@@ -272,7 +281,7 @@ class GetComicsClient:
 
         return None, None
 
-    def search_series_pack(self, title: str, issue_count: int, series_year=None,
+    def search_series_pack(self, title: str, last_issue: int, series_year=None,
                            status_fn=None, exclude_urls=None) -> tuple[str | None, str | None]:
         """Find the complete-run pack for this volume — the one grab that settles a
         whole backlog. Returns (download_url, filename) or (None, None). Deliberately
@@ -282,7 +291,12 @@ class GetComicsClient:
         exclude_urls = exclude_urls or set()
         title = re.sub(r'\s*\(\d{4}\)\s*$', '', title).strip()
         title_norm = _normalize(title)
-        queries = [f"{title} #1 - {issue_count}", f"{title} complete", title]
+        # '+ Extras' is how these packs are actually titled, and it outperforms
+        # everything else tried: it surfaced the New Avengers pack at result 2 and
+        # the Secret Wars one at result 1, where '#1 - N' and 'complete' returned
+        # nothing at all.
+        queries = [f"{title} + Extras", f"{title} #1 - {last_issue}",
+                   f"{title} complete", title]
         seen = set()
         for query in queries:
             if query in seen:
@@ -291,7 +305,7 @@ class GetComicsClient:
             logger.info(f"GetComics pack search: {query!r}")
             if status_fn:
                 status_fn(f"GetComics pack: \u201c{query}\u201d")
-            post_url = self._search_pack_page(query, title_norm, issue_count, series_year)
+            post_url = self._search_pack_page(query, title_norm, last_issue, series_year)
             if post_url:
                 url, fname = self._extract_download(post_url)
                 if url and url in exclude_urls:
@@ -301,7 +315,7 @@ class GetComicsClient:
                     return url, fname
         return None, None
 
-    def _search_pack_page(self, query: str, title_norm: str, issue_count: int,
+    def _search_pack_page(self, query: str, title_norm: str, last_issue: int,
                           series_year) -> str | None:
         try:
             r = self._get(BASE, params={"s": query})
@@ -318,7 +332,7 @@ class GetComicsClient:
             if not a:
                 continue
             text = a.get_text(strip=True)
-            if _pack_post_matches(title_norm, text, issue_count, series_year):
+            if _pack_post_matches(title_norm, text, last_issue, series_year):
                 logger.info(f"GetComics pack: matched {text!r}")
                 return a.get("href", "")
         return None

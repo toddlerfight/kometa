@@ -601,13 +601,17 @@ def _sweep_missing():
         series = db.get_series_by_id(series_id, DB_PATH)
         if not series or not series.get("folder_path") or not series.get("on_pull_list"):
             continue
-        issue_count = len(db.get_issues_for_series(series_id, DB_PATH))
-        if not issue_count:
+        # The LAST issue number, not how many rows exist. Point-ones inflate the
+        # count without extending the run (Avengers ends at #44 but has 46 rows),
+        # and a pack is titled by where the run ENDS.
+        issues = db.get_issues_for_series(series_id, DB_PATH)
+        last_issue = int(max((i["number"] for i in issues), default=0))
+        if not last_issue:
             continue
         try:
             gc_pack = gc_pack or GetComicsClient()
             url, _hint = gc_pack.search_series_pack(
-                series["title"], issue_count, series_year=series.get("year_began"))
+                series["title"], last_issue, series_year=series.get("year_began"))
         except Exception as e:
             logger.warning(f"Pack search failed for {series['title']!r}: {e}")
             continue
@@ -618,7 +622,7 @@ def _sweep_missing():
             db.queue_trade(series_id, PACK_LOCG_SENTINEL, series["title"],
                            pack_url=url, path=DB_PATH)
             logger.info(f"Complete-run pack queued for {series['title']!r} "
-                        f"({count} missing of {issue_count})")
+                        f"({count} missing, run ends at #{last_issue})")
             pack_submitted.add(series_id)
 
     rows = db.get_missing_for_monitored(DB_PATH)

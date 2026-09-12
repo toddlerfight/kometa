@@ -32,8 +32,8 @@ class _FakeGC:
     def __init__(self):
         pass
 
-    def search_series_pack(self, title, issue_count, series_year=None, **kw):
-        _FakeGC.calls.append((title, issue_count, series_year))
+    def search_series_pack(self, title, last_issue, series_year=None, **kw):
+        _FakeGC.calls.append((title, last_issue, series_year))
         return "https://getcomics.org/dls/THE-PACK", None
 
 
