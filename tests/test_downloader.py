@@ -6,6 +6,7 @@ _num_from_filename_broad is the pack-content matcher's last resort (after the
 the right file among several in a usenet/torrent/GetComics pack.
 """
 import io
+import os
 import pathlib
 import zipfile
 
@@ -360,3 +361,97 @@ class TestRarExtractFallback:
         d.mkdir()
         assert dl._extract_rar_into(str(tmp_path / "a.cbr"), str(d)) is True
         assert len(list(d.iterdir())) == 12
+
+
+class TestPackCanonicalNaming:
+    """A GetComics pack used to land under whatever the scene called its files,
+    while usenet and torrent stamped the library's own 'Title #NNN.cbz' on
+    everything. Same comic, two names, and the pack's skip check compared
+    filename STEMS — so it could not see the copy already sitting beside it.
+    Three Avengers packs later that folder held every issue twice."""
+
+    def _pack(self, tmp_path, names, name="pack.zip"):
+        p = tmp_path / name
+        with zipfile.ZipFile(p, "w") as zf:
+            for n in names:
+                # a real page, so the extracted file survives an ownership probe
+                inner = io.BytesIO()
+                with zipfile.ZipFile(inner, "w") as iz:
+                    iz.writestr("p000.jpg", b"\xff\xd8\xff\xe0page")
+                zf.writestr(n, inner.getvalue())
+        return str(p)
+
+    def _lib(self, tmp_path):
+        d = tmp_path / "lib"
+        d.mkdir()
+        return d
+
+    def test_scene_names_land_under_library_name(self, tmp_path):
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        p = self._pack(tmp_path, [
+            "New Avengers 014 (2014) (Digital) (Zone-Empire).cbz",
+            "New Avengers 016.NOW (2014) (Digital) (Zone-Empire).cbz",
+        ])
+        out = _extract_pack(p, str(dest), series_title="New Avengers")
+        assert sorted(os.path.basename(x) for x in out) == [
+            "New Avengers #014.cbz", "New Avengers #016.cbz"]
+
+    def test_does_not_redeliver_an_issue_already_owned_under_the_library_name(self, tmp_path):
+        """THE bug. The existing file shares no stem with the pack member, so the
+        old stem comparison waved it through and we bought #014 a second time."""
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        with zipfile.ZipFile(dest / "New Avengers #014.cbz", "w") as z:
+            z.writestr("p000.jpg", b"\xff\xd8\xff\xe0page")
+        p = self._pack(tmp_path, [
+            "New Avengers 014 (2014) (Digital) (Zone-Empire).cbz",
+            "New Avengers 015 (2014) (Digital) (Zone-Empire).cbz",
+        ])
+        out = _extract_pack(p, str(dest), series_title="New Avengers")
+        assert [os.path.basename(x) for x in out] == ["New Avengers #015.cbz"]
+        assert not (dest / "New Avengers 014 (2014) (Digital) (Zone-Empire).cbz").exists()
+
+    def test_point_one_issues_do_not_collapse_onto_the_whole_number(self, tmp_path):
+        """#34, #34.1 and #34.2 are three comics. int() truncation makes them one."""
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        p = self._pack(tmp_path, [
+            "Avengers 034 (2014) (Digital) (Zone-Empire).cbz",
+            "Avengers 034.1 (2014) (Digital) (Zone-Empire).cbz",
+            "Avengers 034.2 (2015) (Digital) (Zone-Empire).cbz",
+        ])
+        out = _extract_pack(p, str(dest), series_title="Avengers")
+        assert sorted(os.path.basename(x) for x in out) == [
+            "Avengers #034.1.cbz", "Avengers #034.2.cbz", "Avengers #034.cbz"]
+
+    def test_variant_scans_keep_their_own_names(self, tmp_path):
+        """Four 'Cover ONLY' scans of #001 must not all fight over '#001.cbz'."""
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        names = [
+            "New Avengers 001 (2013) (Digital) (Zone-Empire).cbz",
+            "New Avengers 001 (2013) (Blank Cover Variant) (Cover ONLY) (ScanDog).cbz",
+            "New Avengers 001 (2013) (J. Scott Campbell Sketch Variant) (Cover ONLY).cbz",
+        ]
+        out = _extract_pack(self._pack(tmp_path, names), str(dest), series_title="New Avengers")
+        base = sorted(os.path.basename(x) for x in out)
+        assert len(base) == 3, base
+        assert "New Avengers #001.cbz" in base
+        assert sum(1 for b in base if "Cover ONLY" in b) == 2
+
+    def test_collected_editions_are_not_renamed_to_issues(self, tmp_path):
+        """A trade pack ships volumes. 'Vol 03' is not issue #3 — rename it and
+        the one fact that marks it a collected edition is gone."""
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        names = ["Transmetropolitan Vol. 01 (2009).cbz", "Transmetropolitan Vol. 02 (2009).cbz"]
+        out = _extract_pack(self._pack(tmp_path, names), str(dest), series_title="Transmetropolitan")
+        assert sorted(os.path.basename(x) for x in out) == sorted(names)
+
+    def test_without_a_title_behaviour_is_unchanged(self, tmp_path):
+        from kometa.downloader import _extract_pack
+        dest = self._lib(tmp_path)
+        names = ["a v01.cbz", "a v02.cbz"]
+        out = _extract_pack(self._pack(tmp_path, names), str(dest))
+        assert sorted(os.path.basename(x) for x in out) == names

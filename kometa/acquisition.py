@@ -506,6 +506,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     try:
         placed = downloader.download_trade(
             dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
+            series_title=title,
             progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
             komga_scan_fn=_komga_scan,
             on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),

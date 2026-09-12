@@ -328,3 +328,36 @@ class TestOwnershipSeason:
                    "004-003.jpg"])
         assert scan_folder_numbers(
             str(tmp_path), "Batman: The Adventures Continue") == {4.0}
+
+
+class TestVariantScanDetection:
+    """Which files are NOT the issue they're numbered as — the gate canonical
+    renaming uses before it stamps 'Series #NNN.cbz' on a pack member."""
+
+    def test_cover_only_scans_are_not_the_issue(self):
+        from kometa.naming import is_variant_scan
+        assert is_variant_scan("New Avengers 001 (2013) (Blank Cover Variant) (Cover ONLY).cbz")
+        assert is_variant_scan("New Avengers 011 (2013) (Lego Variant) (Cover ONLY) (Alusias).cbz")
+        assert is_variant_scan("New Avengers 001(6 covers)(2013)(Re-em-Novus)(ScanDog variants).cbz")
+
+    def test_an_issue_shipping_bonus_covers_is_still_the_issue(self):
+        """Minutemen bundle the month's variant covers into the real release.
+        Reading '(9 covers)' as a variant marker threw every Secret Wars issue
+        out of the library and made a complete run look half-missing."""
+        from kometa.naming import is_variant_scan
+        assert not is_variant_scan("Secret Wars 01 (of 09) (2015) (9 covers) (digital) (Minutemen).cbz")
+        assert not is_variant_scan("Secret Wars 02 (of 09) (2015) (6 covers) (digital) (Minutemen).cbz")
+        assert not is_variant_scan("Avengers 044 (2015) (Digital) (Zone-Empire).cbz")
+
+
+class TestCanonicalIssueFilename:
+    def test_pads_to_three_digits(self):
+        from kometa.naming import canonical_issue_filename
+        assert canonical_issue_filename("New Avengers", 14.0, ".cbz") == "New Avengers #014.cbz"
+
+    def test_keeps_point_one_issues_distinct(self):
+        """#34, #34.1 and #34.2 are three comics; int() truncation makes them one."""
+        from kometa.naming import canonical_issue_filename as c
+        assert c("Avengers", 34.0, ".cbz") == "Avengers #034.cbz"
+        assert c("Avengers", 34.1, ".cbz") == "Avengers #034.1.cbz"
+        assert c("Avengers", 34.2, ".cbz") == "Avengers #034.2.cbz"

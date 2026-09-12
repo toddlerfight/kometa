@@ -246,6 +246,46 @@ def find_issue_file(folder_path: str, series_title: str, number: float) -> str |
     return None
 
 
+# Variant/cover-scan markers. These files carry a real issue number but are NOT
+# that issue — a "Cover ONLY" scan is a single jpg in a wrapper. Canonical
+# renaming must leave them alone or five variants of #001 all fight over the
+# name "Series #001.cbz" and four of them lose.
+#
+# "(9 covers)" is deliberately NOT on this list. It reads like a variant marker
+# and isn't: Minutemen ship the REAL issue with the month's variant covers bolted
+# on the back, and every Secret Wars issue we own is named that way. Matching it
+# threw the actual comic out of the library and left the run looking half-missing.
+_NOT_THE_ISSUE = re.compile(r'cover\s*only|variant|sketch\s*cover', re.IGNORECASE)
+
+
+def is_variant_scan(name: str) -> bool:
+    """Does this filename announce itself as a cover/variant scan rather than the issue?"""
+    return bool(_NOT_THE_ISSUE.search(name))
+
+
+def format_issue_number(number: float) -> str:
+    """'014', '034.1' — three-digit zero pad, fractional part kept.
+
+    int() truncation is the trap here: #34.1 and #34.2 are real issues, not
+    rounding noise, and collapsing them onto '034' means the second one
+    overwrites the first and you quietly own one comic where you had three."""
+    whole = int(number)
+    if number == whole:
+        return f"{whole:03d}"
+    frac = f"{number:g}".split(".", 1)[1]
+    return f"{whole:03d}.{frac}"
+
+
+def canonical_issue_filename(series_title: str, number: float, ext: str) -> str:
+    """THE library filename for an issue: 'New Avengers #014.cbz'.
+
+    One definition, because the two acquisition paths had drifted apart — usenet
+    and torrent stamped this name on everything they landed, GetComics packs kept
+    whatever the scene called the file, and the same comic ended up on disk twice
+    under two names with neither path able to see the other's copy."""
+    return f"{_safe(series_title)} #{format_issue_number(number)}{ext.lower()}"
+
+
 def normalize_url(url: str) -> str:
     url = url.strip()
     if url and not url.startswith(("http://", "https://")):

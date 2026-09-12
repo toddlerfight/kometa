@@ -12,7 +12,11 @@ from concurrent.futures import ThreadPoolExecutor
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
 from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
-                           _season_from_title, OWNED_EXTS, PIPELINE_EXTS)
+                           _season_from_title, OWNED_EXTS, PIPELINE_EXTS,
+                           parse_issue_number, parse_volume_number,
+                           scan_folder_numbers,
+                           canonical_issue_filename, format_issue_number,
+                           is_variant_scan)
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -920,7 +924,7 @@ def download_issue(
 
         # If it's a ZIP pack containing multiple comics, extract and discard the wrapper.
         # (A pack is always a ZIP, so rar_dir is None here — no stale-dir risk below.)
-        extracted = _extract_pack(dest_path, dest_dir)
+        extracted = _extract_pack(dest_path, dest_dir, series_title=title)
         if extracted:
             os.remove(dest_path)
             logger.info(f"Pack: {len(extracted)} new file(s) from {os.path.basename(dest_path)}")
@@ -981,6 +985,7 @@ def download_trade(
     progress_fn=None,
     komga_scan_fn=None,
     on_bytes_done=None,
+    series_title: str | None = None,
 ) -> list[str]:
     """Download a collected edition (TPB/HC) into dest_dir. The 'dumb' path: NO
     issue-number validation (a trade has no single number; a 'Vol 1-6' bundle
@@ -1034,7 +1039,7 @@ def download_trade(
     # A bundled trade ('Vol 1-6') often arrives as a ZIP of CBZs — keep ALL of
     # them (no issue-targeting, unlike download_issue's pack handling).
     placed = [dest_path]
-    extracted = _extract_pack(dest_path, dest_dir)
+    extracted = _extract_pack(dest_path, dest_dir, series_title=series_title)
     if extracted:
         os.remove(dest_path)
         placed = extracted
@@ -1071,8 +1076,17 @@ def _pack_comic_count(zip_path: str) -> int:
         return 0
 
 
-def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
-    """If zip_path is a ZIP of comic files, extract new ones. Returns paths of extracted files."""
+def _extract_pack(zip_path: str, dest_dir: str, series_title: str | None = None) -> list[str]:
+    """If zip_path is a ZIP of comic files, extract new ones. Returns paths of extracted files.
+
+    Pass series_title and every member lands under the library's own name —
+    'New Avengers #014.cbz' — and dedupes on the ISSUE NUMBER. Without it a pack
+    keeps whatever the scene called its files, and the skip check below compares
+    filename STEMS: 'New Avengers 014 (2014) (Digital) (Zone-Empire)' shares no
+    stem with the 'New Avengers #014' already sitting in that folder, so the
+    pack cheerfully extracted a second copy of comics we already owned. Forty
+    issues in, that's a folder where every issue exists twice under two names
+    and neither acquisition path can see the other's work."""
     try:
         if not zipfile.is_zipfile(zip_path):
             return []
@@ -1081,24 +1095,47 @@ def _extract_pack(zip_path: str, dest_dir: str) -> list[str]:
                       if os.path.splitext(n)[1].lower() in PIPELINE_EXTS and not n.startswith('__')]
             if len(comics) <= 1:
                 return []
+            # What the folder already holds, by number — the question the stem
+            # comparison could never answer. Computed once; new arrivals are
+            # added as we go so a pack carrying #14 twice only lands it once.
+            have = scan_folder_numbers(dest_dir, series_title or "") if series_title else set()
             extracted = []
             for name in comics:
                 fname = os.path.basename(name)
                 if not fname:
                     continue
-                out = os.path.join(dest_dir, fname)
+                stem, ext = os.path.splitext(fname)
+                num = parse_issue_number(fname, series_title or "") if series_title else None
+                # Two kinds of member must keep the name they arrived with.
+                # A "Cover ONLY" or variant scan carries a real issue number but
+                # isn't that issue — five variants of #001 would all claim
+                # 'Series #001.cbz' and four would lose. And a COLLECTED EDITION
+                # ('Transmetropolitan Vol 03') has a volume number, not an issue
+                # number; renaming it to '#003.cbz' throws away the one fact that
+                # says it's a trade and makes it indistinguishable from issue 3.
+                canonical = (series_title and num is not None
+                             and not is_variant_scan(fname)
+                             and parse_volume_number(fname) is None)
+                if canonical:
+                    if num in have:
+                        logger.info(f"Pack: skipping {fname} — already own #{format_issue_number(num)}")
+                        continue
+                    fname = canonical_issue_filename(series_title, num, ext)
+                    stem, ext = os.path.splitext(fname)
                 # The pipeline converts CBR→CBZ on the way in and deletes the
                 # source, so a re-downloaded pack must recognize its own previous
                 # delivery under the NEW extension — comparing only the pack's
                 # raw name re-extracted (and re-converted) the entire pack on
                 # every retry, and the all-dupes guard below never fired.
-                stem, ext = os.path.splitext(fname)
                 if any(os.path.exists(os.path.join(dest_dir, stem + e)) for e in {ext.lower(), '.cbz'}):
                     logger.info(f"Pack: skipping {fname} — already in library")
                     continue
+                out = os.path.join(dest_dir, fname)
                 with zf.open(name) as src, open(out, 'wb') as dst:
                     dst.write(src.read())
                 out = _fix_extension(out)
+                if canonical:
+                    have.add(num)
                 extracted.append(out)
                 logger.info(f"Pack extracted: {out}")
             return extracted
