@@ -567,6 +567,14 @@ def _sweep_missing():
                 continue
             if db.has_active_pack(series_id, DB_PATH):
                 continue
+            # Usenet gets first crack at a pack, but only ONE. 'Submitted' is not
+            # 'delivered': a pack can sit in SAB for minutes and come back
+            # "Aborted, cannot be completed" on retention — which is exactly what
+            # New Avengers did, after the submission had already marked the series
+            # handled and locked GetComics out of its turn. Without this, every
+            # sweep re-submits the same doomed pack and the fallback never runs.
+            if db.pack_attempt_failed(series_id, DB_PATH):
+                continue
             series = db.get_series_by_id(series_id, DB_PATH)
             if not series:
                 continue

@@ -84,3 +84,34 @@ def test_series_off_the_pull_list_is_left_alone(monkeypatch, db_path, big_backlo
     with db._connect(db_path) as conn:
         n = conn.execute("SELECT COUNT(*) FROM download_queue").fetchone()[0]
     assert n == 0 and _FakeGC.calls == []
+
+
+class _FakeSab:
+    def add_nzb_url(self, url, nzb_name=None):
+        return "nzo-1"
+
+
+def test_failed_usenet_pack_hands_off_to_getcomics(monkeypatch, db_path, big_backlog):
+    """'Submitted' is not 'delivered'. A usenet pack that came back
+    'Aborted, cannot be completed' must not be re-submitted on every sweep while
+    the GetComics fallback sits locked out behind it."""
+    with db._connect(db_path) as conn:
+        conn.execute("""INSERT INTO download_queue (tracked_series_id, issue_number, kind, state)
+                        VALUES (?, -1, 'issue', 'failed')""", (big_backlog,))
+    usenet_calls = []
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    monkeypatch.setattr(acq, "GetComicsClient", _FakeGC)
+    monkeypatch.setattr(acq, "_prowlarr", lambda: object())
+    monkeypatch.setattr(acq, "_sabnzbd", lambda: _FakeSab())
+    monkeypatch.setattr(acq, "_prowlarr_on", lambda: True)
+    monkeypatch.setattr(acq, "_usenet_on", lambda: True)
+    monkeypatch.setattr(acq, "search_usenet_pack",
+                        lambda *a, **k: usenet_calls.append(a) or "http://nzb/pack")
+    _FakeGC.calls = []
+    acq._sweep_missing()
+
+    assert usenet_calls == [], "a spent usenet pack got another turn"
+    with db._connect(db_path) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM download_queue WHERE kind='trade'").fetchone()[0]
+    assert n == 1, "GetComics fallback never ran"
+    assert _FakeGC.calls == [("New Avengers", 33, 2013)]

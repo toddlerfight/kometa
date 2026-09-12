@@ -1164,6 +1164,20 @@ def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
         return {r["id"]: r["cnt"] for r in rows}
 
 
+def pack_attempt_failed(series_id, path=DB_PATH) -> bool:
+    """True if a usenet pack for this series has already been tried and couldn't
+    deliver. Its own shot is spent — the caller hands off to the next source
+    instead of submitting the same doomed pack on every sweep forever."""
+    with _connect(path) as conn:
+        row = conn.execute("""
+            SELECT 1 FROM download_queue
+            WHERE tracked_series_id = ? AND issue_number = -1
+              AND state IN ('failed', 'not_found')
+            LIMIT 1
+        """, (series_id,)).fetchone()
+    return row is not None
+
+
 def has_active_pack(series_id, path=DB_PATH) -> bool:
     """True if a pack queue entry exists for this series that isn't done or failed."""
     with _connect(path) as conn:
