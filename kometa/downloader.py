@@ -273,24 +273,100 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str,
     return len(variant_pages), out_path
 
 
-def ensure_cbz(path: str, extracted_dir: str | None = None) -> str:
-    """Repack a RAR-backed comic (magic bytes, not extension) as a verified CBZ;
-    ZIPs pass through untouched. Best-effort by design: the swap only happens
-    after the rebuild verifies, so a failed repack leaves the original .cbr
-    exactly where it was and we ship that instead — a conversion hiccup must
-    never kill a download that already succeeded. Returns the final path."""
+# A .zip whose only entry is another archive is packaging, not a comic. GetComics
+# serves a real slice of its catalogue double-bagged like that, and looking only at
+# the OUTER magic bytes let every one of them through: a ZIP wrapping a RAR isn't a
+# RAR, so ensure_cbz waved it past. Four landed that way in one session and read as
+# unowned forever after — ownership opens an archive and refuses one that can't
+# produce a page, correctly, so they sat in the library counting for nothing.
+_WRAPPED_ARCHIVE_EXTS = ('.cbr', '.cbz', '.rar', '.zip')
+_MAX_UNWRAP_DEPTH = 3
+
+
+def _archive_pages(path: str) -> int:
+    try:
+        with zipfile.ZipFile(path) as z:
+            return len([n for n in z.namelist()
+                        if n.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))])
+    except Exception:
+        return 0
+
+
+def _wrapped_archive_entry(path: str) -> str | None:
+    """The sole entry of `path` if it is itself an archive, else None. One entry
+    only: a multi-entry zip is a comic (or a pack), never a wrapper."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            entries = [n for n in z.namelist() if not n.endswith('/')]
+    except Exception:
+        return None
+    if len(entries) != 1:
+        return None
+    return entries[0] if entries[0].lower().endswith(_WRAPPED_ARCHIVE_EXTS) else None
+
+
+def _unwrap_archive(path: str, inner_name: str, extracted_dir: str | None,
+                    depth: int) -> str | None:
+    """Lift the inner archive out and run it back through ensure_cbz. Returns the
+    new path, or None if anything about it failed — in which case the caller keeps
+    the file exactly as delivered. Never trades a real file for a broken one."""
+    parent = os.path.dirname(path) or None
+    tmpd = tempfile.mkdtemp(dir=parent, prefix='.unwrap_')
+    try:
+        # Stream it out under a name WE choose — never the archive's own, which is
+        # attacker-controlled text and the whole shape of a zip-slip.
+        inner_path = os.path.join(tmpd, os.path.basename(inner_name) or 'inner')
+        with zipfile.ZipFile(path) as z, z.open(inner_name) as src, \
+                open(inner_path, 'wb') as dst:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+        built = ensure_cbz(inner_path, extracted_dir, _depth=depth + 1)
+        if not _archive_pages(built):
+            logger.warning(f"unwrap: {os.path.basename(path)} held no readable pages "
+                           f"— keeping the file as delivered")
+            return None
+        target = os.path.splitext(path)[0] + '.cbz'
+        staged = os.path.join(tmpd, 'staged.cbz')
+        shutil.move(built, staged)
+        os.replace(staged, target)          # atomic into place
+        if target != path and os.path.exists(path):
+            os.remove(path)
+        logger.info(f"unwrap: {os.path.basename(path)} was a wrapper — "
+                    f"lifted out {os.path.basename(inner_name)}")
+        return target
+    except Exception as e:
+        logger.warning(f"unwrap failed for {path}: {e}")
+        return None
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
+        if os.path.isdir(tmpd):
+            logger.warning(f"unwrap: temp dir survived cleanup: {tmpd}")
+
+
+def ensure_cbz(path: str, extracted_dir: str | None = None, _depth: int = 0) -> str:
+    """Repack a RAR-backed comic (magic bytes, not extension) as a verified CBZ,
+    and lift a comic out of a zip that is only wrapping it. Plain ZIPs pass through
+    untouched. Best-effort by design: a swap only happens after the rebuild
+    verifies, so a failed repack or unwrap leaves the original exactly where it was
+    and we ship that instead — a conversion hiccup must never kill a download that
+    already succeeded. Returns the final path."""
     try:
         with open(path, 'rb') as fh:
-            is_rar = fh.read(4) == b'Rar!'
+            magic = fh.read(4)
     except OSError:
         return path
-    if not is_rar:
-        return path
-    try:
-        return _rebuild_as_cbz(path, [], extracted_dir)
-    except Exception as e:
-        logger.warning(f"ensure_cbz: CBR→CBZ repack failed for {path} — keeping the CBR: {e}")
-        return path
+    if magic == b'Rar!':
+        try:
+            return _rebuild_as_cbz(path, [], extracted_dir)
+        except Exception as e:
+            logger.warning(f"ensure_cbz: CBR→CBZ repack failed for {path} — keeping the CBR: {e}")
+            return path
+    if magic[:2] == b'PK' and _depth < _MAX_UNWRAP_DEPTH:
+        inner = _wrapped_archive_entry(path)
+        if inner:
+            unwrapped = _unwrap_archive(path, inner, extracted_dir, _depth)
+            if unwrapped:
+                return unwrapped
+    return path
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
