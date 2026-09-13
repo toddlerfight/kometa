@@ -5,7 +5,9 @@ the queue/issue rows land where they should.
 _finalize_usenet_download gets the heaviest coverage here — it moves real files
 on disk and was the one extracted function with zero prior exercise.
 """
+import io
 import json
+import zipfile
 from datetime import date
 
 import pytest
@@ -18,8 +20,20 @@ import kometa.acquisition as acq
 ZIP_MAGIC = b"PK\x03\x04"
 
 
-def _make_comic(path, content=ZIP_MAGIC):
-    path.write_bytes(content)
+def _real_cbz_bytes(pages=3):
+    """A genuinely readable CBZ. Bare ZIP_MAGIC used to be enough here, but
+    finalize now OPENS what it placed before calling it an acquisition — a file
+    that claims to be a zip and cannot be read is exactly what that gate exists
+    to reject, so a four-byte fixture no longer models a delivered comic."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for i in range(pages):
+            z.writestr(f"p{i:03d}.jpg", b"\xff\xd8\xff\xe0" + b"page" * 64)
+    return buf.getvalue()
+
+
+def _make_comic(path, content=None):
+    path.write_bytes(_real_cbz_bytes() if content is None else content)
     return str(path)
 
 
@@ -950,3 +964,85 @@ class TestUnusableSiblings:
         good = self._cbz(tmp_path / "Saga #003.cbz", ["003-001.jpg"])
         (tmp_path / "Saga #003.pdf").write_bytes(b"%PDF-1.4 who knows")
         assert acq._unusable_siblings(str(tmp_path), good, "Saga", 3.0) == []
+
+
+class TestUnreadableDeliveryIsNotAnAcquisition:
+    """A completed SABnzbd job is not a delivered comic. Three Avengers World
+    rows recorded 'done' against paths whose files had been pulled out of the
+    library an hour earlier, and a truncated 424MB Infinity #6 was re-placed out
+    of staging and re-stamped 'done' on every retry for two weeks — while
+    ownership, which does open the file, kept reporting the issue as missing.
+    The queue and the library disagreed and nothing reconciled them."""
+
+    def _truncated(self, path):
+        raw = _real_cbz_bytes(6)
+        path.write_bytes(raw[: len(raw) // 2])     # header intact, no central directory
+        return str(path)
+
+    def test_row_fails_instead_of_recording_a_comic_we_do_not_have(self, wired, tmp_path):
+        db_path, series = wired
+        storage = tmp_path / "sab" / "Saga 001"
+        storage.mkdir(parents=True)
+        self._truncated(storage / "Saga 001 (2012) (digital).cbz")
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+
+        db.queue_issue(series, 1.0, db_path)
+        qid = _qid_for(db_path, series, 1.0)
+        item = {"id": qid, "issue_number": 1.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": "2012-03-14",
+                "tracked_series_id": series, "source_url": "http://indexer/nzb/abc"}
+
+        acq._finalize_usenet_download(item, qid, str(storage))
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed", "an unreadable delivery must not read as done"
+        assert "no readable pages" in (q["error"] or "")
+        # No ownership row at all is the right outcome — complete_download is what
+        # creates it, and it was never reached.
+        owned = [i for i in db.get_issues_for_series(series, db_path)
+                 if i["number"] == 1.0 and i["owned"]]
+        assert not owned, "we must not claim to own a comic we cannot open"
+        assert not (dest / "Saga #001.cbz").exists(), "the junk must not keep its seat"
+
+    def test_the_source_is_blacklisted_so_a_retry_buys_something_else(self, wired, tmp_path):
+        db_path, series = wired
+        storage = tmp_path / "sab" / "Saga 002"
+        storage.mkdir(parents=True)
+        self._truncated(storage / "Saga 002.cbz")
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+
+        db.queue_issue(series, 2.0, db_path)
+        qid = _qid_for(db_path, series, 2.0)
+        bad = "http://indexer/nzb/the-same-corpse"
+        item = {"id": qid, "issue_number": 2.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": "2012-04-01",
+                "tracked_series_id": series, "source_url": bad}
+
+        acq._finalize_usenet_download(item, qid, str(storage))
+
+        row = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert bad in (row.get("failed_sources") or ""), \
+            "the link that sold us garbage has to be burned, or the retry rides the same carousel"
+
+    def test_a_readable_delivery_still_succeeds(self, wired, tmp_path):
+        """The gate must not cost us a good comic."""
+        db_path, series = wired
+        storage = tmp_path / "sab" / "Saga 003"
+        storage.mkdir(parents=True)
+        _make_comic(storage / "Saga 003.cbz")
+        dest = tmp_path / "lib" / "Saga"
+        dest.mkdir(parents=True)
+
+        db.queue_issue(series, 3.0, db_path)
+        qid = _qid_for(db_path, series, 3.0)
+        item = {"id": qid, "issue_number": 3.0, "title": "Saga", "publisher": "Image",
+                "folder_path": str(dest), "store_date": "2012-05-01",
+                "tracked_series_id": series}
+
+        acq._finalize_usenet_download(item, qid, str(storage))
+
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+        assert (dest / "Saga #003.cbz").exists()

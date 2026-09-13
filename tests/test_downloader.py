@@ -455,3 +455,82 @@ class TestPackCanonicalNaming:
         names = ["a v01.cbz", "a v02.cbz"]
         out = _extract_pack(self._pack(tmp_path, names), str(dest))
         assert sorted(os.path.basename(x) for x in out) == names
+
+
+class TestPlacedFileMustBeReadable:
+    """Everything upstream of placement verifies a CLAIM — the server's filename,
+    ComicInfo, the download client's 'completed'. None of it opens the file that
+    actually landed. A 424MB archive with a valid ZIP header and no central
+    directory lived in the library for two weeks, re-placed out of staging on
+    every retry and re-stamped 'done' each time, while ownership — which DOES
+    open the file — kept correctly reporting the issue as missing."""
+
+    def _truncated_zip(self, path):
+        """A real ZIP with its central directory lopped off: opens as bytes,
+        passes a magic-byte sniff, and cannot be read by any zip reader."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("p000.jpg", b"\xff\xd8\xff\xe0" + b"x" * 5000)
+        raw = buf.getvalue()
+        pathlib.Path(path).write_bytes(raw[: len(raw) // 2])
+        return str(path)
+
+    def test_truncated_archive_is_not_owned(self, tmp_path):
+        from kometa.naming import counts_as_owned
+        p = self._truncated_zip(tmp_path / "Series #006.cbz")
+        assert counts_as_owned(p, "Series") is False
+
+    def test_canonicalize_renames_a_percent_escaped_name(self, tmp_path):
+        from kometa.downloader import _canonicalize_placed
+        src = tmp_path / "Avengers%20World%20018%20%282015%29.cbz"
+        src.write_bytes(b"x")
+        out = _canonicalize_placed(str(src), "Avengers World", 18.0)
+        assert os.path.basename(out) == "Avengers World #018.cbz"
+
+    def test_canonicalize_never_clobbers_an_existing_file(self, tmp_path):
+        from kometa.downloader import _canonicalize_placed
+        (tmp_path / "Avengers World #018.cbz").write_bytes(b"incumbent")
+        src = tmp_path / "Avengers World 018 (2015) (Zone-Empire).cbz"
+        src.write_bytes(b"newcomer")
+        out = _canonicalize_placed(str(src), "Avengers World", 18.0)
+        assert out == str(src)                                  # left alone
+        assert (tmp_path / "Avengers World #018.cbz").read_bytes() == b"incumbent"
+
+    def test_canonicalize_is_a_noop_without_a_title(self, tmp_path):
+        from kometa.downloader import _canonicalize_placed
+        src = tmp_path / "whatever.cbz"
+        src.write_bytes(b"x")
+        assert _canonicalize_placed(str(src), None, 3.0) == str(src)
+
+
+class TestServerFilenameUnquoting:
+    """The Content-Disposition branch always decoded percent-escapes; the URL
+    fallback did not. A GetComics link with no CD header therefore put
+    'Avengers%20World%20018%20%282015%29.cbz' on disk, and every later reader
+    failed to find an issue number in it — so the library reported an issue it
+    actually owned as missing."""
+
+    class _Resp:
+        def __init__(self, cd=""):
+            self.headers = {"content-disposition": cd} if cd else {}
+
+    def test_url_fallback_is_unquoted(self):
+        from kometa.downloader import _server_filename
+        got = _server_filename(
+            self._Resp(),
+            None,
+            "https://getcomics.org/dl/Avengers%20World%20018%20%282015%29.cbz",
+        )
+        assert got == "Avengers World 018 (2015).cbz"
+
+    def test_hint_filename_is_unquoted(self):
+        from kometa.downloader import _server_filename
+        got = _server_filename(self._Resp(), "Secret%20Wars%2005.cbz", "http://x/y")
+        assert got == "Secret Wars 05.cbz"
+
+    def test_content_disposition_still_wins_and_decodes(self):
+        from kometa.downloader import _server_filename
+        got = _server_filename(
+            self._Resp('attachment; filename="Real%20Name%20001.cbz"'),
+            "ignored.cbz", "http://x/other.cbz")
+        assert got == "Real Name 001.cbz"

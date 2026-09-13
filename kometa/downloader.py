@@ -16,7 +16,7 @@ from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
                            parse_issue_number, parse_volume_number,
                            scan_folder_numbers,
                            canonical_issue_filename, format_issue_number,
-                           is_variant_scan)
+                           is_variant_scan, counts_as_owned)
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -431,6 +431,18 @@ class DuplicateIssueError(ValueError):
 
 class WrongIssueError(DuplicateIssueError):
     pass
+
+
+class UnreadableArchiveError(ValueError):
+    """The bytes arrived and the archive cannot be opened — no pages in it.
+
+    Deliberately NOT a DuplicateIssueError: a dupe means "you already have this",
+    which parks the row quietly. This means "what we were sold is not a comic",
+    which has to FAIL loudly and blacklist the source, or the next retry buys the
+    same corpse. That is not hypothetical — a 424MB file with a valid ZIP header
+    and no central directory lived in the library for two weeks, re-placed out of
+    staging on every retry and re-stamped 'done' each time, while ownership (which
+    does open the file) kept correctly reporting the issue as missing."""
 
 
 # Matches "#135", "#135.1" — strips leading zeros
@@ -961,6 +973,24 @@ def download_issue(
         # rar_dir belongs to the DOWNLOADED archive: valid for dest_path unless
         # the pack branch above swapped dest_path for an extracted member.
         dest_path = ensure_cbz(dest_path, extracted_dir=None if extracted else rar_dir)
+
+        # The library's own name, whatever the server chose to call it. Only the
+        # pack path did this before, so a single-issue grab kept its scene name
+        # (or its percent-escapes) and drifted from every other acquisition path.
+        dest_path = _canonicalize_placed(dest_path, title, issue_number)
+
+        # Last gate before we call this an acquisition. Everything upstream
+        # verifies a CLAIM — the server's filename, ComicInfo, the download
+        # client's "completed" — and none of it opens the file we just placed.
+        if not counts_as_owned(dest_path, title):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+            raise UnreadableArchiveError(
+                f"Placed file for #{format_issue_number(issue_number)} has no readable "
+                f"pages — rejecting it rather than recording a comic we don't have"
+            )
     finally:
         if rar_dir:
             shutil.rmtree(rar_dir, ignore_errors=True)
@@ -1144,6 +1174,25 @@ def _extract_pack(zip_path: str, dest_dir: str, series_title: str | None = None)
         return []
 
 
+def _canonicalize_placed(path: str, title: str | None, issue_number: float) -> str:
+    """Rename a placed single issue to the library's name. Returns the new path
+    (or the original when there's nothing to do). Never clobbers: if the
+    canonical name is already taken by a DIFFERENT file, leave this one alone
+    and let the caller's ownership check decide which survives."""
+    if not title:
+        return path
+    ext = os.path.splitext(path)[1].lower()
+    want = os.path.join(os.path.dirname(path), canonical_issue_filename(title, issue_number, ext))
+    if want == path or os.path.exists(want):
+        return path
+    try:
+        os.rename(path, want)
+        return want
+    except OSError as e:
+        logger.warning(f"Could not canonicalize {path}: {e}")
+        return path
+
+
 def _server_filename(response, hint_filename: str | None, url: str) -> str | None:
     """Return the real filename from the server, or None if unresolvable."""
     from urllib.parse import unquote
@@ -1155,8 +1204,13 @@ def _server_filename(response, hint_filename: str | None, url: str) -> str | Non
             if name and any(name.lower().endswith(e) for e in PIPELINE_EXTS):
                 return name
     if hint_filename and any(hint_filename.lower().endswith(e) for e in PIPELINE_EXTS):
-        return hint_filename
-    basename = url.rsplit("/", 1)[-1].split("?")[0]
+        return unquote(hint_filename)
+    # unquote here too. The Content-Disposition branch above has always decoded,
+    # but this fallback handed back the raw URL segment — so a GetComics link
+    # with no CD header put "Avengers%20World%20018%20%282015%29.cbz" on disk,
+    # percent-escapes and all. Every later reader then failed to find an issue
+    # number in it and the library reported an issue it actually owned as missing.
+    basename = unquote(url.rsplit("/", 1)[-1].split("?")[0])
     if basename and any(basename.lower().endswith(e) for e in PIPELINE_EXTS):
         return basename
     return None

@@ -23,7 +23,7 @@ from kometa.usenet_client import PACK_THRESHOLD
 # protocols. (The old per-newznab-feed usenet_client search is retired.)
 from kometa.prowlarr_client import search_usenet, search_usenet_pack
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
-from kometa.downloader import DuplicateIssueError
+from kometa.downloader import DuplicateIssueError, UnreadableArchiveError
 from kometa.sabnzbd_client import find_comics_in_dir
 
 logger = logging.getLogger(__name__)
@@ -364,6 +364,15 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
         )
     except DuplicateIssueError:
         raise
+    except UnreadableArchiveError as e:
+        # The bytes arrived in full and are not a comic. Unlike a dead mirror,
+        # this link will deliver the exact same garbage next time — so burn it
+        # here, or the retry rides the same carousel forever.
+        logger.info(f"GetComics served an unreadable archive for {item['title']!r} "
+                    f"#{item['issue_number']}: {e} — blacklisting the link")
+        db.add_failed_source(qid, dl_url, path=DB_PATH)
+        clear_progress(qid)
+        return False, str(e)
     except Exception as e:
         # GetComics served a link, but the FILE HOST (not GetComics itself) failed to
         # hand over the bytes — dead mirror, hotlink block, host-level rate limit.
@@ -909,6 +918,32 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     finally:
         if rar_dir:
             _shutil.rmtree(rar_dir, ignore_errors=True)
+
+    # The same last gate the GetComics path now has. Everything above this line
+    # verifies a CLAIM: the indexer's title, the NZB's name, SABnzbd saying the
+    # job completed. None of it opens the file. A completed SAB job is not a
+    # delivered comic — three Avengers World rows recorded 'done' against paths
+    # whose files had been pulled out of the library an hour earlier, and a
+    # truncated 424MB Infinity #6 was re-placed out of staging and re-stamped
+    # 'done' on every single retry for two weeks. Open it, or don't claim it.
+    from kometa.naming import counts_as_owned
+    if not os.path.exists(dest_path) or not counts_as_owned(dest_path, title):
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+                logger.info(f"{label}: removed unreadable {dest_path}")
+            except OSError:
+                pass
+        # Blacklist what sold it to us, so the retry buys something ELSE rather
+        # than the same corpse on a loop.
+        src = item.get("source_url")
+        if src:
+            db.add_failed_source(qid, src, path=DB_PATH)
+        db.update_queue_state(
+            qid, "failed",
+            error=f"{label}: delivered file has no readable pages",
+            path=DB_PATH)
+        return
 
     db.complete_download(
         qid, item["tracked_series_id"], issue_number, item.get("store_date"),
