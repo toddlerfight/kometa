@@ -534,3 +534,60 @@ class TestServerFilenameUnquoting:
             self._Resp('attachment; filename="Real%20Name%20001.cbz"'),
             "ignored.cbz", "http://x/other.cbz")
         assert got == "Real Name 001.cbz"
+
+
+class TestComicInfoSeriesGuard:
+    """An issue number is not an identity. Every run in print has a #3, so a
+    Batman #3 answers "is this issue 3?" perfectly and is still the wrong comic.
+    One landed in the Infinity folder wearing the name 'Infinity #003.cbz' with
+    <Series>Batman: The Adventures Continue (2020-)</Series> inside it. The
+    number guard compared 3 to 3, waved it through, and Komga then renamed the
+    entire Infinity series after the impostor."""
+
+    def _cbz(self, path, series=None, number=None, pages=6):
+        with zipfile.ZipFile(path, "w") as z:
+            for i in range(pages):
+                z.writestr(f"p{i:03d}.jpg", b"\xff\xd8\xff\xe0" + b"x" * 400)
+            if series or number:
+                bits = ""
+                if series: bits += f"<Series>{series}</Series>"
+                if number is not None: bits += f"<Number>{number}</Number>"
+                z.writestr("ComicInfo.xml", f"<ComicInfo>{bits}</ComicInfo>")
+        return str(path)
+
+    def test_rejects_a_different_series_wearing_the_right_number(self, tmp_path):
+        from kometa.downloader import _verify_single_issue, WrongIssueError
+        p = self._cbz(tmp_path / "Infinity #003.cbz",
+                      series="Batman: The Adventures Continue (2020-)", number=3)
+        with pytest.raises(WrongIssueError, match="Batman"):
+            _verify_single_issue(p, 3.0, series_title="Infinity")
+
+    def test_accepts_the_same_series_padded_with_a_volume_year(self, tmp_path):
+        """Publishers pad the field; 'Avengers (2012-)' is still Avengers."""
+        from kometa.downloader import _verify_single_issue
+        p = self._cbz(tmp_path / "Avengers #003.cbz", series="Avengers (2012-)", number=3)
+        _verify_single_issue(p, 3.0, series_title="Avengers")
+
+    def test_accepts_punctuation_and_spacing_differences(self, tmp_path):
+        from kometa.downloader import _verify_single_issue
+        p = self._cbz(tmp_path / "x.cbz", series="Spider-Man / Deadpool", number=1)
+        _verify_single_issue(p, 1.0, series_title="Spider-Man Deadpool")
+
+    def test_a_file_with_no_comicinfo_stays_innocent(self, tmp_path):
+        from kometa.downloader import _verify_single_issue
+        p = self._cbz(tmp_path / "y.cbz")
+        _verify_single_issue(p, 3.0, series_title="Infinity")
+
+    def test_no_expected_title_means_no_opinion(self, tmp_path):
+        from kometa.downloader import _verify_single_issue
+        p = self._cbz(tmp_path / "z.cbz", series="Something Else Entirely", number=3)
+        _verify_single_issue(p, 3.0, series_title=None)
+
+    def test_series_disagreement_is_symmetric_containment(self):
+        from kometa.downloader import _series_disagrees
+        assert _series_disagrees("Infinity", "Batman: The Adventures Continue") is True
+        assert _series_disagrees("Infinity", "Infinity (2013-)") is False
+        assert _series_disagrees("Avengers World", "Avengers World (2014-2015)") is False
+        assert _series_disagrees("Avengers", "New Avengers") is False   # containment: tolerate
+        assert _series_disagrees(None, "Whatever") is False
+        assert _series_disagrees("Whatever", None) is False

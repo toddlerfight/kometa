@@ -16,7 +16,7 @@ from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
                            parse_issue_number, parse_volume_number,
                            scan_folder_numbers,
                            canonical_issue_filename, format_issue_number,
-                           is_variant_scan, counts_as_owned)
+                           is_variant_scan, counts_as_owned, norm_key)
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -498,18 +498,20 @@ def _read_archive_comicinfo(archive) -> str | None:
 
 
 _COMICINFO_NUM_RE = re.compile(r'<Number>\s*(\d+(?:\.\d+)?)\s*</Number>', re.IGNORECASE)
+_COMICINFO_SERIES_RE = re.compile(r'<Series>(.*?)</Series>', re.IGNORECASE | re.DOTALL)
 
 
-def _read_cbz_number(path: str) -> float | None:
-    """Return the issue number from ComicInfo.xml. Detects format by magic bytes, not extension."""
+def _read_comicinfo_xml(path: str) -> str | None:
+    """The raw ComicInfo.xml out of an archive, or None. Detects format by magic
+    bytes, not extension. Split out of _read_cbz_number so the Series guard can
+    ask the same file the same question without opening it a second time."""
     try:
         with open(path, 'rb') as fh:
             magic = fh.read(4)
-        xml = None
         if magic[:2] == b'PK':  # ZIP — real CBZ or mislabeled
             with zipfile.ZipFile(path, 'r') as zf:
-                xml = _read_archive_comicinfo(zf)
-        elif magic[:4] == b'Rar!':  # RAR — real CBR or mislabeled .cbz
+                return _read_archive_comicinfo(zf)
+        if magic[:4] == b'Rar!':  # RAR — real CBR or mislabeled .cbz
             try:
                 import rarfile
                 # No forced UNRAR_TOOL: rarfile auto-detects unrar/unar/bsdtar.
@@ -517,13 +519,58 @@ def _read_cbz_number(path: str) -> float | None:
                 # full RAR5 backend available, pinning the partial one (bsdtar
                 # chokes on compressed/solid v5) would be self-sabotage.
                 with rarfile.RarFile(path, 'r') as rf:
-                    xml = _read_archive_comicinfo(rf)
+                    return _read_archive_comicinfo(rf)
             except Exception:
                 return None
-        if xml:
-            m = _COMICINFO_NUM_RE.search(xml)
-            if m:
-                return float(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _read_cbz_number(path: str) -> float | None:
+    """Return the issue number from ComicInfo.xml."""
+    xml = _read_comicinfo_xml(path)
+    if xml:
+        m = _COMICINFO_NUM_RE.search(xml)
+        if m:
+            return float(m.group(1))
+    return None
+
+
+def _comicinfo_series(xml: str | None) -> str | None:
+    """<Series> out of a ComicInfo blob."""
+    if not xml:
+        return None
+    m = _COMICINFO_SERIES_RE.search(xml)
+    return m.group(1).strip() if m and m.group(1).strip() else None
+
+
+def _series_disagrees(want: str | None, got: str | None) -> bool:
+    """Does the archive's own ComicInfo name a DIFFERENT series than the one we
+    asked for? Tolerant on purpose: publishers pad the field with volume years
+    and subtitles ('Avengers (2012-)' vs 'Avengers'), so containment either way
+    counts as agreement and only two unrelated names are a rejection.
+
+    Earned the hard way. A file landed as 'Infinity #003.cbz' carrying
+    <Series>Batman: The Adventures Continue (2020-)</Series> and <Number>3</Number>.
+    The number guard right below this compared 3 to 3 and waved it through, and
+    Komga then renamed the whole Infinity folder after the impostor."""
+    if not want or not got:
+        return False
+    w, g = norm_key(want), norm_key(got)
+    if not w or not g:
+        return False
+    return w not in g and g not in w
+
+
+def _comicinfo_xml_from_dir(d: str) -> str | None:
+    """Root-level ComicInfo.xml from an already-extracted dir — same rule as
+    _read_archive_comicinfo, where a nested one never matched either."""
+    try:
+        for f in os.listdir(d):
+            if f.lower() == 'comicinfo.xml':
+                with open(os.path.join(d, f), 'rb') as fh:
+                    return fh.read().decode('utf-8', errors='replace')
     except Exception:
         pass
     return None
@@ -722,9 +769,21 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     fnum = _num_from_filename(name)
     if fnum is not None and fnum != issue_number:
         raise WrongIssueError(f"file is #{int(fnum)}, expected #{int(issue_number)}")
-    cnum = _comicinfo_number_from_dir(extracted_dir) if extracted_dir else _read_cbz_number(path)
+    cxml = _comicinfo_xml_from_dir(extracted_dir) if extracted_dir else _read_comicinfo_xml(path)
+    cnum = None
+    if cxml:
+        m = _COMICINFO_NUM_RE.search(cxml)
+        cnum = float(m.group(1)) if m else None
     if cnum is not None and cnum != issue_number:
         raise WrongIssueError(f"ComicInfo reports #{int(cnum)}, expected #{int(issue_number)}")
+    # The number alone is not an identity. Every run in print has a #3, so a
+    # Batman #3 answers "is this issue 3?" perfectly well while being the wrong
+    # comic entirely — which is exactly how one landed in the Infinity folder
+    # and got the whole series renamed after it in Komga.
+    cseries = _comicinfo_series(cxml)
+    if _series_disagrees(series_title, cseries):
+        raise WrongIssueError(
+            f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
     pages = _count_images_in_dir(extracted_dir) if extracted_dir else _count_archive_images(path)
     limit = page_max or _SINGLE_ISSUE_PAGE_MAX
     if pages is not None and pages > limit:
