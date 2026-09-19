@@ -160,6 +160,14 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Komga cover URL for an issue. The ?v= is the file's version (mtime:size) — Komga
+// keeps a book id when the file behind it is swapped, so the bare URL kept a dead
+// coverless #015 alive in every browser for the 30 days we told them to cache it.
+function bookThumb(issue) {
+  const v = issue.komga_book_v ? `?v=${encodeURIComponent(issue.komga_book_v)}` : '';
+  return `/api/book/${issue.komga_book_id}/thumbnail${v}`;
+}
+
 function _localToday() {
   // The VIEWER's own calendar date. Drives the "today/upcoming" line and the TODAY
   // label, so a release shows TODAY on YOUR date — not a day late because the US clock
@@ -606,7 +614,7 @@ function _issueTileHtml(s, issue) {
       const thumbSrc = issue.variant_cover
         ? issue.variant_cover
         : issue.komga_book_id
-          ? `/api/book/${issue.komga_book_id}/thumbnail`
+          ? bookThumb(issue)
           : `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
       inner = `<div class="issue-tile-img">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
@@ -927,7 +935,7 @@ async function renderSeriesDetail(id) {
   // one-shots) never stamp metron_image, so keying off it alone left them with a dead
   // /series/{id}/thumbnail fallback and a blank backdrop. The per-issue route self-heals.
   const _covers = (s.issues || []).map(i =>
-    i.komga_book_id ? `/api/book/${i.komga_book_id}/thumbnail`
+    i.komga_book_id ? bookThumb(i)
       : _metronArt(i) || `/api/series/${s.id}/issues/${i.number}/thumbnail`);
   const _bg = _covers.length
     ? _covers[Math.floor(Math.random() * _covers.length)]
@@ -2965,7 +2973,7 @@ async function showIssueModal(seriesId, number) {
   const imgSrc = issue.variant_cover
     ? issue.variant_cover
     : issue.komga_book_id
-      ? `/api/book/${esc(issue.komga_book_id)}/thumbnail`
+      ? esc(bookThumb(issue))
       : (_metronArt(issue)
           // same server-side fallback chain the grid tiles use — never show the
           // no-cover void when LOCG has variant art for an artless upcoming issue

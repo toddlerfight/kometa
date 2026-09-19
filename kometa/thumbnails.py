@@ -254,7 +254,7 @@ def issue_thumbnail(series_id: int, number: float):
             resp = _komga_thumb(
                 komga,
                 f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-                f"komga:book:{book_id}",
+                _book_cache_key(book_id, issue.get("komga_book_v") if issue else None),
             )
             if resp:
                 return resp
@@ -304,8 +304,15 @@ def issue_thumbnail(series_id: int, number: float):
     return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
 
 
+def _book_cache_key(book_id: str, v: str | None) -> str:
+    # Versioned: a replaced file under the same book id is a cache MISS, not
+    # the old cover served off disk forever. Unversioned keeps the old key so
+    # existing cache entries stay warm for callers that don't know a version.
+    return f"komga:book:{book_id}:{v}" if v else f"komga:book:{book_id}"
+
+
 @router.get("/api/book/{book_id}/thumbnail")
-def book_thumbnail(book_id: str):
+def book_thumbnail(book_id: str, v: str | None = None):
     komga = _komga()
     if not komga:
         raise HTTPException(404)
@@ -313,7 +320,7 @@ def book_thumbnail(book_id: str):
         resp = _komga_thumb(
             komga,
             f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-            f"komga:book:{book_id}",
+            _book_cache_key(book_id, v),
         )
         if resp:
             return resp

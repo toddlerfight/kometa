@@ -48,6 +48,17 @@ def init_db(path=DB_PATH):
                 fetched_at    TEXT DEFAULT (datetime('now'))
             );
 
+            -- A Komga book id outlives the file behind it: replace a coverless
+            -- #015 with a whole one at the same path and Komga keeps the id, so
+            -- '/api/book/<id>/thumbnail' kept serving the old cover — from our
+            -- disk cache, and from every browser told to hold it for 30 days.
+            -- The version (file mtime + size, as Komga reports them) rides on
+            -- the URL and the cache key, so a new file is a new cover.
+            CREATE TABLE IF NOT EXISTS komga_book_version (
+                book_id TEXT PRIMARY KEY,
+                v       TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS trades_cache (
                 tracked_series_id INTEGER PRIMARY KEY REFERENCES tracked_series(id),
                 data_json         TEXT NOT NULL,
@@ -587,10 +598,14 @@ def get_all_series_summaries(path=DB_PATH):
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_image,
                 (SELECT komga_book_id FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga,
+                (SELECT kv.v FROM issue_status i2 JOIN komga_book_version kv ON kv.book_id = i2.komga_book_id
+                   WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga_v
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today))
+        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -616,7 +631,7 @@ def get_all_series_summaries(path=DB_PATH):
             cn = r["recent_number"]
             card_image = variant_map.get((sid, cn)) if cn is not None else None
             if not card_image and r["recent_komga"]:
-                card_image = f"/api/book/{r['recent_komga']}/thumbnail"
+                card_image = book_thumb_url(r["recent_komga"], r["recent_komga_v"])
             if not card_image:
                 card_image = r["recent_image"]
         out[sid] = {
@@ -781,10 +796,29 @@ def get_arc_discovery(tracked_series_id, path=DB_PATH):
     return {"arcs": json.loads(row["data_json"]), "age": row["age"]}
 
 
+def book_thumb_url(book_id: str, v: str | None = None) -> str:
+    """The one spelling of a Komga cover URL — versioned when we know the file."""
+    from urllib.parse import quote
+    return f"/api/book/{book_id}/thumbnail" + (f"?v={quote(v)}" if v else "")
+
+
+def set_komga_book_versions(versions: dict, path=DB_PATH):
+    """{book_id: v} from a Komga book list, in one transaction."""
+    if not versions:
+        return
+    with _connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO komga_book_version (book_id, v) VALUES (?, ?) "
+            "ON CONFLICT(book_id) DO UPDATE SET v = excluded.v",
+            list(versions.items()))
+
+
 def get_issues_for_series(tracked_series_id, path=DB_PATH):
     with _connect(path) as conn:
         rows = [dict(r) for r in conn.execute("""
-            SELECT * FROM issue_status WHERE tracked_series_id = ? ORDER BY number
+            SELECT i.*, kv.v AS komga_book_v FROM issue_status i
+            LEFT JOIN komga_book_version kv ON kv.book_id = i.komga_book_id
+            WHERE i.tracked_series_id = ? ORDER BY i.number
         """, (tracked_series_id,))]
         prefs = {r["number"]: r for r in conn.execute(
             "SELECT number, selected, primary_id FROM variant_prefs WHERE tracked_series_id = ?",
