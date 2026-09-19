@@ -16,7 +16,8 @@ from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
                            parse_issue_number, parse_volume_number,
                            scan_folder_numbers,
                            canonical_issue_filename, format_issue_number,
-                           is_variant_scan, counts_as_owned, norm_key)
+                           is_variant_scan, counts_as_owned, norm_key,
+                           find_issue_file)
 import kometa.sources as sources
 
 logger = logging.getLogger(__name__)
@@ -968,52 +969,74 @@ def download_issue(
     # the whole archive (it used to happen three times per issue). None for
     # ZIPs (cheap member reads, no extract needed) or when the extract fails —
     # consumers then fall back to their own readers, same semantics as before.
-    rar_dir = _extract_rar_once(staging_path)
+    # A ZIP of comics is a SHELF, not an issue — decide that before anything
+    # treats the wrapper as the comic. The single-issue checks used to run on the
+    # wrapper first: a '001-005' pack reads as issue #1 by filename, so asking
+    # it for #2 got the whole shelf thrown out as the wrong issue before a single
+    # member was looked at. And a pack whose members we already owned extracted
+    # nothing, so the wrapper fell through and got filed as the comic itself.
+    is_pack = _pack_comic_count(staging_path) > 1
+    rar_dir = None if is_pack else _extract_rar_once(staging_path)
+    extracted: list[str] = []
     try:
-        # Content checks: wrong issue (server filename / ComicInfo) or a collection /
-        # webtoon edition (page count). Shared with the usenet finalize so both sources
-        # reject the same bad content. Clean up the staging file on rejection.
-        try:
-            _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
-                                 page_max=page_max, series_title=title)
-        except WrongIssueError:
-            os.remove(staging_path)
-            raise
-
         if not dest_dir:
             dest_dir = _resolve_dir(sources.comics_root(), publisher or "Unknown", title)
         os.makedirs(dest_dir, exist_ok=True)
-        dest_path = os.path.join(dest_dir, _safe(filename))
-        if os.path.exists(dest_path):
-            os.remove(staging_path)
-            raise DuplicateIssueError(
-                f"{filename} already exists in library — GetComics served an existing issue"
-            )
-        shutil.move(staging_path, dest_path)
-        dest_path = _fix_extension(dest_path)
-        logger.info(f"Placed: {dest_path}")
 
-        # If it's a ZIP pack containing multiple comics, extract and discard the wrapper.
-        # (A pack is always a ZIP, so rar_dir is None here — no stale-dir risk below.)
-        extracted = _extract_pack(dest_path, dest_dir, series_title=title)
-        if extracted:
-            os.remove(dest_path)
-            logger.info(f"Pack: {len(extracted)} new file(s) from {os.path.basename(dest_path)}")
-            # Find the extracted file that matches the issue we actually requested (Gap J/K)
+        if is_pack:
+            try:
+                extracted = _extract_pack(staging_path, dest_dir, series_title=title)
+            finally:
+                os.remove(staging_path)
+            logger.info(f"Pack: {len(extracted)} new file(s) from {filename}")
             target = _pick_issue_file(extracted, issue_number)
             if target is None:
-                # Pack didn't contain our specific issue — leave extracted files on disk
-                # so Komga picks them up on next scan; only fail this queue entry
-                logger.warning(
-                    f"Pack did not contain issue #{int(issue_number)}, "
-                    f"leaving {len(extracted)} extracted file(s) on disk"
-                )
+                # Maybe an earlier grab of this same chunk already shelved it —
+                # the issue is here, and that's an acquisition, not a miss.
+                already = find_issue_file(dest_dir, title, issue_number)
+                if already and counts_as_owned(already, title):
+                    logger.info(f"Pack: #{format_issue_number(issue_number)} already on the shelf: {already}")
+                    force_readable_tree(dest_dir)
+                    if extracted:
+                        try:
+                            komga_scan_fn()
+                        except Exception as e:
+                            logger.warning(f"Komga scan trigger failed: {e}")
+                    return already
+                # Extracted extras stay on disk — the next sync picks them up.
                 raise WrongIssueError(
-                    f"Pack did not contain issue #{int(issue_number)} "
+                    f"Pack did not contain issue #{format_issue_number(issue_number)} "
                     f"(found: {[os.path.basename(f) for f in extracted]})"
                 )
+            # The wrapper skipped the single-issue checks; the member doesn't.
+            try:
+                _verify_single_issue(target, issue_number, os.path.basename(target),
+                                     page_max=page_max, series_title=title)
+            except WrongIssueError:
+                os.remove(target)
+                raise
             dest_path = target
             # Other newly-extracted issues stay on disk — next sync picks them up
+        else:
+            # Content checks: wrong issue (server filename / ComicInfo) or a collection /
+            # webtoon edition (page count). Shared with the usenet finalize so both sources
+            # reject the same bad content. Clean up the staging file on rejection.
+            try:
+                _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
+                                     page_max=page_max, series_title=title)
+            except WrongIssueError:
+                os.remove(staging_path)
+                raise
+
+            dest_path = os.path.join(dest_dir, _safe(filename))
+            if os.path.exists(dest_path):
+                os.remove(staging_path)
+                raise DuplicateIssueError(
+                    f"{filename} already exists in library — GetComics served an existing issue"
+                )
+            shutil.move(staging_path, dest_path)
+            dest_path = _fix_extension(dest_path)
+            logger.info(f"Placed: {dest_path}")
 
         if tracked_series_id is not None and db_path is not None:
             try:

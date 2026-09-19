@@ -153,6 +153,65 @@ def _pack_post_matches(title_norm: str, post_raw: str, last_issue: int,
     return True
 
 
+def _issue_pack_post_covers(title_norm: str, post_raw: str, issue_number: float,
+                            series_year=None) -> bool:
+    """True if this is a multi-issue post for OUR series whose range covers the
+    issue we want. _series_matches throws these out on sight — 'Curse Words #1 – 25
+    + TPBs' has 'tpbs' in it, which reads as a spinoff — and that's correct for the
+    first two tiers. But when GetComics never posted #2 on its own, this is the only
+    place #2 lives, and refusing to look at it left six issues dead as 'not found'
+    while the post that had them sat on page one of the results.
+
+    The spinoff guard still runs, on what's left after the packaging is peeled off:
+    the range, the '+ TPBs' tail, the parentheticals, the volume ordinal. 'Curse
+    Words Spring Has Sprung Special #1 – 2' keeps 'spring has sprung special' and
+    stays rejected."""
+    m = _PACK_ISSUE_RANGE_RE.search(post_raw)
+    if not m:
+        return False
+    lo, hi = int(m.group(1)), int(m.group(2))
+    if hi <= lo or not lo <= issue_number <= hi:
+        return False
+    ym = _POST_YEAR_RANGE_RE.search(post_raw)
+    if ym and series_year and abs(int(ym.group(1)) - int(series_year)) > 1:
+        return False           # same name, different run
+    core = post_raw[:m.start()] + " " + post_raw[m.end():]
+    core = re.sub(r'\+[^()]*', ' ', core)                          # '+ TPBs', '+ Extras'
+    core = re.sub(r'\([^)]*\)', ' ', core)                         # (2017-2019), (Digital)
+    core = re.sub(r'\bvol(?:ume)?\.?\s*\d+\b', ' ', core, flags=re.IGNORECASE)
+    return _series_matches(title_norm, _normalize(core))
+
+
+# A big pack post doesn't hand you one file — it hands you a shelf. 'Curse Words
+# #1 – 25 + TPBs' is four separate downloads, one per line: '#1 – 5 (2017) (479 MB)
+# : Main Server | Mega | ...'. The old extractor grabbed the first Main Server on
+# the page, which is the #1-5 chunk no matter what you asked for. Ask for #7 and
+# you'd get half a gig of the wrong five comics.
+_CHUNK_RANGE_RE = re.compile(r'#\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
+
+
+def _chunk_links(body) -> list[tuple[int, int, str]]:
+    """(lo, hi, href) for every download line on a post that labels its own issue
+    range. Empty for an ordinary single-download post."""
+    chunks = []
+    for el in body.find_all(["li", "p"]):
+        a = next((a for a in el.find_all("a", href=True)
+                  if any(t in a.get_text(strip=True).lower() for t in GC_DIRECT_TERMS)), None)
+        if not a:
+            continue
+        # The label is the text BEFORE the first link — the post's own title line
+        # also says '#1 – 25', and it isn't a download.
+        label = ""
+        for node in el.children:
+            if isinstance(node, Tag) and (node.name == "a" or node.find("a")):
+                break
+            label += node.get_text(" ") if isinstance(node, Tag) else str(node)
+        m = _CHUNK_RANGE_RE.search(label)
+        if m and int(m.group(2)) > int(m.group(1)):
+            chunks.append((int(m.group(1)), int(m.group(2)), a["href"]))
+    return chunks
+
+
 def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None, post_raw: str = "") -> bool:
     """Trade-aware post matcher — the mirror image of _series_matches, which
     REJECTS format editions. Here we REQUIRE one: the post must name the series,
@@ -266,11 +325,13 @@ class GetComicsClient:
             title,
         ]
 
+        packs: list[str] = []   # multi-issue posts that cover us — last resort
         for query in queries:
             logger.info(f"GetComics search: {query!r}")
             if status_fn:
                 status_fn(f"GetComics: “{query}”")
-            post_url = self._search_page(query, title, issue_number)
+            post_url = self._search_page(query, title, issue_number,
+                                         series_year=series_year, packs=packs)
             if post_url:
                 url, fname = self._extract_download(post_url)
                 if url and url in exclude_urls:
@@ -278,6 +339,17 @@ class GetComicsClient:
                     continue
                 if url:
                     return url, fname
+
+        # Nobody posted this issue by itself. A pack that covers it is still a
+        # delivery — the downloader pulls the one issue out and shelves the rest.
+        for post_url in packs:
+            url, fname = self._extract_download(post_url, issue_number=issue_number)
+            if url and url in exclude_urls:
+                logger.info(f"GetComics: pack {post_url} resolves to an excluded download — skipping")
+                continue
+            if url:
+                logger.info(f"GetComics: #{num_str} via pack post {post_url}")
+                return url, fname
 
         return None, None
 
@@ -307,7 +379,10 @@ class GetComicsClient:
                 status_fn(f"GetComics pack: \u201c{query}\u201d")
             post_url = self._search_pack_page(query, title_norm, last_issue, series_year)
             if post_url:
-                url, fname = self._extract_download(post_url)
+                # A chunked post can't settle the run in one grab — queued as a
+                # pack it'd land the first chunk and call the backlog handled.
+                # Refuse it here; the single-issue path takes it chunk by chunk.
+                url, fname = self._extract_download(post_url, allow_chunked=False)
                 if url and url in exclude_urls:
                     logger.info(f"GetComics pack: {post_url} is an excluded download — skipping")
                     continue
@@ -394,7 +469,8 @@ class GetComicsClient:
                 return a.get("href", "")
         return None
 
-    def _search_page(self, query: str, title: str, issue_number: float) -> str | None:
+    def _search_page(self, query: str, title: str, issue_number: float,
+                     series_year=None, packs: list | None = None) -> str | None:
         try:
             r = self._get(BASE, params={"s": query})
             r.raise_for_status()
@@ -411,6 +487,19 @@ class GetComicsClient:
             return None
 
         title_norm = _normalize(title)
+
+        # Park any pack post that covers us for the caller's last-resort pass —
+        # only after every query's single-issue tiers have come up dry.
+        if packs is not None:
+            for article in articles:
+                h1 = article.find("h1", {"class": "post-title"})
+                a = h1.find("a") if h1 else None
+                if not a:
+                    continue
+                href = a.get("href", "")
+                if href not in packs and _issue_pack_post_covers(
+                        title_norm, a.get_text(strip=True), issue_number, series_year):
+                    packs.append(href)
 
         # Best match: series name matches AND post explicitly covers our issue number
         for article in articles:
@@ -448,7 +537,12 @@ class GetComicsClient:
 
         return None
 
-    def _extract_download(self, post_url: str) -> tuple[str | None, str | None]:
+    def _extract_download(self, post_url: str, issue_number: float | None = None,
+                          allow_chunked: bool = True) -> tuple[str | None, str | None]:
+        """issue_number: when the post is split into ranged chunks, take the chunk
+        that covers it — and NOTHING if none does. allow_chunked=False refuses a
+        chunked post outright (the whole-run pack path wants every issue, and one
+        chunk is not that)."""
         try:
             r = self._get(post_url)
             r.raise_for_status()
@@ -462,6 +556,20 @@ class GetComicsClient:
         body = soup.find("section", {"class": "post-contents"})
         if not body:
             body = soup
+
+        chunks = _chunk_links(body)
+        if len(chunks) > 1:
+            if not allow_chunked:
+                logger.info(f"GetComics: {post_url} is split into {len(chunks)} chunks — "
+                            f"not a single complete-run download")
+                return None, None
+            if issue_number is not None:
+                hit = next((c for c in chunks if c[0] <= issue_number <= c[1]), None)
+                if not hit:
+                    logger.info(f"GetComics: no chunk on {post_url} covers #{issue_number:g}")
+                    return None, None
+                logger.info(f"GetComics: chunk #{hit[0]}-{hit[1]} for #{issue_number:g} {hit[2][:80]}")
+                return hit[2], None
 
         # Strategy 1: find download groups — <p> containing "Language" marks a group
         for p in body.find_all("p"):

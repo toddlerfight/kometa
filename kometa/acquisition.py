@@ -338,10 +338,18 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
         return False, None
 
     if dl_url in downloaded_urls:
-        # This run already pulled this exact pack for another row, and this
-        # issue is STILL queued — the grab didn't settle it. Dead-ending here
-        # as not_found (the old move) silently benched usenet/torrent; treat it
-        # as a GC miss instead and let the cascade earn its keep.
+        # This run already pulled this exact pack for another row. A chunk
+        # ('#1 – 5') shelves its neighbours on the way through — if ours landed,
+        # that's the acquisition; record it instead of re-downloading half a gig.
+        from kometa.naming import counts_as_owned, find_issue_file
+        shelved = find_issue_file(item.get("folder_path"), item["title"], item["issue_number"])
+        if shelved and counts_as_owned(shelved, item["title"]):
+            db.complete_download(qid, item["tracked_series_id"], item["issue_number"], store_date,
+                                 filename=shelved, path=DB_PATH)
+            return True, None
+        # Otherwise the grab didn't settle it. Dead-ending here as not_found
+        # (the old move) silently benched usenet/torrent; treat it as a GC miss
+        # instead and let the cascade earn its keep.
         return False, None
     downloaded_urls.add(dl_url)
 
