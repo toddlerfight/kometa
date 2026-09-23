@@ -131,6 +131,100 @@ def _komga_scan_safe():
         logger.warning(f"Komga scan failed: {e}")
 
 
+# A placed file is only HALF an acquisition. The read link and the thumbnail
+# hang off komga_book_id, and that gets stamped by a SYNC, not by the scan we
+# fire after placing. So for months the flow was: place, tell Komga to look,
+# then wait for the CLOCK — three Absolutes landed 15:54/15:59/16:00 on
+# 2026-09-23 and sat linkless, owned-but-blank, until the 18:00 sync would
+# have got round to them. Worse: Komga swallows a scan request while one is
+# already running, so the third of three back-to-back placements never got
+# looked at AT ALL until someone kicked it by hand.
+#
+# This is the other half. After a placement: watch Komga for the file to show
+# up, re-request the scan once if it's taking its time (the swallowed-request
+# case), then run the one-series sync that stamps the link. Bounded — if
+# Komga never produces the book we sync anyway (ownership is folder-truth and
+# should flip regardless) and the scheduled sync gets a second go later.
+_RESYNC_POLL_S = 5        # how often we ask Komga "got it yet?"
+_RESYNC_RESCAN_AT_S = 45  # no book by now → the scan request was probably eaten; ask again
+_RESYNC_DEADLINE_S = 150  # give up waiting and sync with whatever Komga has
+_RESYNC_BLIND_WAIT_S = 20 # no Komga link / no path to watch for → flat wait, then sync
+
+
+def _komga_has_file(komga, komga_series_id: str, placed_path: str) -> bool:
+    """Does Komga list a live book for this exact filename yet? Match on the
+    file's basename — Komga's `url` is the path it scanned, `name` is the stem.
+    A soft-deleted twin doesn't count; that's the ghost of a previous grab."""
+    want = os.path.basename(placed_path)
+    want_stem = os.path.splitext(want)[0]
+    for b in komga.get_books(komga_series_id):
+        if b.get("deleted"):
+            continue
+        url = b.get("url") or ""
+        if os.path.basename(url) == want or b.get("name") == want_stem:
+            return True
+    return False
+
+
+def _resync_worker(series_id: int, placed_path: str | None, *,
+                   komga=None, sync_fn=None, scan_fn=None,
+                   sleep_fn=time.sleep, now_fn=time.monotonic) -> bool:
+    """Wait for Komga to see `placed_path` (bounded), then sync the series.
+    Returns True if the file was seen before syncing. Every collaborator is
+    injectable so the tests can run this without a network or a clock."""
+    from kometa.sync import sync_one_guarded
+    series = db.get_series_by_id(series_id, path=DB_PATH)
+    if not series:
+        return False
+    komga = komga if komga is not None else _komga()
+    scan_fn = scan_fn or _komga_scan_safe
+    seen = False
+    kid = series.get("komga_series_id")
+    if komga and kid and placed_path:
+        start = now_fn()
+        rescanned = False
+        while True:
+            try:
+                if _komga_has_file(komga, kid, placed_path):
+                    seen = True
+                    break
+            except Exception as e:
+                logger.warning(f"Komga book poll failed for {series.get('title')!r}: {e}")
+            elapsed = now_fn() - start
+            if elapsed >= _RESYNC_DEADLINE_S:
+                logger.warning(
+                    f"Komga never listed {os.path.basename(placed_path)!r} within "
+                    f"{_RESYNC_DEADLINE_S}s — syncing {series.get('title')!r} without it")
+                break
+            if not rescanned and elapsed >= _RESYNC_RESCAN_AT_S:
+                # The first scan request most likely landed while another scan
+                # was running and got dropped on the floor. Ask once more.
+                logger.info(f"Komga scan re-requested for {series.get('title')!r} — "
+                            f"{os.path.basename(placed_path)!r} not listed after {int(elapsed)}s")
+                scan_fn()
+                rescanned = True
+            sleep_fn(_RESYNC_POLL_S)
+    else:
+        # Nothing to watch for (unlinked series, or a multi-file pack with no
+        # single file to name). Give the scan a moment, then let the sync's own
+        # auto-link + book map do the work.
+        sleep_fn(_RESYNC_BLIND_WAIT_S)
+    if sync_fn:
+        sync_fn(series)
+    else:
+        sync_one_guarded(series)
+    return seen
+
+
+def _resync_after_placement(series_id: int, placed_path: str | None = None) -> None:
+    """Fire-and-forget: the finalize thread has done its job the moment the
+    file is on the shelf. The link-stamping wait happens off to the side."""
+    threading.Thread(
+        target=_resync_worker, args=(series_id, placed_path),
+        name=f"resync-{series_id}", daemon=True,
+    ).start()
+
+
 # Five call sites spawn this in threads (scheduler tick, manual retries, bulk
 # re-search). Two passes racing the same queue rows = double downloads — one
 # run at a time, late arrivals skip out and the next tick picks up their rows.
@@ -396,6 +490,8 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
         set_folder_path=os.path.dirname(dest) if not item.get("folder_path") else None,
         path=DB_PATH,
     )
+    # download_issue already asked Komga to scan; now earn the read link.
+    _resync_after_placement(item["tracked_series_id"], dest)
     return True, None
 
 
@@ -799,7 +895,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
                 logger.info(f"Pack: skipping {fname} — already in library")
                 continue
             # Repack CBRs on the way in (best-effort) — new arrivals ship as CBZ.
-            ensure_cbz(_place(src, dst))
+            last_placed = ensure_cbz(_place(src, dst))
             placed += 1
         logger.info(f"{label} pack: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
         db.update_queue_state(qid, "done", path=DB_PATH)
@@ -807,6 +903,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
         force_readable_tree(dest_dir)
         _komga_scan_safe()
+        if placed:
+            _resync_after_placement(item["tracked_series_id"], last_placed)
         return
 
     # Trade — the 'dumb' path, same contract as download_trade: a collected
@@ -983,6 +1081,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     )
     force_readable_tree(dest_dir)
     _komga_scan_safe()
+    _resync_after_placement(item["tracked_series_id"], dest_path)
 
 
 def _unusable_siblings(dest_dir: str, keep_path: str, title: str,

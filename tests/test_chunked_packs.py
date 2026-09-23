@@ -236,6 +236,7 @@ class TestBatchDedupeShelfCheck:
         import kometa.acquisition as acq
         import kometa.db as db
         monkeypatch.setattr(acq, "DB_PATH", db_path)
+        monkeypatch.setattr(acq, "_resync_after_placement", lambda *a, **k: None)
         folder = tmp_path / "Curse Words"
         folder.mkdir()
         (folder / "Curse Words #003.cbz").write_bytes(_comic_bytes(3))
