@@ -758,7 +758,8 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     import shutil as _shutil
     from kometa.downloader import (
         _pick_issue_file, _safe, _resolve_dir, _fix_extension, _extract_rar_once,
-        _verify_single_issue, WrongIssueError, force_readable_tree, ensure_cbz,
+        _verify_single_issue, WrongIssueError, IncompleteIssueError, force_readable_tree,
+        ensure_cbz,
     )
 
     db.update_queue_state(qid, "processing", path=DB_PATH)
@@ -867,6 +868,27 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             _verify_single_issue(target, issue_number, os.path.basename(target),
                                  extracted_dir=rar_dir, page_max=item.get("page_max"),
                                  series_title=title)
+        except IncompleteIssueError as e:
+            # Right comic, holes in it. Unlike a wrong issue there's nothing to
+            # learn about the ROW — only about this release — so burn the release,
+            # bench the channel, and let the next source take its swing. Curse
+            # Words #10/#15/#21 lived in the library coverless because this was
+            # waved through as 'completed'.
+            logger.warning(f"{label}: rejected {os.path.basename(target)} — {e}")
+            if not keep_source:
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+            channel = "torrent" if keep_source else "usenet"
+            db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+            db.add_failed_channel(qid, channel, path=DB_PATH)
+            if channel == "usenet" and _try_torrent(item, qid):
+                return
+            if _gc_rescue(item, qid):
+                return
+            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
+            return
         except WrongIssueError as e:
             db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
             # Clean up the rejected download so it can't be re-scanned or hand-shelved

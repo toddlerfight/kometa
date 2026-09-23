@@ -446,6 +446,15 @@ class UnreadableArchiveError(ValueError):
     does open the file) kept correctly reporting the issue as missing."""
 
 
+class IncompleteIssueError(UnreadableArchiveError):
+    """The right comic, with pages missing. The release numbers its pages and
+    the numbering has holes in it — most often the front: Curse Words #10, #15 and
+    #21 came off usenet starting at page 003/004, cover gone, and SAB called every
+    one of those jobs 'completed'. An UnreadableArchiveError on purpose: blacklist
+    the source and go shopping elsewhere. Not a WrongIssueError — that parks or
+    dead-ends the row, and the next retry buys the same holey release."""
+
+
 # Matches "#135", "#135.1" — strips leading zeros
 _NUM_FROM_FNAME_RE = re.compile(r'#\s*0*(\d+(?:\.\d+)?)')
 # Matches bare "001 (2016)" style — used as fallback for pack filenames without #
@@ -609,6 +618,64 @@ def _count_images_in_dir(d: str) -> int:
     for _root, _dirs, files in os.walk(d):
         n += sum(1 for f in files if f.lower().endswith(_IMG_EXTS))
     return n
+
+
+# Page-sequence guard. Scene releases number their pages — 'Curse Words 010-000.jpg'
+# through '-029' — and a release that lost pages in transit keeps the numbers of the
+# pages it still has. That makes the damage legible: the sequence starts late or
+# has holes. Only the dominant naming group is judged (credits and scanner tags like
+# 'zSoU-Nerd.jpg' ride along under other names), and it has to be big enough to be
+# a pattern. A spread named '012-013' covers both pages. Leading index 0 or 1 is a
+# normal start either way — we can't tell 0-based from 1-based, so 1 gets the
+# benefit of the doubt. Interior holes need to be real: at least 3 pages AND 10%
+# of the run, so a single skipped number (an ad pulled, a stray rename) passes.
+_PAGE_TRAIL_RE = re.compile(r'(\d+(?:[-_ .]+\d+)*)$')
+_PAGE_GROUP_MIN = 8
+_PAGE_GROUP_SHARE = 0.6
+_PAGE_GAP_MIN = 3
+_PAGE_GAP_SHARE = 0.10
+
+
+def _page_sequence_problem(names) -> str | None:
+    """Why this page list looks incomplete, or None if it looks whole (or we
+    can't tell — no pattern means no verdict)."""
+    groups: dict[str, set[int]] = {}
+    total = 0
+    for n in names:
+        base = os.path.basename(str(n).replace('\\', '/'))
+        stem, ext = os.path.splitext(base)
+        if ext.lower() not in _IMG_EXTS:
+            continue
+        total += 1
+        m = _PAGE_TRAIL_RE.search(stem)
+        if not m:
+            continue
+        nums = [int(x) for x in re.findall(r'\d+', m.group(1))]
+        prefix = stem[:m.start()].rstrip(' -_.').lower()
+        pages = groups.setdefault(prefix, set())
+        pages.add(nums[-1])
+        if len(nums) >= 2 and nums[-1] == nums[-2] + 1:
+            pages.add(nums[-2])            # a spread: '012-013'
+    if not groups:
+        return None
+    idx = max(groups.values(), key=len)
+    if len(idx) < _PAGE_GROUP_MIN or len(idx) < _PAGE_GROUP_SHARE * total:
+        return None
+    lo, hi = min(idx), max(idx)
+    if lo >= 2:
+        return f"pages start at {lo:03d} — the cover and opening pages are missing"
+    missing = sorted(set(range(lo, hi + 1)) - idx)
+    if len(missing) >= _PAGE_GAP_MIN and len(missing) >= _PAGE_GAP_SHARE * (hi - lo + 1):
+        shown = ", ".join(f"{m:03d}" for m in missing[:6]) + ("…" if len(missing) > 6 else "")
+        return f"{len(missing)} numbered pages missing ({shown})"
+    return None
+
+
+def _page_names(path: str, extracted_dir: str | None = None) -> list[str] | None:
+    if extracted_dir:
+        return [f for _r, _d, files in os.walk(extracted_dir) for f in files]
+    from kometa.naming import _archive_entry_names
+    return _archive_entry_names(path)
 
 
 def _count_archive_images(path: str) -> int | None:
@@ -785,6 +852,10 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     if _series_disagrees(series_title, cseries):
         raise WrongIssueError(
             f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
+    names = _page_names(path, extracted_dir)
+    problem = _page_sequence_problem(names) if names else None
+    if problem:
+        raise IncompleteIssueError(f"#{format_issue_number(issue_number)} is incomplete: {problem}")
     pages = _count_images_in_dir(extracted_dir) if extracted_dir else _count_archive_images(path)
     limit = page_max or _SINGLE_ISSUE_PAGE_MAX
     if pages is not None and pages > limit:
@@ -1012,7 +1083,7 @@ def download_issue(
             try:
                 _verify_single_issue(target, issue_number, os.path.basename(target),
                                      page_max=page_max, series_title=title)
-            except WrongIssueError:
+            except (WrongIssueError, IncompleteIssueError):
                 os.remove(target)
                 raise
             dest_path = target
@@ -1024,7 +1095,7 @@ def download_issue(
             try:
                 _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
                                      page_max=page_max, series_title=title)
-            except WrongIssueError:
+            except (WrongIssueError, IncompleteIssueError):
                 os.remove(staging_path)
                 raise
 
