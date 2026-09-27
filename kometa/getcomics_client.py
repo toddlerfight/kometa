@@ -88,6 +88,21 @@ def _strip_incidental_numbers(text: str) -> str:
     return re.sub(r'\b\d+\b', _repl, text)
 
 
+# 'Batman Day 2026: Batman of Two Worlds' is how LOCG files the one-shot.
+# GetComics calls it 'Batman of Two Worlds #1 (2026)' — the 'Batman Day 2026:'
+# bit is the EVENT, stamped on the front like a wristband, and every query that
+# dragged it along came back with nothing. The tell is the year: a prefix with a
+# year in it is branding ('Free Comic Book Day 2025:'). A prefix without one is
+# part of the actual name ('Star Wars: Legacy of Vader') and stays glued on.
+_EVENT_PREFIX_RE = re.compile(r'^[^:]*\b(?:19|20)\d{2}\b[^:]*:\s*(.+)$')
+
+
+def _event_subtitle(title: str) -> str | None:
+    """The title minus a year-stamped event prefix, or None if it has none."""
+    m = _EVENT_PREFIX_RE.match(title or "")
+    return m.group(1).strip() if m else None
+
+
 def _series_matches(title_norm: str, post_norm: str) -> bool:
     """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
     if title_norm not in post_norm:
@@ -316,21 +331,20 @@ class GetComicsClient:
         # Use series start year as fallback anchor so "Batman #1" doesn't match the wrong era
         anchor_year = year or (str(series_year) if series_year else None)
 
+        # (query, the name a post must match) — the full title first, then the
+        # event-stripped subtitle as a fallback when there is one.
         queries = []
-        if anchor_year:
-            queries.append(f"{title} #{num_str} ({anchor_year})")
-        queries += [
-            f"{title} #{num_str}",
-            f"{title} {num_str}",
-            title,
-        ]
+        for name in filter(None, [title, _event_subtitle(title)]):
+            if anchor_year:
+                queries.append((f"{name} #{num_str} ({anchor_year})", name))
+            queries += [(f"{name} #{num_str}", name), (f"{name} {num_str}", name), (name, name)]
 
         packs: list[str] = []   # multi-issue posts that cover us — last resort
-        for query in queries:
+        for query, name in queries:
             logger.info(f"GetComics search: {query!r}")
             if status_fn:
                 status_fn(f"GetComics: “{query}”")
-            post_url = self._search_page(query, title, issue_number,
+            post_url = self._search_page(query, name, issue_number,
                                          series_year=series_year, packs=packs)
             if post_url:
                 url, fname = self._extract_download(post_url)
