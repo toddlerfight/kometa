@@ -148,3 +148,36 @@ def test_unknown_series_is_a_noop(db_path, monkeypatch):
                               sync_fn=lambda s: synced.append(1),
                               sleep_fn=lambda s: None) is False
     assert synced == []
+
+
+def test_default_rescan_is_deep(db_path, monkeypatch):
+    # A shallow re-scan skips folders whose mtime didn't move — over SMB that's
+    # exactly the folder the new file landed in. The retry has to go deep.
+    sid = _linked_series(db_path, monkeypatch)
+    deeps = []
+    monkeypatch.setattr(acq, "_komga_scan_safe", lambda deep=False: deeps.append(deep))
+    polls_to_appear = (acq._RESYNC_RESCAN_AT_S // acq._RESYNC_POLL_S) + 4
+    clock = FakeClock()
+    acq._resync_worker(sid, "/comics/Image/Saga/Saga #001.cbz",
+                       komga=FakeKomga(appear_after=polls_to_appear),
+                       sync_fn=lambda s: None, sleep_fn=clock.sleep, now_fn=clock.now)
+    assert deeps == [True]
+
+
+def test_scan_library_passes_deep_flag():
+    from kometa.komga_client import KomgaClient
+    sent = []
+
+    class _S:
+        def post(self, url, params=None, timeout=None):
+            sent.append(params)
+
+            class R:
+                def raise_for_status(self):
+                    pass
+            return R()
+    c = KomgaClient.__new__(KomgaClient)
+    c.session, c.base_url, c.library_id = _S(), "http://k", "LIB"
+    c.scan_library()
+    c.scan_library(deep=True)
+    assert sent == [None, {"deep": "true"}]

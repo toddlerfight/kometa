@@ -34,6 +34,17 @@ class TestParseIssueNumber:
         # only a 4-digit number present, treated as a year/noise, not an issue
         assert naming.parse_issue_number("Reprint 2018.cbz") is None
 
+    def test_point_issue_survives_a_name_with_no_extension(self):
+        # Komga book names carry no extension. splitext used to eat the ".2"
+        # as if it were one, and Avengers #34.2 collapsed onto #34.
+        assert naming.parse_issue_number("Avengers #034.2", "Avengers") == 34.2
+        assert naming.parse_issue_number(
+            "Avengers 034.1 (2014) (Digital) (Zone-Empire)", "Avengers") == 34.1
+
+    def test_point_issue_with_extension_still_parses(self):
+        assert naming.parse_issue_number(
+            "Avengers 034.1 (2014) (Digital) (Zone-Empire).cbz", "Avengers") == 34.1
+
 
 class TestScanFolderNumbers:
     def test_collects_comic_numbers_ignores_other_files(self, tmp_path):

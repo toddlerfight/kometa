@@ -117,16 +117,16 @@ def _trade_fallback_name(meta: dict, default_title: str) -> str:
     return meta.get("edition_title") or title
 
 
-def _komga_scan():
+def _komga_scan(deep=False):
     komga = _komga()
     if komga:
-        komga.scan_library()
+        komga.scan_library(deep=deep)
 
 
-def _komga_scan_safe():
+def _komga_scan_safe(deep=False):
     """_komga_scan() that never lets a scan hiccup break a finalize."""
     try:
-        _komga_scan()
+        _komga_scan(deep=deep)
     except Exception as e:
         logger.warning(f"Komga scan failed: {e}")
 
@@ -177,7 +177,11 @@ def _resync_worker(series_id: int, placed_path: str | None, *,
     if not series:
         return False
     komga = komga if komga is not None else _komga()
-    scan_fn = scan_fn or _komga_scan_safe
+    # The re-request goes DEEP. If the first scan ran and still missed the file,
+    # asking the same shallow question twice gets the same wrong answer — Komga
+    # skips any folder whose mtime didn't move, and SMB doesn't always move it.
+    # That's how Batman (2016) sat 117 books short from 09-12 to 09-27.
+    scan_fn = scan_fn or (lambda: _komga_scan_safe(deep=True))
     seen = False
     kid = series.get("komga_series_id")
     if komga and kid and placed_path:
@@ -197,8 +201,8 @@ def _resync_worker(series_id: int, placed_path: str | None, *,
                     f"{_RESYNC_DEADLINE_S}s — syncing {series.get('title')!r} without it")
                 break
             if not rescanned and elapsed >= _RESYNC_RESCAN_AT_S:
-                # The first scan request most likely landed while another scan
-                # was running and got dropped on the floor. Ask once more.
+                # Either the first request landed mid-scan and got dropped on the
+                # floor, or it ran and skipped the folder. Ask again, deep.
                 logger.info(f"Komga scan re-requested for {series.get('title')!r} — "
                             f"{os.path.basename(placed_path)!r} not listed after {int(elapsed)}s")
                 scan_fn()

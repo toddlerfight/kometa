@@ -22,8 +22,18 @@ OWNED_EXTS = frozenset({'.cbz', '.cbr', '.cb7', '.cbt', '.zip', '.rar', '.pdf'})
 PIPELINE_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
 
 
+def _strip_ext(filename: str) -> str:
+    """Drop a REAL file extension, nothing else. splitext thinks everything after
+    the last dot is an extension — hand it a Komga book name (no extension at all)
+    and 'Avengers #034.2' loses its .2, '034.1 (2014) (Digital)' loses the lot.
+    Point issues silently collapse onto their parent. An extension is short,
+    alphanumeric, and has a letter in it; '.2' and '.1 (2014)' are neither."""
+    root, ext = os.path.splitext(filename)
+    return root if re.fullmatch(r"\.(?=[^.]*[A-Za-z])[A-Za-z0-9]{1,5}", ext) else filename
+
+
 def parse_issue_number(filename: str, series_title: str = "") -> float | None:
-    name = os.path.splitext(filename)[0]
+    name = _strip_ext(filename)
     # #001 or #1.5
     m = re.search(r'#(\d+(?:\.\d+)?)', name)
     if m:
