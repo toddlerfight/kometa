@@ -107,6 +107,21 @@ def sync_one(series: dict):
         return
     komga = _komga()
 
+    # A stored Komga id is a promise Komga can break. Drop and re-add the library
+    # (dead SMB mount, rebuild, whatever) and Komga re-mints EVERY series id — the
+    # 2026-09-12 purge killed 57 links in one shot, and each one kept asking a
+    # corpse for its books: zero book ids, zero read links, two weeks of silence.
+    # So check the id is still alive and, if it's not, forget it and fall through
+    # to the auto-link below like a fresh series. An EMPTY library read is Komga
+    # down or blind, not a verdict — never unlink on that.
+    if series.get("komga_series_id") and komga:
+        all_komga = _komga_all_series(komga)
+        if all_komga and not any(r.get("id") == series["komga_series_id"] for r in all_komga):
+            logger.warning(f"Komga id {series['komga_series_id']} for {series.get('title')!r} "
+                           f"is gone from Komga — relinking")
+            db.clear_komga_series_id(series["id"], DB_PATH)
+            series = dict(series, komga_series_id=None)
+
     # Auto-link to a Komga series when connected but unlinked. Folder PATH first
     # (unambiguous — disambiguates same-titled runs like the Batman 2016/2025), then
     # fall back to normalised title for series whose folder Komga hasn't got.

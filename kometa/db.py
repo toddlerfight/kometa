@@ -872,6 +872,13 @@ def set_komga_series_id(series_id, komga_series_id, path=DB_PATH) -> bool:
             return False
 
 
+
+def clear_komga_series_id(series_id, path=DB_PATH):
+    """Unlink a series from Komga — its stored id points at nothing any more."""
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET komga_series_id = NULL WHERE id = ?",
+                     (series_id,))
+
 # --- Download queue ---
 
 def queue_issue(tracked_series_id, issue_number, path=DB_PATH):

@@ -313,3 +313,86 @@ class TestEnrichTradesEditions:
         out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
         # v02 on disk is the Absolute — doesn't complete a plain-edition range
         assert out[0]["owned"] is False
+
+
+class _FakeKomga:
+    """Komga with a fixed library. get_books only answers for LIVE series ids —
+    a dead id returns nothing, exactly like the real one after a re-mint."""
+    def __init__(self, series, books=None):
+        self.series, self.books = series, books or {}
+
+    def get_all_series(self):
+        return self.series
+
+    def get_books(self, sid):
+        return self.books.get(sid, []) if any(s["id"] == sid for s in self.series) else []
+
+    def get_series(self, sid):
+        return next(s for s in self.series if s["id"] == sid)
+
+    def set_book_number(self, *a):
+        pass
+
+
+def _book(bid, name):
+    return {"id": bid, "name": name, "metadata": {"numberSort": 1}, "media": {"status": "READY"}}
+
+
+class TestStaleKomgaLink:
+    """Komga re-mints series ids when it drops and re-adds a library (the 2026-09-12
+    mass re-creation). A stored id that no longer exists must relink by folder,
+    not sit there dead handing out zero book ids forever."""
+
+    def _setup(self, tmp_path, monkeypatch, komga):
+        dbp = str(tmp_path / "k.db")
+        db.init_db(dbp)
+        _all_sources_off(monkeypatch, dbp)
+        monkeypatch.setattr(sync, "_komga", lambda: komga)
+        monkeypatch.setattr(sync, "_KOMGA_ALL_CACHE", {"ts": 0.0, "data": None})
+        monkeypatch.setattr(sync, "get_issues_anon", lambda sid: [])
+        folder = tmp_path / "Marvel Comics" / "Black Cat"
+        folder.mkdir(parents=True)
+        make_cbz(folder / "Black Cat #001.cbz")
+        sid = db.add_series(komga_series_id="DEADID", title="Black Cat", publisher="Marvel",
+                            folder_path=str(folder), path=dbp)
+        return dbp, sid, str(folder)
+
+    def test_dead_id_relinks_by_folder_and_stamps_book_ids(self, tmp_path, monkeypatch):
+        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
+        komga = _FakeKomga([{"id": "NEWID", "name": "Black Cat", "url": folder}],
+                           {"NEWID": [_book("B1", "Black Cat #001.cbz")]})
+        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
+
+        sync.sync_one(db.get_series_by_id(sid, dbp))
+
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
+        issues = db.get_issues_for_series(sid, dbp)
+        assert [i["komga_book_id"] for i in issues] == ["B1"]
+
+    def test_dead_id_with_no_match_is_cleared_not_kept(self, tmp_path, monkeypatch):
+        komga = _FakeKomga([{"id": "OTHER", "name": "Saga", "url": "/comics/Image Comics/Saga"}])
+        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
+
+        sync.sync_one(db.get_series_by_id(sid, dbp))
+
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] is None
+
+    def test_komga_unreachable_keeps_the_link(self, tmp_path, monkeypatch):
+        # An empty library read is Komga down (or its mount dead), not proof the
+        # id is gone. Never unlink on it.
+        komga = _FakeKomga([])
+        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
+
+        sync.sync_one(db.get_series_by_id(sid, dbp))
+
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
+
+    def test_live_id_is_left_alone(self, tmp_path, monkeypatch):
+        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
+        komga = _FakeKomga([{"id": "DEADID", "name": "Black Cat", "url": folder},
+                            {"id": "NEWID", "name": "Black Cat", "url": "/elsewhere"}])
+        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
+
+        sync.sync_one(db.get_series_by_id(sid, dbp))
+
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
