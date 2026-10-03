@@ -195,6 +195,19 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) 
         results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
 
 
+def _issue_queries(title: str, issue_number: float) -> list[str]:
+    """The queries a single-issue search walks, in order, stopping at the first one
+    that produces a winner. Indexers match the query LITERALLY and releases pad
+    their numbers — 'Re-Evolution 002' — so the old lone '{title} 2' query asked
+    for a token no release carries and got ZERO hits while three good NZBs sat
+    right there (Last Ronin II #2-4, 2026-10-03). Padded first, then the bare
+    title as a net: the scorer still demands issue-number evidence before acting,
+    so casting wide can't grab the wrong issue."""
+    if issue_number == int(issue_number):
+        return [f"{title} {int(issue_number):03d}", title]
+    return [f"{title} {issue_number}", title]
+
+
 def _drop_failed_sources(results: list[dict], exclude_urls) -> list[dict]:
     """Drop releases whose delivery already failed for this queue row (rotted
     NZBs, dead magnets). The whole point of a retry is to NOT buy the same
@@ -218,21 +231,23 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
 
     store_date (ISO 'YYYY-MM-DD') demotes releases posted well before the issue
     existed — see _is_stale."""
-    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
-    results = prowlarr.search(f"{title} {num_int}", protocol="torrent")
-    results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
-    results = _drop_season_mismatches(results, title)
-    results = _drop_failed_sources(results, exclude_urls)
-    if not results:
-        return None
-
     def _score(r):
         base = _nzb_score(r["title"], title, issue_number)
         if base < 15:            # name+number or nothing — seeders can't buy evidence
             return 0
         return base + _seed_bonus(r["seeders"])
 
-    return _best_downloadable_torrent(results, _score, min_score=15, store_date=store_date)
+    for query in _issue_queries(title, issue_number):
+        results = prowlarr.search(query, protocol="torrent")
+        results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
+        results = _drop_season_mismatches(results, title)
+        results = _drop_failed_sources(results, exclude_urls)
+        if not results:
+            continue
+        best = _best_downloadable_torrent(results, _score, min_score=15, store_date=store_date)
+        if best:
+            return best
+    return None
 
 
 def _best_usenet(results: list[dict], score_fn, min_score: int,
@@ -273,18 +288,21 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     sees every usenet indexer Prowlarr aggregates. Same evidence bar as the
     torrent twin: series name (+10) AND issue-number evidence (+5) before we act.
     store_date demotes releases that predate the issue — see _is_stale."""
-    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
-    results = prowlarr.search(f"{title} {num_int}", protocol="usenet")
-    results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
-    results = _drop_season_mismatches(results, title)
-    results = _drop_failed_sources(results, exclude_urls)
-    if not results:
-        return None
     def _score(r):
         base = _nzb_score(r["title"], title, issue_number)
         return base if base >= 15 else 0     # name+number or nothing
-    best = _best_usenet(results, _score, min_score=15, store_date=store_date)
-    return best["url"] if best else None
+
+    for query in _issue_queries(title, issue_number):
+        results = prowlarr.search(query, protocol="usenet")
+        results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
+        results = _drop_season_mismatches(results, title)
+        results = _drop_failed_sources(results, exclude_urls)
+        if not results:
+            continue
+        best = _best_usenet(results, _score, min_score=15, store_date=store_date)
+        if best:
+            return best["url"]
+    return None
 
 
 def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> str | None:

@@ -514,6 +514,9 @@ class TestGetComicsDownloadFallback:
         class FakeGC:
             def search(self, *a, **k):
                 return ("http://dead-host/saga-1.cbz", "saga-1.cbz")
+
+            def mirror_urls(self, dl_url):
+                return []
         monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
 
         def _boom(**kw):
@@ -523,6 +526,65 @@ class TestGetComicsDownloadFallback:
         # short-circuited away by that (same gotcha test_no_source_marks_not_found
         # hits), so stub it too — otherwise the real accessor tries the container DB.
         monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "failed"
+        assert "403" in q["error"]
+
+    def test_walled_main_host_falls_back_to_pixeldrain_mirror(self, wired, monkeypatch):
+        # Last Ronin II #2-4, 2026-10-03: fs2.comicfiles.ru 403'd behind Cloudflare
+        # while the same post's Pixeldrain button had the file.
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+        mirror = "https://pixeldrain.com/api/file/abc?download"
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://fs2-walled/saga-1.cbz", "saga-1.cbz")
+
+            def mirror_urls(self, dl_url):
+                assert dl_url == "http://fs2-walled/saga-1.cbz"
+                return [mirror]
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        tried = []
+
+        def _fetch(**kw):
+            tried.append(kw["url"])
+            if kw["url"] != mirror:
+                raise Exception("403 Client Error: Forbidden")
+            return "/comics/Image/Saga/Saga #001.cbz"
+        monkeypatch.setattr(acq.downloader, "download_issue", _fetch)
+
+        acq._process_queue()
+
+        qid = _qid_for(db_path, series, 1.0)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["state"] == "done"
+        assert tried == ["http://fs2-walled/saga-1.cbz", mirror]
+
+    def test_mirror_failing_too_reports_the_main_host_error(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 1.0, db_path)
+
+        class FakeGC:
+            def search(self, *a, **k):
+                return ("http://fs2-walled/saga-1.cbz", "saga-1.cbz")
+
+            def mirror_urls(self, dl_url):
+                return ["https://pixeldrain.com/api/file/abc?download"]
+        monkeypatch.setattr(acq, "GetComicsClient", FakeGC)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+
+        def _fetch(**kw):
+            if "pixeldrain" in kw["url"]:
+                raise Exception("pixeldrain rate limited")
+            raise Exception("403 Client Error: Forbidden")
+        monkeypatch.setattr(acq.downloader, "download_issue", _fetch)
 
         acq._process_queue()
 

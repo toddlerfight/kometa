@@ -331,3 +331,95 @@ class TestNonLatinReleases:
     def test_accented_latin_still_fine(self):
         # Latin-script diacritics are not a different alphabet — don't overreach.
         assert _nzb_score("Sécret Wars 001 (2015)", "Secret Wars", 1.0) > 0
+
+
+class _LiteralIndexer:
+    """Matches the way real indexers do: every query token must appear in the
+    release name. Records the queries it was asked."""
+    def __init__(self, results):
+        self._results = results
+        self.queries = []
+
+    def search(self, query, protocol=None, limit=100):
+        self.queries.append(query)
+        def tok(s):
+            return set(s.lower().replace(".", " ").replace("-", " ").split())
+        want = tok(query)
+        return [r for r in self._results if want <= tok(r["title"])]
+
+
+class TestPaddedIssueQuery:
+    """2026-10-03: Last Ronin II #2-4 sat on usenet as '...Re-Evolution.002...'
+    while the lone '{title} 2' query found nothing — and the cascade fell through
+    to a Cloudflare-walled GetComics host. Padded query first, bare title second."""
+    TITLE = "Teenage Mutant Ninja Turtles - The Last Ronin II - Re-Evolution"
+
+    def test_padded_release_found_where_unpadded_query_misses(self):
+        rel = _nzb("Teenage.Mutant.Ninja.Turtles-The.Last.Ronin.II-Re-Evolution.002.2024.Digital", age=800)
+        p = _LiteralIndexer([rel])
+        assert search_usenet(p, self.TITLE, 2.0, store_date="2024-06-19") == rel["url"]
+        assert p.queries[0].endswith(" 002")
+
+    def test_bare_title_net_catches_odd_numbering(self):
+        # '#4' style naming: the padded query misses, the bare title catches it.
+        rel = _nzb("Teenage Mutant Ninja Turtles - The Last Ronin II - Re-Evolution #4 (2025)", age=600)
+        p = _LiteralIndexer([rel])
+        assert search_usenet(p, self.TITLE, 4.0, store_date="2025-01-29") == rel["url"]
+        assert p.queries == [f"{self.TITLE} 004", self.TITLE]
+
+    def test_wide_net_never_grabs_the_wrong_issue(self):
+        wrong = _nzb("Teenage.Mutant.Ninja.Turtles-The.Last.Ronin.II-Re-Evolution.003.2024.digital", age=700)
+        p = _LiteralIndexer([wrong])
+        assert search_usenet(p, self.TITLE, 2.0, store_date="2024-06-19") is None
+
+    def test_first_query_hit_stops_the_walk(self):
+        rel = _nzb("Saga 066 (2024) (Digital)", age=1)
+        p = _LiteralIndexer([rel])
+        search_usenet(p, "Saga", 66.0)
+        assert p.queries == ["Saga 066"]
+
+    def test_torrent_twin_uses_padded_query_too(self):
+        rel = _result("Teenage Mutant Ninja Turtles - The Last Ronin II - Re-Evolution 002 (2024)", 5)
+        p = _LiteralIndexer([rel])
+        got = search_torrent(p, self.TITLE, 2.0, series_year=2024)
+        assert got is not None and "002" in got["title"]
+
+
+class TestGetComicsMirrorCapture:
+    """The real post shape: every button is its own sibling div after the
+    'Language' paragraph. Pixeldrain must be remembered against the primary."""
+    POST = """<section class="post-contents">
+      <p>Language : English | Format : CBZ</p>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/MAIN">DOWNLOAD NOW</a></div>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/MEGA">MEGA</a></div>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/PD">PIXELDRAIN</a></div>
+      <hr/></section>"""
+
+    def _client(self, monkeypatch, redirects):
+        from kometa import getcomics_client as gcm
+
+        class R:
+            def __init__(self, text="", loc=""):
+                self.text, self.headers, self.status_code = text, {"location": loc}, 200
+            def raise_for_status(self):
+                pass
+        gc = gcm.GetComicsClient()
+        def fake_get(url, **kw):
+            return R(loc=redirects[url]) if url in redirects else R(text=self.POST)
+        monkeypatch.setattr(gc, "_get", fake_get)
+        return gc
+
+    def test_pixeldrain_mirror_resolved_to_file_api(self, monkeypatch):
+        gc = self._client(monkeypatch, {"https://getcomics.org/dls/PD": "https://pixeldrain.com/u/rs9cYYi5"})
+        href, _ = gc._extract_download("https://getcomics.org/post")
+        assert href == "https://getcomics.org/dls/MAIN"
+        assert gc.mirror_urls(href) == ["https://pixeldrain.com/api/file/rs9cYYi5?download"]
+
+    def test_non_pixeldrain_redirect_yields_nothing(self, monkeypatch):
+        gc = self._client(monkeypatch, {"https://getcomics.org/dls/PD": "https://getcomics.org"})
+        href, _ = gc._extract_download("https://getcomics.org/post")
+        assert gc.mirror_urls(href) == []
+
+    def test_unknown_link_has_no_mirrors(self, monkeypatch):
+        gc = self._client(monkeypatch, {})
+        assert gc.mirror_urls("https://elsewhere/x.cbz") == []

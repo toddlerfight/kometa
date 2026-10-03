@@ -21,6 +21,10 @@ GC_DIRECT_TERMS = (
     "mirror download", "mirror server", "mirror link", "link 1", "link 2", "getcomics",
 )
 
+# Mirror buttons a post lists beside its main host. Only the ones with a plain
+# file API make the list — Mega/Mediafire/Terabox want a browser.
+_PIXELDRAIN_RE = re.compile(r'https?://pixeldrain\.com/u/([A-Za-z0-9]+)')
+
 _ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
 _ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
 _ISSUE_WORD_RE  = re.compile(r'\bissues?\s+(\d+(?:\.\d+)?)\b', re.IGNORECASE)
@@ -289,6 +293,42 @@ class GetComicsClient:
     def __init__(self):
         self.session = cloudscraper.create_scraper()
         self.session.headers.update(HEADERS)
+        # primary download href -> mirror button hrefs from the same post group
+        self._mirrors: dict[str, list[str]] = {}
+
+    def mirror_urls(self, dl_url: str) -> list[str]:
+        """Direct-file mirrors for a link this client handed out, resolved NOW.
+        The main host is comicfiles.ru, and its fs2 box sits behind a Cloudflare
+        wall that 403s every request style we own — while fs1 serves fine and the
+        same post's Pixeldrain button hands over the exact file, no challenge
+        (Last Ronin II #2-4, 2026-10-03). /dls/ hops are resolved at failure time,
+        not search time: they go stale within hours."""
+        out = []
+        for href in self._mirrors.get(dl_url, []):
+            try:
+                loc = href
+                if "getcomics.org/dls/" in href:
+                    loc = self._get(href, allow_redirects=False).headers.get("location", "")
+                m = _PIXELDRAIN_RE.match(loc)
+                if m:
+                    out.append(f"https://pixeldrain.com/api/file/{m.group(1)}?download")
+            except GCRateLimitError:
+                raise
+            except Exception as e:
+                logger.info(f"GetComics: mirror resolve failed for {href[:80]}: {e}")
+        return out
+
+    def _remember_mirrors(self, primary: str, scope) -> None:
+        """scope: a tag (searched with its descendants) or a list of sibling tags —
+        a post's buttons are siblings, so 'same group' means the whole run."""
+        tags = scope if isinstance(scope, list) else [scope]
+        links = []
+        for t in tags:
+            links += [a for a in t.select("a[href]")]
+            if t.name == "a" and t.get("href"):
+                links.append(t)
+        self._mirrors[primary] = [a["href"] for a in links
+                                  if a.get_text(strip=True).lower() == "pixeldrain"]
 
     def _get(self, url, **kw):
         """Every GetComics request goes through here: cooldown gate first,
@@ -602,6 +642,13 @@ class GetComicsClient:
                     text = a.get_text(strip=True).lower()
                     if any(t in text for t in GC_DIRECT_TERMS):
                         logger.info(f"GetComics: direct download {href[:80]}")
+                        group = []
+                        for g in p.next_siblings:
+                            if isinstance(g, Tag):
+                                if g.name == "hr":
+                                    break
+                                group.append(g)
+                        self._remember_mirrors(href, group)
                         return href, None
 
         # Strategy 2: any aio-button-center on the page with direct-download text
@@ -613,6 +660,9 @@ class GetComicsClient:
             text = a.get_text(strip=True).lower()
             if any(t in text for t in GC_DIRECT_TERMS):
                 logger.info(f"GetComics: strategy-2 direct download {href[:80]}")
+                self._remember_mirrors(href, body)
+                if len(self._mirrors[href]) > 1:   # several groups — can't tell whose
+                    self._mirrors[href] = []
                 return href, None
 
         # Strategy 3: any link ending in a comic file extension

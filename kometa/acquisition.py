@@ -452,14 +452,15 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
     downloaded_urls.add(dl_url)
 
     db.update_queue_state(qid, "downloading", source_url=dl_url, path=DB_PATH)
-    try:
-        dest = downloader.download_issue(
-            url=dl_url,
+
+    def _fetch(url, hint):
+        return downloader.download_issue(
+            url=url,
             title=item["title"],
             publisher=item["publisher"],
             issue_number=item["issue_number"],
             store_date=store_date,
-            hint_filename=hint_filename,
+            hint_filename=hint,
             komga_scan_fn=_komga_scan,
             progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
             dest_dir=item.get("folder_path") or None,
@@ -468,6 +469,30 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
             page_max=item.get("page_max"),
             on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
         )
+
+    try:
+        try:
+            dest = _fetch(dl_url, hint_filename)
+        except (DuplicateIssueError, UnreadableArchiveError):
+            raise
+        except Exception as e:
+            # Main host refused (fs2.comicfiles.ru's Cloudflare wall, a dead box).
+            # The post's other buttons point at the same file somewhere else — ask
+            # the mirrors before calling it failed. Mirror loses too? The MAIN
+            # host's error is the one worth reporting.
+            dest = None
+            for mirror in gc.mirror_urls(dl_url):
+                logger.info(f"GetComics main host failed ({e}) — trying mirror {mirror}")
+                try:
+                    dest = _fetch(mirror, None)
+                    break
+                except (DuplicateIssueError, UnreadableArchiveError):
+                    raise
+                except Exception as me:
+                    logger.info(f"GetComics mirror failed for {item['title']!r} "
+                                f"#{item['issue_number']}: {me}")
+            if dest is None:
+                raise e
     except DuplicateIssueError:
         raise
     except UnreadableArchiveError as e:
