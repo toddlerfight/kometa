@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
 from kometa.models import AddSeriesRequest
 from kometa.arcs import (
     router as _arcs_router, _owned_collection, _add_arc,
@@ -588,6 +588,13 @@ def add_series(req: AddSeriesRequest):
             raise HTTPException(400, "This one-shot isn't linked to a series on LOCG")
         locg_series_id = sid
         title = re.sub(r"\s*#\s*\d+.*$", "", title).strip()  # drop the '#1' issue suffix
+
+    # An issue-level hit arrives pre-clipped by LOCG ('…Training Day...'), and that
+    # stump became the series title AND its folder name — a trailing-dot folder the
+    # SMB share can't even show, so the book on disk read as missing forever.
+    # Ask LOCG for the series row's real name; failing that, at least lose the dots.
+    if locg_series_id and _locg_truncated(title):
+        title = _locg_full_title(locg_series_id, title) or re.sub(r"\s*(?:\.{2,}|…)\s*$", "", title)
 
     # Idempotent add, plain-path edition. The storyline path above dedupes by CV
     # volume; this path had NOTHING — add the same run twice 41 minutes apart and

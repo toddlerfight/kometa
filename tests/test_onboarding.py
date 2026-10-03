@@ -276,3 +276,41 @@ def test_duplicate_add_via_claimed_komga_id_returns_existing_row(tmp_path, monke
 
     assert added["id"] == existing_id
     assert len(db.get_all_series(dbp)) == 1
+
+
+TRUNC = "Teenage Mutant Ninja Turtles: The Last Ronin – Training Day..."
+FULL = "Teenage Mutant Ninja Turtles: The Last Ronin – Training Day"
+
+
+def test_one_shot_add_gets_full_title_not_locg_clip(tmp_path, monkeypatch):
+    """The live Training Day add: an issue-level LOCG hit, clipped before its '#1'.
+    The series row knows the real name — the clip must never reach title or folder."""
+    import kometa.locg_client as locg
+    root = tmp_path / "comics"
+    (root / "IDW Publishing").mkdir(parents=True)
+    _wire(monkeypatch, tmp_path, root)
+    monkeypatch.setattr(main, "_locg_resolve_comic_anon", lambda cid, slug: 206809)
+    monkeypatch.setattr(locg, "search_series_anon", lambda q: [
+        {"id": 2774701, "title": TRUNC + " #1", "comic": True, "slug": "x"},
+        {"id": 206809, "title": FULL},
+    ])
+
+    added = main.add_series(AddSeriesRequest(
+        title=TRUNC + " #1", publisher_name="IDW Publishing", on_pull_list=False,
+        locg_comic_id=2774701, locg_comic_slug="tmnt-the-last-ronin-training-day-1"))
+
+    assert added["title"] == FULL
+    assert added["folder_path"] == str(root / "IDW Publishing" / "Teenage Mutant Ninja Turtles- The Last Ronin – Training Day")
+
+
+def test_clipped_title_loses_dots_when_locg_has_no_series_row(tmp_path, monkeypatch):
+    import kometa.locg_client as locg
+    root = tmp_path / "comics"
+    (root / "IDW Publishing").mkdir(parents=True)
+    _wire(monkeypatch, tmp_path, root)
+    monkeypatch.setattr(locg, "search_series_anon", lambda q: [])
+
+    added = main.add_series(AddSeriesRequest(locg_id=206809, title=TRUNC,
+                                             publisher_name="IDW Publishing", on_pull_list=False))
+    assert added["title"] == FULL
+    assert not added["folder_path"].endswith(".")

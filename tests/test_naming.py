@@ -104,6 +104,16 @@ class TestSafe:
     def test_collapses_and_trims_dashes(self):
         assert naming._safe("--Saga--") == "Saga"
 
+    def test_trailing_dots_and_spaces_dropped(self):
+        # SMB can't show a name ending in '.' — it surfaces as an 8.3 stub
+        # ('TT43LN~H') and the folder we asked for never resolves.
+        assert naming._safe("The Last Ronin – Training Day...") == "The Last Ronin – Training Day"
+        assert naming._safe("Nextwave: Agents of H.A.T.E.") == "Nextwave- Agents of H.A.T.E"
+        assert naming._safe("What If?") == "What If"
+
+    def test_inner_dots_survive(self):
+        assert naming._safe("B.P.R.D. Hell on Earth") == "B.P.R.D. Hell on Earth"
+
 
 class TestPubKey:
     def test_suffix_variants_collapse(self):

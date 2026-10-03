@@ -191,6 +191,24 @@ def search_series_anon(title: str) -> list[dict]:
         return []
 
 
+_ELLIPSIS_RE = re.compile(r"\s*(?:\.{2,}|…)\s*$")
+
+
+def is_truncated(title: str) -> bool:
+    return bool(_ELLIPSIS_RE.search(title or ""))
+
+
+def full_series_title_anon(series_id: int, truncated: str) -> str | None:
+    """LOCG clips long ISSUE-level titles ('…Training Day... #1') but its SERIES rows
+    carry the whole name. Search on the clipped stem and take the series row whose
+    id is ours. None if LOCG doesn't hand that row back — caller strips the dots."""
+    stem = _ELLIPSIS_RE.sub("", truncated)
+    for r in search_series_anon(stem):
+        if not r.get("comic") and r["id"] == int(series_id) and not is_truncated(r["title"]):
+            return r["title"]
+    return None
+
+
 def _parse_num(title: str) -> float | None:
     m = re.search(r'#(\d+(?:\.\d+)?)', title)
     if m:

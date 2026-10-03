@@ -317,7 +317,10 @@ def norm_key(s: str) -> str:
 def _safe(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*]', "-", name)
     name = re.sub(r'-+', '-', name)   # collapse consecutive dashes
-    return name.strip('-').strip()
+    # Trailing dots/spaces are illegal on the SMB share the library lives on — the
+    # server keeps the real name, the client sees 'TT43LN~H', and every lookup by
+    # the name we asked for misses. 'Nextwave- Agents of H.A.T.E.' died this way.
+    return name.strip('-').strip().rstrip('. ')
 
 
 _PUB_NOISE = re.compile(r'\b(comics?|studios?|publishing|entertainment|press|inc|llc|productions?)\b', re.I)
