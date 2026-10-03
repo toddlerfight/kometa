@@ -387,6 +387,20 @@ class TestStaleKomgaLink:
 
         assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
 
+    def test_soft_deleted_id_relinks_to_the_live_twin(self, tmp_path, monkeypatch):
+        # Folder renamed: Komga keeps the old row flagged deleted and mints a new one.
+        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
+        komga = _FakeKomga([{"id": "DEADID", "name": "BLKCAT~1", "url": "/comics/Marvel Comics/BLKCAT~1",
+                             "deleted": True},
+                            {"id": "NEWID", "name": "Black Cat", "url": folder}],
+                           {"NEWID": [_book("B1", "Black Cat #001.cbz")]})
+        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
+
+        sync.sync_one(db.get_series_by_id(sid, dbp))
+
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
+        assert [i["komga_book_id"] for i in db.get_issues_for_series(sid, dbp)] == ["B1"]
+
     def test_live_id_is_left_alone(self, tmp_path, monkeypatch):
         folder = str(tmp_path / "Marvel Comics" / "Black Cat")
         komga = _FakeKomga([{"id": "DEADID", "name": "Black Cat", "url": folder},

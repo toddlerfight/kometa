@@ -58,11 +58,17 @@ def komga_book_version(book: dict) -> str | None:
     return f"{mod or ''}:{size if size is not None else ''}"
 
 def _komga_all_series(komga):
-    """The whole Komga library (cached). Returns a list; [] on failure."""
+    """The whole Komga library (cached), LIVE series only. Returns a list; [] on failure.
+
+    Komga doesn't forget a series whose folder vanished — it keeps the row, flagged
+    deleted, until someone empties the trash (which we never do). Rename a folder and
+    the old id still answers, so the dead-id relink in sync_one read it as alive and
+    kept handing out a corpse: Legacy of Vader et al., 2026-10-04, after the SMB-safe
+    folder renames. A soft-deleted series is never a link target — drop it here."""
     now = time.time()
     if _KOMGA_ALL_CACHE["data"] is None or now - _KOMGA_ALL_CACHE["ts"] > _KOMGA_ALL_TTL:
         try:
-            _KOMGA_ALL_CACHE["data"] = komga.get_all_series()
+            _KOMGA_ALL_CACHE["data"] = [r for r in komga.get_all_series() if not r.get("deleted")]
             _KOMGA_ALL_CACHE["ts"] = now
         except Exception as e:
             logger.warning(f"Komga get_all_series failed: {e}")
