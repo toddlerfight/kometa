@@ -1015,11 +1015,27 @@ def search_missing(series_id: int):
     # One transaction for the whole batch — queue_issue fsyncs per call, and a
     # long-running series can shove dozens of issues through here at once.
     pairs = [(series_id, issue["number"]) for issue in issues
-             if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today)]
+             if not issue["owned"] and not issue.get("ignored")
+             and (not issue["store_date"] or issue["store_date"] <= today)]
     queued = db.queue_issues_bulk(pairs, DB_PATH) if pairs else 0
     if queued:
         threading.Thread(target=_process_queue, daemon=True).start()
     return {"queued": queued}
+
+
+class IgnoreRequest(BaseModel):
+    ignored: bool
+
+
+@app.patch("/api/series/{series_id}/issues/{number}/ignore")
+def set_issue_ignored(series_id: int, number: float, req: IgnoreRequest):
+    """Stop (or resume) chasing one issue. Ignoring also drops any queue row still
+    waiting on it, so a sweep already in flight doesn't grab it anyway."""
+    if not db.set_issue_ignored(series_id, number, req.ignored, DB_PATH):
+        raise HTTPException(404, "No such issue")
+    if req.ignored:
+        db.dequeue_waiting_issue(series_id, number, DB_PATH)
+    return {"ok": True, "ignored": req.ignored}
 
 
 @app.post("/api/series/{series_id}/issues/{number}/search")

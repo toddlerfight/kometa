@@ -215,6 +215,7 @@ function _modalCoverHtml(src, alt) {
 function issueStatus(issue) {
   const lt = _localToday(), ut = _usToday();
   if (issue.owned) return 'owned';
+  if (issue.ignored) return 'ignored';              // told to stop chasing it — never 'missing'
   if (!issue.store_date) return 'unknown';
   if (issue.store_date > lt) return 'upcoming';   // future on YOUR calendar
   if (issue.store_date >= ut) return 'today';      // out today (your date) — or still dropping in the US
@@ -1905,6 +1906,7 @@ async function doDelete(id) {
 function _pullStatus(e) {
   const lt = _localToday(), ut = _usToday();
   if (e.owned) return `<span class="pull-status pull-status-owned">✓</span>`;
+  if (e.ignored) return `<span class="pull-status pull-status-ignored">Ignored</span>`;
   if (e.store_date > lt) return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
   if (e.store_date >= ut) return `<span class="pull-status pull-status-today">Today</span>`;
   return `<span class="pull-status pull-status-missing">Missing</span>`;
@@ -2985,6 +2987,7 @@ async function showIssueModal(seriesId, number) {
     upcoming:`<span class="chip chip-upcoming">Upcoming</span>`,
     today:   `<span class="chip chip-today">Today</span>`,
     unknown: `<span class="chip" style="color:var(--tq);border-color:var(--tq)">Unknown</span>`,
+    ignored: `<span class="chip chip-ignored">Ignored</span>`,
   };
 
   let dateHtml = '';
@@ -3008,7 +3011,11 @@ async function showIssueModal(seriesId, number) {
     const readerUrl = `${komgaBase()}/book/${esc(issue.komga_book_id)}/read`;
     footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
   } else if (st === 'missing' || st === 'today') {
-    footerAction = `<button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
+    footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
+        title="Stop searching for this issue">Ignore</button>
+      <button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
+  } else if (st === 'ignored') {
+    footerAction = `<button class="btn btn-primary" onclick="setIssueIgnored(${seriesId}, ${number}, false)">Stop ignoring</button>`;
   }
 
   const hasLocgId = !!issue.locg_issue_id;
@@ -3338,6 +3345,18 @@ function _updateIssueDlBtn(seriesId, number, qs) {
   btn.disabled = false;
   btn.textContent = state === 'not_found' ? 'Not Found · Retry' : 'Failed · Retry';
   btn.onclick = () => issueDownload(seriesId, number);
+}
+
+async function setIssueIgnored(seriesId, number, ignored) {
+  try {
+    await api.patch(`/api/series/${seriesId}/issues/${number}/ignore`, { ignored });
+  } catch (e) {
+    showToast('Couldn’t update issue'); console.error(e); return;
+  }
+  closeModal();
+  showToast(ignored ? `#${fmtNum(number)} ignored — no more searching for it`
+                    : `#${fmtNum(number)} back on the list`);
+  renderSeriesDetail(seriesId);
 }
 
 async function issueDownload(seriesId, number) {

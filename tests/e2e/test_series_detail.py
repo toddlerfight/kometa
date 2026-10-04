@@ -90,3 +90,45 @@ def test_variant_card_click_zooms_instead_of_selecting(app):
     app.locator("#vlb-include").click()
     expect(card).to_have_class(re.compile(r"\bselected\b"))
     expect(app.locator("#variant-apply-btn")).to_be_enabled()
+
+
+def test_ignore_and_unignore_a_missing_issue(app, app_server):
+    # Ripcord #0, 2026-10-05: an issue no source will ever have. Ignore takes it off
+    # the Missing tab and drops the search arrow; Stop ignoring puts it all back.
+    # Shared session DB: ignoring also (correctly) drops #3's parked 'failed' queue
+    # row, which the Activity tests count on — so it goes back in the finally.
+    try:
+        _ignore_roundtrip(app)
+    finally:
+        import kometa.db as db
+        dbp, alpha = app_server["db_path"], app_server["ids"]["alpha"]
+        db.set_issue_ignored(alpha, 3.0, False, dbp)
+        if not any(q["tracked_series_id"] == alpha and q["issue_number"] == 3.0 for q in db.get_queue(dbp)):
+            db.queue_issue(alpha, 3.0, dbp)
+            qid = next(q["id"] for q in db.get_queue(dbp)
+                       if q["tracked_series_id"] == alpha and q["issue_number"] == 3.0)
+            db.update_queue_state(qid, "failed", error="e2e seed", path=dbp)
+
+
+def _ignore_roundtrip(app):
+    _open_alpha(app)
+    modal = app.locator("#modal")
+    tile = app.locator('.issue-tile[data-num="3"]')
+    expect(tile.locator(".issue-tile-search")).to_have_count(1)
+
+    tile.click()
+    modal.get_by_role("button", name="Ignore").click()
+    expect(modal).to_be_hidden()
+    expect(tile.locator(".issue-tile-img.ignored")).to_have_count(1)
+    expect(tile.locator(".issue-tile-search")).to_have_count(0)
+    app.locator(".issue-tab", has_text="missing").click()
+    expect(app.locator(".issue-tile")).to_have_count(0)
+
+    app.locator(".issue-tab", has_text="all").first.click()
+    tile.click()
+    expect(modal.locator(".chip-ignored")).to_be_visible()
+    modal.get_by_role("button", name="Stop ignoring").click()
+    expect(modal).to_be_hidden()
+    expect(tile.locator(".issue-tile-img.missing")).to_have_count(1)
+    app.locator(".issue-tab", has_text="missing").click()
+    expect(app.locator(".issue-tile")).to_have_count(1)

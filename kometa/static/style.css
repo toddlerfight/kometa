@@ -892,6 +892,18 @@ select.settings-input {
 .issue-tile-img.upcoming::after { border: 2px solid var(--blu); }
 .issue-tile-img.today::after    { border: 2px solid var(--blu); }
 
+/* Ignored: told to stop chasing it. Dashed and quiet — present, but not asking for anything. */
+.issue-tile-img.ignored { background: var(--su2); }
+.issue-tile-img.ignored img { opacity: 0.35; }
+.issue-tile-img.ignored::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-sm);
+  pointer-events: none;
+  border: 2px dashed var(--tq);
+}
+
 .issue-tile-num {
   font-size: var(--fs-label);
   color: var(--tq);
@@ -1134,6 +1146,7 @@ select.settings-input {
 }
 .pull-status-owned   { color: var(--pri); }
 .pull-status-missing { color: var(--amb); }
+.pull-status-ignored { color: var(--tq); }
 .pull-status-today   { color: var(--pink); }
 .pull-status-upcoming { color: var(--tq); }
 
@@ -1637,6 +1650,7 @@ select.settings-input {
 .chip-missing  { color: var(--amb); border: 1px solid var(--amb); }
 .chip-upcoming { color: var(--blu); border: 1px solid var(--blu); }
 .chip-today    { color: var(--blu); border: 1px solid var(--blu); }
+.chip-ignored  { color: var(--tq); border: 1px dashed var(--tq); }
 
 .locg-badge {
   display: inline-block;

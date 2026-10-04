@@ -227,6 +227,11 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_issue_id INTEGER")
         if "locg_issue_id" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN locg_issue_id TEXT")
+        # An issue you've told Kometa to stop chasing — a #0 preview that never got a
+        # real release, say. Not owned, never 'missing': sweeps, search-missing and the
+        # counts all skip it. Sync's upserts don't name this column, so it survives them.
+        if "ignored" not in issue_cols:
+            conn.execute("ALTER TABLE issue_status ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS variant_prefs (
                 tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
@@ -581,7 +586,7 @@ def get_all_series_summaries(path=DB_PATH):
             SELECT
                 tracked_series_id,
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN owned = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
                 SUM(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
                 MIN(CASE WHEN owned = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
                 (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
@@ -1179,6 +1184,18 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
         """, (tracked_series_id, issue_number, store_date))
 
 
+def dequeue_waiting_issue(series_id, number, path=DB_PATH) -> int:
+    """Drop an issue's queue rows that are only WAITING (queued, or parked as
+    not_found/failed for a retry). Anything mid-search or mid-download is left to
+    finish — yanking a row out from under a worker is how state goes inconsistent."""
+    with _connect(path) as conn:
+        return conn.execute(
+            "DELETE FROM download_queue WHERE tracked_series_id = ? AND issue_number = ? "
+            "AND state IN ('queued', 'not_found', 'failed')",
+            (series_id, number),
+        ).rowcount
+
+
 def remove_queue_item(queue_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
@@ -1197,6 +1214,7 @@ def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
+              AND i.ignored = 0
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.monitor_status = 'monitored'
               AND s.on_pull_list = 1
@@ -1240,6 +1258,7 @@ def get_missing_for_monitored(path=DB_PATH):
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
+              AND i.ignored = 0
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.on_pull_list = 1
               AND NOT EXISTS (
@@ -1251,6 +1270,15 @@ def get_missing_for_monitored(path=DB_PATH):
         """)]
 
 
+def set_issue_ignored(series_id, number, ignored: bool, path=DB_PATH) -> bool:
+    """Flag/unflag one issue as not-wanted. Returns False if the issue doesn't exist."""
+    with _connect(path) as conn:
+        return conn.execute(
+            "UPDATE issue_status SET ignored = ? WHERE tracked_series_id = ? AND number = ?",
+            (int(bool(ignored)), series_id, number),
+        ).rowcount > 0
+
+
 def get_upcoming_issues(days=90, past=0, path=DB_PATH):
     # `lookback` is built ONLY from int(past) or a literal — no string ever
     # reaches it, so the f-string can't inject. `days` is a bound param.
@@ -1260,7 +1288,7 @@ def get_upcoming_issues(days=90, past=0, path=DB_PATH):
         lookback = "date('now', '-7 days', 'weekday 0')"
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute(f"""
-            SELECT s.id, s.title, i.number, i.store_date, i.owned
+            SELECT s.id, s.title, i.number, i.store_date, i.owned, i.ignored
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.store_date IS NOT NULL
