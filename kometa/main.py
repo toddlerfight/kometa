@@ -133,10 +133,11 @@ def _summary(issues):
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
     owned = sum(1 for r in issues if r["owned"])
-    missing = sum(1 for r in issues if not r["owned"] and (not r["store_date"] or r["store_date"] < today))
-    upcoming = sum(1 for r in issues if not r["owned"] and r["store_date"] and r["store_date"] >= today)
-    soon = [r["store_date"] for r in issues
-            if not r["owned"] and r["store_date"] and today <= r["store_date"] <= cutoff]
+    wanted = [r for r in issues if not r["owned"] and not r.get("ignored")]
+    missing = sum(1 for r in wanted if not r["store_date"] or r["store_date"] < today)
+    upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] >= today)
+    soon = [r["store_date"] for r in wanted
+            if r["store_date"] and today <= r["store_date"] <= cutoff]
     return {"owned": owned, "missing": missing, "upcoming": upcoming,
             "next_release": min(soon) if soon else None}
 
@@ -692,7 +693,8 @@ def add_series(req: AddSeriesRequest):
             # Batch the queue insert — per-issue queue_issue is one fresh
             # connection + fsync EACH, which the NAS disk does not appreciate.
             pairs = [(new_id, issue["number"]) for issue in issues
-                     if not issue["owned"] and (not issue["store_date"] or issue["store_date"] <= today_str)]
+                     if not issue["owned"] and not issue.get("ignored")
+                     and (not issue["store_date"] or issue["store_date"] <= today_str)]
             if pairs:
                 db.queue_issues_bulk(pairs, DB_PATH)
             _process_queue()

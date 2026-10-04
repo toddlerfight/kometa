@@ -100,3 +100,22 @@ class TestEndpoint:
         with pytest.raises(HTTPException) as e:
             main.set_issue_ignored(series, 42.0, IgnoreRequest(ignored=True))
         assert e.value.status_code == 404
+
+
+class TestCountsAgree:
+    """The library card and the series page count separately (SQL summary vs
+    main._summary). 2026-10-05: the first cut fixed one, and Ripcord read
+    'missing 1' on its own page while the library said complete."""
+    def test_series_page_and_library_card_agree(self, db_path, series, monkeypatch):
+        from datetime import date, timedelta
+        _seed(db_path, series)
+        future = str(date.today() + timedelta(days=5))
+        db.upsert_issue_status(series, 9.0, future, owned=False, path=db_path)
+        db.set_issue_ignored(series, 0.0, True, db_path)
+        db.set_issue_ignored(series, 9.0, True, db_path)
+
+        page = main._summary(db.get_issues_for_series(series, db_path))
+        card = db.get_all_series_summaries(db_path)[series]
+        assert page["missing"] == card["missing"] == 1
+        assert page["upcoming"] == card["upcoming"] == 0
+        assert page["next_release"] is None and card["next_release"] is None
