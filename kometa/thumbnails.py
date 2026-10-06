@@ -214,6 +214,14 @@ def series_thumbnail(series_id: int):
     )
     if img_url:
         return _cached_image_response(img_url)
+    # No issues with art at all — a collections-only LOCG entry ('Batman: Bad
+    # Seeds' is just its TPB + HC) painted a black void on the card. Its trades
+    # have covers; use the first real edition's.
+    cached = db.get_trades(series_id, DB_PATH)
+    trade_cover = next((t["cover"] for t in (cached or {}).get("trades", [])
+                        if t.get("cover") and not t.get("is_variant")), None)
+    if trade_cover:
+        return _cached_image_response(trade_cover)
     raise HTTPException(404)
 
 
