@@ -2050,3 +2050,4 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   .rd-chrome, .rd-progress { transition: none; }
 }
 #reader img.loaded { animation: none; }   /* the app-wide cover fade would flicker every page turn */
+#reader:has(.rd-chrome.on) .rd-count { opacity: 0; }   /* the scrubber already says where you are */
