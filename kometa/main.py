@@ -138,8 +138,13 @@ def _summary(issues):
     upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] >= today)
     soon = [r["store_date"] for r in wanted
             if r["store_date"] and today <= r["store_date"] <= cutoff]
+    week_ago = str(date.today() - timedelta(days=db.RECENT_RELEASE_DAYS))
+    recent = [r["store_date"] for r in issues
+              if not r.get("ignored") and r["store_date"] and week_ago <= r["store_date"] <= today]
+    next_release = min(soon) if soon else None
     return {"owned": owned, "missing": missing, "upcoming": upcoming,
-            "next_release": min(soon) if soon else None}
+            "next_release": next_release,
+            "calendar_date": db.calendar_date(max(recent) if recent else None, next_release)}
 
 
 # --- connection tests ---
@@ -365,7 +370,8 @@ def list_series():
     # series' Arcs tab + their own detail page, not as cards in the grid.
     series = [s for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
     summaries = db.get_all_series_summaries(DB_PATH)
-    empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None, "card_image": None}
+    empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
+             "calendar_date": None, "card_image": None}
     return [dict(s, **summaries.get(s["id"], empty)) for s in series]
 
 

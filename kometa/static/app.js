@@ -296,6 +296,7 @@ async function syncSeries(id, btn, pre = null) {
           const changed = !before
             || s.owned !== before.owned || s.missing !== before.missing
             || s.upcoming !== before.upcoming || s.next_release !== before.next_release
+            || s.calendar_date !== before.calendar_date
             || (s.issues || []).length !== (before.issues || []).length;
           if (changed) await renderSeriesDetail(id);
         }
@@ -462,11 +463,14 @@ function _renderBrowseResults() {
     filtered = filtered.slice().sort((a, b) => dir * a.title.localeCompare(b.title));
   } else if (sortKey === 'date') {
     const dir = (sortDir.date ?? 'asc') === 'asc' ? 1 : -1;
+    // calendar_date, not next_release: this week's release holds its slot even
+    // once it's downloaded (next_release skips owned issues — a fresh #1 used to
+    // sink to the bottom the moment it landed).
     filtered = filtered.slice().sort((a, b) => {
-      if (!a.next_release && !b.next_release) return 0;
-      if (!a.next_release) return 1;
-      if (!b.next_release) return -1;
-      return dir * a.next_release.localeCompare(b.next_release);
+      if (!a.calendar_date && !b.calendar_date) return 0;
+      if (!a.calendar_date) return 1;
+      if (!b.calendar_date) return -1;
+      return dir * a.calendar_date.localeCompare(b.calendar_date);
     });
   }
 
@@ -491,8 +495,8 @@ function _renderBrowseResults() {
     const total = (s.owned ?? 0) + (s.missing ?? 0);
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
     const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
-    const nextRelease = s.next_release
-      ? `<div class="series-card-next-release">${_fmtReleaseDate(s.next_release)}</div>` : '';
+    const nextRelease = s.calendar_date
+      ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
     const thumbFall = s.card_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
     return `

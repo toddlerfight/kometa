@@ -567,6 +567,21 @@ def get_all_series(path=DB_PATH):
         return [dict(r) for r in conn.execute("SELECT * FROM tracked_series ORDER BY title")]
 
 
+# How far back a release still counts as THIS week's for the library's calendar
+# sort. Comics drop weekly on Wednesdays — 6 days holds exactly the latest
+# new-comic day and lets it go the morning the next one arrives.
+RECENT_RELEASE_DAYS = 6
+
+
+def calendar_date(recent_release, next_release):
+    """The date a series sorts by on the library calendar: this week's release if
+    it had one — owned or not — else its next upcoming one. next_release alone
+    (the old key) skips owned issues, so the instant a new #1 downloaded its
+    series fell out of today's slot to the bottom of the grid (Midnight
+    Spider-Man, 2026-10-07): the books you most wanted to see, buried."""
+    return recent_release or next_release
+
+
 def get_all_series_summaries(path=DB_PATH):
     """Bulk per-series aggregation: counts, next-release date, and the card cover.
 
@@ -581,10 +596,12 @@ def get_all_series_summaries(path=DB_PATH):
     The up_/recent_ columns are scratch and aren't returned."""
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
+    week_ago = str(date.today() - timedelta(days=RECENT_RELEASE_DAYS))
     with _connect(path) as conn:
         rows = conn.execute("""
             SELECT
                 tracked_series_id,
+                MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
@@ -610,7 +627,7 @@ def get_all_series_summaries(path=DB_PATH):
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_komga_v
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
+        """, (week_ago, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -642,6 +659,7 @@ def get_all_series_summaries(path=DB_PATH):
         out[sid] = {
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
+            "calendar_date": calendar_date(r["recent_release"], r["next_release"]),
         }
     return out
 
