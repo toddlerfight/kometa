@@ -92,6 +92,20 @@ def init_db(path=DB_PATH):
             -- a second one is a data change, not a schema change. updated_at is the
             -- CLIENT's clock: a write older than what's stored loses (offline
             -- devices replaying a queue must not drag progress backwards).
+            -- The whole shelf, one row per series FOLDER (publisher/series), tracked
+            -- or not. Tracked series link through tracked_series_id; untracked
+            -- ones exist only here, so acquisition (sync, sweeps, LOCG) never sees
+            -- them. Rebuilt by the shelf scan; scanned_at marks the last sighting.
+            CREATE TABLE IF NOT EXISTS shelf_series (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_path       TEXT NOT NULL UNIQUE,
+                title             TEXT NOT NULL,
+                publisher         TEXT,
+                tracked_series_id INTEGER,
+                book_count        INTEGER NOT NULL DEFAULT 0,
+                scanned_at        TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS read_progress (
                 reader_id  TEXT NOT NULL,
                 book_id    INTEGER NOT NULL REFERENCES books(id),
@@ -257,6 +271,9 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_issue_id INTEGER")
         if "locg_issue_id" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN locg_issue_id TEXT")
+        book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
+        if book_cols and "shelf_series_id" not in book_cols:
+            conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
         # An issue you've told Kometa to stop chasing — a #0 preview that never got a
         # real release, say. Not owned, never 'missing': sweeps, search-missing and the
         # counts all skip it. Sync's upserts don't name this column, so it survives them.
@@ -1441,3 +1458,102 @@ def set_progress(reader_id, book_id, page, completed, updated_at, path=DB_PATH):
                 page = excluded.page, completed = excluded.completed, updated_at = excluded.updated_at
         """, (reader_id, book_id, int(page), int(bool(completed)), updated_at))
         return True, {"page": int(page), "completed": int(bool(completed)), "updated_at": updated_at}
+
+
+# --- shelf index ------------------------------------------------------------------
+
+def upsert_shelf_series(folder, title, publisher, tracked_series_id, book_count, scanned_at, path=DB_PATH) -> int:
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO shelf_series (folder_path, title, publisher, tracked_series_id, book_count, scanned_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(folder_path) DO UPDATE SET
+                title = excluded.title, publisher = excluded.publisher,
+                tracked_series_id = excluded.tracked_series_id,
+                book_count = excluded.book_count, scanned_at = excluded.scanned_at
+        """, (folder, title, publisher, tracked_series_id, book_count, scanned_at))
+        return conn.execute("SELECT id FROM shelf_series WHERE folder_path = ?", (folder,)).fetchone()["id"]
+
+
+def index_books(rows, path=DB_PATH):
+    """rows = (path, size, mtime, number, shelf_series_id, tracked_series_id).
+    Registers files WITHOUT opening them. A changed size/mtime clears the page
+    list so the reader rescans the file on next open."""
+    with _connect(path) as conn:
+        conn.executemany("""
+            INSERT INTO books (path, size, mtime, number, shelf_series_id, tracked_series_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                pages_json = CASE WHEN books.size IS excluded.size AND books.mtime IS excluded.mtime
+                                  THEN books.pages_json ELSE NULL END,
+                page_count = CASE WHEN books.size IS excluded.size AND books.mtime IS excluded.mtime
+                                  THEN books.page_count ELSE NULL END,
+                size = excluded.size, mtime = excluded.mtime,
+                number = COALESCE(excluded.number, books.number),
+                shelf_series_id = excluded.shelf_series_id,
+                tracked_series_id = COALESCE(excluded.tracked_series_id, books.tracked_series_id)
+        """, rows)
+
+
+def prune_shelf(scanned_at, path=DB_PATH) -> int:
+    """Drop series folders the latest scan didn't see. Book rows (and any read
+    progress on them) are kept — a book that comes back keeps its history."""
+    with _connect(path) as conn:
+        return conn.execute("DELETE FROM shelf_series WHERE scanned_at IS NOT ? ",
+                            (scanned_at,)).rowcount
+
+
+_SHELF_STATS_SQL = """
+    SELECT b.shelf_series_id AS sid,
+           SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
+           SUM(CASE WHEN p.completed = 0 THEN 1 ELSE 0 END) AS in_progress,
+           MAX(p.updated_at) AS last_read
+    FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+    GROUP BY b.shelf_series_id
+"""
+
+
+def list_shelf(reader_id, untracked_only=True, path=DB_PATH):
+    with _connect(path) as conn:
+        stats = {r["sid"]: dict(r) for r in conn.execute(_SHELF_STATS_SQL, (reader_id,))}
+        q = "SELECT * FROM shelf_series" + (" WHERE tracked_series_id IS NULL" if untracked_only else "")
+        out = []
+        for r in conn.execute(q + " ORDER BY title COLLATE NOCASE"):
+            d = dict(r)
+            st = stats.get(d["id"], {})
+            d.update(read_count=st.get("read_count") or 0, in_progress=st.get("in_progress") or 0,
+                     last_read=st.get("last_read"))
+            out.append(d)
+        return out
+
+
+def get_shelf_series(shelf_id, path=DB_PATH):
+    with _connect(path) as conn:
+        r = conn.execute("SELECT * FROM shelf_series WHERE id = ?", (shelf_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def shelf_books(shelf_id, reader_id, path=DB_PATH):
+    with _connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT b.id, b.path, b.number, b.page_count, b.size, b.mtime,
+                   p.page AS progress_page, p.completed, p.updated_at
+            FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+            WHERE b.shelf_series_id = ?
+        """, (reader_id, shelf_id))]
+
+
+def reading_by_tracked_series(reader_id, path=DB_PATH) -> dict[int, dict]:
+    """{tracked_series_id: {read_count, in_progress, last_read}} — the Library's
+    Reading chip for tracked series."""
+    with _connect(path) as conn:
+        return {r["tid"]: {"read_count": r["read_count"], "in_progress": r["in_progress"], "last_read": r["last_read"]}
+                for r in conn.execute("""
+            SELECT b.tracked_series_id AS tid,
+                   SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
+                   SUM(CASE WHEN p.completed = 0 THEN 1 ELSE 0 END) AS in_progress,
+                   MAX(p.updated_at) AS last_read
+            FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+            WHERE b.tracked_series_id IS NOT NULL
+            GROUP BY b.tracked_series_id
+        """, (reader_id,))}

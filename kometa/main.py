@@ -92,6 +92,10 @@ def _sync_all_job():
         # missed" and the next startup catch-up (lifespan, below) retries it.
         from datetime import datetime, timezone
         db.set_config({"last_full_sync": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")}, DB_PATH)
+        # The reader's whole-shelf index rides the same schedule: new folders and
+        # files (and tracked/untracked links) refresh three times a day.
+        from kometa.shelf import scan_shelf_safe
+        scan_shelf_safe()
     finally:
         full_sync_lock.release()
 
@@ -112,6 +116,7 @@ async def lifespan(app: FastAPI):
     if missed_slot and db.get_config(DB_PATH).get("last_full_sync", "") < missed_slot:
         logger.info(f"Startup catch-up: missed scheduled sync at {missed_slot} UTC — running now")
         threading.Thread(target=_sync_all_job, daemon=True).start()
+    _shelf_scan()   # whole-shelf index for the reader; listing only, so it's cheap
     yield
 
 
@@ -123,6 +128,8 @@ from kometa.thumbnails import router as _thumbnails_router  # noqa: E402
 app.include_router(_thumbnails_router)
 from kometa.reader import router as _reader_router  # noqa: E402
 app.include_router(_reader_router)
+from kometa.shelf import router as _shelf_router, scan_in_background as _shelf_scan  # noqa: E402
+app.include_router(_shelf_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)
