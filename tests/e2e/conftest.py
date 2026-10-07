@@ -79,6 +79,18 @@ def _seed(db, path):
     _os.makedirs(root, exist_ok=True)
     db.set_config({"last_full_sync": "9999-01-01 00:00:00", "comics_root": root}, path)
 
+    # A real, readable #1 for the reader smoke: 6 pages, page 4 a wide spread.
+    import io as _io, zipfile as _zf
+    from PIL import Image as _Image
+    alpha_dir = _os.path.join(root, "Image Comics", "Test Comic Alpha")
+    _os.makedirs(alpha_dir, exist_ok=True)
+    with _zf.ZipFile(_os.path.join(alpha_dir, "Test Comic Alpha #001.cbz"), "w") as z:
+        for i in range(1, 7):
+            buf = _io.BytesIO()
+            _Image.new("RGB", (1200 if i == 4 else 600, 900), (40 * i, 60, 90)).save(buf, "JPEG")
+            z.writestr(f"page{i:02d}.jpg", buf.getvalue())
+    db.set_folder_path(alpha, alpha_dir, path)
+
     return {"alpha": alpha, "beta": beta, "gamma": gamma}
 
 

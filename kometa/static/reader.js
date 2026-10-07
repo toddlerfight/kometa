@@ -1,0 +1,357 @@
+// --- Reader ------------------------------------------------------------------
+// The web half of docs/reader-spec.md. A route of its own (#read?book=42), so
+// Back, reload and a bookmarked URL all land you on the page you were on.
+//
+// Layout: portrait = one page. Landscape (wide enough) = two-up, with the cover
+// and wide spreads always alone. "Shift pairing" fixes files whose ads/missing
+// pages knock every spread off by one. Controls hide while reading; a tap in the
+// middle brings them back. Edges (or a swipe, or the arrow keys) turn pages.
+//
+// Depends on app.js globals: api, esc, showToast, navigate, currentParams.
+
+const _rd = {
+  book: null,        // /api/books/{id} payload
+  spreads: [],       // [[pageNo], [pageNo, pageNo], ...] — 1-based page numbers
+  at: 0,             // index into spreads
+  mode: 'auto',      // 'auto' | 'single' | 'double'
+  shift: false,      // shift pairing by one after the cover
+  chrome: false,
+  ended: false,
+  saveTimer: null,
+  lastSaved: null,
+  touch: null,
+};
+
+const _RD_MODE_KEY = 'kometa.reader.mode';
+try { _rd.mode = localStorage.getItem(_RD_MODE_KEY) || 'auto'; } catch {}
+
+function _rdEl() {
+  let el = document.getElementById('reader');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'reader';
+    el.className = 'hidden';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Comic reader');
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function _rdTwoUp() {
+  if (_rd.mode === 'single') return false;
+  if (_rd.mode === 'double') return true;
+  return window.innerWidth > window.innerHeight && window.innerWidth >= 900;
+}
+
+// Pages that never pair: the cover, and anything drawn as a single wide image.
+function _rdBuildSpreads() {
+  const pages = _rd.book.pages;
+  const n = pages.length;
+  const out = [];
+  if (!_rdTwoUp()) {
+    for (let p = 1; p <= n; p++) out.push([p]);
+    return out;
+  }
+  let p = 1;
+  out.push([p++]);                               // cover alone
+  if (_rd.shift && p <= n) out.push([p++]);      // knock pairing over by one
+  while (p <= n) {
+    if (pages[p - 1].wide) { out.push([p++]); continue; }
+    if (p + 1 <= n && !pages[p].wide) { out.push([p, p + 1]); p += 2; }
+    else out.push([p++]);
+  }
+  return out;
+}
+
+function _rdSpreadOf(page) {
+  const i = _rd.spreads.findIndex(s => s.includes(page));
+  return i < 0 ? 0 : i;
+}
+
+function _rdPageUrl(page, cssWidth) {
+  const w = Math.round(cssWidth * Math.min(window.devicePixelRatio || 1, 2));
+  return `/api/books/${_rd.book.id}/pages/${page}?w=${w}&v=${encodeURIComponent(_rd.book.version)}`;
+}
+
+function _rdSlotWidth(count) {
+  return count === 2 ? window.innerWidth / 2 : window.innerWidth;
+}
+
+function _rdPreload() {
+  for (const d of [1, 2, -1]) {
+    const s = _rd.spreads[_rd.at + d];
+    if (!s) continue;
+    for (const p of s) { const im = new Image(); im.src = _rdPageUrl(p, _rdSlotWidth(s.length)); }
+  }
+}
+
+function _rdTitle() {
+  const b = _rd.book;
+  return b.number != null ? `${b.title} #${fmtNum(b.number)}` : b.title;
+}
+
+function _rdRender() {
+  const el = _rdEl();
+  const b = _rd.book;
+  if (_rd.ended) return _rdRenderEnd();
+  const spread = _rd.spreads[_rd.at] || [1];
+  const last = spread[spread.length - 1];
+  const imgs = spread.map(p => `
+    <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"
+      src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false">`).join('');
+  const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
+  const thumbs = b.pages.map((_, i) => {
+    const p = i + 1, on = spread.includes(p);
+    return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdGo(${p})">
+      <img src="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage">${imgs}</div>
+    <div class="rd-progress" style="width:${(last / b.page_count) * 100}%"></div>
+    <div class="rd-count" aria-hidden="true">${label} / ${b.page_count}</div>
+    <div class="rd-chrome${_rd.chrome ? ' on' : ''}" id="rd-chrome">
+      <div class="rd-top">
+        <div class="rd-top-l">
+          <button class="rd-back" onclick="_rdExit()">‹ Back</button>
+          <div class="rd-titles">
+            <div class="rd-title">${esc(_rdTitle())}</div>
+            <div class="rd-sub">${esc((b.publisher || '').toUpperCase())}${b.publisher ? ' · ' : ''}${b.page_count} PAGES</div>
+          </div>
+        </div>
+        <div class="rd-top-r">
+          <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
+          <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">⋯</button>
+          <div class="rd-menu hidden" id="rd-menu">
+            <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
+            <button onclick="_rdMarkRead()">Mark as read</button>
+          </div>
+        </div>
+      </div>
+      <div class="rd-bottom">
+        <div class="rd-strip" id="rd-strip">${thumbs}</div>
+        <div class="rd-scrub">
+          <span>${spread[0]}</span>
+          <input type="range" min="1" max="${b.page_count}" value="${spread[0]}" aria-label="Page"
+            oninput="this.previousElementSibling.textContent=this.value" onchange="_rdGo(+this.value)">
+          <span>${b.page_count}</span>
+        </div>
+      </div>
+    </div>`;
+  if (_rd.chrome) _rdCenterStrip();
+  _rdPreload();
+  _rdQueueSave(last);
+}
+
+function _rdRenderEnd() {
+  const el = _rdEl();
+  const b = _rd.book;
+  el.innerHTML = `
+    <div class="rd-end">
+      <div class="rd-end-done">✓ FINISHED</div>
+      <div class="rd-end-title">${esc(_rdTitle())}</div>
+      <div class="rd-end-actions">
+        <button class="btn btn-ghost" onclick="_rdEnded(false)">‹ Last page</button>
+        <button class="btn btn-primary" onclick="_rdExit()">Done</button>
+      </div>
+      <div class="rd-end-note">Up next arrives with On Deck.</div>
+    </div>`;
+  _rdQueueSave(b.page_count, true);
+}
+
+function _rdCenterStrip() {
+  const on = document.querySelector('#rd-strip .rd-thumb.on');
+  if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+// --- navigation ----------------------------------------------------------------
+
+function _rdGo(page) {
+  _rd.ended = false;
+  _rd.at = _rdSpreadOf(Math.max(1, Math.min(page, _rd.book.page_count)));
+  _rdRender();
+}
+
+function _rdStep(dir) {
+  if (_rd.ended) { if (dir < 0) _rdEnded(false); return; }
+  const next = _rd.at + dir;
+  if (next >= _rd.spreads.length) return _rdEnded(true);
+  if (next < 0) return;
+  _rd.at = next;
+  _rdRender();
+}
+
+function _rdEnded(on) {
+  _rd.ended = on;
+  if (!on) _rd.at = _rd.spreads.length - 1;
+  _rdRender();
+}
+
+function _rdToggleChrome(force) {
+  _rd.chrome = force ?? !_rd.chrome;
+  document.getElementById('rd-chrome')?.classList.toggle('on', _rd.chrome);
+  document.getElementById('rd-menu')?.classList.add('hidden');
+  if (_rd.chrome) _rdCenterStrip();
+}
+
+function _rdCycleMode() {
+  const cur = _rd.spreads[_rd.at]?.[0] || 1;
+  _rd.mode = { auto: 'single', single: 'double', double: 'auto' }[_rd.mode];
+  try { localStorage.setItem(_RD_MODE_KEY, _rd.mode); } catch {}
+  _rd.spreads = _rdBuildSpreads();
+  _rd.at = _rdSpreadOf(cur);
+  _rdRender();
+}
+
+function _rdToggleShift() {
+  const cur = _rd.spreads[_rd.at]?.[0] || 1;
+  _rd.shift = !_rd.shift;
+  _rd.spreads = _rdBuildSpreads();
+  _rd.at = _rdSpreadOf(cur);
+  _rdRender();
+}
+
+function _rdToggleMenu(e) {
+  e.stopPropagation();
+  document.getElementById('rd-menu')?.classList.toggle('hidden');
+}
+
+// --- progress --------------------------------------------------------------------
+// Explicit writes, debounced: flipping through ten pages is one save, not ten.
+// The server refuses anything older than what it holds (409) — that's another
+// device being further along, and it wins.
+
+function _rdQueueSave(page, completed) {
+  clearTimeout(_rd.saveTimer);
+  _rd.saveTimer = setTimeout(() => _rdSave(page, completed), 1200);
+}
+
+async function _rdSave(page, completed) {
+  if (!_rd.book) return;
+  const key = `${page}:${!!completed}`;
+  if (_rd.lastSaved === key) return;
+  const body = { page, updated_at: new Date().toISOString() };
+  if (completed) body.completed = true;
+  try {
+    await api.put(`/api/books/${_rd.book.id}/progress`, body);
+    _rd.lastSaved = key;
+  } catch (e) {
+    // stale (another device is ahead) or offline — progress is best-effort here
+  }
+}
+
+async function _rdMarkRead() {
+  clearTimeout(_rd.saveTimer);
+  await _rdSave(_rd.book.page_count, true);
+  showToast('Marked as read');
+  _rdToggleChrome(false);
+}
+
+// --- input -------------------------------------------------------------------------
+
+function _rdZoomed() {
+  return window.visualViewport && window.visualViewport.scale > 1.05;
+}
+
+function _rdOnTap(x) {
+  const w = window.innerWidth;
+  if (_rd.chrome) return _rdToggleChrome(false);
+  if (x < w * 0.3) _rdStep(-1);
+  else if (x > w * 0.7) _rdStep(1);
+  else _rdToggleChrome(true);
+}
+
+function _rdBindInput() {
+  const el = _rdEl();
+  if (el.dataset.bound) return;
+  el.dataset.bound = '1';
+  el.addEventListener('click', e => {
+    if (_rd.ended || e.target.closest('.rd-chrome .rd-top, .rd-chrome .rd-bottom, .rd-end')) return;
+    if (_rdZoomed()) return;
+    _rdOnTap(e.clientX);
+  });
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { _rd.touch = null; return; }
+    _rd.touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  el.addEventListener('touchend', e => {
+    const t = _rd.touch; _rd.touch = null;
+    if (!t || _rdZoomed() || _rd.chrome) return;
+    const dx = e.changedTouches[0].clientX - t.x, dy = e.changedTouches[0].clientY - t.y;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - t.t < 600) {
+      e.preventDefault();               // a swipe, not a tap — don't let click fire
+      _rdStep(dx < 0 ? 1 : -1);
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (currentView !== 'read' || !_rd.book) return;
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); _rdStep(1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); _rdStep(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); _rd.chrome ? _rdToggleChrome(false) : _rdExit(); }
+  });
+  let rt;
+  window.addEventListener('resize', () => {
+    if (currentView !== 'read' || !_rd.book) return;
+    clearTimeout(rt);
+    rt = setTimeout(() => {
+      const cur = _rd.spreads[_rd.at]?.[0] || 1;
+      _rd.spreads = _rdBuildSpreads();
+      _rd.at = _rdSpreadOf(cur);
+      _rdRender();
+    }, 150);
+  });
+}
+
+// --- open / close --------------------------------------------------------------------
+
+async function renderReader(params) {
+  const el = _rdEl();
+  el.classList.remove('hidden');
+  document.body.classList.add('reading');
+  el.innerHTML = '<div class="rd-loading">Opening…</div>';
+  _rdBindInput();
+  try {
+    const book = await api.get(`/api/books/${params.book}`);
+    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null });
+    _rd.spreads = _rdBuildSpreads();
+    const p = book.progress;
+    const start = params.page ? +params.page : (p && !p.completed ? p.page : 1);
+    _rd.at = _rdSpreadOf(start);
+    _rdRender();
+  } catch (e) {
+    el.innerHTML = `<div class="rd-end"><div class="rd-end-title">Couldn’t open this book</div>
+      <div class="rd-end-actions"><button class="btn btn-primary" onclick="_rdExit()">‹ Back</button></div></div>`;
+  }
+}
+
+function closeReader() {
+  const el = document.getElementById('reader');
+  if (!el || el.classList.contains('hidden')) return;
+  if (_rd.book && _rd.saveTimer) {
+    clearTimeout(_rd.saveTimer);
+    const s = _rd.spreads[_rd.at];
+    if (s && !_rd.ended) _rdSave(s[s.length - 1]);
+  }
+  el.classList.add('hidden');
+  el.innerHTML = '';
+  document.body.classList.remove('reading');
+  _rd.book = null;
+}
+
+function _rdExit() {
+  const from = _rd.book?.series_id;
+  if (history.length > 1 && history.state && history.state.view === 'read') history.back();
+  else if (from) navigate('series-detail', { id: from });
+  else navigate('library');
+}
+
+// The Read button: issue → book id → the reader.
+async function openIssueReader(seriesId, number) {
+  try {
+    const book = await api.get(`/api/series/${seriesId}/issues/${number}/book`);
+    if (typeof closeModal === 'function') closeModal();
+    navigate('read', { book: book.id });
+  } catch (e) {
+    showToast('Couldn’t open this issue — ' + (e?.message || e), 'error');
+  }
+}

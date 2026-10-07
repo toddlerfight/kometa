@@ -46,7 +46,7 @@ FINISH_WITHIN_PAGES = 3
 # Resize buckets. A client asks for its screen width; we serve the smallest bucket
 # that covers it, so the cache holds a handful of sizes per page, not one per
 # device. Never upscaled — a page smaller than the bucket is served as-is.
-WIDTH_BUCKETS = (720, 1080, 1440, 2048)
+WIDTH_BUCKETS = (240, 720, 1080, 1440, 2048)   # 240 = the reader's thumbnail strip
 DEFAULT_WIDTH = 1440
 JPEG_QUALITY = 85
 

@@ -35,6 +35,10 @@ const api = {
     return fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
   },
+  put(url, body) {
+    return fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+  },
   del(url) {
     return fetch(url, { method: 'DELETE' }).then(r => { if (!r.ok) throw new Error(r.status); });
   },
@@ -126,6 +130,10 @@ function setApp(html) {
 
 function renderView() {
   const view = currentView;
+  // The reader is a full-screen layer over whatever view you came from — the
+  // view underneath stays painted, so Back is instant.
+  if (view === 'read') return renderReader(currentParams);
+  closeReader();
   const paint = (() => {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
@@ -3014,9 +3022,12 @@ async function showIssueModal(seriesId, number) {
   }
 
   let footerAction = '';
-  if (st === 'owned' && issue.komga_book_id && _appConfig.komga_url) {
-    const readerUrl = `${komgaBase()}/book/${esc(issue.komga_book_id)}/read`;
-    footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
+  if (st === 'owned') {
+    // Kometa's own reader first; Komga stays as the fallback until it's retired.
+    const komga = issue.komga_book_id && _appConfig.komga_url
+      ? `<a class="btn btn-ghost komga-read-link" href="${komgaBase()}/book/${esc(issue.komga_book_id)}/read" target="_blank" rel="noopener">Komga</a>`
+      : '';
+    footerAction = `${komga}<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
   } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
         title="Stop searching for this issue">Ignore</button>
@@ -3080,12 +3091,12 @@ async function showIssueModal(seriesId, number) {
       const footer = document.getElementById('issue-modal-footer');
       if (footer && !footer.querySelector('.komga-read-link')) {
         const a = document.createElement('a');
-        a.className = 'btn btn-primary komga-read-link';
+        a.className = 'btn btn-ghost komga-read-link';
         a.href = `${komgaBase()}/book/${fi.komga_book_id}/read`;
         a.target = '_blank';
         a.rel = 'noopener';
-        a.textContent = 'Open in Komga';
-        footer.appendChild(a);
+        a.textContent = 'Komga';
+        footer.insertBefore(a, footer.querySelector('.btn-primary'));
       }
     }).catch(() => {});
   }
