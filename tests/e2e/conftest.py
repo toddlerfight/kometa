@@ -14,6 +14,7 @@ Network quarantine, two layers:
   canned responses. Tests can re-route with page.route to simulate richer
   data or failures — last registration wins in Playwright.
 """
+import os
 import threading
 import time
 import urllib.request
@@ -97,8 +98,10 @@ def app_server(tmp_path_factory):
     import kometa.sync as sync
     import kometa.sources as sources
     import kometa.acquisition as acquisition
-    for mod in (main, arcs, thumbnails, sync, sources, acquisition):
+    import kometa.reader as reader
+    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader):
         mod.DB_PATH = dbfile
+    reader.PAGE_CACHE_DIR = os.path.join(os.path.dirname(dbfile), "page-cache")
 
     db.init_db(dbfile)
     ids = _seed(db, dbfile)

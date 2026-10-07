@@ -71,6 +71,36 @@ def init_db(path=DB_PATH):
                 fetched_at        TEXT DEFAULT (datetime('now'))
             );
 
+            -- The reader's shelf: one row per comic FILE. Registered lazily the first
+            -- time a book is opened (the whole-shelf index fills it in bulk later).
+            -- pages_json = [[entry_name, width, height], ...] in reading order.
+            -- size+mtime fingerprint the file: change either and the page list is
+            -- rebuilt and every cached page for the old version is ignored.
+            CREATE TABLE IF NOT EXISTS books (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                path              TEXT NOT NULL UNIQUE,
+                size              INTEGER,
+                mtime             REAL,
+                page_count        INTEGER,
+                pages_json        TEXT,
+                tracked_series_id INTEGER,
+                number            REAL,
+                added_at          TEXT DEFAULT (datetime('now'))
+            );
+
+            -- Read progress, per READER. One reader ('me') today; the key is there so
+            -- a second one is a data change, not a schema change. updated_at is the
+            -- CLIENT's clock: a write older than what's stored loses (offline
+            -- devices replaying a queue must not drag progress backwards).
+            CREATE TABLE IF NOT EXISTS read_progress (
+                reader_id  TEXT NOT NULL,
+                book_id    INTEGER NOT NULL REFERENCES books(id),
+                page       INTEGER NOT NULL,
+                completed  INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (reader_id, book_id)
+            );
+
         """)
     _migrate(path)
     _seed_defaults(path)
@@ -1349,3 +1379,65 @@ def clear_variant_prefs(tracked_series_id, number, path=DB_PATH):
             "DELETE FROM variant_prefs WHERE tracked_series_id = ? AND number = ?",
             (tracked_series_id, number)
         )
+
+
+# --- reader: books + progress -------------------------------------------------
+
+def upsert_book(path_, size, mtime, pages, tracked_series_id=None, number=None, path=DB_PATH) -> int:
+    """Register (or refresh) a comic file. pages = [[name, w, h], ...]. Returns id."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO books (path, size, mtime, page_count, pages_json, tracked_series_id, number)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                size = excluded.size, mtime = excluded.mtime,
+                page_count = excluded.page_count, pages_json = excluded.pages_json,
+                tracked_series_id = COALESCE(excluded.tracked_series_id, tracked_series_id),
+                number = COALESCE(excluded.number, number)
+        """, (path_, size, mtime, len(pages), json.dumps(pages), tracked_series_id, number))
+        return conn.execute("SELECT id FROM books WHERE path = ?", (path_,)).fetchone()["id"]
+
+
+def _book_row(r):
+    if not r:
+        return None
+    b = dict(r)
+    b["pages"] = json.loads(b.pop("pages_json") or "[]")
+    return b
+
+
+def get_book(book_id, path=DB_PATH):
+    with _connect(path) as conn:
+        return _book_row(conn.execute("SELECT * FROM books WHERE id = ?", (book_id,)).fetchone())
+
+
+def get_book_by_path(path_, path=DB_PATH):
+    with _connect(path) as conn:
+        return _book_row(conn.execute("SELECT * FROM books WHERE path = ?", (path_,)).fetchone())
+
+
+def get_progress(reader_id, book_id, path=DB_PATH):
+    with _connect(path) as conn:
+        r = conn.execute("SELECT page, completed, updated_at FROM read_progress "
+                         "WHERE reader_id = ? AND book_id = ?", (reader_id, book_id)).fetchone()
+        return dict(r) if r else None
+
+
+def set_progress(reader_id, book_id, page, completed, updated_at, path=DB_PATH):
+    """Write progress unless it's stale. Returns (accepted, stored_row).
+
+    Stale = older than what's already stored. Equal timestamps are accepted
+    (same device re-sending is harmless). The compare is on ISO-8601 strings, so
+    clients must send UTC 'YYYY-MM-DDTHH:MM:SS(.fff)Z'."""
+    with _connect(path) as conn:
+        cur = conn.execute("SELECT page, completed, updated_at FROM read_progress "
+                           "WHERE reader_id = ? AND book_id = ?", (reader_id, book_id)).fetchone()
+        if cur and cur["updated_at"] > updated_at:
+            return False, dict(cur)
+        conn.execute("""
+            INSERT INTO read_progress (reader_id, book_id, page, completed, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(reader_id, book_id) DO UPDATE SET
+                page = excluded.page, completed = excluded.completed, updated_at = excluded.updated_at
+        """, (reader_id, book_id, int(page), int(bool(completed)), updated_at))
+        return True, {"page": int(page), "completed": int(bool(completed)), "updated_at": updated_at}

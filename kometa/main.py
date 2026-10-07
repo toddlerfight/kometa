@@ -121,6 +121,8 @@ app = FastAPI(lifespan=lifespan)
 # fully self-contained; nothing else in the app imports from it.
 from kometa.thumbnails import router as _thumbnails_router  # noqa: E402
 app.include_router(_thumbnails_router)
+from kometa.reader import router as _reader_router  # noqa: E402
+app.include_router(_reader_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)
