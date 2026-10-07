@@ -492,9 +492,12 @@ function _renderBrowseResults() {
 
   const cards = filtered.map((s, i) => {
     const pub   = s.publisher ? `<div class="series-card-publisher u-truncate">${esc(s.publisher.toUpperCase())}</div>` : '';
-    const total = (s.owned ?? 0) + (s.missing ?? 0);
+    // Release-day issues not yet down count toward the total and turn it amber —
+    // 145/146, not a '145/145 complete' while #146 is out today.
+    const gap   = (s.missing ?? 0) + (s.out_today ?? 0);
+    const total = (s.owned ?? 0) + gap;
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
-    const color = s.missing > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
+    const color = gap > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
     const nextRelease = s.calendar_date
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;

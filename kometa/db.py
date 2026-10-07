@@ -605,6 +605,7 @@ def get_all_series_summaries(path=DB_PATH):
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
                 MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
                 (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
@@ -627,7 +628,7 @@ def get_all_series_summaries(path=DB_PATH):
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_komga_v
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (week_ago, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
+        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -660,6 +661,9 @@ def get_all_series_summaries(path=DB_PATH):
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
             "calendar_date": calendar_date(r["recent_release"], r["next_release"]),
+            # Library card only: released today, not on the shelf yet. Still counted
+            # as upcoming everywhere else — the card just shouldn't read 'complete'.
+            "out_today": r["out_today"] or 0,
         }
     return out
 

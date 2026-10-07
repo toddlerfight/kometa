@@ -371,7 +371,7 @@ def list_series():
     series = [s for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
     summaries = db.get_all_series_summaries(DB_PATH)
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
-             "calendar_date": None, "card_image": None}
+             "calendar_date": None, "out_today": 0, "card_image": None}
     return [dict(s, **summaries.get(s["id"], empty)) for s in series]
 
 
