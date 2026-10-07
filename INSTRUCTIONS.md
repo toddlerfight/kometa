@@ -253,6 +253,23 @@ the NAS** (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those
   test) before committing. One slice per commit.
 - Architecture/module map lives in `CONTEXT.md`. Keep it current.
 
+## New features: research → mock-up → build
+
+For anything with real UI or product decisions (not bug fixes), in this order:
+
+1. **Decide** — work out what's being built one question at a time, each with a
+   recommendation, until there's a shared understanding. Look up facts (DB, Komga,
+   files) rather than asking for them; put the decisions to the owner.
+2. **Research** prior art from primary sources → `docs/<feature>-research.md`, cited.
+3. **Spec** the agreed decisions → `docs/<feature>-spec.md`. Layout is NOT decided
+   here — it's left open for step 4.
+4. **Mock up** in Pencil (`kometa.pen`, the Pencil desktop app — not VS Code) and get
+   sign-off on how it looks.
+5. **Build**, then the usual test → commit → deploy.
+
+Example: the reader — `docs/reader-research.md`, `docs/reader-spec.md`.
+`docs/` is in a PUBLIC repo: no hosts, IPs, usernames or personal details.
+
 ## Styling / design tokens
 
 - All design tokens are CSS variables in `:root` at the top of
