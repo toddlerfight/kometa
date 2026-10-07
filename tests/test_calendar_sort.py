@@ -61,19 +61,3 @@ def test_sorts_ahead_of_next_weeks_books(db_path):
     db.upsert_issue_status(next_week, 1.0, d(7), owned=False, path=db_path)
     s = db.get_all_series_summaries(db_path)
     assert s[today_owned]["calendar_date"] < s[next_week]["calendar_date"]
-
-
-def test_release_day_counts_as_missing_not_upcoming(db_path):
-    # 2026-10-07, Walking Dead Deluxe: #146 out today, not down yet — the card read
-    # 145/145 'complete'. Release day is missing (amber = not in the collection yet).
-    sid = _series(db_path, "The Walking Dead Deluxe")
-    db.upsert_issue_status(sid, 145.0, d(-21), owned=True, path=db_path)
-    db.upsert_issue_status(sid, 146.0, d(0), owned=False, path=db_path)
-    db.upsert_issue_status(sid, 147.0, d(14), owned=False, path=db_path)
-    card = db.get_all_series_summaries(db_path)[sid]
-    page = main._summary(db.get_issues_for_series(sid, db_path))
-    for v in (card, page):
-        assert (v["owned"], v["missing"], v["upcoming"]) == (1, 1, 1)
-        assert v["next_release"] == d(14)          # 'next' is tomorrow-onward now
-        assert v["calendar_date"] == d(0)          # still holds today's slot
-    assert [r["number"] for r in db.get_missing_for_monitored(db_path)] == [146.0]

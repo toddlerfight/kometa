@@ -134,12 +134,10 @@ def _summary(issues):
     cutoff = str(date.today() + timedelta(days=30))
     owned = sum(1 for r in issues if r["owned"])
     wanted = [r for r in issues if not r["owned"] and not r.get("ignored")]
-    # Release day counts as missing: amber means 'not in the collection yet',
-    # whatever the reason — a late post, or a release that never shows.
-    missing = sum(1 for r in wanted if not r["store_date"] or r["store_date"] <= today)
-    upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] > today)
+    missing = sum(1 for r in wanted if not r["store_date"] or r["store_date"] < today)
+    upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] >= today)
     soon = [r["store_date"] for r in wanted
-            if r["store_date"] and today < r["store_date"] <= cutoff]
+            if r["store_date"] and today <= r["store_date"] <= cutoff]
     week_ago = str(date.today() - timedelta(days=db.RECENT_RELEASE_DAYS))
     recent = [r["store_date"] for r in issues
               if not r.get("ignored") and r["store_date"] and week_ago <= r["store_date"] <= today]

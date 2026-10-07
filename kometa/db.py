@@ -603,9 +603,9 @@ def get_all_series_summaries(path=DB_PATH):
                 tracked_series_id,
                 MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
-                MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date > ? AND store_date <= ? THEN store_date END) as next_release,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
+                MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
                 (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
                    ORDER BY i2.store_date ASC LIMIT 1) as up_number,

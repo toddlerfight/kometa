@@ -169,11 +169,20 @@ function bookThumb(issue) {
 }
 
 function _localToday() {
-  // The VIEWER's own calendar date. Drives the TODAY label and the upcoming/missing
-  // line: once it's release day on your calendar and the book isn't on the shelf,
-  // it's missing (amber = not in the collection yet, whatever the reason).
+  // The VIEWER's own calendar date. Drives the "today/upcoming" line and the TODAY
+  // label, so a release shows TODAY on YOUR date — not a day late because the US clock
+  // hasn't caught up. The missing flip uses _usToday (below), so it still won't go
+  // "missing" before the US release has actually passed.
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function _usToday() {
+  // US (Pacific) date — used ONLY for the "missing" boundary. Comic store_dates are US
+  // release dates; Pacific is the most forgiving US zone, so an issue won't flip to
+  // "missing" until the date has fully passed across the States (your AEST date runs
+  // ahead, so using it alone would mark things missing before they've even dropped).
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
 }
 
 function _fmtReleaseDate(dateStr) {
@@ -204,12 +213,13 @@ function _modalCoverHtml(src, alt) {
 }
 
 function issueStatus(issue) {
-  const lt = _localToday();
+  const lt = _localToday(), ut = _usToday();
   if (issue.owned) return 'owned';
   if (issue.ignored) return 'ignored';              // told to stop chasing it — never 'missing'
   if (!issue.store_date) return 'unknown';
   if (issue.store_date > lt) return 'upcoming';   // future on YOUR calendar
-  return 'missing';   // out (release day included) and not on the shelf — amber means not in the collection yet
+  if (issue.store_date >= ut) return 'today';      // out today (your date) — or still dropping in the US
+  return 'missing';                                 // only once it's passed in the US too
 }
 
 function fmtDayDate(iso) {
@@ -587,7 +597,7 @@ function buildIssueTiles(s) {
     const st = issueStatus(i);
     if (detailTab === 'owned')    return st === 'owned';
     if (detailTab === 'missing')  return st === 'missing';
-    if (detailTab === 'upcoming') return st === 'upcoming';
+    if (detailTab === 'upcoming') return st === 'upcoming' || st === 'today';
     return true;
   }).sort((a, b) => detailSortDesc ? b.number - a.number : a.number - b.number);
 
@@ -597,7 +607,7 @@ function buildIssueTiles(s) {
 function _issueTileHtml(s, issue) {
     const st = issueStatus(issue);
     const num = `#${fmtNum(issue.number)}`;
-    const dateBadge = (st === 'missing' && issue.store_date === _localToday())
+    const dateBadge = st === 'today'
       ? `<div class="series-card-next-release">TODAY</div>`
       : (st === 'upcoming' && issue.store_date
           ? `<div class="series-card-next-release">${issue.store_date.replace(/-/g, '/')}</div>`
@@ -628,7 +638,7 @@ function _issueTileHtml(s, issue) {
           onerror="this.remove()">${dateBadge}
       </div>`;
     }
-    const searchBtn = st === 'missing'
+    const searchBtn = (st === 'missing' || st === 'today')
       ? `<button class="issue-tile-search" title="Search for this issue" aria-label="Search for issue ${fmtNum(issue.number)}" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
@@ -1898,12 +1908,11 @@ async function doDelete(id) {
 // --- Pull List ---
 
 function _pullStatus(e) {
-  const lt = _localToday();
+  const lt = _localToday(), ut = _usToday();
   if (e.owned) return `<span class="pull-status pull-status-owned">✓</span>`;
   if (e.ignored) return `<span class="pull-status pull-status-ignored">Ignored</span>`;
   if (e.store_date > lt) return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
-  // Release day: still 'Today', but amber — out and not in the collection yet.
-  if (e.store_date === lt) return `<span class="pull-status pull-status-missing">Today</span>`;
+  if (e.store_date >= ut) return `<span class="pull-status pull-status-today">Today</span>`;
   return `<span class="pull-status pull-status-missing">Missing</span>`;
 }
 
@@ -1986,7 +1995,7 @@ async function _renderPullListContent() {
                 <div class="pull-issue">#${fmtNum(e.number)}</div>
               </div>
               ${_pullStatus(e)}
-              <span class="pull-act">${(!e.owned && e.store_date <= _localToday())
+              <span class="pull-act">${(!e.owned && e.store_date < _usToday())
                 ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue" aria-label="Download issue ${fmtNum(e.number)}"
                      onclick="event.stopPropagation(); pullDownload(${sid}, ${e.number}, this)">↓</button>`
                 : ''}</span>
@@ -2980,6 +2989,7 @@ async function showIssueModal(seriesId, number) {
     owned:   `<span class="chip chip-complete">Owned</span>`,
     missing: `<span class="chip chip-missing">Missing</span>`,
     upcoming:`<span class="chip chip-upcoming">Upcoming</span>`,
+    today:   `<span class="chip chip-today">Today</span>`,
     unknown: `<span class="chip" style="color:var(--tq);border-color:var(--tq)">Unknown</span>`,
     ignored: `<span class="chip chip-ignored">Ignored</span>`,
   };
@@ -2992,7 +3002,7 @@ async function showIssueModal(seriesId, number) {
       const daysAway = Math.max(0, Math.round((d - Date.now()) / 86400000));
       dateHtml = `<div class="issue-modal-date">${fmtDate}</div>
                   <div class="issue-modal-days">${daysAway} day${daysAway !== 1 ? 's' : ''} away</div>`;
-    } else if (issue.store_date === _localToday()) {
+    } else if (st === 'today') {
       dateHtml = `<div class="issue-modal-date">${fmtDate}</div>
                   <div class="issue-modal-days">Out today</div>`;
     } else {
@@ -3004,7 +3014,7 @@ async function showIssueModal(seriesId, number) {
   if (st === 'owned' && issue.komga_book_id && _appConfig.komga_url) {
     const readerUrl = `${komgaBase()}/book/${esc(issue.komga_book_id)}/read`;
     footerAction = `<a class="btn btn-primary" href="${readerUrl}" target="_blank" rel="noopener">Open in Komga</a>`;
-  } else if (st === 'missing') {
+  } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
         title="Stop searching for this issue">Ignore</button>
       <button class="btn btn-primary" id="issue-dl-btn" onclick="issueDownload(${seriesId}, ${number})">Download</button>`;
@@ -3089,7 +3099,7 @@ async function showIssueModal(seriesId, number) {
   // Fetch variants in background
   if (hasLocgId) _imFetchVariants(seriesId, number);
 
-  if (st === 'missing') _pollIssueQueue(seriesId, number);
+  if (st === 'missing' || st === 'today') _pollIssueQueue(seriesId, number);
 }
 
 function _imSwitchTab(name) {
