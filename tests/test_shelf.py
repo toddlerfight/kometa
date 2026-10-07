@@ -100,8 +100,11 @@ def test_reading_stats_for_untracked_and_tracked(shelf):
 def test_cover_is_page_one_of_the_first_book(shelf):
     root, _ = shelf
     sh.scan_shelf(str(root))
-    resp = sh.shelf_cover(_untracked(root)["Batman - Knightfall"]["id"])
+    kid = _untracked(root)["Batman - Knightfall"]["id"]
+    resp = sh.shelf_cover(kid)
     assert resp.media_type == "image/jpeg" and len(resp.body) > 100
+    first = sh.shelf_detail(kid)["books"][0]
+    assert first["page_count"] is None          # a cover doesn't open (register) the book
 
 
 def test_empty_root_refuses_and_prunes_nothing(shelf, tmp_path):

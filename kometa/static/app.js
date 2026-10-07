@@ -111,7 +111,7 @@ window.addEventListener('popstate', () => {
 });
 
 function updateNav() {
-  const navView = currentView === 'series-detail' ? 'library' : currentView;
+  const navView = (currentView === 'series-detail' || currentView === 'shelf') ? 'library' : currentView;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === navView);
   });
@@ -138,6 +138,7 @@ function renderView() {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
       case 'series-detail': return renderSeriesDetail(currentParams.id);
+      case 'shelf':         return renderShelfSeries(currentParams.id);
       case 'pull-list':     return renderPullList();
       case 'activity':      return renderActivity();
       case 'settings':      return renderSettings();
@@ -320,7 +321,7 @@ async function syncSeries(id, btn, pre = null) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, tracked: false, reading: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -332,7 +333,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.toggles = { upcoming: false, missing: false };
+  browseState.toggles = { upcoming: false, missing: false, tracked: false, reading: false };
   browseState._cache  = null;
   browseState.sortKey = 'date';
   browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
@@ -344,10 +345,16 @@ async function renderLibraryBrowse() {
 // independent toggles that narrow it down, not exclusive tabs: both on
 // shows the union (anything needing attention), not just series matching
 // both at once — see _renderBrowseResults.
+// Tracked / Reading are SCOPE filters (narrow, AND); Upcoming / Missing stay
+// the needs-attention UNION inside whatever scope is left.
 const BROWSE_TOGGLES = [
+  { key: 'tracked',  label: 'Tracked' },
+  { key: 'reading',  label: 'Reading' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
 ];
+
+const _isReading = s => (s.in_progress ?? 0) > 0 || (s.read_count ?? 0) > 0;
 
 function _browseFilterTabs() {
   return `<div class="browse-filters">
@@ -430,17 +437,26 @@ async function _loadBrowsePage() {
     document.getElementById('browse-search')?.focus();
   }
 
-  browseState._cache = await api.get('/api/series');
+  // The library is the whole shelf: tracked series (acquisition) + every other
+  // series folder (reader-only). Shelf failing must not cost the tracked grid.
+  const [tracked, shelf] = await Promise.all([
+    api.get('/api/series'),
+    api.get('/api/shelf').catch(() => ({ series: [], tracked_reading: {} })),
+  ]);
+  const tr = shelf.tracked_reading || {};
+  browseState._trackedCount = tracked.length;
+  browseState._cache = tracked.map(s => ({ ...s, kind: 'series', ...(tr[s.id] || {}) }))
+    .concat((shelf.series || []).map(s => ({ ...s, kind: 'shelf' })));
   _renderBrowseResults();
   // Nothing tracked yet on a configured install? Open the one door they'd open
   // anyway — but give them ~5s to read the empty state and reach for it themselves
   // first. Re-check everything when the timer fires: they may have navigated off,
   // added a series, or opened another modal in the meantime.
   clearTimeout(_autoWizardTimer);
-  if (browseState._cache.length === 0 && _appConfig.comics_root_ok) {
+  if (browseState._trackedCount === 0 && _appConfig.comics_root_ok) {
     _autoWizardTimer = setTimeout(() => {
       if (currentView === 'library'
-          && (browseState._cache?.length ?? 0) === 0
+          && (browseState._trackedCount ?? 0) === 0
           && _appConfig.comics_root_ok
           && document.getElementById('modal-backdrop')?.classList.contains('hidden')) {
         showAddWizard();
@@ -458,6 +474,8 @@ function _renderBrowseResults() {
   const anyToggleOn = toggles.upcoming || toggles.missing;
   let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
+    if (toggles.tracked && s.kind !== 'series') return false;
+    if (toggles.reading && !_isReading(s)) return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -500,6 +518,7 @@ function _renderBrowseResults() {
 
   const cards = filtered.map((s, i) => {
     const pub   = s.publisher ? `<div class="series-card-publisher u-truncate">${esc(s.publisher.toUpperCase())}</div>` : '';
+    if (s.kind === 'shelf') return _shelfCardHtml(s, i, pub);
     // Release-day issues not yet down count toward the total and turn it amber —
     // 145/146, not a '145/145 complete' while #146 is out today.
     const gap   = (s.missing ?? 0) + (s.out_today ?? 0);
@@ -532,6 +551,31 @@ function _renderBrowseResults() {
   }).join('');
 
   document.getElementById('browse-results').innerHTML = `<div class="series-grid">${cards}</div>`;
+}
+
+// An untracked series: on the shelf, readable, nothing to fetch — so no release
+// badge and no owned/missing bar. The count is books (or books read, once you've
+// started), in the quiet colour.
+function _shelfCardHtml(s, i, pub) {
+  const go = `navigate('shelf', {id: ${s.id}})`;
+  const count = _isReading(s) ? `${s.read_count}/${s.book_count} read` : `${s.book_count}`;
+  const pct = _isReading(s) ? Math.round((s.read_count / s.book_count) * 100) : 0;
+  return `
+      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
+        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+        <div class="series-card-img-wrap">
+          <img class="series-card-cover" src="/api/shelf/${s.id}/cover" alt="${esc(s.title)}"
+            loading="lazy" onerror="this.style.opacity='0.15'">
+        </div>
+        <div class="series-card-bar-track">
+          <div class="series-card-bar-fill" style="width:${pct}%;background:var(--tq)"></div>
+        </div>
+        <div class="series-card-footer">
+          <div class="series-card-title">${esc(s.title)}</div>
+          <div class="series-card-count" style="color:var(--tq)">${count}</div>
+        </div>
+        ${pub}
+      </div>`;
 }
 
 function browseSearch(val) {

@@ -355,3 +355,45 @@ async function openIssueReader(seriesId, number) {
     showToast('Couldn’t open this issue — ' + (e?.message || e), 'error');
   }
 }
+
+// --- Shelf series (untracked) --------------------------------------------------
+// A series Kometa doesn't track: on the shelf, readable, nothing to fetch. Books
+// in issue order, Kometa's own covers, your progress on each.
+
+function _shelfNextBook(books) {
+  const going = books.filter(b => b.progress && !b.progress.completed)
+    .sort((a, b) => (b.progress.updated_at || '').localeCompare(a.progress.updated_at || ''))[0];
+  if (going) return { book: going, label: `Continue ${going.label}` };
+  const lastRead = books.map((b, i) => (b.progress?.completed ? i : -1)).reduce((a, b) => Math.max(a, b), -1);
+  const next = books[lastRead + 1] || books[0];
+  return next ? { book: next, label: lastRead >= 0 ? `Read ${next.label}` : `Start ${next.label}` } : null;
+}
+
+async function renderShelfSeries(id) {
+  setTopbar();
+  setApp('<div class="state-msg">Loading...</div>');
+  const s = await api.get(`/api/shelf/${id}`);
+  if (currentView !== 'shelf' || currentParams.id !== id) return;
+  document.getElementById('topbar-title').textContent = s.title;
+  const read = s.books.filter(b => b.progress?.completed).length;
+  document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
+    ${esc((s.publisher || '').toUpperCase())} · ${s.books.length} BOOK${s.books.length === 1 ? '' : 'S'}${read ? ` · ${read} READ` : ''} · NOT TRACKED</span>`;
+  const nx = _shelfNextBook(s.books);
+  if (nx) document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${nx.book.id}})">${esc(nx.label)}</button>`;
+  const tiles = s.books.map(b => {
+    const p = b.progress;
+    const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
+      : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
+    const go = `navigate('read', {book: ${b.id}})`;
+    return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(s.title)} ${esc(b.label)}"
+        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+      <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
+        onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
+      <div class="issue-tile-num">${esc(b.label)}</div>
+    </div>`;
+  }).join('');
+  setApp(s.books.length
+    ? `<div class="issue-grid">${tiles}</div>`
+    : '<div class="state-msg">No readable books in this folder.</div>');
+}

@@ -111,7 +111,8 @@ def app_server(tmp_path_factory):
     import kometa.sources as sources
     import kometa.acquisition as acquisition
     import kometa.reader as reader
-    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader):
+    import kometa.shelf as shelf
+    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader, shelf):
         mod.DB_PATH = dbfile
     reader.PAGE_CACHE_DIR = os.path.join(os.path.dirname(dbfile), "page-cache")
 

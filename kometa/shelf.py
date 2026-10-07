@@ -169,9 +169,10 @@ def book_cover(book_id: int):
 
 
 def _cover_response(path: str):
-    book = rd.ensure_book(path)
     try:
-        data = rd.get_page_bytes(book, 0, rd.COVER_WIDTH)
+        data = rd.get_cover_bytes(path)
+    except FileNotFoundError:
+        raise HTTPException(404, "File is gone from the shelf")
     except Exception:
         raise HTTPException(422, "Cover can't be rendered")
     return Response(content=data, media_type="image/jpeg",

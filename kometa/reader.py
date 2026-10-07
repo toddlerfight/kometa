@@ -267,6 +267,43 @@ def get_page_bytes(book: dict, index: int, width: int) -> bytes:
     return data
 
 
+def get_cover_bytes(path: str) -> bytes:
+    """Page 1 at cover size, WITHOUT registering the book. The full open reads
+    every page's header (282 for a Knightfall omnibus — 17 s cold); a library
+    grid of 800 covers needs page 1 and nothing else."""
+    st = os.stat(path)
+    ver = _version(st.st_size, st.st_mtime)
+    key = re.sub(r"[^A-Za-z0-9]", "_", path)[-120:]
+    cp = os.path.join(PAGE_CACHE_DIR, "_covers", f"{key}-{ver}-{COVER_WIDTH}.jpg")
+    try:
+        with open(cp, "rb") as fh:
+            return fh.read()
+    except OSError:
+        pass
+    bk = _Book(path, ver)
+    try:
+        names = bk.names()
+        if not names:
+            raise ValueError("no pages")
+        with bk.open(names[0]) as fh, Image.open(fh) as im:
+            im.load()
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            if im.width > COVER_WIDTH:
+                im = im.resize((COVER_WIDTH, max(1, round(im.height * COVER_WIDTH / im.width))), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+            data = buf.getvalue()
+    finally:
+        bk.close()
+    os.makedirs(os.path.dirname(cp), exist_ok=True)
+    tmp = cp + f".{threading.get_ident()}.tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, cp)
+    return data
+
+
 # --- payloads -------------------------------------------------------------------
 
 def is_finished(page: int, page_count: int) -> bool:
