@@ -787,28 +787,56 @@ async function _testLocg(btn) {
 async function renderReadLists() {
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Reading lists';
-  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-primary btn-sm" onclick="_rlImportModal()">+ Import</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   const lists = await api.get('/api/readlists');
   if (currentView !== 'readlists') return;
-  const rows = lists.map(l => `
-    <div class="nm-row rl-row" role="button" tabindex="0" onclick="navigate('readlist', {id: ${l.id}})"
-         onkeydown="if(event.key==='Enter')navigate('readlist', {id: ${l.id}})">
-      <div class="nm-main"><div class="nm-title">${esc(l.name)}</div>
-        <div class="nm-meta">${l.entries} entr${l.entries === 1 ? 'y' : 'ies'}${l.source_ref ? ' · ' + esc(l.source_ref) : ''}</div></div>
-      <div class="nm-actions"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); _rlDelete(${l.id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button></div>
-    </div>`).join('');
-  setApp(`
-    <div class="nm-intro">Reading orders across series. Import a ComicRack <b>.cbl</b> file, or paste a link to one
-      — <a class="btn-link" href="https://github.com/DieselTech/CBL-ReadingLists" target="_blank" rel="noopener">the community repo</a> has about 1,700.</div>
-    <div class="rl-import">
-      <label class="btn btn-ghost btn-sm rl-file">Import .cbl file<input type="file" accept=".cbl,.xml,text/xml" onchange="_rlImportFile(this)" hidden></label>
-      <input class="browse-search" id="rl-url" type="url" placeholder="…or paste a link to a .cbl" autocomplete="off" spellcheck="false"
-        onkeydown="if(event.key==='Enter')_rlImportUrl()">
-      <button class="btn btn-ghost btn-sm" onclick="_rlImportUrl()">Import link</button>
-      <button class="btn btn-ghost btn-sm" title="Every read list in Komga, matched by file name" onclick="_rlImportKomga(this)">Import from Komga</button>
+  if (!lists.length) {
+    setApp(`<div class="empty-state"><div class="empty-state-title">No reading lists yet</div>
+      <div style="margin-top:8px;color:var(--tq);font-size:13px">Import a ComicRack .cbl, a link to one, or Komga's read lists.</div></div>`);
+    return;
+  }
+  // The Library's cards: cover, an owned bar, title and count. Here the bar is
+  // how much of the list is on the shelf; lime when all of it is.
+  const cards = lists.map((l, i) => {
+    const total = l.total || l.entries || 0, owned = l.owned || 0, read = l.read || 0;
+    const pct = total ? Math.round(owned / total * 100) : 0;
+    const color = owned < total ? 'var(--amb)' : (total ? 'var(--pri)' : 'var(--tq)');
+    const go = `navigate('readlist', {id: ${l.id}})`;
+    const cover = l.cover_book_id ? `<img class="series-card-cover" src="/api/books/${l.cover_book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
+      : `<div class="series-card-cover rl-nocover"></div>`;
+    const sub = read ? `${read} READ` : (l.source === 'komga' ? 'FROM KOMGA' : 'CBL');
+    return `
+      <div class="series-card card-cascade" style="animation-delay:${Math.min(i, 14) * STAGGER_MS}ms" tabindex="0" role="button"
+        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+        <div class="series-card-img-wrap">${cover}</div>
+        <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="series-card-footer">
+          <div class="series-card-title">${esc(l.name)}</div>
+          <div class="series-card-count" style="color:${color}">${owned}/${total}</div>
+        </div>
+        <div class="series-card-publisher u-truncate">${esc(sub)}</div>
+      </div>`;
+  }).join('');
+  setApp(`<div class="series-grid">${cards}</div>`);
+}
+
+// One modal, three ways in: a .cbl file, a link to one, or Komga's read lists.
+function _rlImportModal() {
+  showModal(`
+    <div class="modal-header"><h2>Import a reading list</h2></div>
+    <div class="modal-body rl-import">
+      <label class="btn btn-ghost rl-file">Choose a .cbl file<input type="file" accept=".cbl,.xml,text/xml" onchange="_rlImportFile(this)" hidden></label>
+      <div class="settings-field" style="margin-top:14px"><label class="settings-field-label u-label" for="rl-url">Or a link to one</label>
+        <div style="display:flex;gap:8px"><input class="settings-input" id="rl-url" type="url" placeholder="https://github.com/DieselTech/CBL-ReadingLists/…" autocomplete="off" spellcheck="false"
+          onkeydown="if(event.key==='Enter')_rlImportUrl()" style="flex:1;min-width:0">
+        <button class="btn btn-ghost" onclick="_rlImportUrl()">Import</button></div>
+        <div style="margin-top:6px;color:var(--tq);font-size:12px"><a class="btn-link" href="https://github.com/DieselTech/CBL-ReadingLists" target="_blank" rel="noopener">The community repo</a> has about 1,700.</div></div>
+      <div class="settings-field" style="margin-top:14px"><label class="settings-field-label u-label">Or from Komga</label>
+        <button class="btn btn-ghost" title="Every read list in Komga, matched by file name" onclick="_rlImportKomga(this)">Import Komga's read lists</button></div>
     </div>
-    ${rows ? `<div class="nm-list">${rows}</div>` : '<div class="od-empty">No lists yet.</div>'}`);
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`);
 }
 
 async function _rlImportFile(input) {
@@ -830,6 +858,7 @@ async function _rlImport(pending) {
     const res = await pending;
     const r = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(r.detail || res.status);
+    closeModal();
     showToast('List imported');
     navigate('readlist', { id: r.id });
   } catch (e) { showToast(`Couldn’t import that: ${e.message || e}`, 'error'); }
@@ -839,6 +868,7 @@ async function _rlImportKomga(btn) {
   btn.disabled = true; btn.textContent = 'Importing…';
   try {
     const made = await api.post('/api/readlists/import-komga', {});
+    closeModal();
     showToast(made.length ? `${made.length} list${made.length === 1 ? '' : 's'} imported from Komga` : 'Komga has no read lists');
     renderReadLists();
   } catch (e) { btn.disabled = false; btn.textContent = 'Import from Komga'; showToast('Couldn’t import from Komga', 'error'); }
@@ -853,7 +883,7 @@ function _rlDelete(id, name) {
       <button class="btn btn-primary" id="rl-del-btn">Remove</button>
     </div>`);
   document.getElementById('rl-del-btn').onclick = async () => {
-    try { await api.del(`/api/readlists/${id}`); closeModal(); renderReadLists(); }
+    try { await api.del(`/api/readlists/${id}`); closeModal(); navigate('readlists'); }
     catch (e) { closeModal(); showToast('Couldn’t remove it', 'error'); }
   };
 }
@@ -866,8 +896,9 @@ async function renderReadList(id) {
   document.getElementById('topbar-title').textContent = l.name;
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
     ${l.owned} OF ${l.total} ON THE SHELF${l.read ? ` · ${l.read} READ` : ''}</span>`;
-  document.getElementById('topbar-actions').innerHTML = l.continue
-    ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : '';
+  document.getElementById('topbar-actions').innerHTML = `
+    ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : ''}
+    <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
   const entries = l.entries.map(e => {
     const head = `<div class="rl-head"><span class="rl-pos">${e.position}</span>
       <span class="rl-series">${esc(e.series)}${e.number && !e.expanded && e.status !== 'not_on_shelf' ? ` <span class="rl-num">#${esc(e.number)}</span>` : ''}</span>

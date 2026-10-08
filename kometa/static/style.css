@@ -2195,10 +2195,8 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-leaving { opacity: 0 !important; transform: scale(.88); transition: opacity var(--t-mid) var(--ease-in), transform var(--t-mid) var(--ease-in); pointer-events: none; }
 
 /* --- Reading lists --- */
-.rl-row { cursor: pointer; }
-.rl-import { display: flex; gap: 8px; align-items: center; margin-bottom: var(--sp-md); flex-wrap: wrap; }
-.rl-import .browse-search { flex: 1 1 260px; min-width: 0; }
 .rl-file { cursor: pointer; }
+.rl-nocover { background: var(--su2); }
 .rl-entries { display: flex; flex-direction: column; gap: 14px; }
 .rl-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .rl-pos { color: var(--td); font-size: 11px; min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }

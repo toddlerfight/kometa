@@ -163,12 +163,22 @@ def _pages(komga, url: str, size: int = 200) -> list[dict]:
 
 
 def get_lists(path=None) -> list[dict]:
+    """Every list with the card facts: owned/total/read and a cover (the first
+    book on the shelf, in order). Resolved live, same as the list page."""
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
-        return [dict(r) for r in conn.execute(
+        rows = [dict(r) for r in conn.execute(
             "SELECT l.*, (SELECT COUNT(*) FROM reading_list_items i WHERE i.list_id = l.id) AS entries "
             "FROM reading_lists l ORDER BY name")]
+    for r in rows:
+        try:
+            res = resolve(r["id"], path)
+        except KeyError:
+            continue
+        first = next((b for e in res["entries"] for b in e["books"]), None)
+        r.update(total=res["total"], owned=res["owned"], read=res["read"], cover_book_id=first["id"] if first else None)
+    return rows
 
 
 def get_items(list_id: int, path=None) -> list[dict]:
