@@ -831,8 +831,7 @@ async function _loadCombine() {
         </div>
         <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick='_combineOpen(${JSON.stringify(g).replace(/'/g, '&#39;')}, ${i})'>Combine</button></div>
       </div>`).join('')}</div></div>`;
-  const twins = document.getElementById('twins-group');
-  if (twins) twins.insertAdjacentHTML('afterend', html); else document.getElementById('app').insertAdjacentHTML('afterbegin', html);
+  (document.getElementById('sg-top') || document.getElementById('app')).insertAdjacentHTML('beforeend', html);
 }
 
 let _cb = null;   // the combine being edited: {group, title, order: [ids], excluded: Set}
@@ -909,7 +908,6 @@ async function _loadTwins() {
   let r;
   try { r = await api.get('/api/report/twins'); } catch { return; }
   if (currentView !== 'singles' || !r.rows.length) return;
-  const app = document.getElementById('app');
   const html = `<div class="singles-group" id="twins-group">
     <div class="singles-head"><span class="series-card-title">Twin folders <span class="settings-opt">${r.rows.length}</span></span>
       <span class="tidy-why">Two folders for one run. The series' own folder is kept; the twin's files move in, true duplicates keep the better copy.</span></div>
@@ -923,7 +921,7 @@ async function _loadTwins() {
         </div>
         <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick="_mergeTwin(${x.shelf_id}, ${x.series_id})">Merge</button></div>
       </div>`).join('')}</div></div>`;
-  app.insertAdjacentHTML('afterbegin', html);
+  (document.getElementById('sg-top') || document.getElementById('app')).insertAdjacentHTML('beforeend', html);
 }
 
 async function _mergeTwin(shelfId, seriesId) {
