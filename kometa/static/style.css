@@ -2162,3 +2162,6 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 
 /* On Deck: covers only for now — the text lines are hidden, not gone */
 .od-title, .od-meta { display: none; }
+
+/* no native clear button in any search box — the blue cross, app-wide */
+input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
