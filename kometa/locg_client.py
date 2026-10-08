@@ -63,6 +63,23 @@ def _access() -> tuple[str, str]:
     return _access_cache["val"]
 
 
+def _impersonation() -> str:
+    """The TLS handshake to wear. Cloudflare binds a pass to the browser that
+    earned it, and a Safari User-Agent on a Chrome handshake reads as a lie —
+    so match the fingerprint family to the pasted UA. No pass → Chrome, as ever."""
+    cookie, ua = _access()
+    u = (ua or "").lower()
+    if not cookie or not u:
+        return "chrome"
+    if "firefox/" in u:
+        return "firefox"
+    if "safari/" in u and "chrome/" not in u and "chromium/" not in u:
+        return "safari"
+    if "edg/" in u:
+        return "edge"
+    return "chrome"
+
+
 def _apply_access(s) -> bool:
     """Put the pasted pass on a curl_cffi session. True if one was applied."""
     cookie, ua = _access()
@@ -150,7 +167,7 @@ def probe() -> dict:
     This is our throttle, not LOCG's, so checking it is fair. Open: the pause
     is lifted and everything resumes. Refused: the pause simply carries on."""
     from curl_cffi import requests as _cffi
-    s = _cffi.Session(impersonate="chrome")
+    s = _cffi.Session(impersonate=_impersonation())
     with_pass = _apply_access(s)
     try:
         r = s.get(f"{BASE}/search/ajax_issues", params={"query": "Batman"},
@@ -213,7 +230,7 @@ def _anon_get_fn():
         if _fresh():
             return _anon_session["get"]
         from curl_cffi import requests as _cffi
-        s = _cffi.Session(impersonate="chrome")
+        s = _cffi.Session(impersonate=_impersonation())
         _apply_access(s)
         _anon_session["cookie"] = cookie
         try:
