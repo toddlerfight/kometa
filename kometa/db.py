@@ -948,6 +948,33 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH):
     return rows
 
 
+def rename_book_path(old_path, new_path, path=DB_PATH) -> int:
+    """A file moved: the book row follows it, read progress rides along (it's keyed
+    on the book id, not the path). kometa/tidy.py."""
+    with _connect(path) as conn:
+        return conn.execute("UPDATE books SET path = ? WHERE path = ?", (new_path, old_path)).rowcount
+
+
+def move_folder_paths(series_id, old_folder, new_folder, path=DB_PATH) -> int:
+    """A series folder moved: every path that pointed inside it follows — book rows,
+    the shelf row, the series itself. One transaction, so a crash can't leave
+    half the library pointing at a folder that no longer exists."""
+    old_prefix = old_folder.rstrip("/") + "/"
+    new_prefix = new_folder.rstrip("/") + "/"
+    with _connect(path) as conn:
+        n = conn.execute(
+            "UPDATE books SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?",
+            (new_prefix, len(old_prefix) + 1, len(old_prefix), old_prefix)).rowcount
+        conn.execute("UPDATE shelf_series SET folder_path = ? WHERE folder_path = ?", (new_folder, old_folder))
+        conn.execute("UPDATE tracked_series SET folder_path = ? WHERE id = ?", (new_folder, series_id))
+        return n
+
+
+def set_series_title(series_id, title, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET title = ? WHERE id = ?", (title, series_id))
+
+
 def set_folder_path(series_id, folder_path, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(

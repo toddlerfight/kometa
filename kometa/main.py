@@ -820,6 +820,25 @@ def restore_from_trash(req: RestoreRequest):
     return {"restored": origin}
 
 
+@app.get("/api/series/{series_id}/tidy")
+def tidy_plan(series_id: int):
+    """Dry run: what tidying this series' files would do (kometa/tidy.py)."""
+    from kometa import tidy
+    try:
+        return tidy.plan(series_id)
+    except tidy.TidyError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/series/{series_id}/tidy")
+def tidy_apply(series_id: int):
+    from kometa import tidy
+    try:
+        return tidy.apply(series_id)
+    except tidy.TidyError as e:
+        raise HTTPException(400, str(e))
+
+
 class PullListRequest(BaseModel):
     on_pull_list: bool
 

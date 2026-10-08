@@ -76,10 +76,18 @@ shelf page built then is transitional and retires).
    queued searches; anything already downloading finishes.
 4. **First run is throttled** in the background over a few hours so LOCG isn't
    hammered and the pull list keeps working; series appear as they're matched.
-5. **Files are left as they are.** Kometa already parses issue numbers from
-   messy names. Tidying existing files (canonical names, CBR→CBZ, duplicates)
-   is a **real but separate task, later**: dry-run report first, then series by
-   series — renames churn Komga books and Kometa's path-keyed progress.
+5. **Files get tidied — dry run first, per series.** *(Revised 2026-10-08:
+   Komga is being retired, so its churn no longer matters, and the reader's
+   path-keyed progress follows renames inside the same database step.)*
+   Convention: `Publisher/Series - Subtitle (Year)/Series - Subtitle #001 (Year).cbz`
+   — the run's own title (Metron), `:` written as ` - ` (the SMB share can't
+   hold a colon), the series' first year on the folder, the issue's year on the
+   file, CBR repacked as CBZ. **Tidy** on a series page shows the plan (every
+   rename, every conversion, every file left alone and why); nothing moves
+   until Apply (`kometa/tidy.py`). Files with no parseable issue number
+   (trades, volumes) and files that would collide are left alone and reported.
+   Later, separate steps needing a decision per case: collected editions filed
+   under their parent run; merging twin folders.
 
 ## Metadata sources: Metron first, LOCG at a trickle
 

@@ -2104,3 +2104,13 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 }
 
 .match-source { margin-left: 6px; opacity: .7; }
+
+/* --- Tidy: the dry-run list --- */
+.tidy-body { max-height: 60vh; overflow: auto; }
+.tidy-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid rgba(255,255,255,.06); }
+.tidy-tag { flex: 0 0 64px; color: var(--tq); padding-top: 2px; }
+.tidy-paths { min-width: 0; flex: 1; font-size: 12px; }
+.tidy-from { color: var(--tq); text-decoration: line-through; text-decoration-color: rgba(255,255,255,.25); }
+.tidy-to { color: var(--pri); }
+.tidy-why { color: var(--tq); font-size: 11px; margin-top: 2px; }
+.tidy-leave .tidy-tag { color: var(--amb); }

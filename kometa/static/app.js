@@ -677,6 +677,51 @@ async function _trashSeries(id, btn, fromDetail) {
 }
 let _lastTrashed = null;
 
+// --- Tidy: files to the house convention, dry run first --------------------------
+// Publisher/Series - Subtitle (Year)/Series - Subtitle #001 (Year).cbz. The modal IS
+// the dry run: every rename and conversion listed, every file left alone and why.
+// Nothing moves until Apply. Progress survives (paths follow the files in the DB).
+async function _tidyPlan(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let p;
+  try { p = await api.get(`/api/series/${id}/tidy`); }
+  catch (e) { showToast(`Tidy: ${e.message || 'couldn’t plan'}`, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Tidy'; } return; }
+  if (btn) { btn.disabled = false; btn.textContent = 'Tidy'; }
+  const c = p.counts;
+  const nothing = !p.ops.length;
+  const row = (from, to, tag) => `<div class="tidy-row"><span class="tidy-tag u-label">${tag}</span>
+      <div class="tidy-paths"><div class="tidy-from u-truncate">${esc(from)}</div><div class="tidy-to u-truncate">${esc(to)}</div></div></div>`;
+  showModal(`
+    <div class="modal-header"><h2>Tidy files</h2></div>
+    <div class="modal-body tidy-body">
+      <div class="u-label" style="color:var(--tq)">${esc(p.run_title)}${p.year ? ` · ${p.year}` : ''} · ${c.rename_folder ? 'folder renamed, ' : ''}${c.rename_file} renamed, ${c.convert} converted to CBZ, ${c.leave} left alone</div>
+      ${nothing ? '<div class="state-msg" style="padding:14px 0">Already tidy. Nothing to do.</div>' : ''}
+      ${p.ops.filter(o => o.kind === 'rename_folder').map(o => row(o.from.split('/').slice(-2).join('/'), o.to.split('/').slice(-2).join('/'), 'folder')).join('')}
+      ${p.ops.filter(o => o.kind !== 'rename_folder').map(o => row(o.from, o.to, o.kind === 'convert' ? 'cbr→cbz' : 'rename')).join('')}
+      ${p.leave.length ? `<div class="u-label" style="color:var(--tq);margin-top:14px">Left alone</div>` : ''}
+      ${p.leave.map(l => `<div class="tidy-row tidy-leave"><span class="tidy-tag u-label">keep</span>
+        <div class="tidy-paths"><div class="u-truncate">${esc(l.file)}</div><div class="tidy-why">${esc(l.reason)}</div></div></div>`).join('')}
+      ${p.run_title !== p.title ? `<div class="tidy-why" style="margin-top:12px">The series will be called <b>${esc(p.run_title)}</b> (was ${esc(p.title)}).</div>` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">${nothing ? 'Close' : 'Cancel'}</button>
+      ${nothing ? '' : `<button class="btn btn-primary" id="tidy-apply-btn">Apply</button>`}
+    </div>`);
+  const apply = document.getElementById('tidy-apply-btn');
+  if (apply) apply.onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Working…'; b.classList.add('btn-working');
+    try {
+      const r = await api.post(`/api/series/${id}/tidy`, {});
+      closeModal();
+      const errs = (r.errors || []).length;
+      showToast(`Tidied: ${r.rename_file} renamed, ${r.convert} converted${r.rename_folder ? ', folder renamed' : ''}${errs ? ` — ${errs} failed` : ''}`, errs ? 'error' : '');
+      renderSeriesDetail(id);
+    } catch (e) {
+      closeModal(); showToast(`Tidy failed: ${e.message || ''}`, 'error');
+    }
+  };
+}
+
 async function _undoTrash(path) {
   try {
     await api.post('/api/trash/restore', { path });
@@ -1142,6 +1187,8 @@ async function renderSeriesDetail(id) {
     ${pullBtn}
     ${oversizedBtn}
     ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
+    ${s.folder_path && s.match_status !== 'pending' && s.match_status !== 'needs_match'
+      ? `<button class="btn btn-ghost btn-sm" title="Rename files and folder to the house convention (dry run first)" onclick="_tidyPlan(${s.id}, this)">Tidy</button>` : ''}
     <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
   `;
   document.getElementById('topbar-sub').innerHTML = `
