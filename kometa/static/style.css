@@ -2165,3 +2165,8 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 
 /* no native clear button in any search box — the blue cross, app-wide */
 input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+
+/* On Deck cards hover and focus like the library's */
+.od-cover img { transition: transform var(--t-med, 220ms) var(--ease-out, ease-out); will-change: transform; }
+.od-card:hover .od-cover img, .od-card:focus-visible .od-cover img { transform: scale(var(--zoom, 1.04)); }
+.od-card:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; border-radius: var(--r-md, 8px); }
