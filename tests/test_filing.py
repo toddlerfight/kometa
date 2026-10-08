@@ -122,3 +122,8 @@ class TestParseShapes:
     def test_bare_entry_is_a_one_shot(self):
         assert fc.parse_entry("Batman: The Killing Joke") == {"series": "Batman: The Killing Joke", "volume": 1, "number": 1.0}
         assert fc.parse_entry("Category:Year One") is None
+
+
+def test_every_word_of_the_shelf_title_must_be_on_the_page():
+    assert fc._score("Batman: Curse of the White Knight Deluxe Edition", "Batman: White Knight: Deluxe Edition (Collected)") == 0.0
+    assert fc._score("Batman: White Knight: The Deluxe Edition", "Batman: White Knight: Deluxe Edition (Collected)") >= fc.MIN_SCORE

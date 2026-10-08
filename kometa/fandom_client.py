@@ -141,7 +141,9 @@ def _score(q: str, page: str) -> float:
     Clown Prince of Crime' can't win on the one word 'joker' — plus a nudge
     when the format words match (a 'Deluxe' query prefers a 'Deluxe' page)."""
     a, b = _core(q), _core(page)
-    if not a or not b:
+    if not a or not b or not a <= b:
+        # every word of the shelf title must be on the page: 'Curse of the White
+        # Knight Deluxe' is NOT 'White Knight Deluxe' however many words they share
         return 0.0
     j = len(a & b) / len(a | b)
     fq = {w.lower() for w in _FORMAT_WORDS.findall(q)}
