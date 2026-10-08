@@ -25,7 +25,7 @@ GC_DIRECT_TERMS = (
 # Mirror buttons a post lists beside its main host. Only the ones with a plain
 # file API make the list — Mega/Mediafire/Terabox want a browser.
 _PIXELDRAIN_RE = re.compile(r'https?://pixeldrain\.com/u/([A-Za-z0-9]+)')
-_MEDIAFIRE_RE = re.compile(r'https?://(?:www\.)?mediafire\.com/file/')
+_MEDIAFIRE_RE = re.compile(r'https?://(?:www\.)?mediafire\.com/file(?:_premium)?/')
 
 _ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
 _ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
