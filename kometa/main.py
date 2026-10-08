@@ -814,6 +814,15 @@ def match_series_now(series_id: int):
     return {"match_status": status}
 
 
+@app.post("/api/locg/test")
+def locg_test():
+    """One request to see whether LOCG answers again (ignores Kometa's own pause)."""
+    from kometa.locg_client import probe, locg_paused, pause_label
+    r = probe()
+    until = locg_paused()
+    return {**r, "paused_until_label": pause_label(until) if until else None}
+
+
 @app.get("/api/locg/status")
 def locg_status():
     from kometa.locg_client import locg_paused, pause_label

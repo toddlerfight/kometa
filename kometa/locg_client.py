@@ -91,6 +91,35 @@ def _note_refusal(r):
         pass
 
 
+def probe() -> dict:
+    """ONE request to LOCG, ignoring Kometa's own pause — 'is the door open?'.
+    This is our throttle, not LOCG's, so checking it is fair. Open: the pause
+    is lifted and everything resumes. Refused: the pause simply carries on."""
+    from curl_cffi import requests as _cffi
+    s = _cffi.Session(impersonate="chrome")
+    try:
+        r = s.get(f"{BASE}/search/ajax_issues", params={"query": "Batman"},
+                  headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"}, timeout=25)
+    except Exception as e:
+        return {"ok": False, "status": None, "detail": f"no answer: {e}"}
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    _note_refusal(r)
+    if r.status_code == 200:
+        _pause["until"] = 0.0
+        try:
+            from kometa import db
+            db.set_config({"locg_paused_until": "0"}, db.DB_PATH)
+        except Exception:
+            pass
+        return {"ok": True, "status": 200, "detail": "LOCG answered — pause lifted"}
+    return {"ok": False, "status": r.status_code,
+            "detail": "LOCG still refusing (" + str(r.status_code) + ") — staying paused"}
+
+
 def locg_paused() -> float | None:
     """Epoch seconds the pause lifts, or None if LOCG is open to us."""
     until = _paused_until()

@@ -479,9 +479,20 @@ async function _showLocgPause(seriesId) {
   if (!st.paused_until || currentView !== 'series-detail' || currentParams.id !== seriesId) return;
   const banner = document.getElementById('match-banner');
   if (!banner) return;
-  banner.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  banner.querySelectorAll('button').forEach(b => { b.disabled = true; });   // (the test button is added after)
   if (!banner.querySelector('.match-paused')) {
     banner.insertAdjacentHTML('beforeend', `<div class="match-paused u-label">LOCG is pausing us until
-      ${esc(st.paused_until_label)} — it refused our requests. Matching resumes after that.</div>`);
+      ${esc(st.paused_until_label)} — it refused our requests. Matching resumes after that.
+      <button class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="_testLocg(this)">Test LOCG now</button></div>`);
   }
+}
+
+async function _testLocg(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  try {
+    const r = await api.post('/api/locg/test', {});
+    showToast(r.detail, r.ok ? '' : 'error');
+    if (r.ok && currentView === 'series-detail') renderSeriesDetail(currentParams.id);
+  } catch (e) { showToast('Test failed — is the server up?', 'error'); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Test LOCG now'; }
 }

@@ -228,3 +228,35 @@ class TestCoversWithoutKomgaOrLocg:
         assert card.media_type == "image/jpeg" and len(card.body) > 100
         tile = th.issue_thumbnail(hk["id"], 1.0)
         assert tile.media_type == "image/jpeg" and len(tile.body) > 100
+
+
+class TestLocgProbe:
+    """'Test LOCG now': one request despite Kometa's OWN pause. Open → pause
+    lifted; refused → still paused. Checking the door, not forcing it."""
+
+    def _fake(self, monkeypatch, status, headers):
+        import sys, types
+        class R:
+            status_code = status
+        R.headers = headers
+        class S:
+            def __init__(self, **k): pass
+            def get(self, *a, **k): return R()
+            def close(self): pass
+        mod = types.SimpleNamespace(requests=types.SimpleNamespace(Session=S))
+        monkeypatch.setitem(sys.modules, "curl_cffi", mod)
+
+    def test_answer_lifts_the_pause(self, db_path, monkeypatch):
+        import kometa.locg_client as lc
+        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})
+        self._fake(monkeypatch, 200, {})
+        assert lc.probe()["ok"] and lc.locg_paused() is None
+
+    def test_refusal_keeps_it_paused(self, db_path, monkeypatch):
+        import kometa.locg_client as lc
+        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+        self._fake(monkeypatch, 403, {"cf-mitigated": "challenge"})
+        r = lc.probe()
+        assert not r["ok"] and r["status"] == 403 and lc.locg_paused()
