@@ -114,7 +114,8 @@ window.addEventListener('popstate', () => {
 });
 
 function updateNav() {
-  const navView = (currentView === 'series-detail' || currentView === 'shelf') ? 'library' : currentView;
+  const navView = (currentView === 'series-detail' || currentView === 'shelf') ? 'library'
+    : currentView === 'readlist' ? 'readlists' : currentView;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === navView);
   });
@@ -141,6 +142,8 @@ function renderView() {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
       case 'ondeck':        return renderOnDeck();
+      case 'readlists':     return renderReadLists();
+      case 'readlist':      return renderReadList(currentParams.id);
       case 'needs-match':   return renderNeedsMatch();
       case 'singles':       return renderSinglesReport();
       case 'series-detail': return renderSeriesDetail(currentParams.id);

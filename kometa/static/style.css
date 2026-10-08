@@ -2193,3 +2193,20 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-entering { opacity: 0 !important; transform: scale(.88); transition: none !important; }
 .od-card { transition: opacity var(--t-mid) var(--ease-out), transform var(--t-mid) var(--ease-out); }
 .od-leaving { opacity: 0 !important; transform: scale(.88); transition: opacity var(--t-mid) var(--ease-in), transform var(--t-mid) var(--ease-in); pointer-events: none; }
+
+/* --- Reading lists --- */
+.rl-row { cursor: pointer; }
+.rl-import { display: flex; gap: 8px; align-items: center; margin-bottom: var(--sp-md); flex-wrap: wrap; }
+.rl-import .browse-search { flex: 1 1 260px; min-width: 0; }
+.rl-file { cursor: pointer; }
+.rl-entries { display: flex; flex-direction: column; gap: 14px; }
+.rl-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rl-pos { color: var(--td); font-size: 11px; min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+.rl-series { font-weight: 600; }
+.rl-num { color: var(--tq); font-weight: 400; }
+.rl-year, .rl-state { color: var(--tq); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.rl-state.amber { color: var(--amb); }
+.rl-open { font-size: 11px; }
+.rl-not_on_shelf .rl-series, .rl-missing .rl-series { color: var(--tq); font-weight: 400; }
+.rl-grid { padding: 6px 0 0 34px; }
+@media (max-width: 760px) { .rl-grid { padding-left: 0; } }

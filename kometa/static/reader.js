@@ -155,9 +155,27 @@ function _rdRenderEnd() {
         <button class="btn btn-ghost" onclick="_rdEnded(false)">‹ Last page</button>
         <button class="btn btn-primary" onclick="_rdExit()">Done</button>
       </div>
-      <div class="rd-end-note">Up next arrives with On Deck.</div>
+      <div class="rd-end-note" id="rd-end-note">${_rd.list ? 'Looking for the next on the list…' : 'Up next arrives with On Deck.'}</div>
     </div>`;
   _rdQueueSave(b.page_count, true);
+  if (_rd.list) _rdListNext(_rd.list, b.id);
+}
+
+// From a reading list, 'next' is the list's next, not the series'.
+async function _rdListNext(listId, bookId) {
+  let nb = null;
+  try { nb = (await api.get(`/api/readlists/${listId}/next?after=${bookId}`)).book_id; } catch {}
+  if (!_rd.book || _rd.book.id !== bookId || _rd.list !== listId) return;
+  const note = document.getElementById('rd-end-note');
+  const actions = document.querySelector('.rd-end-actions');
+  if (!nb) { if (note) note.textContent = 'That was the last one on the list.'; return; }
+  try {
+    const next = await api.get(`/api/books/${nb}`);
+    if (!_rd.book || _rd.book.id !== bookId) return;
+    if (note) note.textContent = '';
+    actions?.insertAdjacentHTML('beforeend',
+      `<button class="btn btn-primary" onclick="navigate('read', {book: ${nb}, list: ${listId}})">Next: ${esc(next.title)}${next.number != null ? ' #' + next.number : ''} ›</button>`);
+  } catch { if (note) note.textContent = 'Next on the list couldn’t open.'; }
 }
 
 function _rdCenterStrip() {
@@ -318,7 +336,8 @@ async function renderReader(params) {
   _rdBindInput();
   try {
     const book = await api.get(`/api/books/${params.book}`);
-    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null });
+    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null,
+      list: params.list ? parseInt(params.list, 10) : null });
     _rd.spreads = _rdBuildSpreads();
     const p = book.progress;
     const start = params.page ? +params.page : (p && !p.completed ? p.page : 1);
@@ -373,6 +392,7 @@ function closeReader() {
 
 function _rdExit() {
   const from = _rd.book?.series_id;
+  if (_rd.list) { navigate('readlist', { id: _rd.list }); return; }
   if (history.length > 1 && history.state && history.state.view === 'read') history.back();
   else if (from) navigate('series-detail', { id: from });
   else navigate('library');
@@ -392,6 +412,21 @@ async function openIssueReader(seriesId, number) {
 // --- Shelf series (untracked) --------------------------------------------------
 // A series Kometa doesn't track: on the shelf, readable, nothing to fetch. Books
 // in issue order, Kometa's own covers, your progress on each.
+
+// One book on the shelf as a tile: cover, read tick or progress bar, label.
+// `extra` rides into the reader ({list: id} keeps 'next' on the list's order).
+function _bookTile(b, seriesTitle, extra = {}) {
+  const p = b.progress;
+  const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
+    : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
+  const go = `navigate('read', ${JSON.stringify({ book: b.id, ...extra }).replace(/"/g, "'")})`;
+  return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(seriesTitle)} ${esc(b.label)}"
+      onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+    <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
+      onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
+    <div class="issue-tile-num">${esc(b.label)}</div>
+  </div>`;
+}
 
 function _shelfNextBook(books) {
   const going = books.filter(b => b.progress && !b.progress.completed)
@@ -414,18 +449,7 @@ async function renderShelfSeries(id) {
   const nx = _shelfNextBook(s.books);
   if (nx) document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${nx.book.id}})">${esc(nx.label)}</button>`;
-  const tiles = s.books.map(b => {
-    const p = b.progress;
-    const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
-      : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
-    const go = `navigate('read', {book: ${b.id}})`;
-    return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(s.title)} ${esc(b.label)}"
-        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
-      <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
-        onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
-      <div class="issue-tile-num">${esc(b.label)}</div>
-    </div>`;
-  }).join('');
+  const tiles = s.books.map(b => _bookTile(b, s.title)).join('');
   setApp(s.books.length
     ? `<div class="issue-grid">${tiles}</div>`
     : '<div class="state-msg">No readable books in this folder.</div>');
@@ -752,4 +776,98 @@ async function _testLocg(btn) {
     if (r.ok && currentView === 'series-detail') renderSeriesDetail(currentParams.id);
   } catch (e) { showToast('Test failed — is the server up?', 'error'); }
   if (btn) { btn.disabled = false; btn.textContent = 'Test LOCG now'; }
+}
+
+
+// --- Reading lists -------------------------------------------------------------
+// An order to read in, across series (kometa/readlists.py). CBL files in — the
+// community repo on GitHub holds ~1,700 — resolved against the shelf every time
+// the page opens, so a Combine or a new download shows up without a re-import.
+
+async function renderReadLists() {
+  setTopbar();
+  document.getElementById('topbar-title').textContent = 'Reading lists';
+  document.getElementById('topbar-actions').innerHTML = '';
+  setApp('<div class="state-msg">Loading...</div>');
+  const lists = await api.get('/api/readlists');
+  if (currentView !== 'readlists') return;
+  const rows = lists.map(l => `
+    <div class="nm-row rl-row" role="button" tabindex="0" onclick="navigate('readlist', {id: ${l.id}})"
+         onkeydown="if(event.key==='Enter')navigate('readlist', {id: ${l.id}})">
+      <div class="nm-main"><div class="nm-title">${esc(l.name)}</div>
+        <div class="nm-meta">${l.entries} entr${l.entries === 1 ? 'y' : 'ies'}${l.source_ref ? ' · ' + esc(l.source_ref) : ''}</div></div>
+      <div class="nm-actions"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); _rlDelete(${l.id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button></div>
+    </div>`).join('');
+  setApp(`
+    <div class="nm-intro">Reading orders across series. Import a ComicRack <b>.cbl</b> file, or paste a link to one
+      — <a class="btn-link" href="https://github.com/DieselTech/CBL-ReadingLists" target="_blank" rel="noopener">the community repo</a> has about 1,700.</div>
+    <div class="rl-import">
+      <label class="btn btn-ghost btn-sm rl-file">Import .cbl file<input type="file" accept=".cbl,.xml,text/xml" onchange="_rlImportFile(this)" hidden></label>
+      <input class="browse-search" id="rl-url" type="url" placeholder="…or paste a link to a .cbl" autocomplete="off" spellcheck="false"
+        onkeydown="if(event.key==='Enter')_rlImportUrl()">
+      <button class="btn btn-ghost btn-sm" onclick="_rlImportUrl()">Import link</button>
+    </div>
+    ${rows ? `<div class="nm-list">${rows}</div>` : '<div class="od-empty">No lists yet.</div>'}`);
+}
+
+async function _rlImportFile(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const text = await f.text();
+  await _rlImport(fetch(`/api/readlists/import?name=${encodeURIComponent(f.name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/xml' }, body: text }));
+}
+
+async function _rlImportUrl() {
+  const url = (document.getElementById('rl-url')?.value || '').trim();
+  if (!url) return;
+  await _rlImport(fetch('/api/readlists/import-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }));
+}
+
+async function _rlImport(pending) {
+  try {
+    const res = await pending;
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(r.detail || res.status);
+    showToast('List imported');
+    navigate('readlist', { id: r.id });
+  } catch (e) { showToast(`Couldn’t import that: ${e.message || e}`, 'error'); }
+}
+
+function _rlDelete(id, name) {
+  showModal(`
+    <div class="modal-header"><h2>Remove ${esc(name)}?</h2></div>
+    <div class="modal-body">The list goes. Your books and reading progress stay.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="rl-del-btn">Remove</button>
+    </div>`);
+  document.getElementById('rl-del-btn').onclick = async () => {
+    try { await api.del(`/api/readlists/${id}`); closeModal(); renderReadLists(); }
+    catch (e) { closeModal(); showToast('Couldn’t remove it', 'error'); }
+  };
+}
+
+async function renderReadList(id) {
+  setTopbar();
+  setApp('<div class="state-msg">Loading...</div>');
+  const l = await api.get(`/api/readlists/${id}`);
+  if (currentView !== 'readlist' || currentParams.id !== id) return;
+  document.getElementById('topbar-title').textContent = l.name;
+  document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
+    ${l.owned} OF ${l.total} ON THE SHELF${l.read ? ` · ${l.read} READ` : ''}</span>`;
+  document.getElementById('topbar-actions').innerHTML = l.continue
+    ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : '';
+  const entries = l.entries.map(e => {
+    const head = `<div class="rl-head"><span class="rl-pos">${e.position}</span>
+      <span class="rl-series">${esc(e.series)}${e.number && !e.expanded && e.status !== 'not_on_shelf' ? ` <span class="rl-num">#${esc(e.number)}</span>` : ''}</span>
+      ${e.year ? `<span class="rl-year">${esc(e.year)}</span>` : ''}
+      ${e.status === 'not_on_shelf' ? '<span class="rl-state">not on the shelf</span>'
+        : e.status === 'missing' ? `<span class="rl-state amber">#${esc(e.number)} not here yet</span>` : ''}
+      ${e.shelf_id ? `<a class="btn-link rl-open" onclick="${e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : `navigate('shelf', {id: ${e.shelf_id}})`}">open</a>` : ''}
+    </div>`;
+    const tiles = e.books.length ? `<div class="issue-grid rl-grid">${e.books.map(b => _bookTile(b, e.series, { list: id })).join('')}</div>` : '';
+    return `<div class="rl-entry rl-${e.status}">${head}${tiles}</div>`;
+  }).join('');
+  setApp(`<div class="rl-entries">${entries}</div>`);
 }
