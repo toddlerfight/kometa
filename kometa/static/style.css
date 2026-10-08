@@ -2064,19 +2064,31 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .pull-switch .u-label { color: var(--tm); }
 
 /* Series page: pick-the-run banner + files on the shelf. */
+/* Match banner: one head row (what's up + actions), an optional search row, a
+   compact candidate list, and a one-line footnote when LOCG is shut. */
 .match-banner { border: 1px solid var(--amb); background: var(--amb-d); border-radius: var(--r-lg);
-  padding: 14px 16px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; }
-.match-banner-text { color: var(--tm); font-size: var(--fs-body); line-height: 1.5; }
+  padding: 12px 14px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.match-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.match-banner-text { color: var(--tm); font-size: var(--fs-body); line-height: 1.45; }
 .match-banner-text b { color: var(--amb); }
-.match-search { display: flex; gap: 8px; }
-.match-search .browse-search { flex: 1; max-width: 420px; }
-.match-results { display: flex; flex-direction: column; gap: 8px; }
-.match-row { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: var(--r-md); background: var(--su1); }
-.match-row img, .match-nocover { width: 36px; height: 54px; object-fit: cover; border-radius: var(--r-sm); background: var(--su2); flex: none; }
-.match-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-body); }
+.match-head-actions { display: flex; gap: 6px; flex: none; }
+.match-remove { color: var(--pink); }
+.match-search { display: flex; gap: 6px; }
+.match-search .browse-search { flex: 1; max-width: 420px; height: 32px; }
+.match-search .btn { height: 32px; }
+.match-results { display: flex; flex-direction: column; gap: 4px; }
+.match-hint { color: var(--tq); font-size: 12px; padding: 4px 2px; }
+.match-row { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: var(--r-md); background: var(--su1); }
+.match-row img { width: 32px; height: 48px; object-fit: cover; border-radius: var(--r-sm); background: var(--su2); flex: none; }
+.match-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.match-row-title { font-size: var(--fs-body); font-weight: 600; }
+.match-row-meta { color: var(--tq); font-size: 11px; letter-spacing: .03em; text-transform: uppercase; }
+.match-source { margin-left: 6px; opacity: .6; }
+.match-paused { color: var(--tq); font-size: 11px; letter-spacing: .03em; text-transform: uppercase; display: flex; align-items: center; gap: 10px; }
+.match-paused .btn-link { text-transform: none; letter-spacing: 0; }
+@media (max-width: 760px) { .match-head { flex-direction: column; align-items: flex-start; } }
 .shelf-files { margin-top: 28px; }
 .shelf-files-head { color: var(--tq); margin-bottom: 12px; }
-.match-paused { color: var(--amb); }
 
 /* --- settings: masked text input (a pasted cookie, not a password) --- */
 .settings-input-mask { -webkit-text-security: disc; }
@@ -2103,7 +2115,6 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   .nm-actions { width: 100%; justify-content: flex-end; }
 }
 
-.match-source { margin-left: 6px; opacity: .7; }
 
 /* --- Tidy: the dry-run list --- */
 .tidy-body { max-height: 60vh; overflow: auto; }

@@ -403,7 +403,7 @@ async function renderShelfSeries(id) {
 async function _loadMatchCandidates(seriesId, q) {
   const box = document.getElementById('match-results');
   if (!box) return;
-  box.innerHTML = '<div class="state-msg" style="padding:10px 0;font-size:11px">Searching…</div>';
+  box.innerHTML = '<div class="match-hint">Searching…</div>';
   // Metron first (the API built for this), LOCG alongside when it's open to us.
   // Either can be shut; whatever answers is what you pick from.
   const enc = encodeURIComponent(q);
@@ -417,13 +417,13 @@ async function _loadMatchCandidates(seriesId, q) {
   _matchRows = rows;
   box.innerHTML = rows.length ? rows.map(r => `
     <div class="match-row">
-      ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : '<div class="match-nocover"></div>'}
-      <div class="match-row-text"><div>${esc(r.series)}</div>
-        <div class="u-label" style="color:var(--tq)">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null].filter(Boolean).join(' · '))}
+      ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : ''}
+      <div class="match-row-text"><div class="match-row-title">${esc(r.series)}</div>
+        <div class="match-row-meta">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null].filter(Boolean).join(' · '))}
           <span class="match-source">${r.source === 'metron' ? 'Metron' : 'LOCG'}</span></div></div>
-      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this, '${r.source}')">This one</button>
+      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this, '${r.source}')">Use this</button>
     </div>`).join('')
-    : '<div class="state-msg" style="padding:10px 0;font-size:11px">No series found — try a different search.</div>';
+    : '<div class="match-hint">No series found — try a different search.</div>';
 }
 
 // You picked a run by hand: say back what you're about to link, next to what's
@@ -557,9 +557,8 @@ async function _showLocgPause(seriesId) {
   // Nothing is disabled: matching runs through Metron and doesn't care that LOCG
   // is shut. (It used to grey out Match now — with the one source that worked.)
   if (!banner.querySelector('.match-paused')) {
-    banner.insertAdjacentHTML('beforeend', `<div class="match-paused u-label">LOCG is pausing us until
-      ${esc(st.paused_until_label)} — it refused our requests. Matching carries on through Metron; only LOCG extras (far-ahead solicits) wait.
-      <button class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="_testLocg(this)">Test LOCG now</button></div>`);
+    banner.insertAdjacentHTML('beforeend', `<div class="match-paused">LOCG paused until ${esc(st.paused_until_label)} · Metron still answers
+      <button class="btn-link" onclick="_testLocg(this)">Test LOCG now</button></div>`);
   }
 }
 

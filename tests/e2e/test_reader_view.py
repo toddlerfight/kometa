@@ -36,6 +36,9 @@ def test_read_button_opens_reader_turns_pages_and_saves_progress(app, app_server
     expect(app.get_by_text("Test Comic Alpha").first).to_be_visible()
     # Leave no trace for the next test. Exiting saved page 3 with a fresh
     # timestamp, so an older-stamped reset would be refused as stale — by design.
+    # The save is debounced (1.2s): let any pending write land BEFORE wiping, or
+    # it lands after and the next test opens at page 3 instead of the cover.
+    app.wait_for_timeout(1600)
     import sqlite3
     with sqlite3.connect(app_server["db_path"]) as c:
         c.execute("DELETE FROM read_progress WHERE book_id = ?", (book_id,))
