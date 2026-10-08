@@ -613,24 +613,22 @@ async function renderOnDeck() {
   const read = c => `navigate('read', {book: ${c.book_id}})`;
   const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
   const bookCard = (c, tag) => `
-    <div class="od-card card-cascade" role="button" tabindex="0" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
-      <div class="od-cover"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
+      <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
-      <div class="od-title">${esc(c.series)}</div>
-      <div class="od-meta">${esc(c.label)}${c.progress && c.page_count ? ` · page ${c.progress.page} of ${c.page_count}` : ''}${c.finished ? ` · ${c.finished} read` : ''}</div>
+      <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
   const soonCard = c => `
-    <div class="od-card card-cascade" role="button" tabindex="0" onclick="${series(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${series(c)}">
-      <div class="od-cover"><img src="/api/series/${c.series_id}/issues/${c.number}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${series(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${series(c)}">
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/issues/${c.number}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         <span class="od-tag${c.status === 'not_owned' ? ' amber' : ''}">${esc(c.status_label)}</span></div>
-      <div class="od-title">${esc(c.series)}</div>
-      <div class="od-meta">${esc(c.label)}</div>
+      <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
   const row = (title, help, cards, empty) => `
     <div class="od-row">
       <div class="od-head"><span class="series-card-title">${title}</span></div>
-      ${cards.length ? `<div class="od-strip">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
+      ${cards.length ? `<div class="issue-grid od-grid">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
     </div>`;
   setApp(
     row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c)),
