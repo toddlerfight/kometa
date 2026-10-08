@@ -179,6 +179,16 @@ def apply(shelf_id: int, series_id: int, path=None, root: str | None = None) -> 
         leftovers = [f for f in os.listdir(src) if not f.startswith(".")]
         if not leftovers:
             shutil.rmtree(src, ignore_errors=True)
+            # The kept folder may be the badly named one ('- Justice League', the
+            # arc feature's doing) while the twin had the clean name. Now that the
+            # twin's name is free, take it.
+            if os.path.basename(dst).startswith("-") and os.path.dirname(dst) == os.path.dirname(src) \
+                    and not os.path.exists(src):
+                os.rename(dst, src)
+                db.move_folder_paths(series_id, dst, src, path)
+                logger.info(f"Twin merge: renamed {os.path.basename(dst)!r} -> {os.path.basename(src)!r}")
+                done["renamed_to"] = src
+                dst = src
             # an emptied publisher folder (Mirage/, Splitter/) goes too
             parent = os.path.dirname(src)
             try:

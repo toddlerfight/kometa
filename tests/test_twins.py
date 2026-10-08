@@ -90,3 +90,25 @@ def test_generic_names_are_never_twins_and_publisher_mismatch_is_flagged(lib):
     assert all(r["title"] != "Volume 01 (2022)" for r in rows)
     eh = next(r for r in rows if r["title"] == "Event Horizon- Dark Descent")
     assert eh["publisher_differs"] is True                       # Mirage vs IDW: flagged, still listed
+
+
+def test_merge_takes_the_clean_name_when_the_kept_folder_has_the_arc_dash(tmp_path, db_path, monkeypatch):
+    monkeypatch.setattr(tw, "DB_PATH", db_path)
+    import kometa.sync as sync
+    monkeypatch.setattr(sync, "rescan_owned", lambda s, owned_numbers=None: {})
+    root = tmp_path / "comics"
+    keep = root / "DC Comics" / "- Justice League"
+    twin = root / "DC Comics" / "Justice League"
+    _file(str(keep / "Justice League #001.cbz"))
+    _file(str(twin / "Justice League #002.cbz"))
+    sid = db.add_series(title="Justice League", publisher="DC Comics", folder_path=str(keep), on_pull_list=False, path=db_path)
+    db.set_match_status(sid, "auto", db_path)
+    ks = db.upsert_shelf_series(str(keep), "- Justice League", "DC Comics", sid, 1, "2026-10-08T00:00:00.000000Z", db_path)
+    ts = db.upsert_shelf_series(str(twin), "Justice League", "DC Comics", None, 1, "2026-10-08T00:00:00.000000Z", db_path)
+    db.index_books([(str(keep / "Justice League #001.cbz"), 4, 1.0, 1.0, ks, sid), (str(twin / "Justice League #002.cbz"), 4, 1.0, 2.0, ts, None)], db_path)
+    r = tw.apply(ts, sid, db_path, root=str(root))
+    assert r["moved"] == 1 and r.get("renamed_to") == str(twin)
+    assert sorted(os.listdir(twin)) == ["Justice League #001.cbz", "Justice League #002.cbz"] and not os.path.exists(keep)
+    assert db.get_series_by_id(sid, db_path)["folder_path"] == str(twin)
+    with db._connect(db_path) as c:
+        assert all(p[0].startswith(str(twin) + "/") for p in c.execute("SELECT path FROM books"))
