@@ -232,7 +232,11 @@ def resolve(list_id: int, path=None) -> dict:
                 picked = [b for b in books if b["number"] == n]
                 entry["status"] = "owned" if picked else "missing"
             else:
-                picked = books
+                # the whole run — and when the folder holds singles AND the trade
+                # of the same story ('#1…#4' plus 'TPB (2022)'), the singles are
+                # the run; the trade would be the same pages again
+                numbered = [b for b in books if b["number"] is not None]
+                picked = numbered or books
                 entry["status"] = "owned" if picked else "missing"
                 entry["expanded"] = len(picked) > 1
             entry["books"] = picked

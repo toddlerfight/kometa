@@ -33,7 +33,7 @@ def shelf(db_path, tmp_path):
     root = tmp_path / "comics" / "Dark Horse Comics"
     _shelf(db_path, root, "Hellboy - Seed of Destruction",
            ["Hellboy - Seed of Destruction #001.cbz", "Hellboy - Seed of Destruction #002.cbz"])
-    _shelf(db_path, root, "BPRD - Plague of Frogs", ["BPRD - Plague of Frogs #001.cbz"])
+    _shelf(db_path, root, "BPRD - Plague of Frogs", ["BPRD - Plague of Frogs #001.cbz", "BPRD - Plague of Frogs TPB (2005).cbz"])
     _shelf(db_path, root, "Sir Edward Grey, Witchfinder",
            ["Sir Edward Grey, Witchfinder #001.cbz", "Sir Edward Grey, Witchfinder #002.cbz",
             "Sir Edward Grey, Witchfinder #002.cbr"])
@@ -47,8 +47,8 @@ def test_import_resolves_whole_runs_single_volumes_and_gaps(shelf):
     e = {x["position"]: x for x in r["entries"]}
     # one entry for the series → the whole run, in order
     assert e[1]["status"] == "owned" and [b["label"] for b in e[1]["books"]] == ["#1", "#2"] and e[1]["expanded"]
-    # 'B.P.R.D.' finds the 'BPRD' folder
-    assert e[2]["status"] == "owned" and len(e[2]["books"]) == 1
+    # 'B.P.R.D.' finds the 'BPRD' folder; the trade beside the single is the same pages, not a second book
+    assert e[2]["status"] == "owned" and [b["label"] for b in e[2]["books"]] == ["#1"]
     # several entries for one series → that numbered book each; CBZ beats CBR
     assert e[3]["status"] == "owned" and e[3]["books"][0]["label"] == "#2"
     assert not e[3]["books"][0].get("expanded")
