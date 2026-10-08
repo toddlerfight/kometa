@@ -1547,7 +1547,9 @@ async function _loadTradesPanel(id) {
   const trades = data.trades || [];
   if (!trades.length) {
     body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">${
-      data.reason === 'no_locg_id' ? 'No LOCG link for this series — can\'t look up trades.' : 'No collected editions found.'}</div>`;
+      data.reason === 'locg_paused' ? 'Trades come from LOCG, and LOCG is pausing us right now — try again later.'
+      : data.reason === 'no_locg_match' ? 'Trades come from LOCG, and it doesn\'t list this run clearly. Pick it on LOCG from the match banner to see its trades.'
+      : data.reason === 'no_locg_id' ? 'No LOCG link for this series — can\'t look up trades.' : 'No collected editions found.'}</div>`;
     return;
   }
   // TPBs first (the common case), then HCs. Volume order within each.

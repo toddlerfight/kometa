@@ -573,7 +573,27 @@ def get_series_trades(series_id: int):
         raise HTTPException(404)
     locg_id = s["locg_series_id"]
     if not locg_id:
-        return {"trades": [], "reason": "no_locg_id"}
+        # Metron-matched, no LOCG id yet: the trickle would get there one series
+        # per tick, but you're looking at the tab NOW. One confident LOCG search
+        # here (two requests), only while LOCG is open to us.
+        from kometa.locg_client import locg_paused, LocgPaused
+        from kometa.shelf_import import find_confident_match
+        if locg_paused():
+            return {"trades": [], "reason": "locg_paused"}
+        if s.get("locg_link") == "none":
+            return {"trades": [], "reason": "no_locg_match"}
+        try:
+            locg_id = find_confident_match(s)
+        except LocgPaused:
+            return {"trades": [], "reason": "locg_paused"}
+        except Exception as e:
+            logger.info(f"Trades: LOCG link lookup failed for {s['title']!r}: {e}")
+            return {"trades": [], "reason": "locg_paused"}
+        db.set_locg_link(series_id, "linked" if locg_id else "none", DB_PATH)
+        if not locg_id:
+            return {"trades": [], "reason": "no_locg_match"}
+        db.set_locg_series_id(series_id, locg_id, DB_PATH)
+        s = db.get_series_by_id(series_id, DB_PATH)
     # Read the cache sync populated; only hit LOCG live when it's missing or stale
     # (>24h). Trades drift slowly — new editions get solicited over weeks, not hours.
     cached = db.get_trades(series_id, DB_PATH)
