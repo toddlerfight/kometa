@@ -269,12 +269,27 @@ _RANGE_RE = re.compile(r'#\s*\d+\s*[-–]\s*#?\s*\d+')
 PACK_THRESHOLD = 5
 
 
-def _pack_score(nzb_title: str, series: str, size: int) -> int:
+# A comic pack is tens of MB an issue. 'Ludwig van Beethoven - Complete Works
+# Brilliant Classics 100 CD Box' (28.6 GB) scored 24 for the series '100%'
+# (2026-10-08): '100' was in the title, 'Complete' was in the title, and size
+# only ever ADDED points. Now: the name must be a whole word, a short or numeric
+# name needs comic evidence beside it, and a pack too big for the run is out.
+_PACK_MB_PER_ISSUE = 150
+_PACK_DEFAULT_MAX = 15 * 1024 ** 3
+_COMIC_EVIDENCE_RE = re.compile(r'\b(cbr|cbz|comics?|digital|tpb|graphic novel|vol(?:ume)?\.?\s*\d+)\b|#\s*\d', re.I)
+
+
+def _pack_score(nzb_title: str, series: str, size: int, missing: int | None = None) -> int:
     if _looks_non_comic(nzb_title):
         return 0
     t = _norm(nzb_title)
     s = _norm(series)
-    if s not in t:
+    if not s or not re.search(rf"(?<![a-z0-9]){re.escape(s)}(?![a-z0-9])", t):
+        return 0
+    if (len(s) < 4 or s.replace(" ", "").isdigit()) and not (_RANGE_RE.search(nzb_title) or _COMIC_EVIDENCE_RE.search(nzb_title)):
+        return 0        # '100', 'X', 'Y' — the name alone proves nothing
+    max_size = (missing * _PACK_MB_PER_ISSUE * 1024 ** 2 + 1024 ** 3) if missing else _PACK_DEFAULT_MAX
+    if size and size > max_size:
         return 0
     score = 10
     if _PACK_KEYWORDS_RE.search(nzb_title):

@@ -310,9 +310,10 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     return None
 
 
-def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> str | None:
+def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, missing: int | None = None) -> str | None:
     """Best usenet pack/collection for a series. Returns the NZB url or None.
-    Drop-in for usenet_client.search_usenet_pack, sourced through Prowlarr."""
+    Drop-in for usenet_client.search_usenet_pack, sourced through Prowlarr.
+    missing: how many issues the pack is for — caps the believable size."""
     results = []
     for q in (f"{title} complete", title):
         results = prowlarr.search(q, protocol="usenet")
@@ -322,5 +323,5 @@ def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -
     results = _drop_season_mismatches(results, title)
     if not results:
         return None
-    best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"]), min_score=10)
+    best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"], missing=missing), min_score=10)
     return best["url"] if best else None

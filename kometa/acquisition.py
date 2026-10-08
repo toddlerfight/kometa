@@ -721,7 +721,7 @@ def _sweep_missing():
             series = db.get_series_by_id(series_id, DB_PATH)
             if not series:
                 continue
-            nzb_url = search_usenet_pack(prowlarr, series["title"], series_year=series.get("year_began"))
+            nzb_url = search_usenet_pack(prowlarr, series["title"], series_year=series.get("year_began"), missing=count)
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{series['title']} - Pack")
                 if nzo_id:

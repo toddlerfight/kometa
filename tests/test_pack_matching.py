@@ -79,3 +79,25 @@ class TestPackPostMatchesRealWorld:
         assert _pack_post_matches(_normalize("New Avengers"),
                                   "New Avengers Vol. 3 #1 – 33 + Extras (2013-2015)",
                                   last_issue=33, series_year=2013)
+
+
+class TestPackScoreSanity:
+    """2026-10-08: '100%' (5 issues) grabbed 'Ludwig van Beethoven - Complete Works
+    Brilliant Classics 100 CD Box' — 28.6 GB — on '100' + 'Complete'."""
+
+    def test_short_numeric_name_needs_comic_evidence(self):
+        from kometa.usenet_client import _pack_score
+        assert _pack_score("Ludwig van Beethoven - Complete Works Brilliant Classics 100 CD Box.nzb", "100%", 28_600_000_000, missing=5) == 0
+        assert _pack_score("100% #1-5 (2002) Complete (Digital)", "100%", 300_000_000, missing=5) > 10
+        assert _pack_score("100 Bullets Complete Collection cbr", "100 Bullets", 3_000_000_000, missing=100) > 10
+
+    def test_whole_word_match_only(self):
+        from kometa.usenet_client import _pack_score
+        assert _pack_score("Sagas Complete", "Saga", 500_000_000, missing=10) == 0
+        assert _pack_score("Saga #1-10 Complete", "Saga", 500_000_000, missing=10) > 10
+
+    def test_size_cap_scales_with_the_run(self):
+        from kometa.usenet_client import _pack_score
+        assert _pack_score("Saga #1-66 Complete (Digital)", "Saga", 20 * 1024**3, missing=66) == 0       # 20 GB for 66 issues: no
+        assert _pack_score("Saga #1-66 Complete (Digital)", "Saga", 4 * 1024**3, missing=66) > 10
+        assert _pack_score("Saga #1-66 Complete (Digital)", "Saga", 16 * 1024**3) == 0                  # no count: 15 GB ceiling
