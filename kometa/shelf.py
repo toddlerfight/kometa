@@ -40,6 +40,36 @@ def _skip(name: str) -> bool:
     return name.startswith((".", "_", "@", "#"))
 
 
+def _comic_files(folder: str) -> list[tuple]:
+    out = []
+    try:
+        for f in os.scandir(folder):
+            if f.is_file() and not _skip(f.name) and os.path.splitext(f.name)[1].lower() in READABLE_EXTS:
+                st = f.stat()
+                out.append((f.path, st.st_size, st.st_mtime, f.name))
+    except OSError:
+        pass
+    return out
+
+
+def _series_folders(ser) -> list[tuple[str, str]]:
+    """(folder, title) for a series dir: itself, plus any sub-folder holding
+    comics. 'Batman (2016)' keeps its name (it says which run it is); 'Volume
+    07 (2016)' or 'Variants' becomes 'Batman Beyond - Volume 07 (2016)'."""
+    out = [(ser.path, ser.name)]
+    try:
+        subs = [d for d in os.scandir(ser.path) if d.is_dir() and not _skip(d.name)]
+    except OSError:
+        return out
+    parent = ser.name.lower()
+    for d in sorted(subs, key=lambda e: e.name.lower()):
+        if not _comic_files(d.path):
+            continue
+        stands_alone = d.name.lower().startswith(parent)
+        out.append((d.path, d.name if stands_alone else f"{ser.name} - {d.name}"))
+    return out
+
+
 def scan_shelf(root: str | None = None) -> dict:
     """Walk root/Publisher/Series/<files>. Returns counts. One scan at a time —
     a second caller gets the running scan's last result instead of piling on."""
@@ -64,19 +94,22 @@ def scan_shelf(root: str | None = None) -> dict:
             for ser in os.scandir(pub.path):
                 if not ser.is_dir() or _skip(ser.name):
                     continue
-                files = []
-                for f in os.scandir(ser.path):
-                    if f.is_file() and not _skip(f.name) and os.path.splitext(f.name)[1].lower() in READABLE_EXTS:
-                        st = f.stat()
-                        files.append((f.path, st.st_size, st.st_mtime, f.name))
-                if not files:
-                    continue
-                tid = tracked.get(os.path.realpath(ser.path))
-                sid = db.upsert_shelf_series(ser.path, ser.name, pub.name, tid, len(files), stamp, DB_PATH)
-                db.index_books([(p, size, mtime, parse_issue_number(name, ser.name), sid, tid)
-                                for p, size, mtime, name in files], DB_PATH)
-                n_series += 1
-                n_books += len(files)
+                # Publisher/Series/<files> — and one level deeper, because the
+                # shelf has Batman/Batman (2016)/, Batman Beyond/Volume 07 (2016)/,
+                # Deadpool/Variants/: 345 files the two-level walk never saw
+                # (2026-10-08, found by the Komga history import's unmatched list).
+                # A sub-folder is its own series, titled by its own name when that
+                # name stands alone ('Batman (2016)'), else 'Parent - Sub'.
+                for folder, title in _series_folders(ser):
+                    files = _comic_files(folder)
+                    if not files:
+                        continue
+                    tid = tracked.get(os.path.realpath(folder))
+                    sid = db.upsert_shelf_series(folder, title, pub.name, tid, len(files), stamp, DB_PATH)
+                    db.index_books([(p, size, mtime, parse_issue_number(name, title), sid, tid)
+                                    for p, size, mtime, name in files], DB_PATH)
+                    n_series += 1
+                    n_books += len(files)
         pruned = db.prune_shelf(stamp, DB_PATH)
         result = {"series": n_series, "books": n_books, "pruned": pruned, "scanned_at": stamp}
         _last_scan.clear()
