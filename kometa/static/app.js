@@ -1282,7 +1282,11 @@ async function renderSeriesDetail(id) {
         <div class="match-search"><input class="browse-search" id="match-q" value="${esc(s.title)}" placeholder="Search by title"
           onkeydown="if(event.key==='Enter')_loadMatchCandidates(${s.id}, this.value)">
           <button class="btn btn-ghost btn-sm" onclick="_loadMatchCandidates(${s.id}, document.getElementById('match-q').value)">Search</button></div>
-        <div class="match-results" id="match-results"><div class="match-hint">Searching…</div></div>` : ''}
+        <div class="match-results" id="match-results"><div class="match-hint">Searching…</div></div>
+        <div class="match-sub">Or is it a collected edition of a run you already have? File it under that series.</div>
+        <div class="match-search"><input class="browse-search" id="file-under-q" placeholder="Search your shelf"
+          oninput="_fileUnderSearch(${s.id}, this.value)" autocomplete="off" spellcheck="false"></div>
+        <div class="match-results" id="file-under-results"></div>` : ''}
       </div>` : '';
 
   setApp(`

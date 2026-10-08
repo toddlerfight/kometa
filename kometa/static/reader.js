@@ -472,6 +472,63 @@ async function _pickMatch(seriesId, runId, btn, source = 'locg') {
   };
 }
 
+// "File it under a run you already have": a deluxe / omnibus / TPB that became
+// its own series by accident. Search your OWN shelf (client-side, it's one
+// list), confirm, and the file moves into the parent's folder — readable from
+// the parent's page, the stub series gone.
+let _fileUnderAll = null, _fileUnderTimer = null;
+async function _fileUnderSearch(seriesId, q) {
+  clearTimeout(_fileUnderTimer);
+  _fileUnderTimer = setTimeout(async () => {
+    const box = document.getElementById('file-under-results');
+    if (!box) return;
+    q = (q || '').trim().toLowerCase();
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { return; } }
+    const hits = _fileUnderAll
+      .filter(s => s.id !== seriesId && s.kind !== 'arc' && s.folder_path && s.match_status !== 'pending' && s.match_status !== 'needs_match'
+        && s.title.toLowerCase().includes(q))
+      .sort((a, b) => a.title.localeCompare(b.title)).slice(0, 8);
+    box.innerHTML = hits.length ? hits.map(s => `
+      <div class="match-row">
+        <img src="/api/series/${s.id}/thumbnail" alt="" loading="lazy" onerror="this.remove()">
+        <div class="match-row-text"><div class="match-row-title">${esc(s.title)}</div>
+          <div class="match-row-meta">${esc([s.publisher, s.year_began, `${s.owned ?? 0} owned`].filter(Boolean).join(' · '))}</div></div>
+        <button class="btn btn-primary btn-sm" onclick="_fileUnder(${seriesId}, ${s.id})">File under</button>
+      </div>`).join('') : '<div class="match-hint">No series on your shelf matches that.</div>';
+  }, 200);
+}
+
+async function _fileUnder(seriesId, parentId) {
+  const parent = (_fileUnderAll || []).find(s => s.id === parentId) || { title: 'that series' };
+  const me = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : { title: 'this' };
+  showModal(`
+    <div class="modal-header"><h2>File under ${esc(parent.title)}?</h2></div>
+    <div class="modal-body">
+      <div><b>${esc(me.title)}</b> is treated as a collected edition of <b>${esc(parent.title)}</b>.</div>
+      <div style="margin-top:10px;color:var(--tq);font-size:12px">Its file moves into that series' folder, named as a collection so it can never be mistaken for an issue. This series and its empty folder go away. Reading progress follows the file.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="file-under-btn">File it</button>
+    </div>`);
+  document.getElementById('file-under-btn').onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Moving…';
+    try {
+      const res = await fetch(`/api/series/${seriesId}/file-under`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: parentId }) });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.detail || res.status);
+      closeModal();
+      showToast(`Filed under ${r.parent_title}: ${r.files.join(', ')}`);
+      _fileUnderAll = null;
+      navigate('series-detail', { id: r.parent_id });
+    } catch (e) {
+      closeModal(); showToast(`Couldn’t file it: ${e.message || ''}`, 'error');
+    }
+  };
+}
+
 // After a match or link the sync runs in the background. Re-render the page when
 // it lands (last_synced moves) rather than leaving you on a page painted before
 // the issues had their details — up to a minute, then give up quietly.

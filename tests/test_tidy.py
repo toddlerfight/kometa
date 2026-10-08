@@ -92,3 +92,25 @@ def test_folder_year_is_the_shelf_year_not_the_cover_date_year(lib, monkeypatch)
     monkeypatch.setattr(mc, "series_detail", lambda sid: {"title": "Batman: Damned", "year": 2019})  # cover-date year
     p = tidy.plan(lib["sid"], lib["db"])
     assert p["year"] == 2018 and p["target_folder"].endswith("Batman - Damned (2018)")        # #1 shipped 2018
+
+
+def test_file_under_moves_the_trade_into_its_run_and_drops_the_stub(lib, monkeypatch):
+    sid = lib["sid"]                                                            # Batman - Damned, the run
+    root = os.path.dirname(lib["folder"])
+    stub = os.path.join(root, "Batman - Damned - The Deluxe Edition")
+    os.makedirs(stub)
+    _cbz(os.path.join(stub, "Batman - Damned - The Deluxe Edition #001 (2019).cbz"))
+    stub_id = db.add_series(title="Batman - Damned - The Deluxe Edition", publisher="DC Comics", folder_path=stub,
+                            on_pull_list=False, path=lib["db"])
+    db.set_match_status(stub_id, "needs_match", lib["db"])
+    shelf_id = db.upsert_shelf_series(stub, "Batman - Damned - The Deluxe Edition", "DC Comics", stub_id, 1, "2026-10-08T00:00:00.000000Z", lib["db"])
+    db.index_books([(os.path.join(stub, "Batman - Damned - The Deluxe Edition #001 (2019).cbz"), 10, 1.0, 1.0, shelf_id, stub_id)], lib["db"])
+    r = tidy.file_under(stub_id, sid, lib["db"])
+    assert r["files"] == ["Batman - Damned - The Deluxe Edition (2019).cbz"]    # no '#': never an issue
+    assert os.path.isfile(os.path.join(lib["folder"], r["files"][0])) and not os.path.exists(stub)
+    assert db.get_series_by_id(stub_id, lib["db"]) is None
+    with db._connect(lib["db"]) as c:
+        row = c.execute("SELECT path, tracked_series_id FROM books WHERE path LIKE '%Deluxe%'").fetchone()
+        assert row[0] == os.path.join(lib["folder"], r["files"][0]) and row[1] == sid
+    with pytest.raises(tidy.TidyError):
+        tidy.file_under(sid, sid, lib["db"])

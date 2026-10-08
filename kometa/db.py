@@ -974,6 +974,24 @@ def move_folder_paths(series_id, old_folder, new_folder, path=DB_PATH) -> int:
         return n
 
 
+def move_books_to_series(old_folder, new_folder, parent_id, parent_shelf_id, path=DB_PATH) -> int:
+    """Files filed under another series (a trade into its run): book rows follow
+    the move AND change owner, so read progress lands on the right series page."""
+    old_prefix = old_folder.rstrip("/") + "/"
+    new_prefix = new_folder.rstrip("/") + "/"
+    with _connect(path) as conn:
+        return conn.execute(
+            "UPDATE books SET path = ? || substr(path, ?), tracked_series_id = ?, shelf_series_id = ? "
+            "WHERE substr(path, 1, ?) = ?",
+            (new_prefix, len(old_prefix) + 1, parent_id, parent_shelf_id, len(old_prefix), old_prefix)).rowcount
+
+
+def set_book_owner(book_path, tracked_series_id, shelf_series_id, path=DB_PATH) -> int:
+    with _connect(path) as conn:
+        return conn.execute("UPDATE books SET tracked_series_id = ?, shelf_series_id = ? WHERE path = ?",
+                            (tracked_series_id, shelf_series_id, book_path)).rowcount
+
+
 def set_series_title(series_id, title, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET title = ? WHERE id = ?", (title, series_id))

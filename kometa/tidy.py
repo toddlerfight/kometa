@@ -130,6 +130,73 @@ def plan(series_id: int, path=None) -> dict:
     }
 
 
+_TRADE_WORDS = re.compile(r"\b(deluxe|omnibus|tpb|hc|hardcover|absolute|compendium|collection|collected|"
+                          r"anniversary|edition|library|treasury)\b", re.I)
+
+
+def file_under(series_id: int, parent_id: int, path=None) -> dict:
+    """A collected edition that became its own series by accident goes under the
+    run it collects: its files move into the parent's folder, named so they can
+    never be mistaken for an issue ('<title> TPB (year).cbz' — no '#'), the book
+    rows follow and change owner, the stub series and its folder go away. The
+    files show on the parent's page with its other non-issue files, readable."""
+    path = path or DB_PATH
+    s = db.get_series_by_id(series_id, path)
+    p = db.get_series_by_id(parent_id, path)
+    if not s or not p:
+        raise TidyError("No such series")
+    if series_id == parent_id:
+        raise TidyError("A series can't be filed under itself")
+    src, dst = s.get("folder_path"), p.get("folder_path")
+    if not src or not os.path.isdir(src):
+        raise TidyError("The series has no folder on disk")
+    if not dst or not os.path.isdir(dst):
+        raise TidyError("The parent series has no folder on disk")
+    files = sorted(f for f in os.listdir(src) if os.path.splitext(f)[1].lower() in OWNED_EXTS)
+    if not files:
+        raise TidyError("Nothing to file — the folder has no comic files")
+    title = re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"]).strip()
+    years = _file_years_of(files) or ([s["year_began"]] if s.get("year_began") else [])
+    moved = []
+    for i, f in enumerate(files):
+        ext = os.path.splitext(f)[1].lower()
+        y = f" ({years[0]})" if years else ""
+        kind = "" if _TRADE_WORDS.search(title) else " TPB"
+        name = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))}{kind}{y}{'' if len(files) == 1 else f' {i + 1:02d}'}{ext}"
+        target = os.path.join(dst, name)
+        if os.path.exists(target):
+            raise TidyError(f"{name!r} already exists in the parent folder")
+        moved.append((os.path.join(src, f), target))
+    parent_shelf = db.shelf_id_for_series(parent_id, path)
+    for a, b in moved:
+        os.rename(a, b)
+        db.rename_book_path(a, b, path)
+        db.set_book_owner(b, parent_id, parent_shelf, path)      # progress now lives on the parent's page
+    db.dequeue_waiting_series(series_id, path)
+    db.remove_shelf_series_by_path(src, path)
+    db.remove_series(series_id, path)
+    # the stub folder: gone if nothing but crumbs (.DS_Store) is left
+    try:
+        leftovers = [f for f in os.listdir(src) if not f.startswith(".")]
+        if not leftovers:
+            import shutil
+            shutil.rmtree(src, ignore_errors=True)
+    except OSError:
+        pass
+    try:
+        from kometa.sync import rescan_owned
+        rescan_owned(db.get_series_by_id(parent_id, path))
+    except Exception as e:
+        logger.info(f"file_under: parent rescan failed: {e}")
+    logger.info(f"Filed {s['title']!r} under {p['title']!r}: {[os.path.basename(b) for _, b in moved]}")
+    return {"parent_id": parent_id, "parent_title": p["title"], "files": [os.path.basename(b) for _, b in moved]}
+
+
+def _file_years_of(files) -> list[int]:
+    ys = sorted({int(y) for f in files for y in re.findall(r"\((\d{4})\)", f) if 1930 <= int(y) <= 2100})
+    return ys
+
+
 def apply(series_id: int, path=None) -> dict:
     """Do it. Recomputes the plan (never trusts a stale one), files first, folder
     last, database updated at every step. Returns what was done."""

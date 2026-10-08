@@ -2131,3 +2131,5 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .singles-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
 
 .nm-search { display: block; max-width: 420px; margin-bottom: 10px; }
+
+.match-sub { color: var(--tq); font-size: 12px; margin-top: 6px; }

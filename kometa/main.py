@@ -836,6 +836,21 @@ def tidy_plan(series_id: int):
         raise HTTPException(400, str(e))
 
 
+class FileUnderRequest(BaseModel):
+    parent_id: int
+
+
+@app.post("/api/series/{series_id}/file-under")
+def file_under(series_id: int, req: FileUnderRequest):
+    """A collected edition filed as a series goes under the run it collects
+    (kometa/tidy.py: files move, book rows follow, the stub series goes)."""
+    from kometa import tidy
+    try:
+        return tidy.file_under(series_id, req.parent_id)
+    except tidy.TidyError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/report/singles")
 def singles_report():
     """Single-file series classified (one-shot / collected / split / unknown).
