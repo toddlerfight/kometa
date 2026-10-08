@@ -107,3 +107,31 @@ def test_add_to_appends_a_straggler_as_the_next_issue(lib):
     assert db.get_progress("me", b["id"], lib["db"])["page"] == 7
     with pytest.raises(cb.CombineError):
         cb.add_to([target], target, None, lib["db"], root=lib["root"])
+
+
+def test_numbered_folders_are_a_run_with_its_order_decided(lib):
+    """'Skidmarks 1 of 4 - …': the number is in the folder name, so the group is
+    a run (two is enough), sorted by it, numbered by it, subtitle kept."""
+    root = os.path.join(lib["root"], "Titan Comics")
+    ids = []
+    for name, f in [("Tank Girl - Skidmarks 2 of 4 - Out of It", "Tank Girl - Skidmarks 2 of 4 - Out of It #001.cbz"),
+                    ("Tank Girl - Skidmarks 1 of 4 - The Watermelon Run", "Tank Girl - Skidmarks 1 of 4 - The Watermelon Run #001.cbz"),
+                    ("Sin City - A Dame To Kill For 1 Of", "Sin City - A Dame To Kill For 1 Of #006.cbz"),
+                    ("Sin City - A Dame To Kill For 2 Of", "Sin City - A Dame To Kill For 2 Of #006.cbz")]:
+        folder = os.path.join(root, name)
+        _cbz(os.path.join(folder, f), b"PK" + b"x" * 60)
+        sid = db.add_series(title=name, publisher="Titan Comics", folder_path=folder, on_pull_list=False, path=lib["db"])
+        sh = db.upsert_shelf_series(folder, name, "Titan Comics", sid, 1, "2026-10-09T00:00:00.000000Z", lib["db"])
+        db.index_books([(os.path.join(folder, f), 4, 1.0, 1.0, sh, sid)], lib["db"])
+        ids.append(sid)
+    groups = {g["prefix"]: g for g in cb.find_groups(lib["db"])}
+    assert groups["Tank Girl - Skidmarks"]["numbered"] and [m["number"] for m in groups["Tank Girl - Skidmarks"]["members"]] == [1, 2]
+    assert groups["Sin City - A Dame To Kill For"]["count"] == 2
+    p = cb.plan(ids[:2], None, "year", lib["db"])
+    assert [i["to"] for i in p["items"]] == ["Tank Girl - Skidmarks #01 - The Watermelon Run.cbz", "Tank Girl - Skidmarks #02 - Out of It.cbz"]
+    p = cb.plan(ids[2:], None, "year", lib["db"])
+    assert [i["to"] for i in p["items"]] == ["Sin City - A Dame To Kill For #01.cbz", "Sin City - A Dame To Kill For #02.cbz"]
+    r = cb.apply(ids[2:], None, "year", lib["db"], root=lib["root"])
+    assert r["moved"] == 2 and r["errors"] == []
+    with db._connect(lib["db"]) as c:
+        assert sorted(n for (n,) in c.execute("SELECT number FROM books WHERE tracked_series_id = ?", (r["series_id"],))) == [1.0, 2.0]

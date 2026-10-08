@@ -44,8 +44,28 @@ def _files(folder: str) -> list[str]:
         return []
 
 
+# A mini filed one issue per folder: 'Tank Girl - Skidmarks 1 of 4 - The Watermelon
+# Run', 'Sin City - A Dame To Kill For 1 Of', 'Zombies vs. Robots - Undercity 01 -
+# Downward Pull'. The number is IN the folder name, so the group is a run with its
+# order already decided — not albums to be numbered by year.
+_N_OF_RE = re.compile(r"^(?P<base>.+?)\s+(?P<n>\d{1,3})\s+of(?:\s+\d{1,3})?(?:\s*[-–:]\s*(?P<sub>.+))?$", re.I)
+_N_DASH_RE = re.compile(r"^(?P<base>.+?)\s+(?P<n>\d{2})\s*[-–]\s*(?P<sub>.+)$")
+
+
+def _numbered(title: str) -> tuple[str, int, str] | None:
+    """('Tank Girl - Skidmarks', 1, 'The Watermelon Run') for the one-issue-per-folder shapes, else None."""
+    t = _YEAR_RE.sub("", title).strip()
+    m = _N_OF_RE.match(t) or _N_DASH_RE.match(t)
+    if not m or not m.group("base").strip():
+        return None
+    return m.group("base").strip(), int(m.group("n")), (m.group("sub") or "").strip()
+
+
 def _split(title: str) -> tuple[str, str] | None:
     """'The Adventures of Tintin - The Blue Lotus' → ('The Adventures of Tintin', 'The Blue Lotus')."""
+    nb = _numbered(title)
+    if nb:
+        return nb[0], nb[2] or f"Part {nb[1]}"
     t = _YEAR_RE.sub("", title).strip()
     parts = _SPLIT_RE.split(t, maxsplit=1)
     if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
@@ -74,9 +94,12 @@ def _member(s: dict, names: dict[int, list[str]] | None = None) -> dict | None:
     sp = _split(s["title"])
     if not sp:
         return None
+    nb = _numbered(s["title"])
     return {"id": s["id"], "title": s["title"], "prefix": sp[0], "subtitle": sp[1], "folder": folder,
             "files": files, "year": _year_of(folder, files, s), "publisher": s.get("publisher"),
             "match_status": s.get("match_status"),
+            "number": nb[1] if nb else None,           # from the folder name ('2 of 4'), else decided at plan time
+            "sub": nb[2] if nb else sp[1],             # the subtitle to keep in the file name ('' = none)
             # already its own catalogue run (the Metal one-shots, the Hellboy specials):
             # combining would throw that link away — shown, but unticked by default
             "matched": bool(s.get("metron_series_id") or s.get("locg_series_id"))}
@@ -96,13 +119,19 @@ def find_groups(path=None) -> list[dict]:
         groups[(norm_key(m["prefix"]), os.path.dirname(m["folder"]))].append(m)
     out = []
     for (key, parent), members in groups.items():
-        if len(members) < MIN_GROUP:
+        numbered = all(m["number"] is not None for m in members)
+        # a numbered pair ('D'airain Aventure 01 / 02') is a run of two; albums need three to be a series
+        if len(members) < (2 if numbered else MIN_GROUP):
             continue
-        members.sort(key=lambda m: ((m["year"] or 9999), m["subtitle"].lower()))
+        if numbered:
+            members.sort(key=lambda m: m["number"])
+        else:
+            members.sort(key=lambda m: ((m["year"] or 9999), m["subtitle"].lower()))
         out.append({"prefix": members[0]["prefix"], "parent": parent, "publisher": members[0]["publisher"],
                     "count": len(members), "ids": [m["id"] for m in members],
+                    "numbered": numbered,
                     "members": [{"id": m["id"], "subtitle": m["subtitle"], "year": m["year"], "files": len(m["files"]),
-                                 "title": m["title"], "matched": m["matched"]} for m in members],
+                                 "number": m["number"], "title": m["title"], "matched": m["matched"]} for m in members],
                     "unmatched": sum(1 for m in members if not m["matched"])})
     out.sort(key=lambda g: -g["count"])
     return out
@@ -128,7 +157,10 @@ def plan(ids: list[int], title: str | None = None, order: str | list[int] = "yea
     if len(members) < 2:
         raise CombineError("Pick at least two")
     title = (title or members[0]["prefix"]).strip()
-    if isinstance(order, list):
+    numbered = all(m["number"] is not None for m in members)
+    if numbered:
+        members.sort(key=lambda m: m["number"])          # the folder names already say the order
+    elif isinstance(order, list):
         pos = {sid: i for i, sid in enumerate(order)}
         members.sort(key=lambda m: pos.get(m["id"], 999))
     elif order == "alpha":
@@ -138,11 +170,13 @@ def plan(ids: list[int], title: str | None = None, order: str | list[int] = "yea
     parent = os.path.dirname(members[0]["folder"])
     target = os.path.join(parent, _safe(re.sub(r"\s*:\s*", " - ", title)))
     items, dupes = [], []
-    for n, m in enumerate(members, 1):
+    for i, m in enumerate(members, 1):
+        n = m["number"] if numbered else i
         keep = _best(m["folder"], m["files"])
         ext = os.path.splitext(keep)[1].lower()
         y = f" ({m['year']})" if m["year"] else ""
-        new = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))} #{n:02d} - {_safe(m['subtitle'])}{y}{ext}"
+        sub = f" - {_safe(m['sub'])}" if m["sub"] else ""
+        new = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))} #{n:02d}{sub}{y}{ext}"
         items.append({"n": n, "id": m["id"], "subtitle": m["subtitle"], "year": m["year"], "from": keep, "to": new,
                       "folder": m["folder"]})
         for f in m["files"]:
