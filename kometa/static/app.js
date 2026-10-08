@@ -690,6 +690,21 @@ function _animateTileOut(tile) {
   });
 }
 
+// Shelf clean-up search: hides any row (twin, combine group, collected edition,
+// split, unknown) whose text doesn't contain the words; empties a group's
+// heading when nothing in it is left.
+function _sgFilter(q) {
+  q = (q || '').trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  document.querySelectorAll('#app .nm-row').forEach(row => {
+    const t = row.textContent.toLowerCase();
+    row.style.display = words.every(w => t.includes(w)) ? '' : 'none';
+  });
+  document.querySelectorAll('#app .singles-group').forEach(g => {
+    g.style.display = [...g.querySelectorAll('.nm-row')].some(r => r.style.display !== 'none') ? '' : 'none';
+  });
+}
+
 // --- Needs matching ------------------------------------------------------------
 // Its own section, not a Library filter: a folder that hasn't been matched to a
 // run isn't on the shelf yet, it's in the in-tray. Pick the run and it moves to
@@ -779,6 +794,7 @@ async function renderSinglesReport() {
       <div class="nm-actions" id="sga-${x.id}"></div>
     </div>`;
   setApp(`
+    <input class="browse-search nm-search" id="sg-search" type="text" placeholder="Search this page" autocomplete="off" spellcheck="false" oninput="_sgFilter(this.value)">
     <div class="nm-intro">Twin folders, collected editions filed as series, split minis, and single files not yet placed${r.counts.one_shot ? ` (${r.counts.one_shot} one-shots are fine and not shown)` : ''}. Nothing here changes anything until you press Merge or File under on a row.
       ${r.types_pending ? `<br>Metron types known for ${r.types_known}, still fetching ${r.types_pending} (a few seconds each) — refresh in a while and "not sure yet" shrinks.` : ''}</div>
     ${_SINGLE_KINDS.map(([k, label, help]) => {
