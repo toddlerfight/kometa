@@ -120,6 +120,7 @@ function _rdRender() {
           </div>
         </div>
         <div class="rd-top-r">
+          <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">⛶</button>
           <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
           <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">⋯</button>
           <div class="rd-menu hidden" id="rd-menu">
@@ -292,6 +293,7 @@ function _rdBindInput() {
     if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); _rdStep(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); _rdStep(-1); }
     else if (e.key === 'Escape') { e.preventDefault(); _rd.chrome ? _rdToggleChrome(false) : _rdExit(); }
+    else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); _rdFullscreen(); }
   });
   let rt;
   window.addEventListener('resize', () => {
@@ -326,6 +328,33 @@ async function renderReader(params) {
     el.innerHTML = `<div class="rd-end"><div class="rd-end-title">Couldn’t open this book</div>
       <div class="rd-end-actions"><button class="btn btn-primary" onclick="_rdExit()">‹ Back</button></div></div>`;
   }
+}
+
+// Full screen, on whatever this is. Desktop and Android: the browser's own
+// full-screen mode (the F key too). iPhone and iPad Safari refuse it for
+// anything but video — there the answer is the home-screen web app, which
+// runs with no browser chrome at all, so say so instead of doing nothing.
+function _rdFullscreen() {
+  const el = document.documentElement;
+  const standalone = window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    return;
+  }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req) {
+    try { const p = req.call(el); if (p && p.catch) p.catch(() => _rdFullscreenHint(standalone)); }
+    catch { _rdFullscreenHint(standalone); }
+    return;
+  }
+  _rdFullscreenHint(standalone);
+}
+
+function _rdFullscreenHint(standalone) {
+  if (standalone) { showToast('You’re already full screen — this is the home-screen app'); return; }
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  showToast(ios ? 'Safari won’t go full screen for a page. Share → Add to Home Screen, and open Kometa from there: no browser chrome at all.'
+                : 'This browser won’t go full screen here.', 'error');
 }
 
 function closeReader() {
