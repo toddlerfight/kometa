@@ -943,6 +943,37 @@ def twins_apply(req: TwinRequest):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/report/combine")
+def combine_report():
+    """Groups of one-file folders that are one series (kometa/combine.py)."""
+    from kometa import combine
+    return {"groups": combine.find_groups()}
+
+
+class CombineRequest(BaseModel):
+    ids: list[int]
+    title: str | None = None
+    order: str | list[int] = "year"
+
+
+@app.post("/api/report/combine/plan")
+def combine_plan(req: CombineRequest):
+    from kometa import combine
+    try:
+        return combine.plan(req.ids, req.title, req.order)
+    except combine.CombineError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/report/combine/apply")
+def combine_apply(req: CombineRequest):
+    from kometa import combine
+    try:
+        return combine.apply(req.ids, req.title, req.order)
+    except combine.CombineError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/report/singles")
 def singles_report():
     """Single-file series classified (one-shot / collected / split / unknown).

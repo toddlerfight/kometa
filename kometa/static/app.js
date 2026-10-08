@@ -793,6 +793,96 @@ async function renderSinglesReport() {
     }).join('')}`);
   _loadCollections();
   _loadTwins();
+  _loadCombine();
+}
+
+// Same series, many folders (kometa/combine.py): 'The Adventures of Tintin - X'
+// ×25, the One Bad Day one-shots. Combine shows the order and the new names;
+// you can reorder, untick extras and rename before anything moves.
+async function _loadCombine() {
+  let r;
+  try { r = await api.get('/api/report/combine'); } catch { return; }
+  if (currentView !== 'singles' || !r.groups.length) return;
+  const html = `<div class="singles-group" id="combine-group">
+    <div class="singles-head"><span class="series-card-title">Same series, many folders <span class="settings-opt">${r.groups.length}</span></span>
+      <span class="tidy-why">One album per folder. Combine makes one series, numbered in order, each file keeping its title.</span></div>
+    <div class="nm-list">${r.groups.map((g, i) => `
+      <div class="nm-row" id="cg-${i}">
+        <img class="nm-cover" src="/api/series/${g.ids[0]}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+        <div class="nm-main">
+          <div class="nm-title">${esc(g.prefix)}</div>
+          <div class="nm-meta u-truncate">${g.count} folders · ${esc(g.publisher || '')} · ${esc(g.members.slice(0, 4).map(m => m.subtitle).join(', '))}${g.count > 4 ? '…' : ''}</div>
+        </div>
+        <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick='_combineOpen(${JSON.stringify(g).replace(/'/g, '&#39;')}, ${i})'>Combine</button></div>
+      </div>`).join('')}</div></div>`;
+  const twins = document.getElementById('twins-group');
+  if (twins) twins.insertAdjacentHTML('afterend', html); else document.getElementById('app').insertAdjacentHTML('afterbegin', html);
+}
+
+let _cb = null;   // the combine being edited: {group, title, order: [ids], excluded: Set}
+async function _combineOpen(group, rowIndex) {
+  _cb = { group, rowIndex, title: group.prefix, order: group.members.map(m => m.id), excluded: new Set() };
+  await _combineRender();
+}
+
+async function _combineRender() {
+  const ids = _cb.order.filter(id => !_cb.excluded.has(id));
+  let p = null, err = null;
+  try { p = await api.post('/api/report/combine/plan', { ids, title: _cb.title, order: ids }); }
+  catch (e) { err = e.message || 'plan failed'; }
+  const byId = Object.fromEntries(_cb.group.members.map(m => [m.id, m]));
+  const row = (id, i) => {
+    const m = byId[id], ex = _cb.excluded.has(id), item = p && p.items.find(x => x.id === id);
+    return `<div class="tidy-row${ex ? ' tidy-leave' : ''}">
+      <span class="tidy-tag u-label">${ex ? 'out' : item ? '#' + String(item.n).padStart(2, '0') : ''}</span>
+      <div class="tidy-paths"><div class="u-truncate">${esc(m.subtitle)}${m.year ? ` <span class="tidy-why">(${m.year})</span>` : ''}</div>
+        ${item ? `<div class="tidy-to u-truncate">${esc(item.to)}</div>` : ''}</div>
+      <span style="display:flex;gap:2px;flex:none">
+        <button class="btn btn-ghost btn-sm" title="Up" onclick="_combineMove(${id}, -1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="btn btn-ghost btn-sm" title="Down" onclick="_combineMove(${id}, 1)" ${i === _cb.order.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="btn btn-ghost btn-sm" title="${ex ? 'Include' : 'Leave out'}" onclick="_combineToggle(${id})">${ex ? '+' : '–'}</button>
+      </span></div>`;
+  };
+  showModal(`
+    <div class="modal-header"><h2>Combine into one series</h2></div>
+    <div class="modal-body tidy-body">
+      <div class="settings-field"><label class="settings-field-label u-label">Series name</label>
+        <input class="settings-input" id="cb-title" value="${esc(_cb.title)}" onchange="_cb.title = this.value.trim(); _combineRender()"></div>
+      <div class="u-label" style="color:var(--tq);margin:8px 0">Order: <a class="btn-link" onclick="_combineSort('year')">by year</a> · <a class="btn-link" onclick="_combineSort('alpha')">alphabetical</a>${p ? ` · ${p.counts.albums} albums${p.counts.duplicates ? `, ${p.counts.duplicates} duplicate file${p.counts.duplicates === 1 ? '' : 's'} binned` : ''}` : ''}</div>
+      ${err ? `<div style="color:var(--pink);margin-bottom:8px">${esc(err)}</div>` : ''}
+      ${_cb.order.map(row).join('')}
+      ${p ? `<div class="tidy-why" style="margin-top:12px">Files move into <b>${esc(p.target.replace(/^\/comics\//, ''))}</b>. The ${_cb.group.count} stub series go; reading progress follows the files. The result is a shelf series with no catalogue run.</div>` : ''}
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="cb-apply" ${p ? '' : 'disabled'}>Combine</button>
+    </div>`);
+  const b = document.getElementById('cb-apply');
+  if (b) b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Combining…';
+    try {
+      const r = await api.post('/api/report/combine/apply', { ids, title: _cb.title, order: ids });
+      closeModal();
+      const errs = (r.errors || []).length;
+      showToast(`${r.title}: ${r.moved} albums combined${r.binned ? `, ${r.binned} duplicates binned` : ''}${errs ? `, ${errs} failed` : ''}`, errs ? 'error' : '');
+      const el = document.getElementById(`cg-${_cb.rowIndex}`); if (el) el.remove();
+      if (!errs) navigate('series-detail', { id: r.series_id });
+    } catch (e) { closeModal(); showToast(`Combine failed: ${e.message || ''}`, 'error'); }
+  };
+}
+function _combineMove(id, d) {
+  const i = _cb.order.indexOf(id), j = i + d;
+  if (j < 0 || j >= _cb.order.length) return;
+  [_cb.order[i], _cb.order[j]] = [_cb.order[j], _cb.order[i]];
+  _combineRender();
+}
+function _combineToggle(id) { _cb.excluded.has(id) ? _cb.excluded.delete(id) : _cb.excluded.add(id); _combineRender(); }
+function _combineSort(how) {
+  const byId = Object.fromEntries(_cb.group.members.map(m => [m.id, m]));
+  _cb.order.sort((a, b) => how === 'alpha'
+    ? byId[a].subtitle.localeCompare(byId[b].subtitle)
+    : ((byId[a].year || 9999) - (byId[b].year || 9999)) || byId[a].subtitle.localeCompare(byId[b].subtitle));
+  _combineRender();
 }
 
 // Twin folders: one run, two folders (kometa/twins.py). Rendered at the top of
