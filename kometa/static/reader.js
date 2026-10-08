@@ -511,9 +511,11 @@ async function _pickMatch(seriesId, runId, btn, source = 'locg') {
 // the parent's page, the stub series gone.
 let _fileUnderAll = null;
 
-async function _fileUnder(seriesId, parentId, run = null) {
+async function _fileUnder(seriesId, parentId, run = null, opts = {}) {
+  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
   const parent = (_fileUnderAll || []).find(s => s.id === parentId) || { title: 'that series' };
-  const me = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : { title: 'this' };
+  const me = (_detailSeries && _detailSeries.id === seriesId) ? _detailSeries
+    : (_fileUnderAll || []).find(s => s.id === seriesId) || { title: 'this' };
   showModal(`
     <div class="modal-header"><h2>File under ${esc(parent.title)}?</h2></div>
     <div class="modal-body">
@@ -528,13 +530,21 @@ async function _fileUnder(seriesId, parentId, run = null) {
   document.getElementById('file-under-btn').onclick = async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = 'Moving…';
     try {
-      const res = await fetch(`/api/series/${seriesId}/file-under`, { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: parentId }) });
+      // from the report, go through the filing pass so the wiki's year lands on the file name
+      const [url, body] = opts.stay
+        ? ['/api/report/collections/apply', { series_id: seriesId, parent_id: parentId }]
+        : [`/api/series/${seriesId}/file-under`, { parent_id: parentId }];
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const r = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(r.detail || res.status);
       closeModal();
       showToast(`Filed under ${r.parent_title}: ${r.files.join(', ')}`);
       _fileUnderAll = null;
+      if (opts.stay) {
+        const row = document.getElementById(`sg-${seriesId}`);
+        if (row) { row.style.transition = 'opacity .3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 320); }
+        return;
+      }
       navigate('series-detail', { id: r.parent_id });
     } catch (e) {
       closeModal(); showToast(`Couldn’t file it: ${e.message || ''}`, 'error');

@@ -851,6 +851,30 @@ def file_under(series_id: int, req: FileUnderRequest):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/report/collections")
+def collections_report():
+    """Collected editions filed as series: what each collects (publisher wiki)
+    and the run on your shelf to file it under. Cache-only; kicks the lookup
+    job so 'pending' rows fill in (kometa/filing.py)."""
+    from kometa import filing
+    filing.refresh_in_background()
+    return filing.plan()
+
+
+class CollectionApplyRequest(BaseModel):
+    series_id: int
+    parent_id: int
+
+
+@app.post("/api/report/collections/apply")
+def collections_apply(req: CollectionApplyRequest):
+    from kometa import filing, tidy
+    try:
+        return filing.apply(req.series_id, req.parent_id)
+    except tidy.TidyError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/report/singles")
 def singles_report():
     """Single-file series classified (one-shot / collected / split / unknown).

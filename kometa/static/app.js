@@ -670,14 +670,16 @@ async function renderSinglesReport() {
   const c = r.counts;
   const open = id => `navigate('series-detail', {id: ${id}})`;
   const row = x => `
-    <div class="nm-row" style="cursor:pointer" onclick="${open(x.id)}">
-      <img class="nm-cover" src="/api/series/${x.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
-      <div class="nm-main">
+    <div class="nm-row" id="sg-${x.id}">
+      <img class="nm-cover" src="/api/series/${x.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'" onclick="${open(x.id)}">
+      <div class="nm-main" onclick="${open(x.id)}">
         <div class="nm-title">${esc(x.title)}</div>
         <div class="nm-meta u-truncate">${esc(x.file)}</div>
-        <div class="tidy-why">${esc(x.why)}${x.parent_guess ? ` · parent? <b>${esc(x.parent_guess)}</b>${x.parent_on_shelf ? ' (on your shelf)' : ' (not on shelf)'}` : ''}${x.split_base ? ` · merge as <b>${esc(x.split_base)}</b>` : ''}</div>
+        <div class="tidy-why">${esc(x.why)}${x.kind !== 'collected' && x.parent_guess ? ` · parent? <b>${esc(x.parent_guess)}</b>` : ''}${x.split_base ? ` · merge as <b>${esc(x.split_base)}</b>` : ''}</div>
+        ${x.kind === 'collected' ? `<div class="tidy-why sg-collects" id="sgc-${x.id}">looking up what it collects…</div>` : ''}
       </div>
       <span class="nm-status${x.match_status === 'needs_match' || x.match_status === 'pending' ? ' amber' : ''}">${esc(x.metron_type || (x.match_status === 'needs_match' || x.match_status === 'pending' ? 'unmatched' : ''))}</span>
+      <div class="nm-actions" id="sga-${x.id}"></div>
     </div>`;
   setApp(`
     <div class="nm-intro">${r.singles} of ${r.total_series} series are a single file. Nothing on this page changes anything — it's the dry run for merging and filing.
@@ -692,6 +694,33 @@ async function renderSinglesReport() {
           <span class="tidy-why">${help}</span></div>
         <div class="nm-list">${rows.map(row).join('')}</div></div>`;
     }).join('')}`);
+  _loadCollections();
+}
+
+// Collected editions: what each one collects (publisher wiki) and the run on
+// your shelf to file it under. Rows fill in as the background lookups land.
+let _collectionsPoll = null;
+async function _loadCollections() {
+  clearTimeout(_collectionsPoll);
+  let r;
+  try { r = await api.get('/api/report/collections'); } catch { return; }
+  if (currentView !== 'singles') return;
+  let pending = 0;
+  for (const x of r.rows) {
+    const line = document.getElementById(`sgc-${x.id}`), acts = document.getElementById(`sga-${x.id}`);
+    if (!line) continue;
+    const link = x.wiki_url ? ` <a class="btn-link" href="${esc(x.wiki_url)}" target="_blank" rel="noopener">wiki</a>` : '';
+    if (x.status === 'pending') { pending++; line.textContent = 'looking up what it collects…'; continue; }
+    if (x.status === 'ready') {
+      line.innerHTML = `collects <b>${esc(x.collects_summary)}</b>${x.year ? ` · ${x.year}` : ''}${link}`;
+      if (acts) acts.innerHTML = `<button class="btn btn-primary btn-sm" onclick="_fileUnder(${x.id}, ${x.parent_id}, null, {stay: true})">File under ${esc(x.parent_title)}</button>`;
+    } else if (x.status === 'no_parent') {
+      line.innerHTML = `collects <b>${esc(x.collects_summary)}</b>${x.year ? ` · ${x.year}` : ''} — <span style="color:var(--amb)">${esc(x.why)}</span>${link}`;
+    } else {
+      line.innerHTML = `<span style="color:var(--tq)">${esc(x.why)}</span>`;
+    }
+  }
+  if (pending && r.progress && r.progress.running) _collectionsPoll = setTimeout(_loadCollections, 4000);
 }
 
 function _needsRowHtml(s, i) {

@@ -134,7 +134,7 @@ _TRADE_WORDS = re.compile(r"\b(deluxe|omnibus|tpb|hc|hardcover|absolute|compendi
                           r"anniversary|edition|library|treasury)\b", re.I)
 
 
-def file_under(series_id: int, parent_id: int, path=None) -> dict:
+def file_under(series_id: int, parent_id: int, path=None, year: int | None = None) -> dict:
     """A collected edition that became its own series by accident goes under the
     run it collects: its files move into the parent's folder, named so they can
     never be mistaken for an issue ('<title> TPB (year).cbz' — no '#'), the book
@@ -156,7 +156,7 @@ def file_under(series_id: int, parent_id: int, path=None) -> dict:
     if not files:
         raise TidyError("Nothing to file — the folder has no comic files")
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"]).strip()
-    years = _file_years_of(files) or ([s["year_began"]] if s.get("year_began") else [])
+    years = [year] if year else (_file_years_of(files) or ([s["year_began"]] if s.get("year_began") else []))
     moved = []
     for i, f in enumerate(files):
         ext = os.path.splitext(f)[1].lower()
