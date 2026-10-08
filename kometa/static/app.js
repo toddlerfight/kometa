@@ -703,7 +703,6 @@ function _nmListHtml() {
 const _SINGLE_KINDS = [
   ['collected', 'Collected editions', 'Trades, deluxe and omnibus editions filed as series. These belong under their parent run as trades.'],
   ['split',     'Split minis',        'One series spread one issue per folder. These belong merged into one folder.'],
-  ['one_shot',  'One-shots',          'Genuine one-shots, annuals and graphic novels. 1/1 is correct here.'],
   ['unknown',   'Not sure yet',       'Metron type still being fetched, or no catalogue match and a name that says nothing.'],
 ];
 
@@ -730,7 +729,7 @@ async function renderSinglesReport() {
       <div class="nm-actions" id="sga-${x.id}"></div>
     </div>`;
   setApp(`
-    <div class="nm-intro">Twin folders, collected editions filed as series, split minis, one-shots: ${r.singles} of ${r.total_series} series are a single file. Nothing here changes anything until you press Merge or File under on a row.
+    <div class="nm-intro">Twin folders, collected editions filed as series, split minis, and single files not yet placed${r.counts.one_shot ? ` (${r.counts.one_shot} one-shots are fine and not shown)` : ''}. Nothing here changes anything until you press Merge or File under on a row.
       ${r.types_pending ? `<br>Metron types known for ${r.types_known}, still fetching ${r.types_pending} (a few seconds each) — refresh in a while and "not sure yet" shrinks.` : ''}</div>
     ${_SINGLE_KINDS.map(([k, label, help]) => {
       const rows = r.rows.filter(x => x.kind === k);
