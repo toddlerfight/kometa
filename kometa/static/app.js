@@ -1531,7 +1531,7 @@ async function renderSeriesDetail(id) {
     ? `<div class="match-banner" id="match-banner">
         <div class="match-head">
           <div class="match-banner-text">${s.match_status === 'pending'
-            ? '<b>Not matched yet.</b> Matching trickles through in the background, a handful every 20 minutes.'
+            ? '<b>Not matched yet.</b>'
             : '<b>Pick the run.</b> More than one series could be this folder, or none clearly fits.'}</div>
           <div class="match-head-actions">
             ${s.match_status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="_matchNow(${s.id}, this)">Match now</button>` : ''}
