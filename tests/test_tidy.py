@@ -133,3 +133,18 @@ def test_a_series_under_unknown_moves_to_the_publisher_the_catalogue_names(lib, 
     r = tidy.apply(sid, lib["db"])
     assert r["rename_folder"] == 1 and os.path.isdir(p["target_folder"]) and not os.path.exists(os.path.join(lib["root"], "Unknown"))
     assert db.get_series_by_id(sid, lib["db"])["publisher"] == "Image Comics"
+
+
+def test_file_under_keeps_volume_names_and_drops_scene_tags(lib):
+    sid = lib["sid"]
+    root = os.path.dirname(lib["folder"])
+    stub = os.path.join(root, "Batman - Damned - Trade Paperbacks")
+    os.makedirs(stub)
+    _cbz(os.path.join(stub, "Batman - Damned v01 - The Promise (2019) (Digital) (Pym-Empire).cbz"))
+    _cbz(os.path.join(stub, "Batman - Damned v02 (2020) (digital) (Son of Ultron-Empire).cbz"))
+    stub_id = db.add_series(title="Batman - Damned - Trade Paperbacks", publisher="DC Comics", folder_path=stub,
+                            on_pull_list=False, path=lib["db"])
+    db.upsert_shelf_series(stub, "Batman - Damned - Trade Paperbacks", "DC Comics", stub_id, 2, "2026-10-08T00:00:00.000000Z", lib["db"])
+    r = tidy.file_under(stub_id, sid, lib["db"])
+    assert r["files"] == ["Batman - Damned v01 - The Promise (2019).cbz", "Batman - Damned v02 (2020).cbz"]
+    assert tidy._clean_scene_name("East of West v03 - There Is No Us (2014) (Digital) (Pym-Empire)") == "East of West v03 - There Is No Us (2014)"

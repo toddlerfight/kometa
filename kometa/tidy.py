@@ -139,6 +139,17 @@ def plan(series_id: int, path=None) -> dict:
     }
 
 
+_VOLUME_IN_NAME = re.compile(r"\b(?:v|vol\.?|volume)\s*\d+\b", re.I)
+_SCENE_TAGS = re.compile(r"\s*\((?:digital|digital-sd|webrip|scan|c2c|\d+\s*covers|[^()]*-empire|[^()]*scanning|[^()]*-dcp)\)", re.I)
+
+
+def _clean_scene_name(stem: str) -> str:
+    """'East of West v03 - There Is No Us (2014) (Digital) (Pym-Empire)' →
+    'East of West v03 - There Is No Us (2014)': the year stays, the scene tags go."""
+    out = _SCENE_TAGS.sub("", stem)
+    return re.sub(r"\s{2,}", " ", out).strip(" -")
+
+
 _TRADE_WORDS = re.compile(r"\b(deluxe|omnibus|tpb|hc|hardcover|absolute|compendium|collection|collected|"
                           r"anniversary|edition|library|treasury)\b", re.I)
 
@@ -171,7 +182,13 @@ def file_under(series_id: int, parent_id: int, path=None, year: int | None = Non
         ext = os.path.splitext(f)[1].lower()
         y = f" ({years[0]})" if years else ""
         kind = "" if _TRADE_WORDS.search(title) else " TPB"
-        name = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))}{kind}{y}{'' if len(files) == 1 else f' {i + 1:02d}'}{ext}"
+        if len(files) > 1 and _VOLUME_IN_NAME.search(f):
+            # 'East of West v03 - There Is No Us (2014) (Digital) (Pym-Empire).cbz': the
+            # file already says which volume it is — keep that, drop the scene tags.
+            # (The first cut renamed eleven volumes 'TPB (2013) 01'…'11' and lost it all.)
+            name = _clean_scene_name(os.path.splitext(f)[0]) + ext
+        else:
+            name = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))}{kind}{y}{'' if len(files) == 1 else f' {i + 1:02d}'}{ext}"
         target = os.path.join(dst, name)
         if os.path.exists(target):
             raise TidyError(f"{name!r} already exists in the parent folder")
