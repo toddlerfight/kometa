@@ -623,18 +623,25 @@ async function _addAsIssue(seriesId, targetId) {
   const me = (_detailSeries && _detailSeries.id === seriesId) ? _detailSeries : (_fileUnderAll || []).find(s => s.id === seriesId) || { title: 'this' };
   let next = 1;
   try { const t = await api.get(`/api/series/${targetId}`); next = Math.max(0, ...t.issues.map(i => i.number || 0)) + 1; } catch {}
+  const stem = target.title.replace(/\s*\(\d{4}\)\s*$/, '');
+  const sub = me.title.replace(/\s*\(\d{4}\)\s*$/, '');
+  const preview = n => `${esc(stem)} #${String(n).padStart(2, '0')} - ${esc(sub)}`;
   showModal(`
-    <div class="modal-header"><h2>Add to ${esc(target.title)}?</h2></div>
+    <div class="modal-header"><h2>Add as issue</h2></div>
     <div class="modal-body">
-      <div><b>${esc(me.title)}</b> becomes an issue of <b>${esc(target.title)}</b>, its title kept in the file name.</div>
-      <div class="settings-field" style="margin-top:12px"><label class="settings-field-label u-label" for="add-num">Issue number</label>
+      <div class="settings-field"><label class="settings-field-label u-label" for="add-num">Issue number in ${esc(stem)}</label>
         <input class="settings-input" id="add-num" type="number" min="1" step="1" value="${next}" style="max-width:120px"></div>
-      <div style="margin-top:10px;color:var(--tq);font-size:12px">The file moves into that series' folder; this series and its empty folder go. Reading progress follows the file.</div>
+      <div style="margin-top:12px;color:var(--tq);font-size:12px">Becomes</div>
+      <div id="add-preview" style="margin-top:4px"><b>${preview(next)}</b></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="add-issue-btn">Add</button>
     </div>`);
+  document.getElementById('add-num').oninput = (ev) => {
+    const n = parseInt(ev.target.value, 10);
+    document.getElementById('add-preview').innerHTML = `<b>${preview(n > 0 ? n : next)}</b>`;
+  };
   document.getElementById('add-issue-btn').onclick = async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = 'Moving…';
     const number = parseInt(document.getElementById('add-num').value, 10) || next;
