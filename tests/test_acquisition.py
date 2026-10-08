@@ -315,6 +315,18 @@ class TestFailedSourceBlacklist:
                 "failed_channels": '["torrent"]'}
         assert acq._try_torrent(item, 1) is False
 
+    def test_prowlarr_link_token_changes_but_the_release_is_the_same(self):
+        # Deadly Class #47: three grabs of one NZB, three different `link=` tokens
+        from kometa.prowlarr_client import _drop_failed_sources, release_key
+        a = "http://prowlarr.example:9696/18/download?apikey=k&link=AAAA&file=Deadly+Class+047+(2021)+(Digital-Empire)"
+        b = "http://prowlarr.example:9696/18/download?apikey=k&link=BBBB&file=Deadly+Class+047+(2021)+(Digital-Empire)"
+        other = "http://prowlarr.example:9696/18/download?apikey=k&link=CCCC&file=Deadly+Class+047+(2021)+(Oroboros-DCP)"
+        assert release_key(a) == release_key(b) != release_key(other)
+        assert release_key("magnet:?xt=dead") == "magnet:?xt=dead"
+        assert release_key(None) is None
+        kept = _drop_failed_sources([{"url": b}, {"url": other}], {a})
+        assert kept == [{"url": other}]
+
     def test_search_excludes_failed_sources(self):
         from kometa.prowlarr_client import _drop_failed_sources
         results = [{"url": "http://nzb/rotten", "title": "Saga 001"},

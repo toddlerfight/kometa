@@ -213,14 +213,35 @@ def _issue_queries(title: str, issue_number: float) -> list[str]:
     return [f"{t} {num}" for t in titles] + titles
 
 
+def release_key(url: str | None) -> str | None:
+    """What makes a Prowlarr download URL the SAME release across searches.
+    Prowlarr mints a fresh `link=` token every search (and the apikey is noise),
+    so two grabs of one NZB never share a URL — Deadly Class #47 was bought
+    three times through a blacklist that compared whole URLs. The indexer path
+    plus the `file=` name is what's stable. Anything else (magnets, GetComics
+    links) is its own key."""
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlsplit, parse_qs
+        u = urlsplit(url)
+        q = parse_qs(u.query)
+        if u.path.endswith("/download") and q.get("file"):
+            return f"{u.netloc}{u.path}?file={q['file'][0]}"
+    except ValueError:
+        pass
+    return url
+
+
 def _drop_failed_sources(results: list[dict], exclude_urls) -> list[dict]:
-    """Drop releases whose delivery already failed for this queue row (rotted
-    NZBs, dead magnets). The whole point of a retry is to NOT buy the same
-    corpse twice — the next-best release gets its shot instead."""
+    """Drop releases whose delivery already failed for this issue (rotted
+    NZBs, dead magnets, no-pages posts). The whole point of a retry is to NOT
+    buy the same corpse twice — the next-best release gets its shot instead."""
     if not exclude_urls:
         return results
+    bad = {release_key(u) for u in exclude_urls}
     return [r for r in results
-            if r.get("url") not in exclude_urls and r.get("magnet") not in exclude_urls]
+            if release_key(r.get("url")) not in bad and release_key(r.get("magnet")) not in bad]
 
 
 def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
