@@ -703,7 +703,7 @@ function _needsRowHtml(s, i) {
 async function _trashSeries(id, btn, fromDetail) {
   if (btn.dataset.armed !== '1') {
     btn.dataset.armed = '1';
-    btn.textContent = 'Remove files too?';
+    btn.textContent = 'Sure? Files go with it';
     setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Remove'; }, 4000);
     return;
   }
@@ -2204,7 +2204,7 @@ function confirmDelete(id) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-danger" onclick="doDelete(${id})">${hasFolder ? 'Remove files too' : 'Remove'}</button>
+      <button class="btn btn-danger" onclick="doDelete(${id})">${hasFolder ? 'Remove series and files' : 'Remove'}</button>
     </div>
   `);
 }
