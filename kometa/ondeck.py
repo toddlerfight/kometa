@@ -140,6 +140,28 @@ def coming_soon(reader_id=READER_ID, path=None) -> list[dict]:
     return out[:ROW_LIMIT]
 
 
+def recent(reader_id=READER_ID, path=None) -> list[dict]:
+    """What landed on the shelf lately: one card per series (its newest file),
+    newest first, unread only. Seven Deadly Duo issues in one night is one card."""
+    path = path or DB_PATH
+    out, seen = [], set()
+    with db._connect(path) as conn:
+        rows = conn.execute("""
+            SELECT b.*, p.completed FROM books b
+            LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+            WHERE COALESCE(p.completed, 0) = 0
+            ORDER BY b.added_at DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
+        for r in rows:
+            key = ("t", r["tracked_series_id"]) if r["tracked_series_id"] else ("s", r["shelf_series_id"])
+            if key in seen or not os.path.exists(r["path"]):
+                continue
+            seen.add(key)
+            out.append(_card(conn, r, None, added_at=r["added_at"]))
+            if len(out) >= ROW_LIMIT:
+                break
+    return out
+
+
 @router.get("/api/ondeck")
 def on_deck():
-    return {"continue": continue_reading(), "next": up_next(), "soon": coming_soon()}
+    return {"continue": continue_reading(), "next": up_next(), "soon": coming_soon(), "recent": recent()}

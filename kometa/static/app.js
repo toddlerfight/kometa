@@ -631,7 +631,9 @@ async function renderOnDeck() {
     row('Next', 'the next unread issue in series you’ve finished something of', d.next.map(c => bookCard(c, 'Next')),
         'Finish an issue and its series lands here.') +
     row('Coming soon', 'series you’re caught up on whose next issue isn’t here yet', d.soon.map(soonCard),
-        'Nothing waiting. Either you’re not caught up on anything, or everything you’re caught up on has nothing coming.')
+        'Nothing waiting. Either you’re not caught up on anything, or everything you’re caught up on has nothing coming.') +
+    row('Recent', 'newest on the shelf, one card per series', (d.recent || []).map(c => bookCard(c)),
+        'Nothing new on the shelf.')
   );
 }
 
