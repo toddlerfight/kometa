@@ -238,6 +238,7 @@ function issueStatus(issue) {
 }
 
 function fmtDayDate(iso) {
+  if (!iso || iso >= '9000') return 'TBD';        // the catalogue's 'unscheduled' placeholder (9999-01-01)
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('en-AU', { weekday: 'long', month: 'short', day: 'numeric' });
 }

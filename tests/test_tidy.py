@@ -115,3 +115,21 @@ def test_file_under_moves_the_trade_into_its_run_and_drops_the_stub(lib, monkeyp
         assert row[2] is None                                                       # was '1' from '#001' — not an issue
     with pytest.raises(tidy.TidyError):
         tidy.file_under(sid, sid, lib["db"])
+
+
+def test_a_series_under_unknown_moves_to_the_publisher_the_catalogue_names(lib, monkeypatch, tmp_path):
+    monkeypatch.setattr(mc, "series_detail", lambda sid: {"title": "Killadelphia", "year": 2019, "publisher": "Image Comics"})
+    import kometa.sources as sources
+    monkeypatch.setattr(sources, "comics_root", lambda: lib["root"])
+    unk = os.path.join(lib["root"], "Unknown", "Killadelphia")
+    os.makedirs(unk)
+    _cbz(os.path.join(unk, "Killadelphia #001 (2019).cbz"))
+    sid = db.add_series(title="Killadelphia", publisher=None, folder_path=unk, on_pull_list=False, path=lib["db"])
+    db.set_metron_series_id(sid, 4744, lib["db"])
+    db.set_match_status(sid, "auto", lib["db"])
+    db.upsert_shelf_series(unk, "Killadelphia", "Unknown", sid, 1, "2026-10-08T00:00:00.000000Z", lib["db"])
+    p = tidy.plan(sid, lib["db"])
+    assert p["publisher"] == "Image Comics" and p["target_folder"] == os.path.join(lib["root"], "Image Comics", "Killadelphia (2019)")
+    r = tidy.apply(sid, lib["db"])
+    assert r["rename_folder"] == 1 and os.path.isdir(p["target_folder"]) and not os.path.exists(os.path.join(lib["root"], "Unknown"))
+    assert db.get_series_by_id(sid, lib["db"])["publisher"] == "Image Comics"

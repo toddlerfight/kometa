@@ -35,16 +35,18 @@ def _run_identity(s: dict) -> dict:
     """What the run is actually called, and when it began — from Metron when the
     series is matched there, else what we already have."""
     title, year = s["title"], s.get("year_began")
+    publisher = s.get("publisher") if (s.get("publisher") or "").lower() not in ("", "unknown") else None
     if s.get("metron_series_id"):
         try:
             from kometa import metron_client
             d = metron_client.series_detail(s["metron_series_id"])
             title = d.get("title") or title
             year = d.get("year") or year
+            publisher = publisher or d.get("publisher")      # 'Unknown' folders get a real publisher
         except Exception as e:
             logger.info(f"Tidy: Metron identity unavailable for {s['title']!r}, using ours: {e}")
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", title).strip()
-    return {"title": title, "year": year}
+    return {"title": title, "year": year, "publisher": publisher}
 
 
 def folder_name(title: str, year) -> str:
@@ -86,7 +88,13 @@ def plan(series_id: int, path=None) -> dict:
     if shelf_years:
         ident["year"] = min(shelf_years[0], ident["year"] or shelf_years[0])
 
-    target_folder = os.path.join(os.path.dirname(folder), folder_name(ident["title"], ident["year"]))
+    # The publisher folder: kept as is, unless the series sits under 'Unknown'
+    # (the old add flow with no publisher) and the catalogue names one.
+    parent = os.path.dirname(folder)
+    if os.path.basename(parent).lower() == "unknown" and ident.get("publisher"):
+        from kometa import sources
+        parent = os.path.join(sources.comics_root(), _safe(ident["publisher"]))
+    target_folder = os.path.join(parent, folder_name(ident["title"], ident["year"]))
     ops, leave = [], []
     if os.path.realpath(target_folder) != os.path.realpath(folder):
         if os.path.exists(target_folder):
@@ -123,6 +131,7 @@ def plan(series_id: int, path=None) -> dict:
 
     return {
         "series_id": series_id, "title": s["title"], "run_title": ident["title"], "year": ident["year"],
+        "publisher": ident.get("publisher"),
         "folder": folder, "target_folder": target_folder, "ops": ops, "leave": leave,
         "counts": {"rename_folder": sum(o["kind"] == "rename_folder" for o in ops),
                    "rename_file": sum(o["kind"] == "rename_file" for o in ops),
@@ -230,8 +239,17 @@ def apply(series_id: int, path=None) -> dict:
             done["errors"].append({"file": op["from"], "error": str(e)})
     if any(o["kind"] == "rename_folder" for o in p["ops"]):
         try:
+            os.makedirs(os.path.dirname(p["target_folder"]), exist_ok=True)
             os.rename(folder, p["target_folder"])
             db.move_folder_paths(series_id, folder, p["target_folder"], path)
+            if p.get("publisher") and (s_pub := (db.get_series_by_id(series_id, path) or {}).get("publisher") or "").lower() in ("", "unknown"):
+                with db._connect(path) as c:
+                    c.execute("UPDATE tracked_series SET publisher = ? WHERE id = ?", (p["publisher"], series_id))
+                    c.execute("UPDATE shelf_series SET publisher = ? WHERE folder_path = ?", (p["publisher"], p["target_folder"]))
+            try:
+                os.rmdir(os.path.dirname(folder))        # an emptied 'Unknown' goes; a full one stays
+            except OSError:
+                pass
             done["rename_folder"] = 1
             folder = p["target_folder"]
         except Exception as e:
