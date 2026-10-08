@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 class AddSeriesRequest(BaseModel):
     locg_id: int | None = None
+    metron_id: int | None = None      # a Metron run picked in the wizard
     cv_arc_id: int | None = None
     cv_volume_id: int | None = None   # the origin run, when followed via a storyline
     folder_path: str | None = None

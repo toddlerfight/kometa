@@ -731,6 +731,11 @@ def add_series(req: AddSeriesRequest):
                 logger.info(f"Add {title!r}: LOCG series {locg_series_id} already tracked "
                             f"as #{s['id']} — returning existing, not minting a twin")
                 return s
+    if req.metron_id:
+        for s in db.get_all_series(DB_PATH):
+            if s.get("kind") != "arc" and s.get("metron_series_id") == req.metron_id:
+                logger.info(f"Add {title!r}: Metron series {req.metron_id} already tracked as #{s['id']}")
+                return s
 
     komga = _komga()
     if komga_series_id and komga:
@@ -806,6 +811,9 @@ def add_series(req: AddSeriesRequest):
         cv_volume_id=str(req.cv_volume_id) if req.cv_volume_id else None,
         path=DB_PATH,
     )
+    if req.metron_id:
+        db.set_metron_series_id(new_id, req.metron_id, DB_PATH)
+        db.set_metron_link(new_id, "linked", DB_PATH)
     added = db.get_series_by_id(new_id, DB_PATH)
 
     def _bg_sync():

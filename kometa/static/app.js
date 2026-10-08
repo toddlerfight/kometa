@@ -2151,7 +2151,12 @@ function wizardPickSeries(idx) {
   if (r.needs_resolve) return _wizardResolveComic(idx);
   if (r.kind === 'storyline') return wizardPickStoryline(idx);
   const isArc = r.kind === 'arc';
-  _wizardState = { idx, source: isArc ? 'arc' : (r.source || 'locg'), locgId: r.source === 'locg' ? r.id : null, cvArcId: isArc ? r.cv_arc_id : null };
+  // Every source the search can hand back has to survive to confirm: LOCG ids,
+  // ComicVine volumes (the fallback while LOCG is shut), Metron ids. 'Track
+  // Series' used to return silently on anything but LOCG — a dead click.
+  _wizardState = { idx, source: isArc ? 'arc' : (r.source || 'locg'), locgId: r.source === 'locg' ? r.id : null,
+    cvArcId: isArc ? r.cv_arc_id : null, cvVolumeId: (!isArc && r.cv_volume_id) ? r.cv_volume_id : null,
+    metronId: r.source === 'metron' ? r.id : null };
   // An arc owns no folder (lens model): it tracks a cross-title reading order and
   // grabs the collected edition into its main series. So no folder field, and the
   // pull-list line means 'find the collected edition', not 'download every issue'.
@@ -2264,7 +2269,8 @@ async function wizardConfirm() {
     }
     return;
   }
-  if (!locgId && !cvArcId) return;
+  const { cvVolumeId: cvVol, metronId } = _wizardState;
+  if (!locgId && !cvArcId && !cvVol && !metronId) { showToast('This result can’t be tracked from here', 'error'); return; }
   const r = _wizardResults[_wizardState.idx];
   const folder = (document.getElementById('ff-wizard')?.value || '').trim() || null;
   const onPullList = document.getElementById('wizard-pull')?.checked ?? true;
@@ -2277,6 +2283,16 @@ async function wizardConfirm() {
     };
     if (source === 'arc') {
       payload.cv_arc_id = cvArcId;
+      payload.title = r.series || r.name || '';
+      payload.publisher_name = r.publisher?.name || '';
+      payload.year_began = r.year_began || null;
+    } else if (source === 'comicvine' || (!locgId && cvVol)) {
+      payload.cv_volume_id = cvVol;
+      payload.title = r.series || r.name || '';
+      payload.publisher_name = r.publisher?.name || '';
+      payload.year_began = r.year_began || null;
+    } else if (source === 'metron') {
+      payload.metron_id = metronId;
       payload.title = r.series || r.name || '';
       payload.publisher_name = r.publisher?.name || '';
       payload.year_began = r.year_began || null;
