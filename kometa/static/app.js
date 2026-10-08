@@ -811,7 +811,7 @@ async function _loadCombine() {
         <img class="nm-cover" src="/api/series/${g.ids[0]}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         <div class="nm-main">
           <div class="nm-title">${esc(g.prefix)}</div>
-          <div class="nm-meta u-truncate">${g.count} folders · ${esc(g.publisher || '')} · ${esc(g.members.slice(0, 4).map(m => m.subtitle).join(', '))}${g.count > 4 ? '…' : ''}</div>
+          <div class="nm-meta u-truncate">${g.count} folders${g.unmatched < g.count ? ` (${g.count - g.unmatched} already matched to their own runs)` : ''} · ${esc(g.publisher || '')} · ${esc(g.members.slice(0, 4).map(m => m.subtitle).join(', '))}${g.count > 4 ? '…' : ''}</div>
         </div>
         <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick='_combineOpen(${JSON.stringify(g).replace(/'/g, '&#39;')}, ${i})'>Combine</button></div>
       </div>`).join('')}</div></div>`;
@@ -821,7 +821,8 @@ async function _loadCombine() {
 
 let _cb = null;   // the combine being edited: {group, title, order: [ids], excluded: Set}
 async function _combineOpen(group, rowIndex) {
-  _cb = { group, rowIndex, title: group.prefix, order: group.members.map(m => m.id), excluded: new Set() };
+  _cb = { group, rowIndex, title: group.prefix, order: group.members.map(m => m.id),
+          excluded: new Set(group.members.filter(m => m.matched).map(m => m.id)) };   // matched runs stay out unless you say
   await _combineRender();
 }
 
@@ -835,7 +836,7 @@ async function _combineRender() {
     const m = byId[id], ex = _cb.excluded.has(id), item = p && p.items.find(x => x.id === id);
     return `<div class="tidy-row${ex ? ' tidy-leave' : ''}">
       <span class="tidy-tag u-label">${ex ? 'out' : item ? '#' + String(item.n).padStart(2, '0') : ''}</span>
-      <div class="tidy-paths"><div class="u-truncate">${esc(m.subtitle)}${m.year ? ` <span class="tidy-why">(${m.year})</span>` : ''}</div>
+      <div class="tidy-paths"><div class="u-truncate">${esc(m.subtitle)}${m.year ? ` <span class="tidy-why">(${m.year})</span>` : ''}${m.matched ? ' <span class="tidy-why" style="color:var(--amb)">matched to its own run</span>' : ''}</div>
         ${item ? `<div class="tidy-to u-truncate">${esc(item.to)}</div>` : ''}</div>
       <span style="display:flex;gap:2px;flex:none">
         <button class="btn btn-ghost btn-sm" title="Up" onclick="_combineMove(${id}, -1)" ${i === 0 ? 'disabled' : ''}>↑</button>

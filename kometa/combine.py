@@ -73,7 +73,10 @@ def _member(s: dict) -> dict | None:
         return None
     return {"id": s["id"], "title": s["title"], "prefix": sp[0], "subtitle": sp[1], "folder": folder,
             "files": files, "year": _year_of(folder, files, s), "publisher": s.get("publisher"),
-            "match_status": s.get("match_status")}
+            "match_status": s.get("match_status"),
+            # already its own catalogue run (the Metal one-shots, the Hellboy specials):
+            # combining would throw that link away — shown, but unticked by default
+            "matched": bool(s.get("metron_series_id") or s.get("locg_series_id"))}
 
 
 def find_groups(path=None) -> list[dict]:
@@ -95,7 +98,8 @@ def find_groups(path=None) -> list[dict]:
         out.append({"prefix": members[0]["prefix"], "parent": parent, "publisher": members[0]["publisher"],
                     "count": len(members), "ids": [m["id"] for m in members],
                     "members": [{"id": m["id"], "subtitle": m["subtitle"], "year": m["year"], "files": len(m["files"]),
-                                 "title": m["title"]} for m in members]})
+                                 "title": m["title"], "matched": m["matched"]} for m in members],
+                    "unmatched": sum(1 for m in members if not m["matched"])})
     out.sort(key=lambda g: -g["count"])
     return out
 
