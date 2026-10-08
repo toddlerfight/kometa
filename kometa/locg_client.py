@@ -176,16 +176,23 @@ def resolve_comic_series_anon(comic_id, slug):
     return _comic_series_id(_anon_get_fn(), comic_id, slug)
 
 
+def search_series_strict(title: str) -> list[dict]:
+    """Like search_series_anon, but a failure RAISES. For callers that must tell
+    'LOCG has nothing' apart from 'LOCG didn't answer' — the shelf matcher, which
+    once read a Cloudflare 403 as 'no match' and handed you a decision for it."""
+    r = _anon_get_fn()(
+        f"{BASE}/search/ajax_issues",
+        params={"query": title},
+        headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
+    )
+    r.raise_for_status()
+    return _parse_search_html(r.text)
+
+
 def search_series_anon(title: str) -> list[dict]:
     """Search LOCG without credentials — the search endpoint works without auth."""
     try:
-        r = _anon_get_fn()(
-            f"{BASE}/search/ajax_issues",
-            params={"query": title},
-            headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
-        )
-        r.raise_for_status()
-        return _parse_search_html(r.text)
+        return search_series_strict(title)
     except Exception as e:
         logger.warning(f"LoCG anon search({title!r}) failed: {e}")
         return []

@@ -19,7 +19,7 @@ import time
 
 import kometa.db as db
 from kometa.naming import norm_key, _pub_key
-from kometa.locg_client import search_series_anon
+from kometa.locg_client import search_series_strict
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ DB_PATH = db.DB_PATH
 THROTTLE_S = float(os.environ.get("KOMETA_IMPORT_THROTTLE_S", "10"))
 
 PENDING, AUTO, NEEDS_MATCH, MANUAL = "pending", "auto", "needs_match", "manual"
+MAX_FAILURES_IN_A_ROW = 3
 
 _job_lock = threading.Lock()
 _YEAR_RE = re.compile(r"\((\d{4})\)")
@@ -85,7 +86,7 @@ def import_new_folders() -> list[int]:
     return new_ids
 
 
-def find_confident_match(series: dict, search=search_series_anon) -> int | None:
+def find_confident_match(series: dict, search=search_series_strict) -> int | None:
     """The LOCG series id, or None unless exactly one candidate agrees on title,
     publisher and (when there's any year evidence) year."""
     title, folder_year = _title_and_year(series["title"])
@@ -118,15 +119,27 @@ def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
     if not _job_lock.acquire(blocking=False):
         return {"skipped": "import already running"}
     from kometa.sync import sync_one, sync_one_guarded
-    done = {AUTO: 0, NEEDS_MATCH: 0}
+    done = {AUTO: 0, NEEDS_MATCH: 0, "failed": 0}
+    failures_in_a_row = 0
     try:
         pending = [s for s in db.get_all_series(DB_PATH) if s.get("match_status") == PENDING]
         for s in pending[:limit] if limit else pending:
             try:
                 locg_id = find_confident_match(s)
+                failures_in_a_row = 0
             except Exception as e:
+                # LOCG didn't answer (2026-10-08: a Cloudflare challenge). That is
+                # NOT "no match" — the series stays pending for the next run. Several
+                # in a row means LOCG is shut to us: stop, don't burn the list.
+                done["failed"] += 1
+                failures_in_a_row += 1
                 logger.warning(f"Import: LOCG search failed for {s['title']!r}: {e}")
-                continue                        # stays pending; next run retries
+                if failures_in_a_row >= MAX_FAILURES_IN_A_ROW:
+                    logger.warning(f"Import: LOCG failing {failures_in_a_row}x in a row — "
+                                   f"pausing matching until the next scan")
+                    break
+                sleep(THROTTLE_S)
+                continue
             if locg_id:
                 db.set_locg_series_id(s["id"], locg_id, DB_PATH)
                 db.set_match_status(s["id"], AUTO, DB_PATH)

@@ -110,11 +110,25 @@ class TestMatchPending:
         monkeypatch.setattr(sync, "get_trades_anon", lambda sid: [])
         monkeypatch.setattr(sync, "_komga", lambda: None)
         r = si.match_pending(sleep=lambda s: None)
-        assert r == {"auto": 1, "needs_match": 1}
+        assert r == {"auto": 1, "needs_match": 1, "failed": 0}
         by = {s["title"]: s for s in db.get_all_series(si.DB_PATH)}
         assert (by["Hawkeye"]["locg_series_id"], by["Hawkeye"]["match_status"]) == (77, "auto")
         assert (by["Batman - Knightfall"]["locg_series_id"], by["Batman - Knightfall"]["match_status"]) == (None, "needs_match")
         assert guessed == []                                   # sync never guessed the unmatched one
+
+    def test_locg_not_answering_is_not_a_no_match_and_stops_the_run(self, shelf, monkeypatch):
+        # 2026-10-08: Cloudflare 403'd every search and the first cut marked each
+        # series 'needs_match' — a decision handed to you for a lookup that failed.
+        si.import_new_folders()
+        calls = []
+        def boom(s, **k):
+            calls.append(s["title"])
+            raise RuntimeError("403 Forbidden")
+        monkeypatch.setattr(si, "find_confident_match", boom)
+        monkeypatch.setattr(si, "MAX_FAILURES_IN_A_ROW", 2)
+        r = si.match_pending(sleep=lambda s: None)
+        assert r["failed"] == 2 and r["needs_match"] == 0 and len(calls) == 2
+        assert {s["match_status"] for s in db.get_all_series(si.DB_PATH)} == {"pending"}
 
     def test_manual_pick_links_and_marks_manual(self, shelf, monkeypatch):
         si.import_new_folders()
