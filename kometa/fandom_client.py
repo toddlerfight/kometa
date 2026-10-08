@@ -120,10 +120,26 @@ def parse_collection(w: str, wiki: str) -> dict | None:
 _EDITION_WORDS = re.compile(r"\b(the|deluxe|edition|omnibus|tpb|hc|hardcover|collected|collection|vol|volume|book|new|anniversary|\d+th)\b", re.I)
 
 
-def _overlap(a: str, b: str) -> float:
-    wa = set(norm_key(_EDITION_WORDS.sub(" ", a)).split())
-    wb = set(norm_key(_EDITION_WORDS.sub(" ", b)).split())
-    return len(wa & wb) / len(wa) if wa else 0.0
+_FORMAT_WORDS = re.compile(r"\b(deluxe|omnibus|absolute|compendium|compact)\b", re.I)
+MIN_SCORE = 0.6
+
+
+def _core(s: str) -> set[str]:
+    return set(norm_key(_EDITION_WORDS.sub(" ", re.sub(r"\(Collected\)", "", s))).split())
+
+
+def _score(q: str, page: str) -> float:
+    """How much the page title IS the shelf title: Jaccard over the core words
+    (edition noise stripped) — both directions, so 'The Joker: 80 Years of the
+    Clown Prince of Crime' can't win on the one word 'joker' — plus a nudge
+    when the format words match (a 'Deluxe' query prefers a 'Deluxe' page)."""
+    a, b = _core(q), _core(page)
+    if not a or not b:
+        return 0.0
+    j = len(a & b) / len(a | b)
+    fq = {w.lower() for w in _FORMAT_WORDS.findall(q)}
+    fp = {w.lower() for w in _FORMAT_WORDS.findall(page)}
+    return j + (0.05 if fq and fq <= fp else 0.0)
 
 
 def lookup_collection(title: str, publisher: str | None) -> dict | None:
@@ -134,12 +150,18 @@ def lookup_collection(title: str, publisher: str | None) -> dict | None:
     if not wiki:
         return None
     q = re.sub(r"\s*-\s+", ": ", re.sub(r"\(\d{4}\)", "", title)).strip()
-    hits = search(wiki, f"{q} Collected" if wiki == "dc" else q)
-    if wiki == "dc":
-        hits = [h for h in hits if h.endswith("(Collected)")]
-    ranked = sorted(((_overlap(q, h), h) for h in hits), reverse=True)
+    core_q = " ".join(sorted(_core(q), key=q.lower().find))
+    hits, seen = [], set()
+    for sq in (q, core_q):                       # full title, then the title minus edition words
+        if not sq or sq.lower() in seen:
+            continue
+        seen.add(sq.lower())
+        for h in search(wiki, f"{sq} Collected" if wiki == "dc" else sq):
+            if h not in hits and (wiki != "dc" or h.endswith("(Collected)")):
+                hits.append(h)
+    ranked = sorted(((_score(q, h), h) for h in hits), key=lambda x: (-x[0], len(x[1])))
     for score, page in ranked[:3]:
-        if score < 0.5:
+        if score < MIN_SCORE:
             break
         w = wikitext(wiki, page)
         if not w:

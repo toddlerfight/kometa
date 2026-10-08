@@ -86,3 +86,19 @@ class TestPlan:
         assert fi.lookup(s, db_path) is None
         assert fi.lookup(s, db_path) is None
         assert calls == ["Batman - Hush"]                       # a miss is remembered too
+
+
+class TestPageScore:
+    def test_both_directions_so_one_shared_word_cannot_win(self):
+        q = "Joker: the Deluxe Edition"
+        assert fc._score(q, "The Joker: 80 Years of the Clown Prince of Crime: The Deluxe Edition (Collected)") < fc.MIN_SCORE
+        assert fc._score(q, "Joker: DC Compact Comics Edition (Collected)") < fc.MIN_SCORE
+
+    def test_the_right_page_wins_and_format_words_nudge(self):
+        q = "Batman: the Killing Joke Deluxe (New Edition)"
+        good = fc._score(q, "Batman: The Killing Joke Deluxe Edition (Collected)")
+        finest = fc._score(q, "DC Finest: Batman: The Killing Joke and Other Stories (Collected)")
+        assert good >= fc.MIN_SCORE and good > finest
+        q = "Batman: Year One: The Deluxe Edition"
+        assert fc._score(q, "Batman: Year One (Collected)") > fc._score(q, "DC Finest: Batman: Year One & Two (Collected)")
+        assert fc._score(q, "Batman: Year Two - 30th Anniversary Deluxe Edition (Collected)") < fc.MIN_SCORE
