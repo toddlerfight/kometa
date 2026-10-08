@@ -83,3 +83,27 @@ def test_apply_moves_numbers_drops_stubs_and_keeps_progress(lib):
     assert db.get_progress("me", lib["lotus_book"], lib["db"])["page"] == 12
     assert not os.path.exists(os.path.join(lib["root"], "Casterman", "The Adventures of Tintin - The Blue Lotus"))
     assert cb.find_groups(lib["db"]) == []
+
+
+def test_add_to_appends_a_straggler_as_the_next_issue(lib):
+    ids = [lib["ids"][k] for k in ("In the Land of Soviets", "The Blue Lotus", "King Ottokar's Sceptre")]
+    r = cb.apply(ids, None, "year", lib["db"], root=lib["root"])
+    target = r["series_id"]
+    # 'Tintin in Thailand': no 'Series - Subtitle' shape, so the whole title is the subtitle
+    folder = os.path.join(lib["root"], "Casterman", "Tintin in Thailand")
+    _cbz(os.path.join(folder, "Tintin in Thailand (1999).cbz"), b"PK" + b"x" * 60)
+    sid = db.add_series(title="Tintin in Thailand", publisher="Casterman", folder_path=folder, on_pull_list=False, path=lib["db"])
+    sh = db.upsert_shelf_series(folder, "Tintin in Thailand", "Casterman", sid, 1, "2026-10-09T00:00:00.000000Z", lib["db"])
+    db.index_books([(os.path.join(folder, "Tintin in Thailand (1999).cbz"), 4, 1.0, 1.0, sh, sid)], lib["db"])
+    b = db.get_book_by_path(os.path.join(folder, "Tintin in Thailand (1999).cbz"), lib["db"])
+    db.set_progress("me", b["id"], 7, False, "2026-10-02T00:00:00Z", lib["db"])
+
+    a = cb.add_to([sid], target, None, lib["db"], root=lib["root"])
+    assert a["moved"] == 1 and a["errors"] == [] and a["numbers"] == [4]
+    dst = os.path.join(lib["root"], "Casterman", "The Adventures of Tintin", "The Adventures of Tintin #04 - Tintin in Thailand (1999).cbz")
+    assert os.path.exists(dst) and not os.path.exists(folder)
+    assert db.get_series_by_id(sid, lib["db"]) is None
+    assert db.get_book_by_path(dst, lib["db"])["tracked_series_id"] == target
+    assert db.get_progress("me", b["id"], lib["db"])["page"] == 7
+    with pytest.raises(cb.CombineError):
+        cb.add_to([target], target, None, lib["db"], root=lib["root"])

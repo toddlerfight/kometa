@@ -233,3 +233,78 @@ def apply(ids: list[int], title: str | None = None, order: str | list[int] = "ye
         logger.info(f"Combine: rescan failed: {e}")
     logger.info(f"Combined {len(p['items'])} folders into {p['title']!r}: {done}")
     return done
+
+
+def add_to(ids: list[int], into: int, number: float | None = None, path=None, root: str | None = None) -> dict:
+    """Add one-file series to an EXISTING series as its next issues — the three
+    Tintin books the prefix rule couldn't see ('Tintin in Thailand', 'Tintins
+    Last Adventure - Tintin and Alph-Art'). Numbering continues from the
+    series' highest issue unless `number` says where to start; the subtitle is
+    the member's whole title when it has no 'Series - Subtitle' shape."""
+    path = path or DB_PATH
+    root = root or sources.comics_root()
+    target = db.get_series_by_id(into, path)
+    if not target or not target.get("folder_path") or not os.path.isdir(target["folder_path"]):
+        raise CombineError("That series has no folder on disk")
+    members = []
+    for sid in ids:
+        if sid == into:
+            raise CombineError("A series can't be added to itself")
+        s = db.get_series_by_id(sid, path)
+        if not s or not s.get("folder_path"):
+            raise CombineError(f"Series {sid} has no folder")
+        files = _files(s["folder_path"])
+        if not files:
+            raise CombineError(f"{s['title']!r} has no comic files")
+        sp = _split(s["title"])
+        members.append({"id": sid, "title": s["title"], "subtitle": sp[1] if sp else _YEAR_RE.sub("", s["title"]).strip(),
+                        "folder": s["folder_path"], "files": files, "year": _year_of(s["folder_path"], files, s)})
+    existing = [i["number"] for i in db.get_issues_for_series(into, path) if i.get("number") is not None]
+    names = db.book_names_by_series(path).get(into, [])
+    existing += [n for n in (parse_issue_number(f, target["title"]) for f in names) if n is not None]
+    n = int(number) if number else (int(max(existing)) + 1 if existing else 1)
+    shelf_id = db.shelf_id_for_series(into, path)
+    tfolder = target["folder_path"]
+    stem = _safe(re.sub(r"\s*:\s*", " - ", _YEAR_RE.sub("", target["title"]).strip()))
+    done = {"moved": 0, "binned": 0, "errors": [], "series_id": into, "title": target["title"], "numbers": []}
+    for m in members:
+        keep = _best(m["folder"], m["files"])
+        for f in m["files"]:
+            if f != keep:
+                try:
+                    _bin(os.path.join(m["folder"], f), root, f"duplicate, kept {keep!r}", path)
+                    done["binned"] += 1
+                except Exception as e:
+                    done["errors"].append({"file": f, "error": str(e)})
+        ext = os.path.splitext(keep)[1].lower()
+        y = f" ({m['year']})" if m["year"] else ""
+        dst = os.path.join(tfolder, f"{stem} #{n:02d} - {_safe(m['subtitle'])}{y}{ext}")
+        src = os.path.join(m["folder"], keep)
+        try:
+            if os.path.exists(dst):
+                raise CombineError(f"{os.path.basename(dst)!r} already exists")
+            _mv(src, dst)
+            db.rename_book_path(src, dst, path)
+            db.set_book_owner(dst, into, shelf_id, number=float(n), path=path)
+            done["moved"] += 1
+            done["numbers"].append(n)
+            n += 1
+        except Exception as e:
+            done["errors"].append({"file": keep, "error": str(e)})
+            continue
+        db.dequeue_waiting_series(m["id"], path)
+        db.remove_books_under(m["folder"], path)
+        db.remove_shelf_series_by_path(m["folder"], path)
+        db.remove_series(m["id"], path)
+        try:
+            if not [f for f in os.listdir(m["folder"]) if not f.startswith(".")]:
+                shutil.rmtree(m["folder"], ignore_errors=True)
+        except OSError:
+            pass
+    try:
+        from kometa.sync import rescan_owned
+        rescan_owned(db.get_series_by_id(into, path))
+    except Exception as e:
+        logger.info(f"Combine add_to: rescan failed: {e}")
+    logger.info(f"Added {done['moved']} to {target['title']!r} as {done['numbers']}: {done}")
+    return done

@@ -477,6 +477,7 @@ async function _loadMatchCandidates(seriesId, q) {
       <div class="match-row-text"><div class="match-row-title">${esc(s.title)}</div>
         <div class="match-row-meta">${esc([s.publisher, s.year_began, `${s.owned ?? 0} owned`].filter(Boolean).join(' · '))}
           <span class="match-have">· on your shelf</span></div></div>
+      <button class="btn btn-ghost btn-sm" title="Move this file into that series as its next issue, keeping its title" onclick="_addAsIssue(${seriesId}, ${s.id})">Add as issue</button>
       <button class="btn btn-primary btn-sm" onclick="_fileUnder(${seriesId}, ${s.id})">File under</button>
     </div>`;
   box.innerHTML = (rows.length || shelfHits.length)
@@ -609,6 +610,44 @@ async function _noRun(seriesId) {
         _nmRows = (_nmRows || []).filter(x => x.id !== seriesId); _updateNeedsBadge(_nmRows.length);
       } else renderSeriesDetail(seriesId);
     } catch (e) { closeModal(); showToast('Couldn’t save that', 'error'); }
+  };
+}
+
+// "Add as issue": this one-file series becomes the next issue of a series you
+// have — 'Tintin in Thailand' → 'The Adventures of Tintin #25 - Tintin in
+// Thailand'. Number defaults to the series' highest + 1; change it if the book
+// belongs elsewhere in the order (Combine's numbering is yours to fix later).
+async function _addAsIssue(seriesId, targetId) {
+  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
+  const target = (_fileUnderAll || []).find(s => s.id === targetId) || { title: 'that series' };
+  const me = (_detailSeries && _detailSeries.id === seriesId) ? _detailSeries : (_fileUnderAll || []).find(s => s.id === seriesId) || { title: 'this' };
+  let next = 1;
+  try { const t = await api.get(`/api/series/${targetId}`); next = Math.max(0, ...t.issues.map(i => i.number || 0)) + 1; } catch {}
+  showModal(`
+    <div class="modal-header"><h2>Add to ${esc(target.title)}?</h2></div>
+    <div class="modal-body">
+      <div><b>${esc(me.title)}</b> becomes an issue of <b>${esc(target.title)}</b>, its title kept in the file name.</div>
+      <div class="settings-field" style="margin-top:12px"><label class="settings-field-label u-label" for="add-num">Issue number</label>
+        <input class="settings-input" id="add-num" type="number" min="1" step="1" value="${next}" style="max-width:120px"></div>
+      <div style="margin-top:10px;color:var(--tq);font-size:12px">The file moves into that series' folder; this series and its empty folder go. Reading progress follows the file.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="add-issue-btn">Add</button>
+    </div>`);
+  document.getElementById('add-issue-btn').onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Moving…';
+    const number = parseInt(document.getElementById('add-num').value, 10) || next;
+    try {
+      const res = await fetch('/api/report/combine/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [seriesId], into: targetId, number }) });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(r.detail || res.status);
+      closeModal();
+      showToast(`Added to ${r.title} as #${r.numbers[0]}`);
+      _fileUnderAll = null;
+      navigate('series-detail', { id: r.series_id });
+    } catch (e) { closeModal(); showToast(`Couldn’t add it: ${e.message || ''}`, 'error'); }
   };
 }
 

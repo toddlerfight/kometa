@@ -965,6 +965,22 @@ def combine_plan(req: CombineRequest):
         raise HTTPException(400, str(e))
 
 
+class AddToRequest(BaseModel):
+    ids: list[int]
+    into: int
+    number: float | None = None
+
+
+@app.post("/api/report/combine/add")
+def combine_add(req: AddToRequest):
+    """One-file series → the next issue(s) of a series you have (kometa/combine.py)."""
+    from kometa import combine
+    try:
+        return combine.add_to(req.ids, req.into, req.number)
+    except combine.CombineError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/report/combine/apply")
 def combine_apply(req: CombineRequest):
     from kometa import combine
