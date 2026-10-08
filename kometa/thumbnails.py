@@ -13,7 +13,7 @@ import hashlib
 import logging
 
 import requests as _requests
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 import kometa.db as db
 from kometa.sources import komga as _komga
@@ -235,7 +235,11 @@ def _jpeg(data: bytes) -> Response:
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
-def _file_cover_response(series_id: int, number: float) -> Response | None:
+def _file_cover_response(series_id: int, number: float, request: Request | None = None) -> Response | None:
+    """The cover of the file you own. Validated, not cached blind: the ETag is
+    the file's size+mtime, the browser checks back each time and gets a 304
+    when nothing changed — so a re-downloaded file shows its new cover at once
+    (2026-10-08: Batgirls #2/#11 replaced, grid kept the old page for 30 days)."""
     from kometa.naming import find_issue_file
     from kometa import reader
     s = db.get_series_by_id(series_id, DB_PATH)
@@ -243,7 +247,12 @@ def _file_cover_response(series_id: int, number: float) -> Response | None:
     if not path:
         return None
     try:
-        return _jpeg(reader.get_cover_bytes(path))
+        st = os.stat(path)
+        etag = f'"{st.st_size}-{int(st.st_mtime)}"'
+        if request is not None and request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+        return Response(content=reader.get_cover_bytes(path), media_type="image/jpeg",
+                        headers={"ETag": etag, "Cache-Control": "no-cache"})
     except Exception as e:
         logger.warning(f"file cover failed for series {series_id} #{number}: {e}")
         return None
@@ -263,7 +272,7 @@ def _shelf_cover_response(series_id: int) -> Response | None:
 
 
 @router.get("/api/series/{series_id}/issues/{number}/thumbnail")
-def issue_thumbnail(series_id: int, number: float):
+def issue_thumbnail(series_id: int, number: float, request: Request = None):
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
 
@@ -273,6 +282,13 @@ def issue_thumbnail(series_id: int, number: float):
     vc = issue.get("variant_cover") if issue else None
     if vc and vc.startswith("http"):
         resp = _image_or_none(vc)
+        if resp:
+            return resp
+
+    # Owned: the cover of the FILE, read by Kometa itself — ahead of Komga, whose
+    # thumbnail lags a re-download until its own rescan. Validated per request.
+    if issue and issue.get("owned"):
+        resp = _file_cover_response(series_id, number, request)
         if resp:
             return resp
 
@@ -305,14 +321,6 @@ def issue_thumbnail(series_id: int, number: float):
                 return resp
         except Exception:
             pass
-
-    # Owned and no Komga link: the cover of the FILE you own — Kometa reads it
-    # itself. The 785 shelf-imported series have no Komga link or LOCG art yet,
-    # and this needs no network at all (it matters when LOCG is shut to us).
-    if issue and issue.get("owned"):
-        resp = _file_cover_response(series_id, number)
-        if resp:
-            return resp
 
     # Known-artless issue: 404 immediately (with browser caching) instead of
     # re-running the whole LOCG chain on every grid render. Without this,
