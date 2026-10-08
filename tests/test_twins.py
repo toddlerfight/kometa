@@ -75,3 +75,18 @@ def test_apply_moves_bins_and_the_database_follows(lib):
     assert db.get_progress("me", lib["b3"], lib["db"])["page"] == 7                        # progress rode along
     assert db.get_shelf_series(lib["ts"], lib["db"]) is None
     assert tw.find_twins(lib["db"]) == []
+
+
+def test_generic_names_are_never_twins_and_publisher_mismatch_is_flagged(lib):
+    root = lib["root"]
+    # two unrelated 'Volume 01 (2022)' folders under root-level series dirs
+    _file(os.path.join(root, "Dogs of London", "Volume 01 (2022)", "Dogs of London #001.cbz"))
+    _file(os.path.join(root, "Bylines in Blood", "Volume 01 (2022)", "Bylines #001.cbz"))
+    v = db.add_series(title="Volume 01 (2022)", publisher="Bylines in Blood",
+                      folder_path=os.path.join(root, "Bylines in Blood", "Volume 01 (2022)"), on_pull_list=False, path=lib["db"])
+    db.upsert_shelf_series(os.path.join(root, "Dogs of London", "Volume 01 (2022)"), "Volume 01 (2022)", "Dogs of London", None, 1,
+                           "2026-10-08T00:00:00.000000Z", lib["db"])
+    rows = tw.find_twins(lib["db"])
+    assert all(r["title"] != "Volume 01 (2022)" for r in rows)
+    eh = next(r for r in rows if r["title"] == "Event Horizon- Dark Descent")
+    assert eh["publisher_differs"] is True                       # Mirage vs IDW: flagged, still listed

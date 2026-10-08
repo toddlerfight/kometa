@@ -762,7 +762,7 @@ async function _loadTwins() {
         <div class="nm-main">
           <div class="nm-title">${esc(x.title)}</div>
           <div class="nm-meta u-truncate">${esc(x.folder.replace(/^\/comics\//, ''))} · ${x.book_count} file${x.book_count === 1 ? '' : 's'}</div>
-          <div class="tidy-why">same run as <b>${esc(x.series_title)}</b> · ${esc(x.series_folder.replace(/^\/comics\//, ''))}</div>
+          <div class="tidy-why">same name as <b>${esc(x.series_title)}</b> · ${esc(x.series_folder.replace(/^\/comics\//, ''))}${x.publisher_differs ? ` · <span style="color:var(--amb)">different publisher (${esc(x.publisher || '?')} vs ${esc(x.series_publisher || '?')}) — check it's the same run</span>` : ''}</div>
         </div>
         <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick="_mergeTwin(${x.shelf_id}, ${x.series_id})">Merge</button></div>
       </div>`).join('')}</div></div>`;

@@ -33,6 +33,17 @@ def _key(title: str) -> str:
     return norm_key(re.sub(r"\(\d{4}\)", "", title).strip().strip("-").strip())
 
 
+# 'Volume 01', 'Book One', '03': a name that says nothing about WHICH run.
+# Two such folders are not twins however equal the names (Dogs of London and
+# The Boogyman both have a 'Volume 01 (2022)').
+_GENERIC = re.compile(r"^(vol(?:ume)?\s*\d+|book\s+(?:\w+)|\d+|part\s*\d+|tpb|hc)$")
+
+
+def _same_publisher(a: str | None, b: str | None) -> bool:
+    from kometa.naming import _pub_key
+    return not a or not b or _pub_key(a) == _pub_key(b)
+
+
 def find_twins(path=None) -> list[dict]:
     """[{shelf_id, folder, title, publisher, book_count, series_id, series_title, series_folder}]"""
     path = path or DB_PATH
@@ -42,12 +53,19 @@ def find_twins(path=None) -> list[dict]:
         by_key.setdefault(_key(s["title"]), s)
     out = []
     for sh in db.list_shelf(READER_ID, untracked_only=True, path=path):
-        s = by_key.get(_key(sh["title"]))
+        k = _key(sh["title"])
+        if _GENERIC.match(k):
+            continue
+        s = by_key.get(k)
         if not s or os.path.realpath(s["folder_path"]) == os.path.realpath(sh["folder_path"]):
             continue
         out.append({"shelf_id": sh["id"], "folder": sh["folder_path"], "title": sh["title"], "publisher": sh.get("publisher"),
                     "book_count": sh.get("book_count"), "series_id": s["id"], "series_title": s["title"],
-                    "series_folder": s["folder_path"], "series_publisher": s.get("publisher")})
+                    "series_folder": s["folder_path"], "series_publisher": s.get("publisher"),
+                    # same name, different publisher: usually a misfiled folder (Last Ronin under
+                    # Mirage), sometimes a different book entirely (Atlas's Fear Itself). Flagged, not hidden.
+                    "publisher_differs": not _same_publisher(sh.get("publisher"), s.get("publisher"))})
+    out.sort(key=lambda r: (r["publisher_differs"], r["title"].lower()))
     return out
 
 
