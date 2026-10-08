@@ -649,12 +649,34 @@ async function renderOnDeck() {
 // you read it. Undo on the toast for a few seconds.
 async function _odDismiss(bookId, btn) {
   const tile = document.getElementById(`od-${bookId}`);
+  const row = tile && tile.closest('.od-row');
+  const html = tile && tile.outerHTML;
   try { await api.post(`/api/books/${bookId}/dismiss`, {}); }
   catch (e) { showToast('Couldn\u2019t hide that', 'error'); return; }
   await _animateTileOut(tile);
   showToastAction('Hidden from Continue reading', 'Undo', async () => {
-    try { await api.post(`/api/books/${bookId}/dismiss?undo=1`, {}); renderOnDeck(); } catch {}
+    try { await api.post(`/api/books/${bookId}/dismiss?undo=1`, {}); } catch { showToast('Couldn\u2019t undo that', 'error'); return; }
+    // Back in at the end of the row — no page reload, no flash. The server
+    // sorts by last read, which is where it'd land anyway.
+    if (currentView !== 'ondeck' || !row || !html || !row.isConnected) { renderOnDeck(); return; }
+    let grid = row.querySelector('.od-grid');
+    if (!grid) {                                  // the row had emptied out
+      row.querySelector('.od-empty')?.remove();
+      grid = document.createElement('div'); grid.className = 'issue-grid od-grid'; row.appendChild(grid);
+    }
+    grid.insertAdjacentHTML('beforeend', html);
+    _animateTileIn(grid.lastElementChild);
   });
+}
+
+// The reverse of _animateTileOut: a tile arrives small and clear, then settles.
+function _animateTileIn(tile) {
+  if (!tile) return;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) return;
+  tile.classList.add('od-entering');
+  void tile.offsetWidth;
+  tile.classList.remove('od-entering');
 }
 
 // A tile leaves a grid the way an Activity row leaves a list: it fades and
