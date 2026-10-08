@@ -146,6 +146,9 @@ def series_issues(series_id: int) -> list[dict]:
 _MASTHEAD_ROLES = {"president", "publisher", "chief creative officer", "editor in chief",
                    "executive editor", "group editor", "senior editor", "associate editor",
                    "assistant editor", "editor"}
+_ROLE_ORDER = {r: i for i, r in enumerate((
+    "writer", "story", "script", "plot", "artist", "penciller", "inker", "colorist",
+    "letterer", "cover"))}
 
 
 def issue_detail(metron_issue_id: int) -> dict:
@@ -164,6 +167,8 @@ def issue_detail(metron_issue_id: int) -> dict:
                 continue
             credits.append({"role": name, "name": c.get("creator"), "people_id": None,
                             "metron_creator_id": c.get("id")})
+    # the people who MADE the comic first; ten variant-cover artists last
+    credits.sort(key=lambda c: (_ROLE_ORDER.get(c["role"].lower(), 50), c["name"] or ""))
     covers = []
     if d.get("image"):
         covers.append({"id": f"m{d['id']}", "name": "Cover A (Main)", "thumb": d["image"], "large": d["image"]})
