@@ -178,9 +178,11 @@ function esc(str) {
 // Komga cover URL for an issue. The ?v= is the file's version (mtime:size) — Komga
 // keeps a book id when the file behind it is swapped, so the bare URL kept a dead
 // coverless #015 alive in every browser for the 30 days we told them to cache it.
+// Kometa's own cover route for an owned issue — the file's cover first (validated
+// per request), Komga only as a fallback. Asking Komga's thumbnail directly kept
+// the OLD file's picture after a re-download until Komga's next scan (2026-10-08).
 function bookThumb(issue) {
-  const v = issue.komga_book_v ? `?v=${encodeURIComponent(issue.komga_book_v)}` : '';
-  return `/api/book/${issue.komga_book_id}/thumbnail${v}`;
+  return `/api/series/${issue.tracked_series_id}/issues/${issue.number}/thumbnail`;
 }
 
 function _localToday() {
