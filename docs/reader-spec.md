@@ -68,6 +68,14 @@ shelf page built then is transitional and retires).
    unclear becomes a series *without* LOCG — still listed, still readable from
    its files — and lands in a **Needs matching** list where you pick the run.
    A wrong match costs more than no match.
+2b. **One Remove, one meaning** *(2026-10-08)*. Removing a series removes its
+   files too: the folder moves to `_trash` under the comics root (skipped by
+   the shelf scan, so it vanishes everywhere at once), is purged after 7 days,
+   and the toast carries Undo until then. The modal says so, including that
+   Komga loses the books on its next scan. There is no "untrack": a folder left
+   on disk would only be re-imported by the next scan. **Pull list off** is how
+   you stop fetching a series and keep what you have. A series with nothing on
+   disk (an arc, a run never acquired) is simply forgotten.
 3. **Pull list = an on/off switch** (the Settings toggle component), not a
    one-shot button. **On:** new releases and missing issues actively searched
    and downloaded, synced 3x/day as now. **Off:** a weekly check for new issues

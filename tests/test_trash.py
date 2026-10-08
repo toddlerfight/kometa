@@ -42,11 +42,19 @@ def test_trash_moves_the_folder_and_forgets_everything(lib):
         assert c.execute("SELECT count(*) FROM books").fetchone()[0] == 0
 
 
-def test_only_unmatched_series_can_be_removed(lib):
+def test_any_series_can_be_removed_matched_or_not(lib):
     sid = _series(lib, status=AUTO)
-    with pytest.raises(tr.TrashError, match="unmatched"):
-        tr.trash_series(sid, root=lib["root"])
-    assert os.path.isdir(lib["folder"])
+    r = tr.trash_series(sid, root=lib["root"])
+    assert not os.path.isdir(lib["folder"]) and r["trashed_to"]
+    assert db.get_series_by_id(sid, lib["db"]) is None
+
+
+def test_no_folder_means_simply_forgotten(lib, tmp_path):
+    sid = db.add_series(title="Never Got It", publisher="Image", folder_path=str(tmp_path / "nope"),
+                        on_pull_list=True, path=lib["db"])
+    r = tr.trash_series(sid, root=lib["root"])
+    assert r["trashed_to"] is None and db.get_series_by_id(sid, lib["db"]) is None
+    assert not os.path.exists(os.path.join(lib["root"], tr.TRASH_DIR))
 
 
 def test_folder_outside_the_root_is_refused(lib, tmp_path):

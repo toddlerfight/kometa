@@ -35,17 +35,23 @@ def _inside(path: str, root: str) -> bool:
 
 
 def trash_series(series_id: int, root: str | None = None) -> dict:
-    """Move the folder to _trash and forget the series. Only for series that
-    aren't matched — a matched run is a library item, not a candidate for the bin."""
+    """ONE Remove, one meaning (agreed 2026-10-08): the series goes, and so do its
+    files — folder to _trash, purged after TRASH_DAYS, Undo meanwhile. 'Untrack'
+    is not a thing any more: a folder left on disk would only be re-imported by
+    the next shelf scan. Pull list OFF is how you stop fetching something.
+
+    A series with no folder on disk (an arc, a run you tracked and never got)
+    has nothing to bin — it's simply forgotten."""
     root = root or sources.comics_root()
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise TrashError("No such series")
-    if s.get("match_status") not in REMOVABLE:
-        raise TrashError("Only unmatched series can be removed this way")
     folder = s.get("folder_path")
     if not folder or not os.path.isdir(folder):
-        raise TrashError("The series has no folder on disk")
+        db.dequeue_waiting_series(series_id, DB_PATH)
+        db.remove_series(series_id, DB_PATH)
+        logger.info(f"Removed {s['title']!r} (no folder on disk — nothing to bin)")
+        return {"title": s["title"], "trashed_to": None, "purge_days": TRASH_DAYS}
     if not _inside(folder, root) or os.path.realpath(folder) == os.path.realpath(root):
         raise TrashError("Folder is outside the comics root")
     trash_root = os.path.join(root, TRASH_DIR)

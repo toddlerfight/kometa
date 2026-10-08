@@ -786,11 +786,17 @@ def add_series(req: AddSeriesRequest):
     return added
 
 
-@app.delete("/api/series/{series_id}", status_code=204)
+@app.delete("/api/series/{series_id}")
 def delete_series(series_id: int):
+    """One Remove, one meaning: same as POST …/trash — the series AND its folder
+    (to _trash, 7-day purge, restorable). Kept as DELETE for older callers."""
+    from kometa import trash
     if not db.get_series_by_id(series_id, DB_PATH):
         raise HTTPException(404)
-    db.remove_series(series_id, DB_PATH)
+    try:
+        return trash.trash_series(series_id)
+    except trash.TrashError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/series/{series_id}/trash")

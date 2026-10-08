@@ -40,7 +40,10 @@ const api = {
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
   },
   del(url) {
-    return fetch(url, { method: 'DELETE' }).then(r => { if (!r.ok) throw new Error(r.status); });
+    return fetch(url, { method: 'DELETE' }).then(r => {
+      if (!r.ok) throw new Error(r.status);
+      return r.status === 204 ? null : r.json().catch(() => null);
+    });
   },
 };
 
@@ -2186,27 +2189,36 @@ function confirmDelete(id) {
   // Title comes from _detailSeries, NOT an onclick string param — interpolating
   // a title into inline JS breaks on apostrophes (HTML entities decode back to
   // raw quotes before the JS engine parses the handler, so esc() can't save you).
+  // One Remove, one meaning (2026-10-08): the series AND its files. 'Untrack'
+  // is gone — a folder left on disk just comes back on the next shelf scan.
   const title = _detailSeries?.title || 'this series';
+  const files = (_detailSeries?.issues || []).filter(i => i.owned).length;
+  const hasFolder = !!_detailSeries?.folder_path;
   showModal(`
     <div class="modal-title">Remove Series</div>
     <div class="confirm-body">
-      Remove <strong style="color:var(--tp)">${esc(title)}</strong> from tracking?
-      <div class="confirm-note">Your Komga library is not affected.</div>
+      Remove <strong style="color:var(--tp)">${esc(title)}</strong>${hasFolder ? ` and its folder${files ? ` (${files} file${files === 1 ? '' : 's'})` : ''}` : ''}?
+      <div class="confirm-note">${hasFolder
+        ? 'The folder moves to the bin and is deleted for good after 7 days — Undo on the toast until then. Komga will lose these books on its next scan. To stop fetching a series but keep what you have, turn its pull list off instead.'
+        : 'Nothing on disk belongs to it; it’s simply forgotten.'}</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-danger" onclick="doDelete(${id})">Remove</button>
+      <button class="btn btn-danger" onclick="doDelete(${id})">${hasFolder ? 'Remove files too' : 'Remove'}</button>
     </div>
   `);
 }
 
 async function doDelete(id) {
   closeModal();
+  let r;
   try {
-    await api.del(`/api/series/${id}`);
+    r = await api.del(`/api/series/${id}`);
   } catch (e) {
-    showToast('Delete failed'); console.error(e); return;
+    showToast(`Remove failed: ${e.message || ''}`, 'error'); console.error(e); return;
   }
+  if (r?.trashed_to) showToastAction(`${r.title} removed — files in the bin for ${r.purge_days} days`, 'Undo', () => _undoTrash(r.trashed_to));
+  else showToast(`${r?.title || 'Series'} removed`);
   navigate('library');
 }
 
