@@ -806,6 +806,7 @@ async function renderReadLists() {
       <input class="browse-search" id="rl-url" type="url" placeholder="…or paste a link to a .cbl" autocomplete="off" spellcheck="false"
         onkeydown="if(event.key==='Enter')_rlImportUrl()">
       <button class="btn btn-ghost btn-sm" onclick="_rlImportUrl()">Import link</button>
+      <button class="btn btn-ghost btn-sm" title="Every read list in Komga, matched by file name" onclick="_rlImportKomga(this)">Import from Komga</button>
     </div>
     ${rows ? `<div class="nm-list">${rows}</div>` : '<div class="od-empty">No lists yet.</div>'}`);
 }
@@ -832,6 +833,15 @@ async function _rlImport(pending) {
     showToast('List imported');
     navigate('readlist', { id: r.id });
   } catch (e) { showToast(`Couldn’t import that: ${e.message || e}`, 'error'); }
+}
+
+async function _rlImportKomga(btn) {
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    const made = await api.post('/api/readlists/import-komga', {});
+    showToast(made.length ? `${made.length} list${made.length === 1 ? '' : 's'} imported from Komga` : 'Komga has no read lists');
+    renderReadLists();
+  } catch (e) { btn.disabled = false; btn.textContent = 'Import from Komga'; showToast('Couldn’t import from Komga', 'error'); }
 }
 
 function _rlDelete(id, name) {

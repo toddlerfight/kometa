@@ -81,3 +81,30 @@ def test_bad_cbl_is_refused(shelf):
         rl.import_cbl(b"<html>nope</html>", path=shelf)
     with pytest.raises(rl.CblError):
         rl.import_cbl(b"<ReadingList><Name>x</Name><Books/></ReadingList>", path=shelf)
+
+
+class _FakeKomga:
+    """Two Komga read lists; its metadata.number lies (a counter), the file name doesn't."""
+    def _get(self, url, params=None):
+        if url == "/api/v1/readlists":
+            return {"content": [{"id": "rl1", "name": "Witchfinder arc"}, {"id": "rl2", "name": "Empty"}], "last": True}
+        if url == "/api/v1/readlists/rl1/books":
+            return {"content": [
+                {"seriesTitle": "Sir Edward Grey, Witchfinder", "url": "/data/x/Sir Edward Grey, Witchfinder #002.cbz", "metadata": {"number": "1"}},
+                {"seriesTitle": "Hellboy: Seed of Destruction", "url": "/data/x/Hellboy - Seed of Destruction #001.cbz", "metadata": {"number": "7"}},
+                {"seriesTitle": "Gone", "url": "/data/x/Gone #001.cbz", "metadata": {"number": "1"}},
+            ], "last": True}
+        return {"content": [], "last": True}
+
+
+def test_komga_lists_import_by_file_name(shelf):
+    made = rl.import_komga(_FakeKomga(), path=shelf)
+    assert [m["name"] for m in made] == ["Witchfinder arc"] and made[0]["entries"] == 3
+    r = rl.resolve(made[0]["id"], path=shelf)
+    e = r["entries"]
+    assert e[0]["status"] == "owned" and e[0]["books"][0]["label"] == "#2"       # file, not Komga's '1'
+    assert e[1]["status"] == "owned" and [b["label"] for b in e[1]["books"]] == ["#1"]   # one file, not the whole run
+    assert e[2]["status"] == "not_on_shelf"
+    assert r["source"] == "komga"
+    # importing again replaces, same id
+    assert rl.import_komga(_FakeKomga(), path=shelf)[0]["id"] == made[0]["id"]

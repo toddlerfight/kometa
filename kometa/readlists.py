@@ -55,8 +55,11 @@ def ensure_tables(path=None):
                 volume      TEXT,
                 year        TEXT,
                 cv_series   TEXT,
-                cv_issue    TEXT
+                cv_issue    TEXT,
+                file        TEXT
             )""")
+        if "file" not in [r[1] for r in conn.execute("PRAGMA table_info(reading_list_items)")]:
+            conn.execute("ALTER TABLE reading_list_items ADD COLUMN file TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rli_list ON reading_list_items(list_id, position)")
 
 
@@ -91,27 +94,72 @@ def parse_cbl(data: bytes) -> dict:
     return {"name": name, "items": items}
 
 
-def import_cbl(data: bytes, source_ref: str | None = None, path=None) -> int:
+def save_list(name: str, items: list[dict], source: str, source_ref: str | None, path=None) -> int:
+    """Write a list. The same name again is a re-import: replaced in place, id
+    kept so links to it survive."""
     path = path or DB_PATH
     ensure_tables(path)
-    parsed = parse_cbl(data)
     with db._connect(path) as conn:
-        # same name again = re-import: replace, keep the id so links survive
-        row = conn.execute("SELECT id FROM reading_lists WHERE name = ?", (parsed["name"],)).fetchone()
+        row = conn.execute("SELECT id FROM reading_lists WHERE name = ?", (name,)).fetchone()
         if row:
             lid = row[0]
             conn.execute("DELETE FROM reading_list_items WHERE list_id = ?", (lid,))
-            conn.execute("UPDATE reading_lists SET source_ref = ?, created_at = datetime('now') WHERE id = ?", (source_ref, lid))
+            conn.execute("UPDATE reading_lists SET source = ?, source_ref = ?, created_at = datetime('now') WHERE id = ?",
+                         (source, source_ref, lid))
         else:
-            lid = conn.execute("INSERT INTO reading_lists (name, source, source_ref) VALUES (?, 'cbl', ?)",
-                               (parsed["name"], source_ref)).lastrowid
+            lid = conn.execute("INSERT INTO reading_lists (name, source, source_ref) VALUES (?, ?, ?)",
+                               (name, source, source_ref)).lastrowid
         conn.executemany(
-            "INSERT INTO reading_list_items (list_id, position, series, number, volume, year, cv_series, cv_issue) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [(lid, i + 1, it["series"], it["number"], it["volume"], it["year"], it["cv_series"], it["cv_issue"])
-             for i, it in enumerate(parsed["items"])])
-    logger.info(f"Reading list imported: {parsed['name']!r}, {len(parsed['items'])} entries")
+            "INSERT INTO reading_list_items (list_id, position, series, number, volume, year, cv_series, cv_issue, file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(lid, i + 1, it["series"], it.get("number"), it.get("volume"), it.get("year"),
+              it.get("cv_series"), it.get("cv_issue"), it.get("file")) for i, it in enumerate(items)])
+    logger.info(f"Reading list saved: {name!r} ({source}), {len(items)} entries")
     return lid
+
+
+def import_cbl(data: bytes, source_ref: str | None = None, path=None) -> int:
+    parsed = parse_cbl(data)
+    return save_list(parsed["name"], parsed["items"], "cbl", source_ref, path)
+
+
+def import_komga(komga=None, path=None) -> list[dict]:
+    """Every Komga read list → a list here, one entry per book, the FILE NAME
+    as the hint — Komga's metadata.number is a counter, not the issue (its
+    'Batman: Knightfall #1' is a nine-volume trade). The title+number are kept
+    beside it for the day the file is renamed."""
+    import os
+    from kometa import sources
+    from kometa.naming import parse_issue_number
+    komga = komga or sources.komga()
+    if not komga:
+        raise RuntimeError("Komga isn't configured")
+    out = []
+    for rl in _pages(komga, "/api/v1/readlists"):
+        books = _pages(komga, f"/api/v1/readlists/{rl['id']}/books")
+        items = []
+        for b in books:
+            fn = os.path.basename(b.get("url") or "")
+            series = b.get("seriesTitle") or ""
+            n = parse_issue_number(fn, series) if fn else None
+            if n is None:
+                n = (b.get("metadata") or {}).get("number")
+            items.append({"series": series, "number": str(n) if n is not None else None, "file": fn or None})
+        if not items:
+            continue
+        lid = save_list(rl["name"], items, "komga", rl["id"], path)
+        out.append({"id": lid, "name": rl["name"], "entries": len(items)})
+    return out
+
+
+def _pages(komga, url: str, size: int = 200) -> list[dict]:
+    rows, page = [], 0
+    while True:
+        r = komga._get(url, params={"size": size, "page": page})
+        rows += r.get("content", [])
+        if r.get("last", True) or not r.get("content"):
+            return rows
+        page += 1
 
 
 def get_lists(path=None) -> list[dict]:
@@ -193,6 +241,26 @@ def _books(shelf_id: int, path) -> list[dict]:
     return out
 
 
+def _by_file(path, names: list[str]) -> dict[str, dict]:
+    """basename → book row (with progress), for the names that are on the shelf.
+    One pass over the books table matched in Python: SQLite can't index a
+    basename, and 7k rows is nothing."""
+    import os
+    if not names:
+        return {}
+    want, out = set(names), {}
+    with db._connect(path) as conn:
+        for r in conn.execute("""
+            SELECT b.id, b.path, b.number, b.page_count, b.size, b.mtime, b.shelf_series_id, b.tracked_series_id,
+                   p.page AS progress_page, p.completed, p.updated_at
+            FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+        """, (READER_ID,)):
+            bn = os.path.basename(r["path"])
+            if bn in want and bn not in out:
+                out[bn] = dict(r)
+    return out
+
+
 def _book_view(b: dict) -> dict:
     import os
     n = b.get("number")
@@ -218,11 +286,17 @@ def resolve(list_id: int, path=None) -> dict:
         per_series[norm_key(it["series"])] = per_series.get(norm_key(it["series"]), 0) + 1
     out, books_cache = [], {}
     owned = read = 0
+    by_file = _by_file(path, [it["file"] for it in items if it.get("file")])
     for it in items:
         hit = next((idx[k] for k in _keys(it["series"]) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": []}
-        if hit:
+        bf = by_file.get(it.get("file") or "")
+        if bf:
+            # the file itself is on the shelf — no guessing from the title
+            entry.update(status="owned", shelf_id=bf["shelf_series_id"], series_id=bf.get("tracked_series_id"),
+                         books=[_book_view(bf)])
+        elif hit:
             entry["shelf_id"], entry["series_id"] = hit["id"], hit.get("tracked_series_id")
             if hit["id"] not in books_cache:
                 books_cache[hit["id"]] = _books(hit["id"], path)
@@ -312,6 +386,16 @@ async def api_import_body(request: Request, name: str | None = None):
     except CblError as e:
         raise HTTPException(400, str(e))
     return {"id": lid}
+
+
+@router.post("/api/readlists/import-komga")
+def api_import_komga():
+    try:
+        return import_komga()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"Komga didn't answer: {e}")
 
 
 @router.post("/api/readlists/import-url")
