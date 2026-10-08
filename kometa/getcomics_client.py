@@ -1,4 +1,5 @@
 import re
+import requests
 import time
 import logging
 from datetime import date
@@ -24,6 +25,7 @@ GC_DIRECT_TERMS = (
 # Mirror buttons a post lists beside its main host. Only the ones with a plain
 # file API make the list — Mega/Mediafire/Terabox want a browser.
 _PIXELDRAIN_RE = re.compile(r'https?://pixeldrain\.com/u/([A-Za-z0-9]+)')
+_MEDIAFIRE_RE = re.compile(r'https?://(?:www\.)?mediafire\.com/file/')
 
 _ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
 _ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
@@ -317,23 +319,45 @@ class GetComicsClient:
                 m = _PIXELDRAIN_RE.match(loc)
                 if m:
                     out.append(f"https://pixeldrain.com/api/file/{m.group(1)}?download")
+                    continue
+                if _MEDIAFIRE_RE.match(loc):
+                    direct = self._mediafire_direct(loc)
+                    if direct:
+                        out.append(direct)
             except GCRateLimitError:
                 raise
             except Exception as e:
                 logger.info(f"GetComics: mirror resolve failed for {href[:80]}: {e}")
         return out
 
+    def _mediafire_direct(self, page_url: str) -> str | None:
+        """MediaFire's file page carries a plain direct link on its download
+        button — no account, no API. (2026-10-08: Deadly Duo #7 and the Hellboy
+        Yule Cat both sat behind the fs2 wall with a MediaFire button right there.)"""
+        r = requests.get(page_url, headers={"User-Agent": HEADERS.get("User-Agent", "Mozilla/5.0")}, timeout=30)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "lxml")
+        a = soup.find("a", id="downloadButton") or soup.find("a", href=re.compile(r"^https?://download\d*\.mediafire\.com/"))
+        href = a.get("href") if a else None
+        if not href:
+            m = re.search(r'https?://download\d*\.mediafire\.com/[^"\'\s]+', r.text)
+            href = m.group(0) if m else None
+        return href
+
     def _remember_mirrors(self, primary: str, scope) -> None:
         """scope: a tag (searched with its descendants) or a list of sibling tags —
-        a post's buttons are siblings, so 'same group' means the whole run."""
+        a post's buttons are siblings, so 'same group' means the whole run.
+        Pixeldrain first (a direct API, no page to scrape), then MediaFire."""
         tags = scope if isinstance(scope, list) else [scope]
         links = []
         for t in tags:
             links += [a for a in t.select("a[href]")]
             if t.name == "a" and t.get("href"):
                 links.append(t)
-        self._mirrors[primary] = [a["href"] for a in links
-                                  if a.get_text(strip=True).lower() == "pixeldrain"]
+        wanted = {"pixeldrain": 0, "mediafire": 1}
+        picked = [(wanted[a.get_text(strip=True).lower()], a["href"]) for a in links
+                  if a.get_text(strip=True).lower() in wanted]
+        self._mirrors[primary] = [h for _, h in sorted(picked, key=lambda x: x[0])]
 
     def _get(self, url, **kw):
         """Every GetComics request goes through here: cooldown gate first,
@@ -666,7 +690,10 @@ class GetComicsClient:
             if any(t in text for t in GC_DIRECT_TERMS):
                 logger.info(f"GetComics: strategy-2 direct download {href[:80]}")
                 self._remember_mirrors(href, body)
-                if len(self._mirrors[href]) > 1:   # several groups — can't tell whose
+                # whole-page scan: TWO of the same kind means several download
+                # groups and we can't tell whose is whose. One Pixeldrain plus one
+                # MediaFire is a single group with two mirrors — keep them.
+                if len(self._mirrors[href]) > 2:
                     self._mirrors[href] = []
                 return href, None
 
