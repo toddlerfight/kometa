@@ -3209,9 +3209,12 @@ async function _settingsChanged(el) {
   if (f.key === 'locg_cf_clearance') {
     // the pass is bound to the browser it was issued to — if you're pasting it
     // from that same browser (the normal case), its UA is right here
+    // ALWAYS the browser you're pasting from — a stale Safari string left in the
+    // field sent a Chrome cookie with a Safari identity, refused every time
+    // (2026-10-08 19:15). Edit the field afterwards if you really mean to.
     const ua = document.getElementById('f-locg-ua');
-    body.locg_user_agent = (ua && ua.value.trim()) || navigator.userAgent;
-    if (ua && !ua.value.trim()) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
+    body.locg_user_agent = navigator.userAgent;
+    if (ua) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
   }
   try {
     const cfg = await api.patch('/api/config', body);
