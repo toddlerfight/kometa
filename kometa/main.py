@@ -2,7 +2,7 @@ import os
 import re
 import logging
 import threading
-from datetime import date
+from datetime import date, datetime, timezone
 from contextlib import asynccontextmanager
 
 
@@ -310,11 +310,25 @@ _INTEGRATION_KEYS = {
 
 @app.post("/api/config/disconnect/{integration}")
 def disconnect_integration(integration: str):
-    keys = _INTEGRATION_KEYS.get(integration)
+    keys = _INTEGRATION_KEYS.get(integration) or _EXTRA_INTEGRATION_KEYS.get(integration)
     if not keys:
         raise HTTPException(404)
     db.set_config({k: "" for k in keys}, DB_PATH)
+    if integration == "locg":
+        from kometa.locg_client import _access_cache
+        _access_cache["ts"] = 0.0
     return get_config()
+
+
+_EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at"]}
+
+
+@app.post("/api/test/locg")
+def test_locg_access():
+    """Settings 'test' for the LOCG card — the same single knock as 'Test LOCG now'."""
+    from kometa.locg_client import probe
+    r = probe()
+    return {"ok": True, "detail": r["detail"]} if r["ok"] else {"ok": False, "error": r["detail"]}
 
 
 # --- version ---
@@ -368,6 +382,10 @@ def get_config():
         "metron_pass":         "",
         "metron_configured":   bool(cfg.get("metron_user", "") and cfg.get("metron_pass", "")),
         "metron_enabled":      cfg.get("metron_enabled", "1") != "0",
+        # LOCG: your own browser's pass (kometa/locg_client.py). Never echoed back.
+        "locg_cf_configured":  bool(cfg.get("locg_cf_clearance", "")),
+        "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
+        "locg_user_agent":     cfg.get("locg_user_agent", ""),
     }
 
 
@@ -394,6 +412,8 @@ class ConfigRequest(BaseModel):
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_enabled:     str | None = None   # "1"/"0" — primary metadata source
+    locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
+    locg_user_agent:    str | None = None   # the exact UA that pass was issued to
 
 
 @app.patch("/api/config")
@@ -401,7 +421,15 @@ def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
     if "komga_url" in updates:
         updates["komga_url"] = _normalize_url(updates["komga_url"])
+    if "locg_cf_clearance" in updates:
+        updates["locg_cf_clearance"] = updates["locg_cf_clearance"].strip().removeprefix("cf_clearance=")
+        updates["locg_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     db.set_config(updates, DB_PATH)
+    if "locg_cf_clearance" in updates:
+        # the Settings field re-verifies on save (POST /api/test/locg) — one knock,
+        # and if the pass works the pause lifts right there
+        from kometa.locg_client import _access_cache
+        _access_cache["ts"] = 0.0
     return get_config()
 
 

@@ -36,6 +36,57 @@ _anon_session = {"session": None, "get": None, "ts": 0.0}
 _anon_lock = threading.Lock()
 
 
+# --- your own browser's pass ------------------------------------------------------
+# 2026-10-08: LOCG's Cloudflare challenges every non-browser. A real Chrome at
+# home passes it and is handed a cf_clearance cookie bound to the house's public
+# IP and that browser's exact User-Agent. Kometa sits behind the same IP, so a
+# cookie YOU paste from YOUR browser (Settings → LOCG) lets it ride your session
+# — at the trickle, for a few hours, until Cloudflare lets it rot. Not a bypass:
+# no solver, no headless browser, nothing automated. When it dies we forget it
+# and go back to waiting, same as before.
+_access_cache = {"ts": 0.0, "val": ("", "")}
+_ACCESS_TTL = 30
+
+
+def _access() -> tuple[str, str]:
+    """(cf_clearance, user_agent) from Settings, or ('', '')."""
+    now = time.time()
+    if now - _access_cache["ts"] > _ACCESS_TTL:
+        try:
+            from kometa import db
+            cfg = db.get_config(db.DB_PATH)
+            _access_cache["val"] = ((cfg.get("locg_cf_clearance") or "").strip(),
+                                    (cfg.get("locg_user_agent") or "").strip())
+        except Exception:
+            _access_cache["val"] = ("", "")
+        _access_cache["ts"] = now
+    return _access_cache["val"]
+
+
+def _apply_access(s) -> bool:
+    """Put the pasted pass on a curl_cffi session. True if one was applied."""
+    cookie, ua = _access()
+    if not cookie:
+        return False
+    try:
+        s.cookies.set("cf_clearance", cookie, domain="leagueofcomicgeeks.com")
+    except Exception:
+        s.headers["Cookie"] = f"cf_clearance={cookie}"
+    if ua:
+        s.headers["User-Agent"] = ua
+    return True
+
+
+def _forget_access():
+    """The pass stopped working — drop it so Settings shows 'expired', not a lie."""
+    _access_cache.update(ts=0.0, val=("", ""))
+    try:
+        from kometa import db
+        db.set_config({"locg_cf_clearance": "", "locg_cf_set_at": ""}, db.DB_PATH)
+    except Exception:
+        pass
+
+
 # --- backoff ----------------------------------------------------------------------
 # LOCG is a site we read without an API or an agreement. When it says "too much"
 # — a Cloudflare challenge or a 429 — we STOP: every LOCG call (syncs, matching,
@@ -80,6 +131,9 @@ def _note_refusal(r):
                                   or "cloudflare" in (r.headers.get("server") or "").lower()))
     if not refused:
         return
+    if _access()[0]:
+        logger.info("LOCG refused a request carrying your browser's pass — it has expired; forgetting it")
+        _forget_access()
     until = time.time() + PAUSE_SECONDS
     _pause["until"] = until
     logger.warning(f"LOCG refused us ({r.status_code}) — pausing ALL LOCG traffic for "
@@ -97,6 +151,7 @@ def probe() -> dict:
     is lifted and everything resumes. Refused: the pause simply carries on."""
     from curl_cffi import requests as _cffi
     s = _cffi.Session(impersonate="chrome")
+    with_pass = _apply_access(s)
     try:
         r = s.get(f"{BASE}/search/ajax_issues", params={"query": "Batman"},
                   headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"}, timeout=25)
@@ -115,9 +170,11 @@ def probe() -> dict:
             db.set_config({"locg_paused_until": "0"}, db.DB_PATH)
         except Exception:
             pass
-        return {"ok": True, "status": 200, "detail": "LOCG answered — pause lifted"}
-    return {"ok": False, "status": r.status_code,
-            "detail": "LOCG still refusing (" + str(r.status_code) + ") — staying paused"}
+        return {"ok": True, "status": 200, "with_pass": with_pass,
+                "detail": "LOCG answered" + (" with your browser's pass" if with_pass else "") + " — pause lifted"}
+    return {"ok": False, "status": r.status_code, "with_pass": with_pass,
+            "detail": ("your browser's pass has expired — LOCG refused it" if with_pass else
+                       "LOCG still refusing (" + str(r.status_code) + ") — staying paused")}
 
 
 def locg_paused() -> float | None:
@@ -140,17 +197,25 @@ def _anon_get_fn():
     holding the lock — deliberate: it serializes against in-flight closure .get()s,
     which is the politeness we wanted anyway."""
     _check_paused()   # paused = not even the homepage warm-up
+    cookie = _access()[0]
+    def _fresh():
+        # a session built with a different (or no) pass than the one in Settings
+        # is stale too — you just pasted one, use it
+        return (_anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL
+                and _anon_session.get("cookie", "") == cookie)
     # Unlocked fast path — a stale read here just falls through to the lock,
     # where the truth gets re-checked. Fresh-session reads skip the lock entirely.
-    if _anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL:
+    if _fresh():
         return _anon_session["get"]
     with _anon_lock:
         # The double-check: whoever won the lock race may have already rebuilt.
         now = time.time()
-        if _anon_session["get"] is not None and now - _anon_session["ts"] <= _ANON_SESSION_TTL:
+        if _fresh():
             return _anon_session["get"]
         from curl_cffi import requests as _cffi
         s = _cffi.Session(impersonate="chrome")
+        _apply_access(s)
+        _anon_session["cookie"] = cookie
         try:
             s.get(BASE + "/", timeout=20)
         except Exception:

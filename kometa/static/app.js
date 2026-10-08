@@ -2688,6 +2688,14 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
+        <div class="settings-card" style="margin-top:32px">
+          ${_settingsHeader('League of Comic Geeks', 'your browser’s pass', 'locg', true, cfg.locg_cf_configured)}
+          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies' })}
+          ${_settingsField('f-locg-ua', 'User-Agent of that browser', cfg.locg_user_agent, { ph: navigator.userAgent })}
+          <div class="settings-help">${cfg.locg_cf_configured
+            ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC. It lasts a few hours and is forgotten the moment LOCG refuses it.`
+            : 'LOCG challenges anything that isn’t a browser. When yours gets through, its cookie lets Kometa ride the same session — same house, same IP — at the usual trickle. Optional; Metron covers nearly everything now.'}</div>
+        </div>
       </div>
     </div>
   `);
@@ -2721,9 +2729,11 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
+  'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: true },
+  'f-locg-ua':         { card: 'locg',      key: 'locg_user_agent' },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine' };
+const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', locg: 'locg' };
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};

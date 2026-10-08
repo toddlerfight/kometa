@@ -99,7 +99,11 @@ only; LOCG had #2 and #3).
    lacks (`kometa/issue_meta.py`; one request per issue, cached a week).
 2. **LOCG becomes a trickle** for what only it has: **far-ahead
    solicitations** and community data. Never a bulk job; the 3-hour backoff
-   on any refusal stays. No routing around its bot protection.
+   on any refusal stays. No automated routing around its bot protection: the
+   one concession (2026-10-08) is a Settings field where the user can paste
+   the Cloudflare clearance cookie their **own browser** was issued, so Kometa
+   rides that session from the same connection, at the same trickle, until it
+   expires. No solver, no headless browser; a refusal forgets the cookie.
 3. **Matching** tries Metron first, then LOCG. Titles are searched as written
    AND with folder-style " - " turned into ": " (shelf hits 8→13 in the probe).
    Confident-only rule unchanged: one candidate agreeing on title, publisher
