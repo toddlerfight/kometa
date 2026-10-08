@@ -434,6 +434,14 @@ async function _loadMatchCandidates(seriesId, q) {
 let _matchRows = [];
 async function _pickMatch(seriesId, runId, btn, source = 'locg') {
   const r = (_matchRows || []).find(x => x.id === runId && x.source === source) || { id: runId, source };
+  // Already have this run as a series? Then this folder is a second copy of it
+  // — a deluxe, a trade, a split — and matching would mint a duplicate series
+  // with the collection reading as issue #1. Offer to file it under the one you
+  // have instead. (Year 100 and Other Tales Deluxe → Batman - Year 100.)
+  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch {} }
+  const have = (_fileUnderAll || []).find(s => s.id !== seriesId && s.folder_path
+    && (source === 'metron' ? s.metron_series_id === runId : s.locg_series_id === runId));
+  if (have) { _fileUnder(seriesId, have.id, r); return; }
   const s = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : null;
   // Count FILES on the shelf, not owned issues: a trade or a one-file folder
   // with no issue number is 0 issues and 1 file, and '0 files' is a lie.
@@ -499,12 +507,13 @@ async function _fileUnderSearch(seriesId, q) {
   }, 200);
 }
 
-async function _fileUnder(seriesId, parentId) {
+async function _fileUnder(seriesId, parentId, run = null) {
   const parent = (_fileUnderAll || []).find(s => s.id === parentId) || { title: 'that series' };
   const me = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : { title: 'this' };
   showModal(`
     <div class="modal-header"><h2>File under ${esc(parent.title)}?</h2></div>
     <div class="modal-body">
+      ${run ? `<div style="margin-bottom:8px">You already have <b>${esc(run.series || parent.title)}</b> on your shelf as <b>${esc(parent.title)}</b>. Matching this folder to it as well would make a second series of the same run.</div>` : ''}
       <div><b>${esc(me.title)}</b> is treated as a collected edition of <b>${esc(parent.title)}</b>.</div>
       <div style="margin-top:10px;color:var(--tq);font-size:12px">Its file moves into that series' folder, named as a collection so it can never be mistaken for an issue. This series and its empty folder go away. Reading progress follows the file.</div>
     </div>
