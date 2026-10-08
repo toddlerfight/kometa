@@ -93,9 +93,16 @@ def _parent_guess(title: str) -> str | None:
 def report(path=None) -> dict:
     path = path or DB_PATH
     series = [s for s in db.get_all_series(path) if s.get("kind") != "arc" and s.get("folder_path")]
+    # file names from the books table (one query), not a directory listing per
+    # series over SMB — that made this report take 48 s
+    names = db.book_names_by_series(path)
     singles = []
     for s in series:
-        f = _single_file(s["folder_path"])
+        if s["id"] in names:
+            fs = [f for f in names[s["id"]] if os.path.splitext(f)[1].lower() in OWNED_EXTS]
+            f = fs[0] if len(fs) == 1 else None
+        else:
+            f = _single_file(s["folder_path"])           # not indexed yet: ask the disk
         if f:
             singles.append((s, f))
     siblings: dict[str, list[str]] = {}

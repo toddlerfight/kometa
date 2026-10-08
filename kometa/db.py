@@ -1003,6 +1003,18 @@ def set_book_owner(book_path, tracked_series_id, shelf_series_id, number="keep",
                             (tracked_series_id, shelf_series_id, number, book_path)).rowcount
 
 
+def book_names_by_series(path=DB_PATH) -> dict[int, list[str]]:
+    """{tracked_series_id: [file name, …]} from the books table — one query for
+    the whole shelf, instead of a directory listing per series over SMB (the
+    clean-up reports took 47 s each that way)."""
+    import os
+    out: dict[int, list[str]] = {}
+    with _connect(path) as conn:
+        for r in conn.execute("SELECT tracked_series_id, path FROM books WHERE tracked_series_id IS NOT NULL ORDER BY path"):
+            out.setdefault(r["tracked_series_id"], []).append(os.path.basename(r["path"]))
+    return out
+
+
 def set_series_title(series_id, title, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET title = ? WHERE id = ?", (title, series_id))

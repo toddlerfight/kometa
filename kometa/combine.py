@@ -61,11 +61,14 @@ def _year_of(folder: str, files: list[str], series: dict) -> int | None:
     return int(m.group(1)) if m else series.get("year_began")
 
 
-def _member(s: dict) -> dict | None:
+def _member(s: dict, names: dict[int, list[str]] | None = None) -> dict | None:
     folder = s.get("folder_path")
-    if not folder or not os.path.isdir(folder):
+    if not folder:
         return None
-    files = _files(folder)
+    # the books table knows the files (one query for the shelf); the disk is only
+    # asked when a caller has no map — a listing per series over SMB took 47 s
+    files = ([f for f in names[s["id"]] if os.path.splitext(f)[1].lower() in OWNED_EXTS]
+             if names is not None and s["id"] in names else _files(folder))
     if not files:
         return None
     sp = _split(s["title"])
@@ -83,10 +86,11 @@ def find_groups(path=None) -> list[dict]:
     """Groups of ≥MIN_GROUP one-file series sharing a prefix (same publisher folder)."""
     path = path or DB_PATH
     groups: dict[tuple, list] = defaultdict(list)
+    names = db.book_names_by_series(path)
     for s in db.get_all_series(path):
         if s.get("kind") == "arc":
             continue
-        m = _member(s)
+        m = _member(s, names)
         if not m or len(m["files"]) > 3:
             continue                                   # a real run with many issues isn't an album folder
         groups[(norm_key(m["prefix"]), os.path.dirname(m["folder"]))].append(m)
