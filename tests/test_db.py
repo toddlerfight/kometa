@@ -181,3 +181,19 @@ class TestFreshInstallMigration:
         db.set_locg_series_id(sid, 9999, p)
         row = db.get_series_by_id(sid, p)
         assert row["locg_series_id"] == 9999
+
+
+def test_rename_book_path_rereads_the_number_from_the_new_name(db_path, tmp_path):
+    """Dr. Manhattan: 'TPB 01' had no number; renamed to '#001' it must get one,
+    or the series page shows the same file as #1 AND under 'Also on the shelf'."""
+    sid = db.add_series(title="Before Watchmen: Dr. Manhattan", publisher="DC", folder_path=str(tmp_path),
+                        on_pull_list=False, path=db_path)
+    sh = db.upsert_shelf_series(str(tmp_path), "Before Watchmen- Dr. Manhattan", "DC", sid, 1, "2026-10-09T00:00:00Z", db_path)
+    old = str(tmp_path / "Dr. Manhattan TPB 01.cbz"); new = str(tmp_path / "Before Watchmen - Dr. Manhattan #001 (2012).cbz")
+    db.index_books([(old, 10, 1.0, None, sh, sid)], db_path)
+    assert db.rename_book_path(old, new, db_path) == 1
+    assert db.get_book_by_path(new, db_path)["number"] == 1.0
+    # and the heal for rows renamed before this: a null that parses now
+    db.index_books([(str(tmp_path / "Before Watchmen - Dr. Manhattan #002 (2012).cbz"), 10, 1.0, None, sh, sid)], db_path)
+    assert db.reparse_null_numbers(db_path) == 1
+    assert db.reparse_null_numbers(db_path) == 0

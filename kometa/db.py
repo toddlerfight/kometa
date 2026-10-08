@@ -972,9 +972,43 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH):
 
 def rename_book_path(old_path, new_path, path=DB_PATH) -> int:
     """A file moved: the book row follows it, read progress rides along (it's keyed
-    on the book id, not the path). kometa/tidy.py."""
+    on the book id, not the path). The number is re-read from the NEW name —
+    'Dr. Manhattan TPB 01.cbz' had none, 'Before Watchmen - Dr. Manhattan #001'
+    does, and a book that keeps a stale null shows twice on the series page
+    (as issue #1 and again under 'Also on the shelf'). kometa/tidy.py."""
+    import os
+    from kometa.naming import parse_issue_number
     with _connect(path) as conn:
-        return conn.execute("UPDATE books SET path = ? WHERE path = ?", (new_path, old_path)).rowcount
+        n = conn.execute("UPDATE books SET path = ? WHERE path = ?", (new_path, old_path)).rowcount
+        if n:
+            row = conn.execute("""
+                SELECT b.id, b.number, COALESCE(t.title, s.title, '') AS title FROM books b
+                LEFT JOIN tracked_series t ON t.id = b.tracked_series_id
+                LEFT JOIN shelf_series s ON s.id = b.shelf_series_id WHERE b.path = ?""", (new_path,)).fetchone()
+            if row:
+                num = parse_issue_number(os.path.basename(new_path), row["title"])
+                if num is not None and num != row["number"]:
+                    conn.execute("UPDATE books SET number = ? WHERE id = ?", (num, row["id"]))
+        return n
+
+
+def reparse_null_numbers(path=DB_PATH) -> int:
+    """Books indexed with no number whose name parses to one now: give them it.
+    The heal for everything renamed before rename_book_path learned to."""
+    import os
+    from kometa.naming import parse_issue_number
+    fixed = 0
+    with _connect(path) as conn:
+        rows = conn.execute("""
+            SELECT b.id, b.path, COALESCE(t.title, s.title, '') AS title FROM books b
+            LEFT JOIN tracked_series t ON t.id = b.tracked_series_id
+            LEFT JOIN shelf_series s ON s.id = b.shelf_series_id WHERE b.number IS NULL""").fetchall()
+        for r in rows:
+            num = parse_issue_number(os.path.basename(r["path"]), r["title"])
+            if num is not None:
+                conn.execute("UPDATE books SET number = ? WHERE id = ?", (num, r["id"]))
+                fixed += 1
+    return fixed
 
 
 def move_folder_paths(series_id, old_folder, new_folder, path=DB_PATH) -> int:

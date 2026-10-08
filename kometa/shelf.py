@@ -111,6 +111,9 @@ def scan_shelf(root: str | None = None) -> dict:
                     n_series += 1
                     n_books += len(files)
         pruned = db.prune_shelf(stamp, DB_PATH)
+        healed = db.reparse_null_numbers(DB_PATH)      # names that parse now (renamed, re-titled)
+        if healed:
+            logger.info(f"Shelf scan: {healed} book(s) given the number their name now carries")
         result = {"series": n_series, "books": n_books, "pruned": pruned, "scanned_at": stamp}
         _last_scan.clear()
         _last_scan.update(result)
