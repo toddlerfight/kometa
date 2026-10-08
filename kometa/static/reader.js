@@ -414,6 +414,7 @@ async function _loadMatchCandidates(seriesId, q) {
   if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
   const rows = metron.map(r => ({ ...r, source: 'metron' })).slice(0, 8)
     .concat(locg.map(r => ({ ...r, source: 'locg' })).slice(0, 8));
+  _matchRows = rows;
   box.innerHTML = rows.length ? rows.map(r => `
     <div class="match-row">
       ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : '<div class="match-nocover"></div>'}
@@ -425,15 +426,67 @@ async function _loadMatchCandidates(seriesId, q) {
     : '<div class="state-msg" style="padding:10px 0;font-size:11px">No series found — try a different search.</div>';
 }
 
+// You picked a run by hand: say back what you're about to link, next to what's
+// actually in the folder, and flag the obvious mismatches (more files than the
+// run has issues; a one-shot for a 40-file folder) BEFORE anything is written.
+// A wrong link brings the wrong issue list and the wrong covers — cheap to
+// stop here, annoying to notice later.
+let _matchRows = [];
 async function _pickMatch(seriesId, runId, btn, source = 'locg') {
-  if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
-  try {
-    await api.patch(`/api/series/${seriesId}/locg`, source === 'metron' ? { metron_id: runId } : { locg_id: runId });
-    showToast('Linked — fetching its issues, trades and covers');
-    renderSeriesDetail(seriesId);
-  } catch (e) {
-    showToast('Couldn’t link that run'); if (btn) { btn.disabled = false; btn.textContent = 'This one'; }
-  }
+  const r = (_matchRows || []).find(x => x.id === runId && x.source === source) || { id: runId, source };
+  const s = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : null;
+  const files = s ? (s.issues || []).filter(i => i.owned).length : null;
+  const warns = [];
+  if (files != null && r.issue_count != null && files > r.issue_count)
+    warns.push(`Your folder has ${files} files; this run has ${r.issue_count} issues.`);
+  if (s && s.publisher && r.publisher?.name && s.publisher.toLowerCase() !== r.publisher.name.toLowerCase())
+    warns.push(`Folder is filed under ${s.publisher}; this run is ${r.publisher.name}.`);
+  showModal(`
+    <div class="modal-header"><h2>Link this run?</h2></div>
+    <div class="modal-body">
+      <div style="font-weight:600">${esc(r.series || 'Run #' + runId)}</div>
+      <div class="u-label" style="color:var(--tq);margin-top:4px">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null, source === 'metron' ? 'Metron' : 'LOCG'].filter(Boolean).join(' · '))}</div>
+      ${s ? `<div class="u-label" style="color:var(--tq);margin-top:10px">Your folder: ${esc(s.title)}${s.publisher ? ' · ' + esc(s.publisher) : ''}${files != null ? ` · ${files} file${files === 1 ? '' : 's'}` : ''}</div>` : ''}
+      ${warns.length ? `<div style="margin-top:10px;color:var(--amb);font-size:13px">${warns.map(esc).join('<br>')}</div>` : ''}
+      <div style="margin-top:10px;color:var(--tq);font-size:12px">The folder and files stay as they are. Linking gives this series its issue list, details and covers.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="link-run-btn">Link</button>
+    </div>`);
+  document.getElementById('link-run-btn').onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Linking…';
+    try {
+      await api.patch(`/api/series/${seriesId}/locg`, source === 'metron' ? { metron_id: runId } : { locg_id: runId });
+      closeModal();
+      showToast(`Linked to ${r.series || 'the run'} — fetching issues and covers`);
+      _awaitSync(seriesId);
+    } catch (e) {
+      closeModal(); showToast('Couldn’t link that run', 'error');
+    }
+  };
+}
+
+// After a match or link the sync runs in the background. Re-render the page when
+// it lands (last_synced moves) rather than leaving you on a page painted before
+// the issues had their details — up to a minute, then give up quietly.
+async function _awaitSync(seriesId) {
+  let before = null;
+  try { before = (await api.get(`/api/series/${seriesId}`)).last_synced || null; } catch {}
+  renderSeriesDetail(seriesId);
+  const stop = Date.now() + 60000;
+  const tick = async () => {
+    if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
+    let fresh = null;
+    try { fresh = await api.get(`/api/series/${seriesId}`); } catch {}
+    if (fresh && fresh.last_synced && fresh.last_synced !== before) {
+      renderSeriesDetail(seriesId);
+      showToast('Issues and covers are in');
+      return;
+    }
+    if (Date.now() < stop) setTimeout(tick, 2500);
+  };
+  setTimeout(tick, 2500);
 }
 
 // Files on the shelf that aren't numbered issues (trades, omnibuses, oddities) —
@@ -470,9 +523,23 @@ async function _matchNow(seriesId, btn) {
     const r = await fetch(`/api/series/${seriesId}/match`, { method: 'POST' });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.detail || r.status);
-    showToast(body.match_status === 'auto' ? 'Matched — fetching issues, trades and covers'
-      : 'More than one run could fit — pick it below');
-    renderSeriesDetail(seriesId);
+    const m = body.matched;
+    const who = m ? `${m.title}${m.publisher ? ' · ' + m.publisher : ''}${m.year ? ' · ' + m.year : ''} (${m.source === 'metron' ? 'Metron' : 'LOCG'})` : '';
+    if (body.match_status === 'auto') {
+      showToast(`Matched to ${who} — fetching issues and covers`);
+      if (currentView === 'needs-match') {
+        // the row's done its job: fade it, keep the count honest, stay on the list
+        const row = document.getElementById(`nm-${seriesId}`);
+        if (row) { row.style.transition = 'opacity .3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 320); }
+        _updateNeedsBadge(Math.max(0, document.querySelectorAll('.nm-row').length - 1));
+      } else {
+        _awaitSync(seriesId);
+      }
+    } else {
+      showToast(currentView === 'needs-match' ? 'No single run fits — open it and pick' : 'More than one run could fit — pick it below');
+      if (currentView === 'needs-match') navigate('series-detail', { id: seriesId });
+      else renderSeriesDetail(seriesId);
+    }
   } catch (e) {
     showToast(String(e.message || e), 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Match now'; }

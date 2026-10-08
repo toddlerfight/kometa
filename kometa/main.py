@@ -868,12 +868,11 @@ def match_series_now(series_id: int):
     from kometa.shelf_import import match_one
     from kometa.locg_client import LocgPaused
     try:
-        status = match_one(series_id)
+        return match_one(series_id)
     except LocgPaused as e:
         raise HTTPException(503, str(e))
     except Exception as e:
-        raise HTTPException(502, f"LOCG didn't answer: {e}")
-    return {"match_status": status}
+        raise HTTPException(502, f"The catalogue didn't answer: {e}")
 
 
 @app.post("/api/locg/test")

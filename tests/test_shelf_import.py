@@ -210,8 +210,8 @@ class TestPoliteness:
         monkeypatch.setattr(si, "find_confident_match", lambda s, **k: 55 if s["title"] == "Hawkeye" else None)
         monkeypatch.setattr("kometa.sync.sync_one_guarded", lambda *a, **k: None)
         by = {s["title"]: s["id"] for s in db.get_all_series(si.DB_PATH)}
-        assert si.match_one(by["Hawkeye"]) == "auto"
-        assert si.match_one(by["Batman - Knightfall"]) == "needs_match"
+        assert si.match_one(by["Hawkeye"])["match_status"] == "auto"
+        assert si.match_one(by["Batman - Knightfall"])["match_status"] == "needs_match"
 
 
 class TestCoversWithoutKomgaOrLocg:

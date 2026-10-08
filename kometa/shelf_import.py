@@ -97,8 +97,13 @@ def import_new_folders() -> list[int]:
 
 
 def _confident(rows, series: dict) -> int | None:
+    row = _confident_row(rows, series)
+    return int(row["id"]) if row else None
+
+
+def _confident_row(rows, series: dict) -> dict | None:
     """Exactly one candidate agreeing on title, publisher and (when there's any
-    year evidence) year — else None. Shared by Metron and LOCG matching."""
+    year evidence) year — that row, else None. Shared by Metron and LOCG matching."""
     title, folder_year = _title_and_year(series["title"])
     from kometa.metron_client import title_variants
     wants = {norm_key(t) for t in title_variants(title)}
@@ -119,7 +124,7 @@ def _confident(rows, series: dict) -> int | None:
             continue
         passing.append(r)
     if len(passing) == 1:
-        return int(passing[0]["id"])
+        return passing[0]
     # several runs share the name and nothing on disk says which — or none fit
     return None
 
@@ -135,13 +140,24 @@ def find_confident_match(series: dict, search=search_series_strict) -> int | Non
             if r["id"] not in seen:
                 seen.add(r["id"])
                 rows.append(r)
-    return _confident(rows, series)
+    return _remember(series, "locg", _confident_row(rows, series))
 
 
 def find_metron_match(series: dict, search=None) -> int | None:
     """Metron: the series id, or None. Raises MetronUnavailable if it doesn't answer."""
     from kometa import metron_client
-    return _confident((search or metron_client.search_series)(series["title"]), series)
+    return _remember(series, "metron", _confident_row((search or metron_client.search_series)(series["title"]), series))
+
+
+def _remember(series: dict, source: str, row: dict | None) -> int | None:
+    """Keep WHAT matched on the series dict so 'Match now' can say it back to
+    you ('Matched to Batman: Damned, DC 2018') instead of a bare status."""
+    if not row:
+        return None
+    series["_matched"] = {"source": source, "id": int(row["id"]), "title": row.get("title"),
+                          "publisher": row.get("publisher"), "year": row.get("year"),
+                          "issue_count": row.get("issue_count")}
+    return int(row["id"])
 
 
 def _match(series: dict) -> tuple[int | None, int | None]:
@@ -269,9 +285,11 @@ def link_metron_existing(limit: int = METRON_PER_TICK) -> int:
     return linked
 
 
-def match_one(series_id: int) -> str:
-    """'Match now': one series, right away. Returns its new match_status.
-    Raises when LOCG doesn't answer — that's not 'no match'."""
+def match_one(series_id: int) -> dict:
+    """'Match now': one series, right away. Returns {match_status, matched} —
+    matched says WHICH run (source, title, publisher, year) so the UI can tell
+    you, not just that something happened. Raises when a source that was needed
+    didn't answer — that's not 'no match'."""
     from kometa.sync import sync_one, sync_one_guarded
     s = db.get_series_by_id(series_id, DB_PATH)
     metron_id, locg_id = _match(s)
@@ -279,10 +297,11 @@ def match_one(series_id: int) -> str:
         db.set_metron_series_id(series_id, metron_id, DB_PATH)
     if locg_id:
         db.set_locg_series_id(series_id, locg_id, DB_PATH)
-    db.set_match_status(series_id, AUTO if (metron_id or locg_id) else NEEDS_MATCH, DB_PATH)
+    status = AUTO if (metron_id or locg_id) else NEEDS_MATCH
+    db.set_match_status(series_id, status, DB_PATH)
     threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), sync_one),
                      daemon=True).start()
-    return AUTO if (metron_id or locg_id) else NEEDS_MATCH
+    return {"match_status": status, "matched": s.get("_matched")}
 
 
 def import_in_background():
