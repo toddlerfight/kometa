@@ -2996,9 +2996,8 @@ async function renderSettings() {
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('League of Comic Geeks', 'your browser’s pass', 'locg', true, cfg.locg_cf_configured)}
           ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies' })}
-          ${_settingsField('f-locg-ua', 'User-Agent of that browser', cfg.locg_user_agent, { ph: navigator.userAgent })}
           <div class="settings-help">${cfg.locg_cf_configured
-            ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC. It lasts a few hours and is forgotten the moment LOCG refuses it.`
+            ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.locg_user_agent))}. It lasts a few hours and is forgotten the moment LOCG refuses it. Paste from the browser that has LOCG open.`
             : 'LOCG challenges anything that isn’t a browser. When yours gets through, its cookie lets Kometa ride the same session — same house, same IP — at the usual trickle. Optional; Metron covers nearly everything now.'}</div>
         </div>
       </div>
@@ -3035,10 +3034,18 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
-  'f-locg-ua':         { card: 'locg',      key: 'locg_user_agent' },
 };
 
 const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', locg: 'locg' };
+
+// 'Chrome 154 on macOS' from a User-Agent — for the LOCG card's status line.
+function _browserName(ua) {
+  ua = ua || '';
+  const os = /Macintosh/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+  const m = ua.match(/(Edg|Chrome|Firefox|Version)\/(\d+)/);
+  const name = !m ? 'a browser' : m[1] === 'Edg' ? `Edge ${m[2]}` : m[1] === 'Version' ? `Safari ${m[2]}` : `${m[1]} ${m[2]}`;
+  return os ? `${name} on ${os}` : name;
+}
 
 function _settingsField(id, label, value, opts = {}) {
   const f = _SETTINGS_FIELDS[id] || {};
