@@ -120,6 +120,9 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # checks daytime + LOCG backoff). Never a batch — see shelf_import.
     if trickle_fn:
         from kometa.shelf_import import TRICKLE_MINUTES
+        # First tick one minute after boot, not twenty: an interval job's clock
+        # restarts with the container, and a deploy-heavy evening (2026-10-08,
+        # ~25 restarts) starved the matcher to two ticks in three hours.
         scheduler.add_job(
             trickle_fn,
             IntervalTrigger(minutes=TRICKLE_MINUTES),
@@ -127,6 +130,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             replace_existing=True,
             coalesce=True,
             max_instances=1,
+            next_run_time=datetime.now(TZ) + timedelta(minutes=1),
         )
 
     scheduler.start()
