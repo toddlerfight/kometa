@@ -1,0 +1,177 @@
+"""Twin folders: one run, two folders. Merge the second into the first.
+
+The import logs these ('duplicate folder … left on the shelf'): a shelf folder
+nobody added whose title is the same series as one you already have —
+'Event Horizon- Dark Descent' beside 'Event Horizon - Dark Descent', Last
+Ronin under both IDW and Mirage. The series' own folder is kept. The twin's
+files move in; an issue present in BOTH keeps the better copy (CBZ over CBR,
+then the bigger file) and the other goes to _trash with an origin marker, same
+as Remove; files with no issue number move as they are. Book rows follow every
+move, so read progress survives. Plan first; nothing moves until Apply.
+"""
+import logging
+import os
+import re
+import shutil
+import time
+
+import kometa.db as db
+from kometa import sources
+from kometa.naming import norm_key, parse_issue_number, OWNED_EXTS
+from kometa.reader import READER_ID
+
+logger = logging.getLogger(__name__)
+
+DB_PATH = db.DB_PATH
+
+
+class TwinError(RuntimeError):
+    pass
+
+
+def _key(title: str) -> str:
+    return norm_key(re.sub(r"\(\d{4}\)", "", title).strip().strip("-").strip())
+
+
+def find_twins(path=None) -> list[dict]:
+    """[{shelf_id, folder, title, publisher, book_count, series_id, series_title, series_folder}]"""
+    path = path or DB_PATH
+    series = [s for s in db.get_all_series(path) if s.get("kind") != "arc" and s.get("folder_path")]
+    by_key: dict[str, dict] = {}
+    for s in series:
+        by_key.setdefault(_key(s["title"]), s)
+    out = []
+    for sh in db.list_shelf(READER_ID, untracked_only=True, path=path):
+        s = by_key.get(_key(sh["title"]))
+        if not s or os.path.realpath(s["folder_path"]) == os.path.realpath(sh["folder_path"]):
+            continue
+        out.append({"shelf_id": sh["id"], "folder": sh["folder_path"], "title": sh["title"], "publisher": sh.get("publisher"),
+                    "book_count": sh.get("book_count"), "series_id": s["id"], "series_title": s["title"],
+                    "series_folder": s["folder_path"], "series_publisher": s.get("publisher")})
+    return out
+
+
+def _files(folder: str) -> list[str]:
+    try:
+        return sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in OWNED_EXTS and not f.startswith("."))
+    except OSError:
+        return []
+
+
+def _better(a_path: str, b_path: str) -> str:
+    """The copy to keep: CBZ beats CBR, then the bigger file."""
+    def rank(p):
+        return (p.lower().endswith(".cbz"), os.path.getsize(p) if os.path.exists(p) else 0)
+    return a_path if rank(a_path) >= rank(b_path) else b_path
+
+
+def plan(shelf_id: int, series_id: int, path=None) -> dict:
+    path = path or DB_PATH
+    sh = db.get_shelf_series(shelf_id, path)
+    s = db.get_series_by_id(series_id, path)
+    if not sh or not s:
+        raise TwinError("No such folder or series")
+    if sh.get("tracked_series_id"):
+        raise TwinError("That folder is already a series of its own")
+    src, dst = sh["folder_path"], s.get("folder_path")
+    if not os.path.isdir(src) or not dst or not os.path.isdir(dst):
+        raise TwinError("A folder is missing on disk")
+    have = {}
+    for f in _files(dst):
+        n = parse_issue_number(f, s["title"])
+        if n is not None:
+            have.setdefault(n, f)
+    moves, dupes, asis = [], [], []
+    for f in _files(src):
+        n = parse_issue_number(f, sh["title"]) or parse_issue_number(f, s["title"])
+        if n is None:
+            asis.append({"file": f})
+            continue
+        if n in have:
+            keep = _better(os.path.join(src, f), os.path.join(dst, have[n]))
+            dupes.append({"number": n, "twin_file": f, "series_file": have[n], "keep": "twin" if keep.startswith(src + "/") else "series"})
+        else:
+            moves.append({"number": n, "file": f})
+    return {"shelf_id": shelf_id, "series_id": series_id, "twin_title": sh["title"], "series_title": s["title"],
+            "twin_folder": src, "series_folder": dst, "moves": moves, "duplicates": dupes, "as_is": asis,
+            "counts": {"move": len(moves) + len(asis), "duplicate": len(dupes),
+                       "twin_wins": sum(d["keep"] == "twin" for d in dupes)}}
+
+
+def _bin(path_: str, root: str, why: str, dbp):
+    rel = os.path.relpath(path_, root)
+    dest = os.path.join(root, "_trash", rel)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if os.path.exists(dest):
+        dest = f"{dest} ({int(time.time())})"
+    shutil.move(path_, dest)
+    marker = os.path.join(os.path.dirname(dest), ".kometa-origin")
+    if not os.path.exists(marker):
+        with open(marker, "w") as f:
+            f.write(os.path.dirname(path_))
+    with db._connect(dbp) as c:
+        c.execute("DELETE FROM read_progress WHERE book_id IN (SELECT id FROM books WHERE path = ?)", (path_,))
+        c.execute("DELETE FROM books WHERE path = ?", (path_,))
+    logger.info(f"Twin merge: binned {os.path.basename(path_)} ({why})")
+
+
+def _move(a: str, b: str, series_id: int, shelf_id: int, number, dbp):
+    if os.path.exists(b):
+        stem, ext = os.path.splitext(b)
+        b = f"{stem} ({int(time.time())}){ext}"
+    os.rename(a, b)
+    db.rename_book_path(a, b, dbp)
+    db.set_book_owner(b, series_id, shelf_id, number=number, path=dbp)
+    return b
+
+
+def apply(shelf_id: int, series_id: int, path=None, root: str | None = None) -> dict:
+    path = path or DB_PATH
+    root = root or sources.comics_root()
+    p = plan(shelf_id, series_id, path)
+    src, dst = p["twin_folder"], p["series_folder"]
+    keep_shelf = db.shelf_id_for_series(series_id, path)
+    done = {"moved": 0, "binned": 0, "errors": []}
+    for d in p["duplicates"]:
+        try:
+            if d["keep"] == "twin":
+                _bin(os.path.join(dst, d["series_file"]), root, f"duplicate of #{d['number']:g}, twin's copy is better", path)
+                _move(os.path.join(src, d["twin_file"]), os.path.join(dst, d["twin_file"]), series_id, keep_shelf, d["number"], path)
+                done["moved"] += 1
+            else:
+                _bin(os.path.join(src, d["twin_file"]), root, f"duplicate of #{d['number']:g}", path)
+            done["binned"] += 1
+        except Exception as e:
+            done["errors"].append({"file": d["twin_file"], "error": str(e)})
+    for m in p["moves"]:
+        try:
+            _move(os.path.join(src, m["file"]), os.path.join(dst, m["file"]), series_id, keep_shelf, m["number"], path)
+            done["moved"] += 1
+        except Exception as e:
+            done["errors"].append({"file": m["file"], "error": str(e)})
+    for a in p["as_is"]:
+        try:
+            _move(os.path.join(src, a["file"]), os.path.join(dst, a["file"]), series_id, keep_shelf, None, path)
+            done["moved"] += 1
+        except Exception as e:
+            done["errors"].append({"file": a["file"], "error": str(e)})
+    if not done["errors"]:
+        db.remove_books_under(src, path)
+        db.remove_shelf_series_by_path(src, path)
+        leftovers = [f for f in os.listdir(src) if not f.startswith(".")]
+        if not leftovers:
+            shutil.rmtree(src, ignore_errors=True)
+            # an emptied publisher folder (Mirage/, Splitter/) goes too
+            parent = os.path.dirname(src)
+            try:
+                if parent != root and not [f for f in os.listdir(parent) if not f.startswith(".")]:
+                    shutil.rmtree(parent, ignore_errors=True)
+            except OSError:
+                pass
+    try:
+        from kometa.sync import rescan_owned
+        rescan_owned(db.get_series_by_id(series_id, path))
+    except Exception as e:
+        logger.info(f"Twin merge: rescan failed: {e}")
+    logger.info(f"Merged twin {p['twin_title']!r} into {p['series_title']!r}: {done}")
+    return {**done, "series_id": series_id, "series_title": p["series_title"]}

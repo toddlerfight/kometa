@@ -893,6 +893,36 @@ def collections_apply(req: CollectionApplyRequest):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/report/twins")
+def twins_report():
+    """Shelf folders that are the same run as a series you have (kometa/twins.py)."""
+    from kometa import twins
+    return {"rows": twins.find_twins()}
+
+
+class TwinRequest(BaseModel):
+    shelf_id: int
+    series_id: int
+
+
+@app.post("/api/report/twins/plan")
+def twins_plan(req: TwinRequest):
+    from kometa import twins
+    try:
+        return twins.plan(req.shelf_id, req.series_id)
+    except twins.TwinError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/report/twins/apply")
+def twins_apply(req: TwinRequest):
+    from kometa import twins
+    try:
+        return twins.apply(req.shelf_id, req.series_id)
+    except twins.TwinError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/report/singles")
 def singles_report():
     """Single-file series classified (one-shot / collected / split / unknown).

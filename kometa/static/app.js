@@ -742,6 +742,63 @@ async function renderSinglesReport() {
         <div class="nm-list">${rows.map(row).join('')}</div></div>`;
     }).join('')}`);
   _loadCollections();
+  _loadTwins();
+}
+
+// Twin folders: one run, two folders (kometa/twins.py). Rendered at the top of
+// the report; Merge shows the plan — moves, duplicates and which copy wins —
+// and nothing happens until you confirm.
+async function _loadTwins() {
+  let r;
+  try { r = await api.get('/api/report/twins'); } catch { return; }
+  if (currentView !== 'singles' || !r.rows.length) return;
+  const app = document.getElementById('app');
+  const html = `<div class="singles-group" id="twins-group">
+    <div class="singles-head"><span class="series-card-title">Twin folders <span class="settings-opt">${r.rows.length}</span></span>
+      <span class="tidy-why">Two folders for one run. The series' own folder is kept; the twin's files move in, true duplicates keep the better copy.</span></div>
+    <div class="nm-list">${r.rows.map(x => `
+      <div class="nm-row" id="tw-${x.shelf_id}">
+        <img class="nm-cover" src="/api/shelf/${x.shelf_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+        <div class="nm-main">
+          <div class="nm-title">${esc(x.title)}</div>
+          <div class="nm-meta u-truncate">${esc(x.folder.replace(/^\/comics\//, ''))} · ${x.book_count} file${x.book_count === 1 ? '' : 's'}</div>
+          <div class="tidy-why">same run as <b>${esc(x.series_title)}</b> · ${esc(x.series_folder.replace(/^\/comics\//, ''))}</div>
+        </div>
+        <div class="nm-actions"><button class="btn btn-primary btn-sm" onclick="_mergeTwin(${x.shelf_id}, ${x.series_id})">Merge</button></div>
+      </div>`).join('')}</div></div>`;
+  app.insertAdjacentHTML('afterbegin', html);
+}
+
+async function _mergeTwin(shelfId, seriesId) {
+  let p;
+  try { p = await api.post('/api/report/twins/plan', { shelf_id: shelfId, series_id: seriesId }); }
+  catch (e) { showToast(`Merge: ${e.message || 'couldn’t plan'}`, 'error'); return; }
+  const c = p.counts;
+  const row = (tag, text, sub) => `<div class="tidy-row"><span class="tidy-tag u-label">${tag}</span>
+    <div class="tidy-paths"><div class="u-truncate">${esc(text)}</div>${sub ? `<div class="tidy-why">${esc(sub)}</div>` : ''}</div></div>`;
+  showModal(`
+    <div class="modal-header"><h2>Merge into ${esc(p.series_title)}?</h2></div>
+    <div class="modal-body tidy-body">
+      <div class="u-label" style="color:var(--tq)">${c.move} file${c.move === 1 ? '' : 's'} move in · ${c.duplicate} duplicate${c.duplicate === 1 ? '' : 's'} (${c.twin_wins} where the twin's copy is better) · the twin folder goes</div>
+      ${p.moves.map(m => row('move', m.file)).join('')}
+      ${p.as_is.map(a => row('move', a.file, 'no issue number — moved as is')).join('')}
+      ${p.duplicates.map(d => row('dupe', d.twin_file, d.keep === 'twin' ? `keeps this; bins the series' ${d.series_file}` : `binned; the series already has ${d.series_file}`)).join('')}
+      <div class="tidy-why" style="margin-top:12px">Binned files sit in _trash for 7 days. Reading progress follows the files.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="merge-btn">Merge</button>
+    </div>`);
+  document.getElementById('merge-btn').onclick = async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Merging…';
+    try {
+      const r = await api.post('/api/report/twins/apply', { shelf_id: shelfId, series_id: seriesId });
+      closeModal();
+      const errs = (r.errors || []).length;
+      showToast(`Merged into ${r.series_title}: ${r.moved} moved, ${r.binned} binned${errs ? `, ${errs} failed` : ''}`, errs ? 'error' : '');
+      const el = document.getElementById(`tw-${shelfId}`); if (el) el.remove();
+    } catch (e) { closeModal(); showToast(`Merge failed: ${e.message || ''}`, 'error'); }
+  };
 }
 
 // Collected editions: what each one collects (publisher wiki) and the run on
