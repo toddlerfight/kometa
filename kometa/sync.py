@@ -292,6 +292,13 @@ def sync_one(series: dict, force: bool = False):
                     if issue_map:
                         from datetime import datetime, timezone
                         db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
+                    if series.get("metron_type") is None:
+                        # once per series: what KIND of run this is (one-shot, limited,
+                        # trade…) — kometa/singles.py reads it to tell a stub from a book
+                        try:
+                            db.set_metron_type(series["id"], metron_client.series_detail(mid).get("type"), DB_PATH)
+                        except metron_client.MetronUnavailable:
+                            pass
                 except metron_client.MetronUnavailable as e:
                     logger.info(f"Metron unavailable for {series['title']!r}: {e}")
             have_metron = bool(series.get("metron_fetched_at")) or bool(issue_map)

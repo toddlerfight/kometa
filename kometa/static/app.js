@@ -138,6 +138,7 @@ function renderView() {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
       case 'needs-match':   return renderNeedsMatch();
+      case 'singles':       return renderSinglesReport();
       case 'series-detail': return renderSeriesDetail(currentParams.id);
       case 'shelf':         return renderShelfSeries(currentParams.id);
       case 'pull-list':     return renderPullList();
@@ -620,8 +621,55 @@ async function renderNeedsMatch() {
   const waiting = rows.filter(s => s.match_status === 'pending').length;
   setApp(`
     <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
-      ? ` — ${waiting} still in the queue (a few a day, politely)` : ''}. Open one to pick its run, or Remove what's trash.</div>
+      ? ` — ${waiting} still in the queue (a few a day, politely)` : ''}. Open one to pick its run, or Remove what's trash.
+      <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Single-file series report →</a></div>
     <div class="nm-list">${rows.map((s, i) => _needsRowHtml(s, i)).join('')}</div>`);
+}
+
+// --- Single-file series report (read-only) ----------------------------------------
+// 414 of 876 series are one file. The report says what each one IS — a real
+// one-shot, a trade filed as a run, one folder of a split mini, or not yet known
+// — so the per-case steps (merge, file under parent) start from facts.
+const _SINGLE_KINDS = [
+  ['collected', 'Collected editions', 'Trades, deluxe and omnibus editions filed as series. These belong under their parent run as trades.'],
+  ['split',     'Split minis',        'One series spread one issue per folder. These belong merged into one folder.'],
+  ['one_shot',  'One-shots',          'Genuine one-shots, annuals and graphic novels. 1/1 is correct here.'],
+  ['unknown',   'Not sure yet',       'Metron type still being fetched, or no catalogue match and a name that says nothing.'],
+];
+
+async function renderSinglesReport() {
+  setTopbar();
+  document.getElementById('topbar-title').textContent = 'Single-file series';
+  document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-ghost btn-sm" onclick="renderSinglesReport()">Refresh</button>`;
+  setApp('<div class="state-msg">Looking at every folder…</div>');
+  const r = await api.get('/api/report/singles');
+  if (currentView !== 'singles') return;
+  const c = r.counts;
+  const open = id => `navigate('series-detail', {id: ${id}})`;
+  const row = x => `
+    <div class="nm-row" style="cursor:pointer" onclick="${open(x.id)}">
+      <img class="nm-cover" src="/api/series/${x.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+      <div class="nm-main">
+        <div class="nm-title">${esc(x.title)}</div>
+        <div class="nm-meta u-truncate">${esc(x.file)}</div>
+        <div class="tidy-why">${esc(x.why)}${x.parent_guess ? ` · parent? <b>${esc(x.parent_guess)}</b>${x.parent_on_shelf ? ' (on your shelf)' : ' (not on shelf)'}` : ''}${x.split_base ? ` · merge as <b>${esc(x.split_base)}</b>` : ''}</div>
+      </div>
+      <span class="nm-status${x.match_status === 'needs_match' || x.match_status === 'pending' ? ' amber' : ''}">${esc(x.metron_type || (x.match_status === 'needs_match' || x.match_status === 'pending' ? 'unmatched' : ''))}</span>
+    </div>`;
+  setApp(`
+    <div class="nm-intro">${r.singles} of ${r.total_series} series are a single file. Nothing on this page changes anything — it's the dry run for merging and filing.
+      ${r.types_pending ? `<br>Metron types known for ${r.types_known}, still fetching ${r.types_pending} (a few seconds each) — refresh in a while and "not sure yet" shrinks.` : ''}</div>
+    ${_SINGLE_KINDS.map(([k, label, help]) => {
+      const rows = r.rows.filter(x => x.kind === k);
+      if (!rows.length) return '';
+      if (k === 'split') rows.sort((a, b) => (a.split_base || '').localeCompare(b.split_base || '') || a.title.localeCompare(b.title));
+      else rows.sort((a, b) => a.title.localeCompare(b.title));
+      return `<div class="singles-group">
+        <div class="singles-head"><span class="series-card-title">${label} <span class="settings-opt">${rows.length}</span></span>
+          <span class="tidy-why">${help}</span></div>
+        <div class="nm-list">${rows.map(row).join('')}</div></div>`;
+    }).join('')}`);
 }
 
 function _needsRowHtml(s, i) {

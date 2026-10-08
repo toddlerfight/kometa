@@ -2114,3 +2114,7 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .tidy-to { color: var(--pri); }
 .tidy-why { color: var(--tq); font-size: 11px; margin-top: 2px; }
 .tidy-leave .tidy-tag { color: var(--amb); }
+
+/* --- single-file report --- */
+.singles-group { margin-top: var(--sp-lg, 24px); }
+.singles-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }

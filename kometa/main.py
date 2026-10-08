@@ -830,6 +830,15 @@ def tidy_plan(series_id: int):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/report/singles")
+def singles_report():
+    """Single-file series classified (one-shot / collected / split / unknown).
+    Read-only. Kicks the Metron series-type backfill so 'unknown' shrinks."""
+    from kometa import singles
+    singles.backfill_in_background()
+    return singles.report()
+
+
 @app.post("/api/series/{series_id}/tidy")
 def tidy_apply(series_id: int):
     from kometa import tidy
