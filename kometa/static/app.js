@@ -712,40 +712,13 @@ function _needsRowHtml(s, i) {
       <div class="nm-actions">
         ${s.match_status === 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="_matchNow(${s.id}, this)">Match now</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="${go}">Open</button>
-        <button class="btn btn-danger btn-sm" onclick="_trashSeries(${s.id}, this, false)">Remove</button>
+        <button class="btn btn-danger btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
       </div>
     </div>`;
 }
 
-// Two clicks, then the series AND its folder are gone (folder → _trash, purged
-// after a week). The toast carries Undo for a while.
-async function _trashSeries(id, btn, fromDetail) {
-  if (btn.dataset.armed !== '1') {
-    btn.dataset.armed = '1';
-    btn.textContent = 'Confirm remove';
-    setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Remove'; }, 4000);
-    return;
-  }
-  btn.disabled = true;
-  btn.textContent = 'Removing…';
-  try {
-    const r = await api.post(`/api/series/${id}/trash`, {});
-    _lastTrashed = r.trashed_to;
-    showToastAction(`${r.title} removed — files in the bin for ${r.purge_days} days`, 'Undo', () => _undoTrash(r.trashed_to));
-    if (fromDetail) navigate('needs-match');
-    else {
-      const row = document.getElementById(`nm-${id}`);
-      if (row) row.remove();
-      const left = document.querySelectorAll('.nm-row').length;
-      _updateNeedsBadge(left);
-      if (!left) renderNeedsMatch();
-    }
-  } catch (e) {
-    btn.disabled = false; btn.textContent = 'Remove';
-    showToast(`Remove failed: ${e.message || id}`, 'error');
-  }
-}
-let _lastTrashed = null;
+// Removing goes through confirmDelete / doDelete — ONE modal, one meaning —
+// from the series page, its match banner and a Needs matching row alike.
 
 // --- Tidy: files to the house convention, dry run first --------------------------
 // Publisher/Series - Subtitle (Year)/Series - Subtitle #001 (Year).cbz. The modal IS
@@ -1275,7 +1248,7 @@ async function renderSeriesDetail(id) {
           <div class="match-head-actions">
             ${s.match_status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="_matchNow(${s.id}, this)">Match now</button>` : ''}
             <button class="btn btn-ghost btn-sm match-remove" title="Remove this series and move its folder to the bin"
-              onclick="_trashSeries(${s.id}, this, true)">Remove</button>
+              onclick="confirmDelete(${s.id})">Remove</button>
           </div>
         </div>
         ${s.match_status === 'needs_match' ? `
@@ -2214,9 +2187,11 @@ function confirmDelete(id) {
   // raw quotes before the JS engine parses the handler, so esc() can't save you).
   // One Remove, one meaning (2026-10-08): the series AND its files. 'Untrack'
   // is gone — a folder left on disk just comes back on the next shelf scan.
-  const title = _detailSeries?.title || 'this series';
-  const files = (_detailSeries?.issues || []).filter(i => i.owned).length;
-  const hasFolder = !!_detailSeries?.folder_path;
+  // Same modal from the series page, its match banner, and a Needs matching row.
+  const s = (_detailSeries && _detailSeries.id === id) ? _detailSeries : (_nmRows || []).find(x => x.id === id) || null;
+  const title = s?.title || 'this series';
+  const files = s?.issues ? s.issues.filter(i => i.owned).length : (s?.owned ?? 0);
+  const hasFolder = !!s?.folder_path;
   showModal(`
     <div class="modal-title">Remove Series</div>
     <div class="confirm-body">
@@ -2242,7 +2217,16 @@ async function doDelete(id) {
   }
   if (r?.trashed_to) showToastAction(`${r.title} removed — files in the bin for ${r.purge_days} days`, 'Undo', () => _undoTrash(r.trashed_to));
   else showToast(`${r?.title || 'Series'} removed`);
-  navigate('library');
+  if (currentView === 'needs-match') {
+    // stay on the list: drop the row, keep the count honest, keep your search
+    const row = document.getElementById(`nm-${id}`);
+    if (row) row.remove();
+    _nmRows = (_nmRows || []).filter(x => x.id !== id);
+    _updateNeedsBadge(_nmRows.length);
+    if (!_nmRows.length) renderNeedsMatch();
+    return;
+  }
+  navigate(_detailSeries && (_detailSeries.match_status === 'pending' || _detailSeries.match_status === 'needs_match') ? 'needs-match' : 'library');
 }
 
 // --- Pull List ---
