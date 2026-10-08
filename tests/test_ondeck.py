@@ -71,13 +71,24 @@ def test_coming_soon_only_when_caught_up_and_labels_from_real_data(lib):
     assert list(rows) == ["Saga", "Low"]                                  # most recently read first
 
 
-def test_recent_is_one_card_per_series_newest_first_unread_only(lib):
+def test_recently_added_is_by_file_time_one_card_per_series_unread_only(lib):
     b = lib["b"]
     with db._connect(lib["db"]) as c:
-        c.execute("UPDATE books SET added_at = '2026-10-01 00:00:00'")
-        c.execute("UPDATE books SET added_at = '2026-10-08 10:00:00' WHERE id IN (?, ?)", (b[("saga", 2)], b[("saga", 3)]))
-        c.execute("UPDATE books SET added_at = '2026-10-07 10:00:00' WHERE id = ?", (b[("low", 2)],))
+        c.execute("UPDATE books SET mtime = 1.0")
+        c.execute("UPDATE books SET mtime = 300.0 WHERE id IN (?, ?)", (b[("saga", 2)], b[("saga", 3)]))
+        c.execute("UPDATE books SET mtime = 200.0 WHERE id = ?", (b[("low", 2)],))
     db.set_progress("me", b[("saga", 3)], 24, True, "2026-10-08T11:00:00Z", lib["db"])   # read already → not 'new' to you
-    rows = od.recent(path=lib["db"])
+    rows = od.recent_added(path=lib["db"])
     assert [(r["series"], r["label"]) for r in rows[:2]] == [("Saga", "#2"), ("Low", "#2")]
     assert len([r for r in rows if r["series"] == "Saga"]) == 1
+
+
+def test_recently_released_is_by_store_date_of_owned_issues(lib):
+    b = lib["b"]
+    with db._connect(lib["db"]) as c:
+        c.execute("UPDATE issue_status SET store_date = '2026-09-30' WHERE tracked_series_id = ? AND number = 3", (lib["saga"],))
+        c.execute("UPDATE issue_status SET store_date = '2026-10-07' WHERE tracked_series_id = ? AND number = 2", (lib["low"],))
+    rows = od.recent_released(path=lib["db"])
+    assert [(r["series"], r["label"], r["store_date"]) for r in rows[:2]] == [("Low", "#2", "2026-10-07"), ("Saga", "#3", "2026-09-30")]
+    db.set_progress("me", b[("low", 2)], 24, True, "2026-10-08T11:00:00Z", lib["db"])
+    assert [r["series"] for r in od.recent_released(path=lib["db"])][:2] == ["Saga", "Low"]   # Low #2 read → Low #1 is its newest unread

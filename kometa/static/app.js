@@ -632,7 +632,9 @@ async function renderOnDeck() {
         'Finish an issue and its series lands here.') +
     row('Coming soon', 'series you’re caught up on whose next issue isn’t here yet', d.soon.map(soonCard),
         'Nothing waiting. Either you’re not caught up on anything, or everything you’re caught up on has nothing coming.') +
-    row('Recent', 'newest on the shelf, one card per series', (d.recent || []).map(c => bookCard(c)),
+    row('Recently released', 'newest release dates you own, one card per series', (d.released || []).map(c => bookCard(c)),
+        'Nothing with a release date yet.') +
+    row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.')
   );
 }

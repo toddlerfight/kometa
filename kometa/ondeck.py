@@ -140,28 +140,48 @@ def coming_soon(reader_id=READER_ID, path=None) -> list[dict]:
     return out[:ROW_LIMIT]
 
 
-def recent(reader_id=READER_ID, path=None) -> list[dict]:
-    """What landed on the shelf lately: one card per series (its newest file),
-    newest first, unread only. Seven Deadly Duo issues in one night is one card."""
-    path = path or DB_PATH
+def _one_per_series(conn, rows, **field) -> list[dict]:
     out, seen = [], set()
+    for r in rows:
+        key = ("t", r["tracked_series_id"]) if r["tracked_series_id"] else ("s", r["shelf_series_id"])
+        if key[1] is None or key in seen or not os.path.exists(r["path"]):
+            continue
+        seen.add(key)
+        out.append(_card(conn, r, None, **{k: r[v] for k, v in field.items()}))
+        if len(out) >= ROW_LIMIT:
+            break
+    return out
+
+
+def recent_added(reader_id=READER_ID, path=None) -> list[dict]:
+    """What landed on the shelf lately, by the FILE's own timestamp (the index
+    date lies: the whole shelf was indexed this week). One card per series,
+    its newest file, unread only — seven Deadly Duo issues in a night is one card."""
+    path = path or DB_PATH
     with db._connect(path) as conn:
         rows = conn.execute("""
             SELECT b.*, p.completed FROM books b
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
             WHERE COALESCE(p.completed, 0) = 0
-            ORDER BY b.added_at DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
-        for r in rows:
-            key = ("t", r["tracked_series_id"]) if r["tracked_series_id"] else ("s", r["shelf_series_id"])
-            if key in seen or not os.path.exists(r["path"]):
-                continue
-            seen.add(key)
-            out.append(_card(conn, r, None, added_at=r["added_at"]))
-            if len(out) >= ROW_LIMIT:
-                break
-    return out
+            ORDER BY b.mtime DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
+        return _one_per_series(conn, rows, mtime="mtime")
+
+
+def recent_released(reader_id=READER_ID, path=None) -> list[dict]:
+    """Owned issues by RELEASE date (the catalogue's store date), newest first,
+    unread only, one card per series. What came out lately that you have."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        rows = conn.execute("""
+            SELECT b.*, i.store_date, p.completed FROM issue_status i
+            JOIN books b ON b.tracked_series_id = i.tracked_series_id AND b.number = i.number
+            LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+            WHERE i.owned = 1 AND i.store_date IS NOT NULL AND COALESCE(p.completed, 0) = 0
+            ORDER BY i.store_date DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
+        return _one_per_series(conn, rows, store_date="store_date")
 
 
 @router.get("/api/ondeck")
 def on_deck():
-    return {"continue": continue_reading(), "next": up_next(), "soon": coming_soon(), "recent": recent()}
+    return {"continue": continue_reading(), "next": up_next(), "soon": coming_soon(),
+            "released": recent_released(), "added": recent_added()}
