@@ -888,27 +888,49 @@ function _rlDelete(id, name) {
   };
 }
 
+let _rlTab = 'all';
+function setRlTab(tab, id) { _rlTab = tab; renderReadList(id); }
+
+// The series page's layout: a cover for the backdrop, a count chip, a sub line,
+// tabs, and one grid of tiles in reading order. A gap in the order is a tile
+// too — amber frame, no cover — so the list reads as the list, holes and all.
 async function renderReadList(id) {
   setTopbar();
   setApp('<div class="state-msg">Loading...</div>');
   const l = await api.get(`/api/readlists/${id}`);
   if (currentView !== 'readlist' || currentParams.id !== id) return;
+  const books = l.entries.flatMap(e => e.books);
+  const bg = document.getElementById('series-bg'), bgImg = document.getElementById('series-bg-img');
+  if (books.length) {
+    bgImg.style.backgroundImage = `url("/api/books/${books[Math.floor(Math.random() * books.length)].id}/cover")`;
+    bg.classList.remove('hidden');
+  }
   document.getElementById('topbar-title').textContent = l.name;
+  document.getElementById('topbar-chips').innerHTML =
+    `<span class="chip ${l.owned < l.total ? 'chip-missing' : 'chip-complete'}">${l.owned}/${l.total}</span>`;
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
-    ${l.owned} OF ${l.total} ON THE SHELF${l.read ? ` · ${l.read} READ` : ''}</span>`;
+    ${l.read ? `${l.read} READ · ` : ''}${l.source === 'komga' ? 'FROM KOMGA' : 'CBL'}</span>`;
   document.getElementById('topbar-actions').innerHTML = `
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : ''}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
-  const entries = l.entries.map(e => {
-    const head = `<div class="rl-head"><span class="rl-pos">${e.position}</span>
-      <span class="rl-series">${esc(e.series)}${e.number && !e.expanded && e.status !== 'not_on_shelf' ? ` <span class="rl-num">#${esc(e.number)}</span>` : ''}</span>
-      ${e.year ? `<span class="rl-year">${esc(e.year)}</span>` : ''}
-      ${e.status === 'not_on_shelf' ? '<span class="rl-state">not on the shelf</span>'
-        : e.status === 'missing' ? `<span class="rl-state amber">#${esc(e.number)} not here yet</span>` : ''}
-      ${e.shelf_id ? `<a class="btn-link rl-open" onclick="${e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : `navigate('shelf', {id: ${e.shelf_id}})`}">open</a>` : ''}
-    </div>`;
-    const tiles = e.books.length ? `<div class="issue-grid rl-grid">${e.books.map(b => _bookTile(b, e.series, { list: id })).join('')}</div>` : '';
-    return `<div class="rl-entry rl-${e.status}">${head}${tiles}</div>`;
-  }).join('');
-  setApp(`<div class="rl-entries">${entries}</div>`);
+  const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
+      aria-selected="${_rlTab === t}" onclick="setRlTab('${t}', ${id})" onkeydown="if(event.key==='Enter'||event.key===' ')setRlTab('${t}', ${id})">${t}</div>`).join('');
+  const tiles = [];
+  for (const e of l.entries) {
+    const owned = e.status === 'owned';
+    if (_rlTab === 'on shelf' && !owned) continue;
+    if (_rlTab === 'not here' && owned) continue;
+    if (owned) {
+      for (const b of e.books) tiles.push(_bookTile({ ...b, label: `${e.series} ${b.label}` }, e.series, { list: id }));
+    } else {
+      const label = `${e.series}${e.number ? ' #' + e.number : ''}`;
+      const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
+      tiles.push(`<div class="issue-tile rl-gap" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
+        <div class="issue-tile-img unknown missing"></div>
+        <div class="issue-tile-num">${esc(label)}</div></div>`);
+    }
+  }
+  setApp(`
+    <div class="issue-tabs-row"><div class="issue-tabs">${tabs}</div></div>
+    ${tiles.length ? `<div class="issue-grid rl-grid">${tiles.join('')}</div>` : '<div class="state-msg">Nothing here.</div>'}`);
 }
