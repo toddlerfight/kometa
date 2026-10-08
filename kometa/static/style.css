@@ -2076,3 +2076,4 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .match-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-body); }
 .shelf-files { margin-top: 28px; }
 .shelf-files-head { color: var(--tq); margin-bottom: 12px; }
+.match-paused { color: var(--amb); }

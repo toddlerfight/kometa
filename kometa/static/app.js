@@ -1075,6 +1075,7 @@ async function renderSeriesDetail(id) {
   if (detailTab === 'trades') _loadTradesPanel(id);
   if (detailTab === 'arcs') _loadArcsPanel(id);
   if (s.match_status === 'needs_match') _loadMatchCandidates(id, s.title);
+  if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
   if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
 
   // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now

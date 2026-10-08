@@ -60,10 +60,18 @@ def _paused_until() -> float:
     return _pause["until"]
 
 
+def pause_label(until: float) -> str:
+    """'2:50pm' in YOUR timezone. The container runs on UTC, so time.localtime
+    printed '04:50' for a 2:50pm Brisbane pause."""
+    from datetime import datetime
+    from kometa.scheduler import TZ
+    return datetime.fromtimestamp(until, TZ).strftime("%-I:%M%p").lower()
+
+
 def _check_paused():
     until = _paused_until()
     if time.time() < until:
-        raise LocgPaused(f"LOCG paused until {time.strftime('%H:%M', time.localtime(until))} (it refused us)")
+        raise LocgPaused(f"LOCG is pausing us until {pause_label(until)} — it refused our requests")
 
 
 def _note_refusal(r):

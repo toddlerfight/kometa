@@ -470,3 +470,18 @@ async function _matchNow(seriesId, btn) {
     if (btn) { btn.disabled = false; btn.textContent = 'Match now'; }
   }
 }
+
+// LOCG has paused us (it refused requests): say so on the banner instead of
+// offering buttons that can only fail.
+async function _showLocgPause(seriesId) {
+  let st;
+  try { st = await api.get('/api/locg/status'); } catch { return; }
+  if (!st.paused_until || currentView !== 'series-detail' || currentParams.id !== seriesId) return;
+  const banner = document.getElementById('match-banner');
+  if (!banner) return;
+  banner.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  if (!banner.querySelector('.match-paused')) {
+    banner.insertAdjacentHTML('beforeend', `<div class="match-paused u-label">LOCG is pausing us until
+      ${esc(st.paused_until_label)} — it refused our requests. Matching resumes after that.</div>`);
+  }
+}

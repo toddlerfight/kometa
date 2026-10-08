@@ -799,9 +799,9 @@ def match_series_now(series_id: int):
 
 @app.get("/api/locg/status")
 def locg_status():
-    from kometa.locg_client import locg_paused
+    from kometa.locg_client import locg_paused, pause_label
     until = locg_paused()
-    return {"paused_until": until}
+    return {"paused_until": until, "paused_until_label": pause_label(until) if until else None}
 
 
 class PageMaxRequest(BaseModel):
