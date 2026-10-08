@@ -298,6 +298,11 @@ def _migrate(path=DB_PATH):
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
+        rp_cols = [r[1] for r in conn.execute("PRAGMA table_info(read_progress)")]
+        if "dismissed" not in rp_cols:
+            # On Deck 'not now': hidden from Continue reading, place kept; any
+            # new progress write clears it (docs/reader-spec.md)
+            conn.execute("ALTER TABLE read_progress ADD COLUMN dismissed INTEGER NOT NULL DEFAULT 0")
         # An issue you've told Kometa to stop chasing — a #0 preview that never got a
         # real release, say. Not owned, never 'missing': sweeps, search-missing and the
         # counts all skip it. Sync's upserts don't name this column, so it survives them.
@@ -1555,12 +1560,21 @@ def set_progress(reader_id, book_id, page, completed, updated_at, path=DB_PATH):
         if cur and cur["updated_at"] > updated_at:
             return False, dict(cur)
         conn.execute("""
-            INSERT INTO read_progress (reader_id, book_id, page, completed, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO read_progress (reader_id, book_id, page, completed, updated_at, dismissed)
+            VALUES (?, ?, ?, ?, ?, 0)
             ON CONFLICT(reader_id, book_id) DO UPDATE SET
-                page = excluded.page, completed = excluded.completed, updated_at = excluded.updated_at
+                page = excluded.page, completed = excluded.completed, updated_at = excluded.updated_at,
+                dismissed = 0
         """, (reader_id, book_id, int(page), int(bool(completed)), updated_at))
         return True, {"page": int(page), "completed": int(bool(completed)), "updated_at": updated_at}
+
+
+def set_dismissed(reader_id, book_id, dismissed: bool, path=DB_PATH) -> bool:
+    """On Deck 'not now': hide from Continue reading without touching the place.
+    Reading it again (any progress write) clears the flag by itself."""
+    with _connect(path) as conn:
+        return conn.execute("UPDATE read_progress SET dismissed = ? WHERE reader_id = ? AND book_id = ?",
+                            (int(bool(dismissed)), reader_id, book_id)).rowcount > 0
 
 
 # --- shelf index ------------------------------------------------------------------

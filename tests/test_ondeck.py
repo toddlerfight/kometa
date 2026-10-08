@@ -92,3 +92,15 @@ def test_recently_released_is_by_store_date_of_owned_issues(lib):
     assert [(r["series"], r["label"], r["store_date"]) for r in rows[:2]] == [("Low", "#2", "2026-10-07"), ("Saga", "#3", "2026-09-30")]
     db.set_progress("me", b[("low", 2)], 24, True, "2026-10-08T11:00:00Z", lib["db"])
     assert [r["series"] for r in od.recent_released(path=lib["db"])][:2] == ["Saga", "Low"]   # Low #2 read → Low #1 is its newest unread
+
+
+def test_not_now_hides_keeps_the_place_and_clears_on_the_next_read(lib):
+    b = lib["b"]
+    db.set_progress("me", b[("saga", 1)], 5, False, "2026-10-08T10:00:00Z", lib["db"])
+    assert [r["label"] for r in od.continue_reading(path=lib["db"])] == ["#1"]
+    assert db.set_dismissed("me", b[("saga", 1)], True, lib["db"])
+    assert od.continue_reading(path=lib["db"]) == []
+    assert db.get_progress("me", b[("saga", 1)], lib["db"])["page"] == 5              # place kept
+    db.set_progress("me", b[("saga", 1)], 6, False, "2026-10-08T11:00:00Z", lib["db"])   # read on → back
+    assert [r["progress"]["page"] for r in od.continue_reading(path=lib["db"])] == [6]
+    assert db.set_dismissed("me", 99999, True, lib["db"]) is False

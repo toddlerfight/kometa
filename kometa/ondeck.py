@@ -57,7 +57,7 @@ def continue_reading(reader_id=READER_ID, now=None, path=None) -> list[dict]:
     with db._connect(path) as conn:
         rows = conn.execute("""
             SELECT b.*, p.page, p.updated_at FROM read_progress p JOIN books b ON b.id = p.book_id
-            WHERE p.reader_id = ? AND p.completed = 0 AND p.updated_at >= ?
+            WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ?
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
         return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows if os.path.exists(r["path"])]
 
@@ -179,6 +179,15 @@ def recent_released(reader_id=READER_ID, path=None) -> list[dict]:
             WHERE i.owned = 1 AND i.store_date IS NOT NULL AND COALESCE(p.completed, 0) = 0
             ORDER BY i.store_date DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
         return _one_per_series(conn, rows, store_date="store_date")
+
+
+@router.post("/api/books/{book_id}/dismiss")
+def dismiss_book(book_id: int, undo: int = 0):
+    """'Not now' on Continue reading. Place kept; cleared by the next read."""
+    from fastapi import HTTPException
+    if not db.set_dismissed(READER_ID, book_id, not undo, DB_PATH):
+        raise HTTPException(404, "No progress for that book")
+    return {"ok": True, "dismissed": not undo}
 
 
 @router.get("/api/ondeck")

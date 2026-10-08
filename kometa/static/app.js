@@ -612,10 +612,11 @@ async function renderOnDeck() {
   const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
   const read = c => `navigate('read', {book: ${c.book_id}})`;
   const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
-  const bookCard = (c, tag) => `
-    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
+  const bookCard = (c, tag, dismissable) => `
+    <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
+        ${dismissable ? `<button class="od-x" title="Not now — hide from Continue reading, keep my place" aria-label="Not now" onclick="event.stopPropagation(); _odDismiss(${c.book_id}, this)">×</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
@@ -631,7 +632,7 @@ async function renderOnDeck() {
       ${cards.length ? `<div class="issue-grid od-grid">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
     </div>`;
   setApp(
-    row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c)),
+    row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c, null, true)),
         'Nothing in progress. Open anything in the Library and it shows up here.') +
     row('Next', 'the next unread issue in series you’ve finished something of', d.next.map(c => bookCard(c, 'Next')),
         'Finish an issue and its series lands here.') +
@@ -642,6 +643,18 @@ async function renderOnDeck() {
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.')
   );
+}
+
+// 'Not now' on a Continue reading tile: hidden, place kept, back the next time
+// you read it. Undo on the toast for a few seconds.
+async function _odDismiss(bookId, btn) {
+  const tile = document.getElementById(`od-${bookId}`);
+  try { await api.post(`/api/books/${bookId}/dismiss`, {}); }
+  catch (e) { showToast('Couldn\u2019t hide that', 'error'); return; }
+  if (tile) { tile.style.transition = 'opacity .25s'; tile.style.opacity = '0'; setTimeout(() => tile.remove(), 260); }
+  showToastAction('Hidden from Continue reading — your place is kept', 'Undo', async () => {
+    try { await api.post(`/api/books/${bookId}/dismiss?undo=1`, {}); renderOnDeck(); } catch {}
+  });
 }
 
 // --- Needs matching ------------------------------------------------------------

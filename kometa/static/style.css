@@ -2179,3 +2179,11 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 
 /* On Deck: covers only — no number line under the tile */
 .od-card .issue-tile-num { display: none; }
+
+/* On Deck 'not now' — a small × on the tile, shown on hover (always on touch) */
+.od-x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 0; border-radius: 50%;
+  background: rgba(0,0,0,.75); color: var(--tp); font-size: 16px; line-height: 24px; text-align: center; cursor: pointer;
+  opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
+.od-card:hover .od-x, .od-card:focus-within .od-x { opacity: 1; }
+@media (hover: none) { .od-x { opacity: .85; } }
+.od-x:hover { background: var(--pink); color: var(--ink, #000); }
