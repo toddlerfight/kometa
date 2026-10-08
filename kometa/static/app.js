@@ -1323,6 +1323,7 @@ async function renderSeriesDetail(id) {
             : '<b>Pick the run.</b> More than one series could be this folder, or none clearly fits.'}</div>
           <div class="match-head-actions">
             ${s.match_status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="_matchNow(${s.id}, this)">Match now</button>` : ''}
+            ${s.match_status === 'needs_match' ? `<button class="btn btn-ghost btn-sm" title="There is no run to pick: an omnibus library, a folder of specials, a fan book. Keep it as a shelf series." onclick="_noRun(${s.id})">No run</button>` : ''}
             <button class="btn btn-ghost btn-sm match-remove" title="Remove this series and move its folder to the bin"
               onclick="confirmDelete(${s.id})">Remove</button>
           </div>

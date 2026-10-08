@@ -556,6 +556,33 @@ async function _fileUnder(seriesId, parentId, run = null, opts = {}) {
   };
 }
 
+// "No run": you looked, and there's nothing to pick — an omnibus library, a
+// folder of yearly specials, a fan comic. It stays a shelf series (readable,
+// no issue list) and leaves Needs matching for good.
+async function _noRun(seriesId) {
+  const me = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : { title: 'this series' };
+  showModal(`
+    <div class="modal-header"><h2>No run to match?</h2></div>
+    <div class="modal-body">
+      <div><b>${esc(me.title)}</b> stays on the shelf as it is: readable, with its files, but no issue list, covers or pull list.</div>
+      <div style="margin-top:10px;color:var(--tq);font-size:12px">Right for omnibus libraries, folders of one-shots and specials, fan books. You can still pick a run later from its page.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="no-run-btn">Keep as is</button>
+    </div>`);
+  document.getElementById('no-run-btn').onclick = async () => {
+    try {
+      await api.patch(`/api/series/${seriesId}/locg`, { none: true });
+      closeModal(); showToast('Kept as a shelf series');
+      if (currentView === 'needs-match') {
+        const row = document.getElementById(`nm-${seriesId}`); if (row) row.remove();
+        _nmRows = (_nmRows || []).filter(x => x.id !== seriesId); _updateNeedsBadge(_nmRows.length);
+      } else renderSeriesDetail(seriesId);
+    } catch (e) { closeModal(); showToast('Couldn’t save that', 'error'); }
+  };
+}
+
 // After a match or link the sync runs in the background. Re-render the page when
 // it lands (last_synced moves) rather than leaving you on a page painted before
 // the issues had their details — up to a minute, then give up quietly.

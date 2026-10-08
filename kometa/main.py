@@ -922,15 +922,25 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
 class MatchRequest(BaseModel):
     locg_id: int | None = None
     metron_id: int | None = None
+    none: bool = False          # "there is no run": a collection, a fan book, a folder of one-shots
 
 
 @app.patch("/api/series/{series_id}/locg", status_code=200)
 def set_series_locg(series_id: int, req: MatchRequest):
     """You picked the run (on Metron or LOCG): link it, mark it as your choice,
-    refresh in the background. Route name predates Metron."""
+    refresh in the background. Route name predates Metron.
+
+    none=true: you looked and there is no run to pick — an omnibus library,
+    a folder of yearly specials, a fan comic. The series leaves Needs matching
+    as a shelf-only series (readable, no issue list) and is never asked again."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
+    if req.none:
+        db.set_match_status(series_id, "manual", DB_PATH)
+        db.set_metron_link(series_id, "none", DB_PATH)
+        db.set_locg_link(series_id, "none", DB_PATH)
+        return db.get_series_by_id(series_id, DB_PATH)
     if not (req.locg_id or req.metron_id):
         raise HTTPException(400, "Pick a run")
     if req.locg_id:
