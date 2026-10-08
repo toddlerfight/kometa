@@ -674,7 +674,7 @@ async function renderNeedsMatch() {
   setApp(`
     <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
       ? ` — ${waiting} still in the queue` : ''}. Open one to pick its run, or Remove what's trash.
-      <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Single-file series report →</a></div>
+      <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Shelf clean-up →</a></div>
     <input class="browse-search nm-search" id="nm-search" type="text" placeholder="Search titles, publishers, folders"
       value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
     <div class="nm-list" id="nm-list">${_nmListHtml()}</div>`);
@@ -709,7 +709,7 @@ const _SINGLE_KINDS = [
 
 async function renderSinglesReport() {
   setTopbar();
-  document.getElementById('topbar-title').textContent = 'Single-file series';
+  document.getElementById('topbar-title').textContent = 'Shelf clean-up';
   document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-ghost btn-sm" onclick="renderSinglesReport()">Refresh</button>`;
   setApp('<div class="state-msg">Looking at every folder…</div>');
@@ -730,7 +730,7 @@ async function renderSinglesReport() {
       <div class="nm-actions" id="sga-${x.id}"></div>
     </div>`;
   setApp(`
-    <div class="nm-intro">${r.singles} of ${r.total_series} series are a single file. Nothing on this page changes anything — it's the dry run for merging and filing.
+    <div class="nm-intro">Twin folders, collected editions filed as series, split minis, one-shots: ${r.singles} of ${r.total_series} series are a single file. Nothing here changes anything until you press Merge or File under on a row.
       ${r.types_pending ? `<br>Metron types known for ${r.types_known}, still fetching ${r.types_pending} (a few seconds each) — refresh in a while and "not sure yet" shrinks.` : ''}</div>
     ${_SINGLE_KINDS.map(([k, label, help]) => {
       const rows = r.rows.filter(x => x.kind === k);
