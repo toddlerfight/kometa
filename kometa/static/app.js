@@ -140,6 +140,7 @@ function renderView() {
   const paint = (() => {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
+      case 'ondeck':        return renderOnDeck();
       case 'needs-match':   return renderNeedsMatch();
       case 'singles':       return renderSinglesReport();
       case 'series-detail': return renderSeriesDetail(currentParams.id);
@@ -326,7 +327,7 @@ async function syncSeries(id, btn, pre = null, force = false) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, reading: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -338,7 +339,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.toggles = { upcoming: false, missing: false, pulling: false, reading: false };
+  browseState.toggles = { upcoming: false, missing: false, pulling: false };
   browseState._cache  = null;
   browseState.sortKey = 'date';
   browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
@@ -355,7 +356,6 @@ async function renderLibraryBrowse() {
 // Kometa series — "pull list" is the one that means "actively downloading".
 const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
-  { key: 'reading',  label: 'Reading' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
 ];
@@ -484,7 +484,6 @@ function _renderBrowseResults() {
   let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
-    if (toggles.reading && !_isReading(s)) return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -590,6 +589,50 @@ function _shelfCardHtml(s, i, pub) {
         </div>
         ${pub}
       </div>`;
+}
+
+// --- On Deck: where reading happens -------------------------------------------
+// Three rows from the reading tables (kometa/ondeck.py): what you're in the
+// middle of, what's next in series you've finished something of, and what's
+// coming for series you're caught up on. Suggestions and reading lists later.
+async function renderOnDeck() {
+  setTopbar();
+  document.getElementById('topbar-title').textContent = 'On Deck';
+  document.getElementById('topbar-actions').innerHTML = '';
+  setApp('<div class="state-msg">Loading...</div>');
+  const d = await api.get('/api/ondeck');
+  if (currentView !== 'ondeck') return;
+  const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
+  const read = c => `navigate('read', {book: ${c.book_id}})`;
+  const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
+  const bookCard = (c, tag) => `
+    <div class="od-card card-cascade" role="button" tabindex="0" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
+      <div class="od-cover"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+        ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
+        ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
+      <div class="od-title">${esc(c.series)}</div>
+      <div class="od-meta">${esc(c.label)}${c.progress && c.page_count ? ` · page ${c.progress.page} of ${c.page_count}` : ''}${c.finished ? ` · ${c.finished} read` : ''}</div>
+    </div>`;
+  const soonCard = c => `
+    <div class="od-card card-cascade" role="button" tabindex="0" onclick="${series(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${series(c)}">
+      <div class="od-cover"><img src="/api/series/${c.series_id}/issues/${c.number}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+        <span class="od-tag${c.status === 'not_owned' ? ' amber' : ''}">${esc(c.status_label)}</span></div>
+      <div class="od-title">${esc(c.series)}</div>
+      <div class="od-meta">${esc(c.label)}</div>
+    </div>`;
+  const row = (title, help, cards, empty) => `
+    <div class="od-row">
+      <div class="od-head"><span class="series-card-title">${title}</span><span class="od-help">${help}</span></div>
+      ${cards.length ? `<div class="od-strip">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
+    </div>`;
+  setApp(
+    row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c)),
+        'Nothing in progress. Open anything in the Library and it shows up here.') +
+    row('Next', 'the next unread issue in series you’ve finished something of', d.next.map(c => bookCard(c, 'Next')),
+        'Finish an issue and its series lands here.') +
+    row('Coming soon', 'series you’re caught up on whose next issue isn’t here yet', d.soon.map(soonCard),
+        'Nothing waiting. Either you’re not caught up on anything, or everything you’re caught up on has nothing coming.')
+  );
 }
 
 // --- Needs matching ------------------------------------------------------------
@@ -3796,7 +3839,7 @@ function _parseHash() {
 
 // --- pull-to-refresh (touch only) ---
 // Re-fetches the current view's DATA without resetting filters/search state.
-const _PTR_VIEWS = new Set(['library', 'needs-match', 'series-detail', 'pull-list', 'activity']);
+const _PTR_VIEWS = new Set(['library', 'ondeck', 'needs-match', 'series-detail', 'pull-list', 'activity']);
 let _ptrStartY = 0, _ptrPulling = false;
 
 function _ptrRefresh() {
@@ -3818,6 +3861,7 @@ function _ptrRefresh() {
   }
   if (currentView === 'pull-list')     return _renderPullListContent();
   if (currentView === 'needs-match')   return renderNeedsMatch();
+  if (currentView === 'ondeck')        return renderOnDeck();
   if (currentView === 'activity') {
     // fresh = give the not-founds another shot (failed stays manual — per-row Retry)
     return api.post('/api/queue/retry-not-found', {}).then(r => {

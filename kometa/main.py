@@ -152,6 +152,10 @@ from kometa.reader import router as _reader_router  # noqa: E402
 app.include_router(_reader_router)
 from kometa.shelf import router as _shelf_router, scan_in_background as _shelf_scan  # noqa: E402
 app.include_router(_shelf_router)
+from kometa.ondeck import router as _ondeck_router          # On Deck: where reading happens
+app.include_router(_ondeck_router)
+from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
+app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)

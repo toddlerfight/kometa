@@ -117,7 +117,10 @@ def app_server(tmp_path_factory):
     import kometa.singles as singles
     import kometa.issue_meta as issue_meta
     import kometa.filing as filing
-    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader, shelf, trash, tidy, singles, issue_meta, filing):
+    import kometa.ondeck as ondeck
+    import kometa.komga_import as komga_import
+    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader, shelf, trash, tidy, singles, issue_meta, filing,
+                ondeck, komga_import):
         mod.DB_PATH = dbfile
     reader.PAGE_CACHE_DIR = os.path.join(os.path.dirname(dbfile), "page-cache")
     # The shelf importer matches new folders against LOCG from the SERVER — the
