@@ -344,8 +344,11 @@ async function renderLibraryBrowse() {
   browseState.search  = '';
   browseState.toggles = { upcoming: false, missing: false, pulling: false };
   browseState._cache  = null;
-  browseState.sortKey = 'date';
-  browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
+  // The sort you chose last time sticks (per browser); nearest release first by default.
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('kometa.librarySort') || 'null'); } catch {}
+  browseState.sortKey = saved?.key || 'date';
+  browseState.sortDir = saved?.dir || { date: 'asc' };
   setApp('<div class="state-msg">Loading...</div>');
   await _loadBrowsePage();
 }
@@ -420,6 +423,7 @@ function browseSort(key) {
     browseState.sortKey = key;
     browseState.sortDir[key] = browseState.sortDir[key] || 'asc';
   }
+  try { localStorage.setItem('kometa.librarySort', JSON.stringify({ key: browseState.sortKey, dir: browseState.sortDir })); } catch {}
   const arrowBox = document.getElementById('sort-arrow');
   if (arrowBox) {
     arrowBox.textContent = browseState.sortDir[browseState.sortKey] === 'asc' ? '↑' : '↓';
