@@ -2944,11 +2944,16 @@ async function clearHistory(btn) {
 async function retryQueue(id, btn) {
   btn.disabled = true;
   btn.textContent = 'Searching…';
-  await api.post(`/api/queue/${id}/retry`, {});
+  const r = await api.post(`/api/queue/${id}/retry`, {});
+  if (r && r.busy) {
+    // the worker is mid-download; the ask is remembered and runs when it's free
+    btn.textContent = 'Next up';
+    showToast('The downloader is busy with another item — this one runs the moment it’s free');
+  }
   // Backend runs the search on a thread — item stays `queued` for a beat, then
-  // flips to searching → done/not_found. Pump the poll loop for ~30s so the UI
-  // actually rides that transition out instead of going dead on the click.
-  _activityPumpUntil = Date.now() + 30000;
+  // flips to searching → done/not_found. Pump the poll loop so the UI rides
+  // that transition out instead of going dead on the click (longer when busy).
+  _activityPumpUntil = Date.now() + (r && r.busy ? 180000 : 30000);
   _activitySig = null;   // force a rebuild on the next poll even if state lags
   _refreshActivity();
 }

@@ -235,11 +235,34 @@ def _resync_after_placement(series_id: int, placed_path: str | None = None) -> N
 _queue_run_lock = threading.Lock()
 
 
+_rerun_wanted = False
+
+
+def queue_busy() -> bool:
+    """Is a worker pass running right now? (A 2 GB trade download holds the
+    lock for minutes.)"""
+    if _queue_run_lock.acquire(blocking=False):
+        _queue_run_lock.release()
+        return False
+    return True
+
+
 def _process_queue():
+    """One worker pass. A request that arrives while a pass is running used to
+    be dropped on the floor — 'Search now' during a big download did nothing
+    until the next scheduled pass, up to five minutes later, with no sign of
+    it on screen. Now the ask is remembered and the running pass goes again
+    the moment it finishes."""
+    global _rerun_wanted
     if not _queue_run_lock.acquire(blocking=False):
+        _rerun_wanted = True
         return
     try:
-        _process_queue_locked()
+        while True:
+            _rerun_wanted = False
+            _process_queue_locked()
+            if not _rerun_wanted:
+                break
     finally:
         _queue_run_lock.release()
 

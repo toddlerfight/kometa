@@ -1329,10 +1329,14 @@ def retry_not_found():
 
 @app.post("/api/queue/{queue_id}/retry", status_code=200)
 def retry_queue_item(queue_id: int):
+    """'Search now'. If a worker pass is mid-download the ask is remembered and
+    runs the moment it's free — and we SAY so, instead of a dead click."""
+    from kometa.acquisition import queue_busy
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
     db.reset_rl_attempts(queue_id, path=DB_PATH)
+    busy = queue_busy()
     threading.Thread(target=_process_queue, daemon=True).start()
-    return {"ok": True}
+    return {"ok": True, "busy": busy}
 
 
 @app.post("/api/series/{series_id}/search-missing")
