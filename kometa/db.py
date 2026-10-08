@@ -1539,6 +1539,25 @@ def index_books(rows, path=DB_PATH):
         """, rows)
 
 
+def remove_books_under(folder, path=DB_PATH) -> int:
+    """Forget every book (and its read progress) filed under a folder — the
+    folder has left the shelf (kometa/trash.py)."""
+    prefix = folder.rstrip("/") + "/"
+    with _connect(path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT id FROM books WHERE path LIKE ? ESCAPE '\\'",
+                                          (prefix.replace("%", r"\%").replace("_", r"\_") + "%",))]
+        if ids:
+            marks = ",".join("?" * len(ids))
+            conn.execute(f"DELETE FROM read_progress WHERE book_id IN ({marks})", ids)
+            conn.execute(f"DELETE FROM books WHERE id IN ({marks})", ids)
+        return len(ids)
+
+
+def remove_shelf_series_by_path(folder, path=DB_PATH) -> int:
+    with _connect(path) as conn:
+        return conn.execute("DELETE FROM shelf_series WHERE folder_path = ?", (folder,)).rowcount
+
+
 def prune_shelf(scanned_at, path=DB_PATH) -> int:
     """Drop series folders the latest scan didn't see. Book rows (and any read
     progress on them) are kept — a book that comes back keeps its history."""

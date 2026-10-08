@@ -793,6 +793,33 @@ def delete_series(series_id: int):
     db.remove_series(series_id, DB_PATH)
 
 
+@app.post("/api/series/{series_id}/trash")
+def trash_series(series_id: int):
+    """Needs matching → Remove: the series goes, and its folder moves to _trash
+    under the comics root (purged after a week; Undo restores). kometa/trash.py."""
+    from kometa import trash
+    try:
+        return trash.trash_series(series_id)
+    except trash.TrashError as e:
+        raise HTTPException(400, str(e))
+
+
+class RestoreRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/trash/restore")
+def restore_from_trash(req: RestoreRequest):
+    from kometa import trash
+    from kometa.shelf import scan_in_background
+    try:
+        origin = trash.restore(req.path)
+    except trash.TrashError as e:
+        raise HTTPException(400, str(e))
+    scan_in_background()                 # the folder is back: it becomes a series again
+    return {"restored": origin}
+
+
 class PullListRequest(BaseModel):
     on_pull_list: bool
 

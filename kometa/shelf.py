@@ -97,6 +97,10 @@ def scan_shelf_safe():
     # and get matched to LOCG in the background, throttled.
     from kometa.shelf_import import import_in_background
     import_in_background()
+    # Removed series wait in _trash for a week, then go for real (kometa/trash.py).
+    # Startup + every full sync is often enough.
+    from kometa.trash import purge_safe
+    purge_safe()
 
 
 def scan_in_background():

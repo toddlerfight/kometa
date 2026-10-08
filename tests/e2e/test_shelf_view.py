@@ -42,16 +42,16 @@ def test_new_folder_becomes_a_series_pull_off_and_readable(app, app_server):
             time.sleep(0.25)
         assert sid, "the folder never became a series"
         app.reload()
-        card = app.locator(".series-card", has_text="Shelf Only")
-        expect(card).to_be_visible()
-        app.locator(".browse-filter-tab", has_text="Pull list").click()
-        expect(card).to_have_count(0)                             # added, not pulled
-        app.locator(".browse-filter-tab", has_text="Pull list").click()
-        app.locator(".browse-filter-tab", has_text="Unmatched").click()
-        expect(card).to_be_visible()                              # pending = unmatched
-        app.locator(".browse-filter-tab", has_text="Unmatched").click()
+        # Unmatched = the in-tray, not the shelf: it's in Needs matching, not the Library
+        expect(app.locator(".series-card", has_text="Shelf Only")).to_have_count(0)
+        expect(app.locator("#needs-badge")).to_have_text("1")
+        app.locator(".nav-item", has_text="Needs matching").click()
+        row = app.locator(".nm-row", has_text="Shelf Only")
+        expect(row).to_be_visible()
+        expect(row).to_contain_text("waiting to match")
+        expect(row.get_by_role("button", name="Remove")).to_be_visible()
 
-        card.click()
+        row.locator(".nm-main").click()
         banner = app.locator("#match-banner")
         expect(banner).to_contain_text("Not matched to LOCG yet")   # waits for the trickle…
         banner.get_by_role("button", name="Match now").click()       # …unless you ask

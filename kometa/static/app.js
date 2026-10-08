@@ -137,6 +137,7 @@ function renderView() {
   const paint = (() => {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
+      case 'needs-match':   return renderNeedsMatch();
       case 'series-detail': return renderSeriesDetail(currentParams.id);
       case 'shelf':         return renderShelfSeries(currentParams.id);
       case 'pull-list':     return renderPullList();
@@ -321,7 +322,7 @@ async function syncSeries(id, btn, pre = null, force = false) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, reading: false, unmatched: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, reading: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -333,7 +334,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.toggles = { upcoming: false, missing: false, pulling: false, reading: false, unmatched: false };
+  browseState.toggles = { upcoming: false, missing: false, pulling: false, reading: false };
   browseState._cache  = null;
   browseState.sortKey = 'date';
   browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
@@ -350,7 +351,6 @@ async function renderLibraryBrowse() {
 // Kometa series — "pull list" is the one that means "actively downloading".
 const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
-  { key: 'unmatched', label: 'Unmatched' },
   { key: 'reading',  label: 'Reading' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
@@ -447,7 +447,10 @@ async function _loadBrowsePage() {
   ]);
   const tr = shelf.tracked_reading || {};
   browseState._trackedCount = tracked.length;
-  browseState._cache = tracked.map(s => ({ ...s, kind: 'series', ...(tr[s.id] || {}) }))
+  // Unmatched series live in their own section (Needs matching) until you've
+  // picked the run — the Library is the matched shelf.
+  _updateNeedsBadge(tracked.filter(_needsMatch).length);
+  browseState._cache = tracked.filter(s => !_needsMatch(s)).map(s => ({ ...s, kind: 'series', ...(tr[s.id] || {}) }))
     .concat((shelf.series || []).map(s => ({ ...s, kind: 'shelf' })));
   _renderBrowseResults();
   // Nothing tracked yet on a configured install? Open the one door they'd open
@@ -478,7 +481,6 @@ function _renderBrowseResults() {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.reading && !_isReading(s)) return false;
-    if (toggles.unmatched && s.match_status !== 'needs_match' && s.match_status !== 'pending') return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -584,6 +586,116 @@ function _shelfCardHtml(s, i, pub) {
         </div>
         ${pub}
       </div>`;
+}
+
+// --- Needs matching ------------------------------------------------------------
+// Its own section, not a Library filter: a folder that hasn't been matched to a
+// run isn't on the shelf yet, it's in the in-tray. Pick the run and it moves to
+// the Library; decide it's trash and Remove bins the folder too (kometa/trash.py).
+const _needsMatch = s => s.match_status === 'needs_match' || s.match_status === 'pending';
+
+function _updateNeedsBadge(n) {
+  const el = document.getElementById('needs-badge');
+  if (!el) return;
+  el.textContent = n || '';
+  el.className = 'nav-badge' + (n ? ' amber' : '');
+}
+
+async function renderNeedsMatch() {
+  setTopbar();
+  document.getElementById('topbar-title').textContent = 'Needs matching';
+  document.getElementById('topbar-actions').innerHTML = '';
+  setApp('<div class="state-msg">Loading...</div>');
+  const all = await api.get('/api/series');
+  const rows = all.filter(_needsMatch).sort((a, b) =>
+    (a.match_status === 'needs_match' ? 0 : 1) - (b.match_status === 'needs_match' ? 0 : 1)
+    || a.title.localeCompare(b.title));
+  _updateNeedsBadge(rows.length);
+  if (currentView !== 'needs-match') return;
+  if (!rows.length) {
+    setApp(`<div class="empty-state"><div class="empty-state-title">Everything's matched</div>
+      <div style="margin-top:8px;color:var(--tq);font-size:13px">New folders land here until they're matched to a run.</div></div>`);
+    return;
+  }
+  const waiting = rows.filter(s => s.match_status === 'pending').length;
+  setApp(`
+    <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
+      ? ` — ${waiting} still in the queue (a few a day, politely)` : ''}. Open one to pick its run, or Remove what's trash.</div>
+    <div class="nm-list">${rows.map((s, i) => _needsRowHtml(s, i)).join('')}</div>`);
+}
+
+function _needsRowHtml(s, i) {
+  const go = `navigate('series-detail', {id: ${s.id}})`;
+  const owned = s.owned ?? 0;
+  const status = s.match_status === 'needs_match'
+    ? '<span class="nm-status amber">pick the run</span>'
+    : '<span class="nm-status">waiting to match</span>';
+  return `
+    <div class="nm-row card-cascade" id="nm-${s.id}" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms">
+      <img class="nm-cover" src="/api/series/${s.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"
+        onclick="${go}">
+      <div class="nm-main" onclick="${go}" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+        <div class="nm-title">${esc(s.title)}</div>
+        <div class="nm-meta u-truncate">${s.publisher ? esc(s.publisher) + ' · ' : ''}${owned} file${owned === 1 ? '' : 's'}${s.folder_path ? ' · ' + esc(s.folder_path.replace(/^\/comics\//, '')) : ''}</div>
+      </div>
+      ${status}
+      <div class="nm-actions">
+        ${s.match_status === 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="_matchNow(${s.id}, this)">Match now</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="${go}">Open</button>
+        <button class="btn btn-danger btn-sm" onclick="_trashSeries(${s.id}, this, false)">Remove</button>
+      </div>
+    </div>`;
+}
+
+// Two clicks, then the series AND its folder are gone (folder → _trash, purged
+// after a week). The toast carries Undo for a while.
+async function _trashSeries(id, btn, fromDetail) {
+  if (btn.dataset.armed !== '1') {
+    btn.dataset.armed = '1';
+    btn.textContent = 'Remove files too?';
+    setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Remove'; }, 4000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Removing…';
+  try {
+    const r = await api.post(`/api/series/${id}/trash`, {});
+    _lastTrashed = r.trashed_to;
+    showToastAction(`${r.title} removed — files in the bin for ${r.purge_days} days`, 'Undo', () => _undoTrash(r.trashed_to));
+    if (fromDetail) navigate('needs-match');
+    else {
+      const row = document.getElementById(`nm-${id}`);
+      if (row) row.remove();
+      const left = document.querySelectorAll('.nm-row').length;
+      _updateNeedsBadge(left);
+      if (!left) renderNeedsMatch();
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Remove';
+    showToast(`Remove failed: ${e.message || id}`, 'error');
+  }
+}
+let _lastTrashed = null;
+
+async function _undoTrash(path) {
+  try {
+    await api.post('/api/trash/restore', { path });
+    showToast('Restored — it’ll be back in a moment');
+    setTimeout(() => { if (currentView === 'needs-match') renderNeedsMatch(); }, 1500);
+  } catch (e) {
+    showToast(`Couldn't restore: ${e.message || ''}`, 'error');
+  }
+}
+
+// A toast with one action button (Undo). Stays up longer than a plain toast.
+function showToastAction(msg, label, fn) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.innerHTML = `${esc(msg)} <button class="btn-link toast-action">${esc(label)}</button>`;
+  el.querySelector('.toast-action').onclick = () => { el.className = 'toast-hidden'; fn(); };
+  el.className = 'toast-show';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, 8000);
 }
 
 function browseSearch(val) {
@@ -1042,7 +1154,9 @@ async function renderSeriesDetail(id) {
         <div class="match-banner-text">${s.match_status === 'pending'
           ? `<b>Not matched to LOCG yet.</b> This series came from your shelf; matching trickles through in the background (a few a day, to stay polite to LOCG). Want it now?
              <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="_matchNow(${s.id}, this)">Match now</button>`
-          : '<b>Pick the run.</b> More than one LOCG series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}</div>
+          : '<b>Pick the run.</b> More than one LOCG series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}
+          <button class="btn btn-danger btn-sm" style="margin-left:8px" title="Remove this series and move its folder to the bin"
+            onclick="_trashSeries(${s.id}, this, true)">Remove</button></div>
         ${s.match_status === 'needs_match' ? `
         <div class="match-search"><input class="browse-search" id="match-q" value="${esc(s.title)}"
           onkeydown="if(event.key==='Enter')_loadMatchCandidates(${s.id}, this.value)">
@@ -2729,7 +2843,7 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
-  'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: true },
+  'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
   'f-locg-ua':         { card: 'locg',      key: 'locg_user_agent' },
 };
 
@@ -2747,14 +2861,19 @@ function _settingsField(id, label, value, opts = {}) {
         ${_testControls(opts.test.cardId, opts.test.configured)}
       </div>`
     : `<label class="settings-field-label u-label" for="${id}">${label}</label>`;
+  // secret: 'mask' — hidden on screen like a password, but a TEXT input: a
+  // pasted cookie is not a password, and type=password had Safari offering to
+  // invent a strong one for it. The data-* attrs wave off 1Password/LastPass.
+  const mask = f.secret === 'mask';
   return `
     <div class="settings-field">
       ${labelRow}
-      <input class="settings-input" id="${id}"
-        type="${secret ? 'password' : 'text'}"
+      <input class="settings-input${mask ? ' settings-input-mask' : ''}" id="${id}"
+        type="${secret && !mask ? 'password' : 'text'}"
         value="${esc(value || '')}" data-last="${esc(value || '')}"
         placeholder="${esc(ph)}"
-        autocomplete="${secret ? 'new-password' : 'off'}" spellcheck="false"
+        autocomplete="${secret && !mask ? 'new-password' : 'off'}" spellcheck="false"
+        ${mask ? 'data-1p-ignore data-lpignore="true" data-form-type="other" autocorrect="off" autocapitalize="off"' : ''}
         onchange="_settingsChanged(this)">
     </div>`;
 }
@@ -3534,7 +3653,7 @@ function _parseHash() {
 
 // --- pull-to-refresh (touch only) ---
 // Re-fetches the current view's DATA without resetting filters/search state.
-const _PTR_VIEWS = new Set(['library', 'series-detail', 'pull-list', 'activity']);
+const _PTR_VIEWS = new Set(['library', 'needs-match', 'series-detail', 'pull-list', 'activity']);
 let _ptrStartY = 0, _ptrPulling = false;
 
 function _ptrRefresh() {
@@ -3555,6 +3674,7 @@ function _ptrRefresh() {
     return renderSeriesDetail(id);
   }
   if (currentView === 'pull-list')     return _renderPullListContent();
+  if (currentView === 'needs-match')   return renderNeedsMatch();
   if (currentView === 'activity') {
     // fresh = give the not-founds another shot (failed stays manual — per-row Retry)
     return api.post('/api/queue/retry-not-found', {}).then(r => {

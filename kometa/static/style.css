@@ -2077,3 +2077,28 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .shelf-files { margin-top: 28px; }
 .shelf-files-head { color: var(--tq); margin-bottom: 12px; }
 .match-paused { color: var(--amb); }
+
+/* --- settings: masked text input (a pasted cookie, not a password) --- */
+.settings-input-mask { -webkit-text-security: disc; }
+.settings-input-mask::placeholder { -webkit-text-security: none; }
+
+/* --- Needs matching: the in-tray, not the shelf --- */
+.nm-intro { color: var(--tq); font-size: 13px; margin-bottom: var(--sp-md); }
+.nm-list { display: flex; flex-direction: column; gap: 6px; }
+.nm-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px; border: 1px solid var(--line, rgba(255,255,255,.08)); border-radius: var(--r-md, 8px);
+  background: var(--bg-2, rgba(255,255,255,.02));
+}
+.nm-cover { width: 40px; height: 60px; object-fit: cover; border-radius: 3px; background: #000; flex: 0 0 auto; cursor: pointer; }
+.nm-main { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.nm-title { font-weight: 600; }
+.nm-meta { color: var(--tq); font-size: 12px; margin-top: 2px; }
+.nm-status { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--tq); white-space: nowrap; }
+.nm-status.amber { color: var(--amb); }
+.nm-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.toast-action { margin-left: 10px; font-weight: 700; }
+@media (max-width: 760px) {
+  .nm-row { flex-wrap: wrap; }
+  .nm-actions { width: 100%; justify-content: flex-end; }
+}
