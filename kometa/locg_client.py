@@ -36,6 +36,59 @@ _anon_session = {"session": None, "get": None, "ts": 0.0}
 _anon_lock = threading.Lock()
 
 
+# --- backoff ----------------------------------------------------------------------
+# LOCG is a site we read without an API or an agreement. When it says "too much"
+# — a Cloudflare challenge or a 429 — we STOP: every LOCG call (syncs, matching,
+# cover fallbacks) pauses for a few hours instead of retrying into the wall.
+# 2026-10-08: challenged from ~03:00; the 06:00 sync then threw 276 more requests
+# at it. Persisted in config so a restart doesn't reset the clock.
+PAUSE_SECONDS = 3 * 3600
+_pause = {"until": None}
+
+
+class LocgPaused(RuntimeError):
+    pass
+
+
+def _paused_until() -> float:
+    if _pause["until"] is None:
+        try:
+            from kometa import db
+            _pause["until"] = float(db.get_config(db.DB_PATH).get("locg_paused_until") or 0)
+        except Exception:
+            _pause["until"] = 0.0
+    return _pause["until"]
+
+
+def _check_paused():
+    until = _paused_until()
+    if time.time() < until:
+        raise LocgPaused(f"LOCG paused until {time.strftime('%H:%M', time.localtime(until))} (it refused us)")
+
+
+def _note_refusal(r):
+    refused = r.status_code == 429 or (
+        r.status_code == 403 and (r.headers.get("cf-mitigated") == "challenge"
+                                  or "cloudflare" in (r.headers.get("server") or "").lower()))
+    if not refused:
+        return
+    until = time.time() + PAUSE_SECONDS
+    _pause["until"] = until
+    logger.warning(f"LOCG refused us ({r.status_code}) — pausing ALL LOCG traffic for "
+                   f"{PAUSE_SECONDS // 3600}h")
+    try:
+        from kometa import db
+        db.set_config({"locg_paused_until": str(until)}, db.DB_PATH)
+    except Exception:
+        pass
+
+
+def locg_paused() -> float | None:
+    """Epoch seconds the pause lifts, or None if LOCG is open to us."""
+    until = _paused_until()
+    return until if time.time() < until else None
+
+
 def _anon_get_fn():
     """A get(url, **kw) callable that gets past Cloudflare without login. cloudscraper's
     TLS fingerprint is blocked from some hosts (e.g. the NAS container — 403 even on the
@@ -49,6 +102,7 @@ def _anon_get_fn():
     the losers re-check inside the lock and reuse its work. The warm-up GET runs while
     holding the lock — deliberate: it serializes against in-flight closure .get()s,
     which is the politeness we wanted anyway."""
+    _check_paused()   # paused = not even the homepage warm-up
     # Unlocked fast path — a stale read here just falls through to the lock,
     # where the truth gets re-checked. Fresh-session reads skip the lock entirely.
     if _anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL:
@@ -80,8 +134,11 @@ def _anon_get_fn():
             # rotation transparently ride the new session — no zombie handles.
             def _get(url, **kw):
                 kw.setdefault("timeout", 25)
+                _check_paused()
                 with _anon_lock:
-                    return _anon_session["session"].get(url, **kw)
+                    r = _anon_session["session"].get(url, **kw)
+                _note_refusal(r)
+                return r
             _anon_session["get"] = _get
         _anon_session["ts"] = now
         return _anon_session["get"]

@@ -47,11 +47,14 @@ def test_new_folder_becomes_a_series_pull_off_and_readable(app, app_server):
         app.locator(".browse-filter-tab", has_text="Pull list").click()
         expect(card).to_have_count(0)                             # added, not pulled
         app.locator(".browse-filter-tab", has_text="Pull list").click()
-        app.locator(".browse-filter-tab", has_text="Needs match").click()
-        expect(card).to_be_visible()                              # matcher found nothing
-        app.locator(".browse-filter-tab", has_text="Needs match").click()
+        app.locator(".browse-filter-tab", has_text="Unmatched").click()
+        expect(card).to_be_visible()                              # pending = unmatched
+        app.locator(".browse-filter-tab", has_text="Unmatched").click()
 
         card.click()
+        banner = app.locator("#match-banner")
+        expect(banner).to_contain_text("Not matched to LOCG yet")   # waits for the trickle…
+        banner.get_by_role("button", name="Match now").click()       # …unless you ask
         expect(app.locator("#match-banner")).to_contain_text("Pick the run")
         expect(app.locator(".pull-switch input")).not_to_be_checked()
         app.locator('.issue-tile[data-num="1"]').click()           # owned, straight from disk

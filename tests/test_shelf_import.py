@@ -159,3 +159,70 @@ class TestPullSwitchAndCadence:
         monkeypatch.setattr(main, "NOT_PULLED_PER_RUN", 3)
         picked = [s["id"] for s in main._series_due_for_sync(series)]
         assert picked == [1, 98, 14, 13]                       # pulled always; never-synced, then stalest
+
+
+class TestPoliteness:
+    """2026-10-08: LOCG had started challenging us; the first matcher would have
+    sent ~360 calls an hour into that. These pin the manners."""
+
+    def test_refusal_pauses_all_locg_traffic_and_persists(self, db_path, monkeypatch):
+        import time as _t
+        import kometa.locg_client as lc
+        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+        class R:
+            status_code = 403
+            headers = {"cf-mitigated": "challenge", "server": "cloudflare"}
+        lc._note_refusal(R())
+        assert lc.locg_paused() and lc.locg_paused() > _t.time() + 3600
+        with pytest.raises(lc.LocgPaused):
+            lc._check_paused()
+        monkeypatch.setattr(lc, "_pause", {"until": None})          # fresh process
+        assert lc.locg_paused()                                     # read back from config
+
+    def test_ordinary_404_is_not_a_refusal(self, monkeypatch):
+        import kometa.locg_client as lc
+        monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+        class R:
+            status_code = 404
+            headers = {"server": "nginx"}
+        lc._note_refusal(R())
+        assert lc.locg_paused() is None
+
+    def test_trickle_is_one_series_daytime_only_and_respects_the_pause(self, shelf, monkeypatch):
+        import kometa.locg_client as lc
+        si.import_new_folders()
+        seen = []
+        monkeypatch.setattr(si, "match_pending", lambda limit=None, sleep=None: seen.append(limit))
+        monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+        si.trickle_tick(now_hour=3)
+        assert seen == []                                          # night: nothing
+        si.trickle_tick(now_hour=11)
+        assert seen == [1]                                         # day: exactly one
+        monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})  # paused
+        si.trickle_tick(now_hour=11)
+        assert seen == [1]
+
+    def test_match_now_links_or_hands_you_the_choice(self, shelf, monkeypatch):
+        si.import_new_folders()
+        monkeypatch.setattr(si, "find_confident_match", lambda s, **k: 55 if s["title"] == "Hawkeye" else None)
+        monkeypatch.setattr("kometa.sync.sync_one_guarded", lambda *a, **k: None)
+        by = {s["title"]: s["id"] for s in db.get_all_series(si.DB_PATH)}
+        assert si.match_one(by["Hawkeye"]) == "auto"
+        assert si.match_one(by["Batman - Knightfall"]) == "needs_match"
+
+
+class TestCoversWithoutKomgaOrLocg:
+    def test_series_card_and_owned_issue_tile_fall_back_to_the_file(self, shelf, monkeypatch):
+        import kometa.thumbnails as th
+        import kometa.reader as rd
+        monkeypatch.setattr(th, "DB_PATH", si.DB_PATH)
+        monkeypatch.setattr(rd, "DB_PATH", si.DB_PATH)
+        monkeypatch.setattr(rd, "PAGE_CACHE_DIR", str(shelf.parent / "page-cache"))
+        monkeypatch.setattr(th, "_komga", lambda: None)
+        si.import_new_folders()
+        hk = next(s for s in db.get_all_series(si.DB_PATH) if s["title"] == "Hawkeye")
+        card = th.series_thumbnail(hk["id"])
+        assert card.media_type == "image/jpeg" and len(card.body) > 100
+        tile = th.issue_thumbnail(hk["id"], 1.0)
+        assert tile.media_type == "image/jpeg" and len(tile.body) > 100

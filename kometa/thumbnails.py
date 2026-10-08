@@ -222,7 +222,44 @@ def series_thumbnail(series_id: int):
                         if t.get("cover") and not t.get("is_variant")), None)
     if trade_cover:
         return _cached_image_response(trade_cover)
+    # Nothing from Komga, LOCG or trades — a shelf-imported series waiting to be
+    # matched. Page 1 of its first file, made by Kometa.
+    resp = _shelf_cover_response(series_id)
+    if resp:
+        return resp
     raise HTTPException(404)
+
+
+def _jpeg(data: bytes) -> Response:
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+def _file_cover_response(series_id: int, number: float) -> Response | None:
+    from kometa.naming import find_issue_file
+    from kometa import reader
+    s = db.get_series_by_id(series_id, DB_PATH)
+    path = s and find_issue_file(s.get("folder_path"), s["title"], number)
+    if not path:
+        return None
+    try:
+        return _jpeg(reader.get_cover_bytes(path))
+    except Exception as e:
+        logger.warning(f"file cover failed for series {series_id} #{number}: {e}")
+        return None
+
+
+def _shelf_cover_response(series_id: int) -> Response | None:
+    from kometa import reader, shelf
+    shelf_id = db.shelf_id_for_series(series_id, DB_PATH)
+    first = shelf_id and shelf._first_book(shelf_id)
+    if not first:
+        return None
+    try:
+        return _jpeg(reader.get_cover_bytes(first["path"]))
+    except Exception as e:
+        logger.warning(f"shelf cover failed for series {series_id}: {e}")
+        return None
 
 
 @router.get("/api/series/{series_id}/issues/{number}/thumbnail")
@@ -268,6 +305,14 @@ def issue_thumbnail(series_id: int, number: float):
                 return resp
         except Exception:
             pass
+
+    # Owned and no Komga link: the cover of the FILE you own — Kometa reads it
+    # itself. The 785 shelf-imported series have no Komga link or LOCG art yet,
+    # and this needs no network at all (it matters when LOCG is shut to us).
+    if issue and issue.get("owned"):
+        resp = _file_cover_response(series_id, number)
+        if resp:
+            return resp
 
     # Known-artless issue: 404 immediately (with browser caching) instead of
     # re-running the whole LOCG chain on every grid render. Without this,

@@ -126,7 +126,9 @@ async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
-    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs)
+    from kometa.shelf_import import trickle_tick
+    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs,
+                    trickle_fn=trickle_tick)
     # Missed-sync catch-up. The scheduler's jobstore is in-memory, so a restart
     # (i.e. every deploy) that straddles a cron fire produces a process that has
     # NO IDEA the fire was missed — apscheduler's misfire grace can't help across
@@ -776,6 +778,29 @@ def set_series_locg(series_id: int, req: MatchRequest):
     threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), _sync_one),
                      daemon=True).start()
     return db.get_series_by_id(series_id, DB_PATH)
+
+
+@app.post("/api/series/{series_id}/match")
+def match_series_now(series_id: int):
+    """'Match now' — one LOCG lookup for this series, right away."""
+    if not db.get_series_by_id(series_id, DB_PATH):
+        raise HTTPException(404)
+    from kometa.shelf_import import match_one
+    from kometa.locg_client import LocgPaused
+    try:
+        status = match_one(series_id)
+    except LocgPaused as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"LOCG didn't answer: {e}")
+    return {"match_status": status}
+
+
+@app.get("/api/locg/status")
+def locg_status():
+    from kometa.locg_client import locg_paused
+    until = locg_paused()
+    return {"paused_until": until}
 
 
 class PageMaxRequest(BaseModel):

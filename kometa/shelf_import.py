@@ -25,8 +25,17 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
 
-# Seconds between series on the LOCG side (one search + the series' first sync).
+# Seconds between series when a batch does run (tests / one-offs). The NORMAL
+# path is the trickle below — not this.
 THROTTLE_S = float(os.environ.get("KOMETA_IMPORT_THROTTLE_S", "10"))
+
+# The background matcher trickles: ONE series per tick, daytime only. A first
+# cut ran ~360 LOCG calls an hour; LOCG had already started refusing us and
+# that would have sealed it. ~40 a day clears ~800 in three weeks — nothing's
+# urgent: every series is readable now, matching only adds metadata. Anything
+# you want sooner: "Match now" on its page.
+TRICKLE_MINUTES = 20
+TRICKLE_HOURS = range(8, 22)   # local time
 
 PENDING, AUTO, NEEDS_MATCH, MANUAL = "pending", "auto", "needs_match", "manual"
 MAX_FAILURES_IN_A_ROW = 3
@@ -156,13 +165,44 @@ def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
         _job_lock.release()
 
 
-def import_and_match():
+def import_new_safe():
+    """After a shelf scan: new folders become series. Matching is left to the
+    trickle — never a batch."""
     try:
         import_new_folders()
-        match_pending()
     except Exception as e:
         logger.warning(f"Shelf import failed: {e}")
 
 
+def trickle_tick(now_hour: int | None = None):
+    """Scheduler job: match ONE pending series, in daytime, if LOCG is open to us."""
+    from kometa.locg_client import locg_paused
+    from datetime import datetime
+    from kometa.scheduler import TZ
+    hour = now_hour if now_hour is not None else datetime.now(TZ).hour
+    if hour not in TRICKLE_HOURS or locg_paused():
+        return
+    try:
+        match_pending(limit=1, sleep=lambda s: None)
+    except Exception as e:
+        logger.warning(f"Import trickle failed: {e}")
+
+
+def match_one(series_id: int) -> str:
+    """'Match now': one series, right away. Returns its new match_status.
+    Raises when LOCG doesn't answer — that's not 'no match'."""
+    from kometa.sync import sync_one, sync_one_guarded
+    s = db.get_series_by_id(series_id, DB_PATH)
+    locg_id = find_confident_match(s)
+    if locg_id:
+        db.set_locg_series_id(series_id, locg_id, DB_PATH)
+        db.set_match_status(series_id, AUTO, DB_PATH)
+    else:
+        db.set_match_status(series_id, NEEDS_MATCH, DB_PATH)
+    threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), sync_one),
+                     daemon=True).start()
+    return AUTO if locg_id else NEEDS_MATCH
+
+
 def import_in_background():
-    threading.Thread(target=import_and_match, name="shelf-import", daemon=True).start()
+    threading.Thread(target=import_new_safe, name="shelf-import", daemon=True).start()

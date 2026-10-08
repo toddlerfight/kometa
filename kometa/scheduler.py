@@ -55,7 +55,8 @@ def last_scheduled_sync_utc() -> str:
     return max(candidates).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None):
+def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None,
+                    trickle_fn=None):
     scheduler = BackgroundScheduler(timezone=TZ)
 
     # misfire_grace_time: apscheduler's default is 1 SECOND — a container
@@ -113,6 +114,19 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             replace_existing=True,
             misfire_grace_time=3600,
             coalesce=True,
+        )
+
+    # Shelf matcher trickle: one pending series per tick (the tick itself
+    # checks daytime + LOCG backoff). Never a batch — see shelf_import.
+    if trickle_fn:
+        from kometa.shelf_import import TRICKLE_MINUTES
+        scheduler.add_job(
+            trickle_fn,
+            IntervalTrigger(minutes=TRICKLE_MINUTES),
+            id="shelf_match_trickle",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
         )
 
     scheduler.start()

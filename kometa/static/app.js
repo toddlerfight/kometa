@@ -350,7 +350,7 @@ async function renderLibraryBrowse() {
 // Kometa series — "pull list" is the one that means "actively downloading".
 const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
-  { key: 'unmatched', label: 'Needs match' },
+  { key: 'unmatched', label: 'Unmatched' },
   { key: 'reading',  label: 'Reading' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
@@ -478,7 +478,7 @@ function _renderBrowseResults() {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.reading && !_isReading(s)) return false;
-    if (toggles.unmatched && s.match_status !== 'needs_match') return false;
+    if (toggles.unmatched && s.match_status !== 'needs_match' && s.match_status !== 'pending') return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -1040,7 +1040,8 @@ async function renderSeriesDetail(id) {
   const matchBanner = (s.match_status === 'needs_match' || s.match_status === 'pending')
     ? `<div class="match-banner" id="match-banner">
         <div class="match-banner-text">${s.match_status === 'pending'
-          ? '<b>Matching to LOCG…</b> This series came from your shelf and is queued for matching.'
+          ? `<b>Not matched to LOCG yet.</b> This series came from your shelf; matching trickles through in the background (a few a day, to stay polite to LOCG). Want it now?
+             <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="_matchNow(${s.id}, this)">Match now</button>`
           : '<b>Pick the run.</b> More than one LOCG series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}</div>
         ${s.match_status === 'needs_match' ? `
         <div class="match-search"><input class="browse-search" id="match-q" value="${esc(s.title)}"

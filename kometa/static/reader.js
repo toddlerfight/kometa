@@ -455,3 +455,18 @@ async function _loadShelfFiles(s, all) {
     <div class="u-label shelf-files-head">${all ? 'On the shelf' : 'Also on the shelf'}</div>
     <div class="issue-grid">${tiles}</div></div>`);
 }
+
+async function _matchNow(seriesId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Matching…'; }
+  try {
+    const r = await fetch(`/api/series/${seriesId}/match`, { method: 'POST' });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || r.status);
+    showToast(body.match_status === 'auto' ? 'Matched — fetching issues, trades and covers'
+      : 'More than one run could fit — pick it below');
+    renderSeriesDetail(seriesId);
+  } catch (e) {
+    showToast(String(e.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Match now'; }
+  }
+}
