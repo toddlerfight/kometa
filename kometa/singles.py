@@ -29,7 +29,7 @@ COLLECTED_TYPES = {"trade paperback", "tpb", "hard cover", "hardcover", "omnibus
 RUN_TYPES = {"ongoing series", "limited series", "cancelled series", "single issue"}
 
 _COLLECTED_WORDS = re.compile(
-    r"\b(deluxe|omnibus|tpb|hc|hardcover|absolute|compendium|collection|collected|anniversary|"
+    r"\b(deluxe|omnibus|tpb|hc|hardcover|absolute edition|compendium|collection|collected|anniversary|"
     r"library|treasury|edition|vol(?:ume)?\.?\s*\d|book\s+(?:one|two|three|\d))\b", re.I)
 _SPLIT_SUFFIX = re.compile(r"^(?P<base>.+?)\s+(?:#\s*)?0?(?P<n>\d{1,2})(?:\s*[-–:]\s*(?P<sub>.+))?(?:\s*\[.*\])?$")
 
