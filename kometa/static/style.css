@@ -2159,3 +2159,6 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 /* On Deck cards line up: title always two lines (clamped), meta always one (truncated) */
 .od-title { height: calc(1.25em * 2); }
 .od-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 1.4em; line-height: 1.4; }
+
+/* On Deck: covers only for now — the text lines are hidden, not gone */
+.od-title, .od-meta { display: none; }
