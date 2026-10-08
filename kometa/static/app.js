@@ -622,7 +622,7 @@ async function renderOnDeck() {
     </div>`;
   const row = (title, help, cards, empty) => `
     <div class="od-row">
-      <div class="od-head"><span class="series-card-title">${title}</span><span class="od-help">${help}</span></div>
+      <div class="od-head"><span class="series-card-title">${title}</span></div>
       ${cards.length ? `<div class="od-strip">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
     </div>`;
   setApp(
