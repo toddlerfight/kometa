@@ -321,7 +321,7 @@ async function syncSeries(id, btn, pre = null) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, tracked: false, reading: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, reading: false, unmatched: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -333,7 +333,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.toggles = { upcoming: false, missing: false, tracked: false, reading: false };
+  browseState.toggles = { upcoming: false, missing: false, pulling: false, reading: false, unmatched: false };
   browseState._cache  = null;
   browseState.sortKey = 'date';
   browseState.sortDir = { date: 'asc' };   // nearest release first (soonest at top)
@@ -345,10 +345,12 @@ async function renderLibraryBrowse() {
 // independent toggles that narrow it down, not exclusive tabs: both on
 // shows the union (anything needing attention), not just series matching
 // both at once — see _renderBrowseResults.
-// Tracked / Reading are SCOPE filters (narrow, AND); Upcoming / Missing stay
-// the needs-attention UNION inside whatever scope is left.
+// Pull list / Reading are SCOPE filters (narrow, AND); Upcoming / Missing stay
+// the needs-attention UNION inside whatever scope is left. Every series is a
+// Kometa series — "pull list" is the one that means "actively downloading".
 const BROWSE_TOGGLES = [
-  { key: 'tracked',  label: 'Tracked' },
+  { key: 'pulling',  label: 'Pull list' },
+  { key: 'unmatched', label: 'Needs match' },
   { key: 'reading',  label: 'Reading' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
@@ -360,7 +362,7 @@ function _browseFilterTabs() {
   return `<div class="browse-filters">
     ${BROWSE_TOGGLES.map(f => `
       <button class="browse-filter-tab u-label${browseState.toggles[f.key] ? ' active' : ''}"
-        onclick="browseFilter('${f.key}')">${f.label}</button>
+        data-key="${f.key}" onclick="browseFilter('${f.key}')">${f.label}</button>
     `).join('')}
   </div>`;
 }
@@ -371,7 +373,7 @@ function browseFilter(key) {
   // only touches #browse-results — so a toggle click has to update ITS OWN
   // button's active class by hand instead of a full re-render finding it.
   document.querySelectorAll('.browse-filter-tab').forEach(b => {
-    if (b.textContent.toLowerCase() === key) b.classList.toggle('active', browseState.toggles[key]);
+    if (b.dataset.key === key) b.classList.toggle('active', browseState.toggles[key]);
   });
   _renderBrowseResults();
 }
@@ -474,14 +476,17 @@ function _renderBrowseResults() {
   const anyToggleOn = toggles.upcoming || toggles.missing;
   let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
-    if (toggles.tracked && s.kind !== 'series') return false;
+    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.reading && !_isReading(s)) return false;
+    if (toggles.unmatched && s.match_status !== 'needs_match') return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
     if (!anyToggleOn) return true;
+    // Missing = gaps you've ASKED for. A run you own 12/40 of and aren't
+    // pulling isn't missing anything — it's just a partial run.
     return (toggles.upcoming && (s.upcoming ?? 0) > 0)
-        || (toggles.missing && (s.missing ?? 0) > 0);
+        || (toggles.missing && s.on_pull_list && (s.missing ?? 0) > 0);
   });
 
   if (sortKey === 'alpha') {
@@ -524,7 +529,10 @@ function _renderBrowseResults() {
     const gap   = (s.missing ?? 0) + (s.out_today ?? 0);
     const total = (s.owned ?? 0) + gap;
     const pct   = total ? Math.round((s.owned / total) * 100) : 0;
-    const color = gap > 0 ? 'var(--amb)' : (total > 0 ? 'var(--pri)' : 'var(--tq)');
+    // Amber only when you're pulling it: a gap is "missing" because you asked for
+    // the series. Not pulling = grey count, still honest about what you own.
+    const color = gap > 0 ? (s.on_pull_list ? 'var(--amb)' : 'var(--tq)')
+                          : (total > 0 ? 'var(--pri)' : 'var(--tq)');
     const nextRelease = s.calendar_date
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
@@ -933,7 +941,10 @@ async function renderSeriesDetail(id) {
   // series per session so a persistently-failing sync can't loop. A successful
   // sync updates last_synced (no longer stale) and re-renders.
   const _lastMs = s.last_synced ? Date.parse(s.last_synced.replace(' ', 'T') + 'Z') : 0;
-  if ((Date.now() - _lastMs) > 3600000 && !_autoSynced.has(id)) {
+  // Pulled series: stale after an hour. Not pulled: after a week — the weekly
+  // check is the cadence for those, and opening one shouldn't hit LOCG daily.
+  const _staleMs = s.on_pull_list ? 3600000 : 7 * 86400000;
+  if ((Date.now() - _lastMs) > _staleMs && !_autoSynced.has(id)) {
     _autoSynced.add(id);
     syncSeries(id, null, s);   // s was fetched 10 lines up — don't GET it again
   }
@@ -958,8 +969,18 @@ async function renderSeriesDetail(id) {
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
   ].filter(Boolean).join('');
 
-  const pullBtn = `<button class="btn btn-sm ${s.on_pull_list ? 'btn-primary' : 'btn-ghost'}"
-    onclick="togglePullList(${s.id}, ${!s.on_pull_list})">Pull</button>`;
+  // An on/off switch, not a button: pulling is a state you can see and undo.
+  // On = actively download new + missing issues. Off = know about it, check weekly.
+  const pullBtn = `<label class="pull-switch" title="${s.on_pull_list
+      ? 'On the pull list: new and missing issues are downloaded'
+      : 'Not pulled: Kometa checks for new issues weekly but downloads nothing'}">
+    <span class="u-label">Pull list</span>
+    <span class="toggle-switch">
+      <input type="checkbox" role="switch" aria-label="Pull list" ${s.on_pull_list ? 'checked' : ''}
+        onchange="togglePullList(${s.id}, this.checked)">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </span>
+  </label>`;
 
   // Oversized = lift the single-issue page-count guard to 150 for this series.
   // For the quarterly bricks (Head Lopper et al.) whose legit issues bust the
@@ -1016,7 +1037,20 @@ async function renderSeriesDetail(id) {
     <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
   `;
 
+  const matchBanner = (s.match_status === 'needs_match' || s.match_status === 'pending')
+    ? `<div class="match-banner" id="match-banner">
+        <div class="match-banner-text">${s.match_status === 'pending'
+          ? '<b>Matching to LOCG…</b> This series came from your shelf and is queued for matching.'
+          : '<b>Pick the run.</b> More than one LOCG series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}</div>
+        ${s.match_status === 'needs_match' ? `
+        <div class="match-search"><input class="browse-search" id="match-q" value="${esc(s.title)}"
+          onkeydown="if(event.key==='Enter')_loadMatchCandidates(${s.id}, this.value)">
+          <button class="btn btn-ghost btn-sm" onclick="_loadMatchCandidates(${s.id}, document.getElementById('match-q').value)">Search</button></div>
+        <div class="match-results" id="match-results"><div class="state-msg" style="padding:10px 0;font-size:11px">Searching LOCG…</div></div>` : ''}
+      </div>` : '';
+
   setApp(`
+    ${matchBanner}
     <div class="issue-tabs-row">
       <div class="issue-tabs">${tabs}</div>
       <button class="btn-icon sort-toggle" title="${detailSortDesc ? 'Newest first' : 'Oldest first'}"
@@ -1039,6 +1073,8 @@ async function renderSeriesDetail(id) {
 
   if (detailTab === 'trades') _loadTradesPanel(id);
   if (detailTab === 'arcs') _loadArcsPanel(id);
+  if (s.match_status === 'needs_match') _loadMatchCandidates(id, s.title);
+  if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
 
   // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now
   // that its run is loaded. Cleared so it fires once.
@@ -1312,11 +1348,14 @@ function showFolderPathModal(seriesId) {
 }
 
 async function togglePullList(id, on) {
+  let res;
   try {
-    await api.patch(`/api/series/${id}/pull-list`, { on_pull_list: on });
+    res = await api.patch(`/api/series/${id}/pull-list`, { on_pull_list: on });
   } catch (e) {
-    showToast('Pull-list update failed'); console.error(e); return;
+    showToast('Pull-list update failed'); console.error(e); renderSeriesDetail(id); return;
   }
+  showToast(on ? 'On the pull list — new and missing issues will be downloaded'
+    : `Off the pull list${res?.cancelled ? ` — ${res.cancelled} queued search${res.cancelled === 1 ? '' : 'es'} cancelled` : ''}`);
   renderSeriesDetail(id);
 }
 

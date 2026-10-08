@@ -2058,3 +2058,21 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   background: var(--pri); color: var(--ink); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
 .shelf-tile-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(0,0,0,.6); }
 .shelf-tile-bar div { height: 100%; background: var(--pri); }
+
+/* Series header: the pull list as a labelled on/off switch (Settings toggle). */
+.pull-switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 2px; }
+.pull-switch .u-label { color: var(--tm); }
+
+/* Series page: pick-the-run banner + files on the shelf. */
+.match-banner { border: 1px solid var(--amb); background: var(--amb-d); border-radius: var(--r-lg);
+  padding: 14px 16px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; }
+.match-banner-text { color: var(--tm); font-size: var(--fs-body); line-height: 1.5; }
+.match-banner-text b { color: var(--amb); }
+.match-search { display: flex; gap: 8px; }
+.match-search .browse-search { flex: 1; max-width: 420px; }
+.match-results { display: flex; flex-direction: column; gap: 8px; }
+.match-row { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: var(--r-md); background: var(--su1); }
+.match-row img, .match-nocover { width: 36px; height: 54px; object-fit: cover; border-radius: var(--r-sm); background: var(--su2); flex: none; }
+.match-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-body); }
+.shelf-files { margin-top: 28px; }
+.shelf-files-head { color: var(--tq); margin-bottom: 12px; }

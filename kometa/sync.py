@@ -222,7 +222,10 @@ def sync_one(series: dict):
     issue_map: dict[float, dict] = {}
     locg_id = series.get("locg_series_id")
     try:
-        if not locg_id and series.get("title"):
+        # A shelf-imported series the importer couldn't match confidently is
+        # waiting for YOU to pick its run — a title guess here is exactly the
+        # silent wrong-run match that state exists to prevent.
+        if not locg_id and series.get("title") and series.get("match_status") not in ("pending", "needs_match"):
             locg_id = find_series_id_anon(series["title"], series.get("year_began"))
             if locg_id:
                 db.set_locg_series_id(series["id"], locg_id, DB_PATH)

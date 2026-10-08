@@ -115,6 +115,12 @@ def app_server(tmp_path_factory):
     for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader, shelf):
         mod.DB_PATH = dbfile
     reader.PAGE_CACHE_DIR = os.path.join(os.path.dirname(dbfile), "page-cache")
+    # The shelf importer matches new folders against LOCG from the SERVER — the
+    # browser-side network quarantine can't see that. Never match; never wait.
+    import kometa.shelf_import as shelf_import
+    shelf_import.DB_PATH = dbfile
+    shelf_import.find_confident_match = lambda *a, **k: None
+    shelf_import.THROTTLE_S = 0
 
     db.init_db(dbfile)
     ids = _seed(db, dbfile)

@@ -54,6 +54,27 @@ logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 DB_PATH = db.DB_PATH
 
+# Series NOT on the pull list get a weekly check, not three a day: ~900 series
+# x 3 syncs is ~2,700 LOCG lookups a day for runs that mostly never change, and a
+# rate-limited LOCG would slow the pull list too. Spread over the week — each
+# full sync takes at most this many of the stalest — so no single run spikes.
+NOT_PULLED_SYNC_DAYS = 7
+NOT_PULLED_PER_RUN = 60
+
+
+def _series_due_for_sync(all_series: list[dict]) -> list[dict]:
+    """Pull-list series every run (as before); the rest once they're a week old,
+    stalest first, capped per run."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=NOT_PULLED_SYNC_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    pulled = [s for s in all_series if s.get("on_pull_list") or s.get("kind") == "arc"]
+    stale = sorted((s for s in all_series
+                    if not (s.get("on_pull_list") or s.get("kind") == "arc")
+                    and (s.get("last_synced") or "") < cutoff),
+                   key=lambda s: s.get("last_synced") or "")
+    return pulled + stale[:NOT_PULLED_PER_RUN]
+
+
 def _sync_all_job():
     # DEAD MOUNT CHECK. /comics rides an SMB share now, and a container that
     # wins the post-reboot race against macOS's mounter sees a perfectly
@@ -77,7 +98,7 @@ def _sync_all_job():
         logger.info("Full sync already running — skipping this invocation")
         return
     try:
-        for s in db.get_all_series(DB_PATH):
+        for s in _series_due_for_sync(db.get_all_series(DB_PATH)):
             # Guarded per series: a bad series logs and the loop MARCHES ON —
             # one LOCG hiccup used to abort the whole sweep, and with it the
             # _sweep_missing pass and the last_full_sync stamp below.
@@ -445,7 +466,8 @@ def get_series(series_id: int):
         arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
                         if arc_includes_series(a["source_titles"], s["title"])) or None
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades,
-                arc_count=arc_count, **_summary(issues))
+                arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
+                **_summary(issues))
 
 
 
@@ -734,6 +756,25 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
     if not db.get_series_by_id(series_id, DB_PATH):
         raise HTTPException(404)
     db.set_pull_list(series_id, req.on_pull_list, DB_PATH)
+    # Off means "stop getting this" now, not after whatever's queued.
+    cancelled = 0 if req.on_pull_list else db.dequeue_waiting_series(series_id, DB_PATH)
+    return {**db.get_series_by_id(series_id, DB_PATH), "cancelled": cancelled}
+
+
+class MatchRequest(BaseModel):
+    locg_id: int
+
+
+@app.patch("/api/series/{series_id}/locg", status_code=200)
+def set_series_locg(series_id: int, req: MatchRequest):
+    """You picked the run: link it, mark it as your choice, refresh in the background."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    db.set_locg_series_id(series_id, req.locg_id, DB_PATH)
+    db.set_match_status(series_id, "manual", DB_PATH)
+    threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), _sync_one),
+                     daemon=True).start()
     return db.get_series_by_id(series_id, DB_PATH)
 
 

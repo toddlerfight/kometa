@@ -397,3 +397,61 @@ async function renderShelfSeries(id) {
     ? `<div class="issue-grid">${tiles}</div>`
     : '<div class="state-msg">No readable books in this folder.</div>');
 }
+
+// --- Series page: matching + files on the shelf ---------------------------------
+
+async function _loadMatchCandidates(seriesId, q) {
+  const box = document.getElementById('match-results');
+  if (!box) return;
+  box.innerHTML = '<div class="state-msg" style="padding:10px 0;font-size:11px">Searching LOCG…</div>';
+  let rows = [];
+  try { rows = (await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`)).filter(r => !r.needs_resolve); } catch {}
+  if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
+  box.innerHTML = rows.length ? rows.slice(0, 8).map(r => `
+    <div class="match-row">
+      ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : '<div class="match-nocover"></div>'}
+      <div class="match-row-text"><div>${esc(r.series)}</div>
+        <div class="u-label" style="color:var(--tq)">${esc([r.publisher?.name, r.year_began].filter(Boolean).join(' · '))}</div></div>
+      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this)">This one</button>
+    </div>`).join('')
+    : '<div class="state-msg" style="padding:10px 0;font-size:11px">No LOCG series found — try a different search.</div>';
+}
+
+async function _pickMatch(seriesId, locgId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
+  try {
+    await api.patch(`/api/series/${seriesId}/locg`, { locg_id: locgId });
+    showToast('Linked — fetching its issues, trades and covers');
+    renderSeriesDetail(seriesId);
+  } catch (e) {
+    showToast('Couldn’t link that run'); if (btn) { btn.disabled = false; btn.textContent = 'This one'; }
+  }
+}
+
+// Files on the shelf that aren't numbered issues (trades, omnibuses, oddities) —
+// or, for a series with no issue list at all, every file — so nothing on disk is
+// unreadable just because it doesn't fit the issue grid.
+async function _loadShelfFiles(s, all) {
+  let shelf;
+  try { shelf = await api.get(`/api/shelf/${s.shelf_id}`); } catch { return; }
+  if (currentView !== 'series-detail' || currentParams.id !== s.id) return;
+  const books = all ? shelf.books : shelf.books.filter(b => b.number == null);
+  if (!books.length) return;
+  const tiles = books.map(b => {
+    const p = b.progress;
+    const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
+      : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
+    const go = `navigate('read', {book: ${b.id}})`;
+    return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(b.label)}"
+        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+      <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
+        onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
+      <div class="issue-tile-num">${esc(b.label)}</div></div>`;
+  }).join('');
+  const app = document.getElementById('app');
+  app.querySelector('.shelf-files')?.remove();
+  if (all) app.querySelector('.issue-grid')?.remove();
+  app.insertAdjacentHTML('beforeend', `<div class="shelf-files">
+    <div class="u-label shelf-files-head">${all ? 'On the shelf' : 'Also on the shelf'}</div>
+    <div class="issue-grid">${tiles}</div></div>`);
+}

@@ -35,8 +35,9 @@ _last_scan: dict = {}
 
 
 def _skip(name: str) -> bool:
-    # dot-dirs (.kometa-staging, quarantines), Synology's @eaDir / #recycle
-    return name.startswith((".", "@", "#"))
+    # dot-dirs (.kometa-staging, quarantines), _underscore quarantines
+    # (_misgrabbed), Synology's @eaDir / #recycle
+    return name.startswith((".", "_", "@", "#"))
 
 
 def scan_shelf(root: str | None = None) -> dict:
@@ -91,6 +92,11 @@ def scan_shelf_safe():
         scan_shelf()
     except Exception as e:
         logger.warning(f"Shelf scan failed: {e}")
+        return
+    # Every series is a Kometa series: new folders become series (pull list off)
+    # and get matched to LOCG in the background, throttled.
+    from kometa.shelf_import import import_in_background
+    import_in_background()
 
 
 def scan_in_background():

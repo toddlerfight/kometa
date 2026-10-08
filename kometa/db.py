@@ -271,6 +271,12 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_issue_id INTEGER")
         if "locg_issue_id" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN locg_issue_id TEXT")
+        # How a series got its LOCG link. NULL = added on purpose (wizard etc.);
+        # 'auto' = the shelf importer matched it confidently; 'needs_match' = the
+        # importer couldn't be sure, so sync must NOT guess by title — you pick.
+        series_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
+        if "match_status" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN match_status TEXT")
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
@@ -1265,6 +1271,15 @@ def dequeue_waiting_issue(series_id, number, path=DB_PATH) -> int:
         ).rowcount
 
 
+def dequeue_waiting_series(series_id, path=DB_PATH) -> int:
+    """Pull list switched off: drop the series' queue rows that are only WAITING.
+    In-flight searches/downloads finish (same rule as dequeue_waiting_issue)."""
+    with _connect(path) as conn:
+        return conn.execute(
+            "DELETE FROM download_queue WHERE tracked_series_id = ? "
+            "AND state IN ('queued', 'not_found', 'failed')", (series_id,)).rowcount
+
+
 def remove_queue_item(queue_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
@@ -1557,3 +1572,21 @@ def reading_by_tracked_series(reader_id, path=DB_PATH) -> dict[int, dict]:
             WHERE b.tracked_series_id IS NOT NULL
             GROUP BY b.tracked_series_id
         """, (reader_id,))}
+
+
+def set_match_status(series_id, status, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET match_status = ? WHERE id = ?", (status, series_id))
+
+
+def link_shelf_series(shelf_id, series_id, path=DB_PATH):
+    """A shelf folder became a Kometa series: point the folder and its books at it."""
+    with _connect(path) as conn:
+        conn.execute("UPDATE shelf_series SET tracked_series_id = ? WHERE id = ?", (series_id, shelf_id))
+        conn.execute("UPDATE books SET tracked_series_id = ? WHERE shelf_series_id = ?", (series_id, shelf_id))
+
+
+def shelf_id_for_series(series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        r = conn.execute("SELECT id FROM shelf_series WHERE tracked_series_id = ?", (series_id,)).fetchone()
+        return r["id"] if r else None

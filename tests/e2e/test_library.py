@@ -14,9 +14,10 @@ def test_grid_defaults_to_all_and_toggles_narrow(app):
     app.locator(".browse-filter-tab", has_text="Upcoming").click()
     expect(app.locator(".series-card")).to_have_count(1)
     expect(app.locator(".series-card-title")).to_have_text("Test Comic Alpha")
-    # + Missing → union pulls gamma (its one issue is unowned) in beside alpha
+    # + Missing → still just alpha: gamma has an unowned issue but isn't on the
+    # pull list, and a gap you haven't asked for isn't "missing" (2026-10-08)
     app.locator(".browse-filter-tab", has_text="Missing").click()
-    expect(app.locator(".series-card")).to_have_count(2)
+    expect(app.locator(".series-card")).to_have_count(1)
     # Both back off → everything again
     app.locator(".browse-filter-tab", has_text="Upcoming").click()
     app.locator(".browse-filter-tab", has_text="Missing").click()
