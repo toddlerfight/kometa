@@ -412,17 +412,42 @@ async function _loadMatchCandidates(seriesId, q) {
     api.get(`/api/search/locg?q=${enc}`).then(r => r.filter(x => !x.needs_resolve)).catch(() => []),
   ]);
   if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
-  const rows = metron.map(r => ({ ...r, source: 'metron' })).slice(0, 8)
-    .concat(locg.map(r => ({ ...r, source: 'locg' })).slice(0, 8));
+  // One list: the catalogue's runs AND your own shelf. A catalogue run you
+  // already have shows as yours ("File under"), not as a thing to match twice;
+  // shelf series whose title matches the words show too, for the deluxe whose
+  // catalogue entry Metron simply doesn't have.
+  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
+  const mine = (_fileUnderAll || []).filter(s => s.id !== seriesId && s.kind !== 'arc' && s.folder_path
+    && s.match_status !== 'pending' && s.match_status !== 'needs_match');
+  const byMetron = new Map(mine.filter(s => s.metron_series_id).map(s => [s.metron_series_id, s]));
+  const byLocg = new Map(mine.filter(s => s.locg_series_id).map(s => [s.locg_series_id, s]));
+  const rows = metron.map(r => ({ ...r, source: 'metron', have: byMetron.get(r.id) })).slice(0, 8)
+    .concat(locg.map(r => ({ ...r, source: 'locg', have: byLocg.get(r.id) })).slice(0, 8));
   _matchRows = rows;
-  box.innerHTML = rows.length ? rows.map(r => `
-    <div class="match-row">
-      ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : ''}
+  const words = q.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !/^(the|and|of|deluxe|edition|omnibus|tpb|hc|vol)$/.test(w));
+  const seenParents = new Set(rows.filter(r => r.have).map(r => r.have.id));
+  const shelfHits = words.length ? mine.filter(s => !seenParents.has(s.id) && words.every(w => s.title.toLowerCase().includes(w))).slice(0, 5) : [];
+  const catalogueRow = r => `
+    <div class="match-row${r.have ? ' match-row-have' : ''}">
+      ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : (r.have ? `<img src="/api/series/${r.have.id}/thumbnail" alt="" loading="lazy" onerror="this.remove()">` : '')}
       <div class="match-row-text"><div class="match-row-title">${esc(r.series)}</div>
         <div class="match-row-meta">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null].filter(Boolean).join(' · '))}
-          <span class="match-source">${r.source === 'metron' ? 'Metron' : 'LOCG'}</span></div></div>
-      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this, '${r.source}')">Use this</button>
-    </div>`).join('')
+          <span class="match-source">${r.source === 'metron' ? 'Metron' : 'LOCG'}</span>
+          ${r.have ? `<span class="match-have">· on your shelf as ${esc(r.have.title)}</span>` : ''}</div></div>
+      ${r.have
+        ? `<button class="btn btn-primary btn-sm" onclick="_fileUnder(${seriesId}, ${r.have.id})">File under</button>`
+        : `<button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this, '${r.source}')">Use this</button>`}
+    </div>`;
+  const shelfRow = s => `
+    <div class="match-row match-row-have">
+      <img src="/api/series/${s.id}/thumbnail" alt="" loading="lazy" onerror="this.remove()">
+      <div class="match-row-text"><div class="match-row-title">${esc(s.title)}</div>
+        <div class="match-row-meta">${esc([s.publisher, s.year_began, `${s.owned ?? 0} owned`].filter(Boolean).join(' · '))}
+          <span class="match-have">· on your shelf</span></div></div>
+      <button class="btn btn-primary btn-sm" onclick="_fileUnder(${seriesId}, ${s.id})">File under</button>
+    </div>`;
+  box.innerHTML = (rows.length || shelfHits.length)
+    ? rows.map(catalogueRow).join('') + shelfHits.map(shelfRow).join('')
     : '<div class="match-hint">No series found — try a different search.</div>';
 }
 
@@ -484,28 +509,7 @@ async function _pickMatch(seriesId, runId, btn, source = 'locg') {
 // its own series by accident. Search your OWN shelf (client-side, it's one
 // list), confirm, and the file moves into the parent's folder — readable from
 // the parent's page, the stub series gone.
-let _fileUnderAll = null, _fileUnderTimer = null;
-async function _fileUnderSearch(seriesId, q) {
-  clearTimeout(_fileUnderTimer);
-  _fileUnderTimer = setTimeout(async () => {
-    const box = document.getElementById('file-under-results');
-    if (!box) return;
-    q = (q || '').trim().toLowerCase();
-    if (q.length < 2) { box.innerHTML = ''; return; }
-    if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { return; } }
-    const hits = _fileUnderAll
-      .filter(s => s.id !== seriesId && s.kind !== 'arc' && s.folder_path && s.match_status !== 'pending' && s.match_status !== 'needs_match'
-        && s.title.toLowerCase().includes(q))
-      .sort((a, b) => a.title.localeCompare(b.title)).slice(0, 8);
-    box.innerHTML = hits.length ? hits.map(s => `
-      <div class="match-row">
-        <img src="/api/series/${s.id}/thumbnail" alt="" loading="lazy" onerror="this.remove()">
-        <div class="match-row-text"><div class="match-row-title">${esc(s.title)}</div>
-          <div class="match-row-meta">${esc([s.publisher, s.year_began, `${s.owned ?? 0} owned`].filter(Boolean).join(' · '))}</div></div>
-        <button class="btn btn-primary btn-sm" onclick="_fileUnder(${seriesId}, ${s.id})">File under</button>
-      </div>`).join('') : '<div class="match-hint">No series on your shelf matches that.</div>';
-  }, 200);
-}
+let _fileUnderAll = null;
 
 async function _fileUnder(seriesId, parentId, run = null) {
   const parent = (_fileUnderAll || []).find(s => s.id === parentId) || { title: 'that series' };

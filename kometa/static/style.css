@@ -2133,3 +2133,6 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .nm-search { display: block; max-width: 420px; margin-bottom: 10px; }
 
 .match-sub { color: var(--tq); font-size: 12px; margin-top: 6px; }
+
+.match-row-have { border: 1px solid rgba(201,255,105,.25); }
+.match-have { color: var(--pri); margin-left: 4px; text-transform: none; letter-spacing: 0; }
