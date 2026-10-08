@@ -1470,7 +1470,7 @@ async function togglePullList(id, on) {
   } catch (e) {
     showToast('Pull-list update failed'); console.error(e); renderSeriesDetail(id); return;
   }
-  showToast(on ? 'On the pull list — new and missing issues will be downloaded'
+  showToast(on ? 'On the pull list — searching for missing issues now'
     : `Off the pull list${res?.cancelled ? ` — ${res.cancelled} queued search${res.cancelled === 1 ? '' : 'es'} cancelled` : ''}`);
   renderSeriesDetail(id);
 }

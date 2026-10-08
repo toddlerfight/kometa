@@ -64,3 +64,19 @@ def test_match_now_says_which_run(lib, monkeypatch):
     assert r["matched"] == {"source": "metron", "id": 7, "title": "Batman: Damned", "publisher": "DC",
                             "year": 2018, "issue_count": 3}
     assert db.get_series_by_id(sid, lib)["metron_series_id"] == 7
+
+
+def test_metron_matched_series_gain_a_locg_id_one_per_tick_when_open(lib, monkeypatch):
+    monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+    monkeypatch.setattr(si, "find_confident_match", lambda s: 900 if s["title"] == "Saga" else None)
+    a = db.add_series(title="Saga", publisher="Image", on_pull_list=True, path=lib)
+    b = db.add_series(title="Nowhere Men", publisher="Image", on_pull_list=False, path=lib)
+    for sid in (a, b):
+        db.set_metron_series_id(sid, 5, lib)
+    assert si.link_locg_existing(limit=1) == 1                       # pull list first
+    assert db.get_series_by_id(a, lib)["locg_series_id"] == 900
+    assert db.get_series_by_id(b, lib)["locg_link"] is None          # not reached this tick
+    assert si.link_locg_existing(limit=1) == 0
+    assert db.get_series_by_id(b, lib)["locg_link"] == "none"        # asked once, remembered
+    monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})
+    assert si.link_locg_existing(limit=5) == 0                       # shut = don't even look

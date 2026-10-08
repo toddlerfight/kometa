@@ -831,7 +831,15 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
     db.set_pull_list(series_id, req.on_pull_list, DB_PATH)
     # Off means "stop getting this" now, not after whatever's queued.
     cancelled = 0 if req.on_pull_list else db.dequeue_waiting_series(series_id, DB_PATH)
-    return {**db.get_series_by_id(series_id, DB_PATH), "cancelled": cancelled}
+    if req.on_pull_list:
+        # On means "go get it" now, not at the next scheduled sweep: refresh the
+        # issue list, queue what's missing, start the queue. All in the background.
+        def _go():
+            sync_one_guarded(db.get_series_by_id(series_id, DB_PATH), lambda x: _sync_one(x, force=True))
+            _sweep_missing()
+            _process_queue()
+        threading.Thread(target=_go, name=f"pull-on-{series_id}", daemon=True).start()
+    return {**db.get_series_by_id(series_id, DB_PATH), "cancelled": cancelled, "searching": bool(req.on_pull_list)}
 
 
 class MatchRequest(BaseModel):

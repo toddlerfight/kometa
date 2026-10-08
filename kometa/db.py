@@ -287,6 +287,10 @@ def _migrate(path=DB_PATH):
         # (Metron couldn't place it confidently — don't ask again every tick).
         if "metron_link" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_link TEXT")
+        if "locg_link" not in series_cols:
+            # mirror of metron_link: a Metron-matched series tried against LOCG
+            # ('linked' / 'none') so the trickle doesn't ask twice
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_link TEXT")
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
@@ -1654,3 +1658,8 @@ def set_metron_fetched(series_id, when, path=DB_PATH):
 def set_metron_link(series_id, outcome, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET metron_link = ? WHERE id = ?", (outcome, series_id))
+
+
+def set_locg_link(series_id, outcome, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET locg_link = ? WHERE id = ?", (outcome, series_id))

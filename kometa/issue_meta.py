@@ -51,13 +51,40 @@ def _locg(issue: dict, path, want_covers: bool) -> dict | None:
     return out
 
 
+def _locg_covers_if_open(issue: dict, path) -> list[dict]:
+    lid = issue.get("locg_issue_id")
+    if not lid:
+        return []
+    from kometa import locg_client
+    if locg_client.locg_paused():
+        return []
+    try:
+        covers = locg_client.fetch_variants(lid)["covers"]
+    except Exception as e:
+        logger.info(f"LOCG covers skipped for issue {lid}: {e}")
+        return []
+    # LOCG's 'Cover A (Main)' duplicates Metron's main; its variants are the prize
+    return [c for c in covers if c.get("id") != str(lid)]
+
+
 def details_for(issue: dict, path=None, want_covers: bool = False) -> dict:
     """{desc, credits, covers?, source}. Raises only when the ONLY source that
     could answer didn't (that's a 502, not 'no details')."""
     path = path or DB_PATH
     found = _metron(issue, path)
     if found is not None and (not want_covers or found.get("covers")):
-        return {**found, "source": "metron"}
+        out = {**found, "source": "metron"}
+        if want_covers:
+            # Metron's variant list is thin for the back catalogue (White Knight
+            # #1, 2017: one cover; LOCG: eight, with reprints and exclusives).
+            # When LOCG is open to us and we know the issue there, add its covers.
+            # Never worth a pause: skipped entirely while LOCG is shut.
+            extra = _locg_covers_if_open(issue, path)
+            if extra:
+                seen = {(c.get("name") or "").lower() for c in out["covers"]}
+                out["covers"] = out["covers"] + [c for c in extra if (c.get("name") or "").lower() not in seen]
+                out["source"] = "metron+locg"
+        return out
     try:
         locg = _locg(issue, path, want_covers)
     except Exception:

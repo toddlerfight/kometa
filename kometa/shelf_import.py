@@ -255,6 +255,7 @@ def trickle_tick(now_hour: int | None = None):
         match_pending(limit=METRON_PER_TICK if metron else 1, sleep=lambda s: None)
         if metron:
             link_metron_existing()
+            link_locg_existing(limit=1)        # no-op while LOCG is paused
     except Exception as e:
         logger.warning(f"Import trickle failed: {e}")
 
@@ -282,6 +283,35 @@ def link_metron_existing(limit: int = METRON_PER_TICK) -> int:
             db.set_metron_series_id(s["id"], mid, DB_PATH)
             linked += 1
         db.set_metron_link(s["id"], "linked" if mid else "none", DB_PATH)
+    return linked
+
+
+def link_locg_existing(limit: int = 1) -> int:
+    """The mirror of link_metron_existing: a Metron-matched series gains its LOCG
+    id — confident rule, pull list first, ONE per tick (LOCG manners) and only
+    while LOCG is open to us. Why bother: LOCG's variant list (reprints, retailer
+    and event exclusives) is what the Variants tab merges in on top of Metron's.
+    'none' is remembered so a series isn't asked about every tick."""
+    from kometa.locg_client import locg_paused, LocgPaused
+    if locg_paused():
+        return 0
+    todo = [s for s in db.get_all_series(DB_PATH)
+            if s.get("kind") != "arc" and s.get("metron_series_id") and not s.get("locg_series_id")
+            and s.get("locg_link") is None]
+    todo.sort(key=lambda s: (not s.get("on_pull_list"), s["title"].lower()))
+    linked = 0
+    for s in todo[:limit]:
+        try:
+            lid = find_confident_match(s)
+        except LocgPaused:
+            break
+        except Exception as e:
+            logger.info(f"LOCG link skipped for {s['title']!r}: {e}")
+            break
+        if lid:
+            db.set_locg_series_id(s["id"], lid, DB_PATH)
+            linked += 1
+        db.set_locg_link(s["id"], "linked" if lid else "none", DB_PATH)
     return linked
 
 

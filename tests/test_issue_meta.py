@@ -107,3 +107,26 @@ class TestPlumbing:
         dl._download_cover("456")
         assert seen == ["https://static.metron.cloud/v/e486.jpg",
                         dl.S3_LARGE.format("123"), dl.S3_LARGE.format("456")]
+
+
+class TestLocgTopUp:
+    def test_locg_variants_added_on_top_of_metron_when_open(self, lib, monkeypatch):
+        import kometa.locg_client as lc
+        monkeypatch.setattr(mc, "issue_detail", lambda mid: {"desc": "d", "credits": [],
+                            "covers": [{"id": "m1", "name": "Cover A (Main)"}, {"id": "v1", "name": "Cover B"}]})
+        monkeypatch.setattr(lc, "locg_paused", lambda: None)
+        monkeypatch.setattr(lc, "fetch_variants", lambda lid: {"covers": [
+            {"id": "77", "name": "Cover A (Main)"}, {"id": "78", "name": "Cover B"}, {"id": "79", "name": "Retailer Exclusive"}]})
+        d = im.details_for({"metron_issue_id": 1, "locg_issue_id": "77"}, lib, want_covers=True)
+        assert d["source"] == "metron+locg"
+        assert [c["id"] for c in d["covers"]] == ["m1", "v1", "79"]      # LOCG's main + dup name skipped
+
+    def test_locg_skipped_entirely_while_paused(self, lib, monkeypatch):
+        import kometa.locg_client as lc
+        monkeypatch.setattr(mc, "issue_detail", lambda mid: {"desc": "d", "credits": [], "covers": [{"id": "m1", "name": "Cover A (Main)"}]})
+        monkeypatch.setattr(lc, "locg_paused", lambda: 4102444800.0)
+        def boom(lid):
+            raise AssertionError("LOCG must not be asked while paused")
+        monkeypatch.setattr(lc, "fetch_variants", boom)
+        d = im.details_for({"metron_issue_id": 2, "locg_issue_id": "77"}, lib, want_covers=True)
+        assert d["source"] == "metron" and len(d["covers"]) == 1
