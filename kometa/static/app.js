@@ -2895,8 +2895,16 @@ async function _settingsChanged(el) {
   }
   el.classList.remove('input-bad');
 
+  const body = { [f.key]: val };
+  if (f.key === 'locg_cf_clearance') {
+    // the pass is bound to the browser it was issued to — if you're pasting it
+    // from that same browser (the normal case), its UA is right here
+    const ua = document.getElementById('f-locg-ua');
+    body.locg_user_agent = (ua && ua.value.trim()) || navigator.userAgent;
+    if (ua && !ua.value.trim()) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
+  }
   try {
-    const cfg = await api.patch('/api/config', { [f.key]: val });
+    const cfg = await api.patch('/api/config', body);
     // Settings autosave changes what the SERVER knows, but every render decision
     // gated on _appConfig (Arcs tab, "Open in Komga" links, …) was reading the
     // STALE snapshot from boot() until a hard reload — a toggle could report
