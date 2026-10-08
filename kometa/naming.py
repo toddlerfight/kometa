@@ -310,8 +310,14 @@ def norm_key(s: str) -> str:
     release named 'Batman - Gargoyle … Noir Edition' normalise to DIFFERENT
     spacing and substring matches silently fail. One definition, four consumers
     (arc titles, edition/book names, NZB scoring, Wikipedia arc tables) — this
-    key deciding 'same name?' identically everywhere is a feature, not tidiness."""
-    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+    key deciding 'same name?' identically everywhere is a feature, not tidiness.
+
+    '&' is spelled out first: the folder says 'Batman & the Joker', every release
+    and post says 'Batman and The Joker', and treating the ampersand as
+    punctuation made them different names (2026-10-08: seven issues on GetComics,
+    'not found' on all of them)."""
+    s = re.sub(r"\s*&\s*", " and ", (s or "").lower())
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
 def _safe(name: str) -> str:

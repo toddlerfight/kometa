@@ -193,6 +193,22 @@ def issue_detail(metron_issue_id: int) -> dict:
     }
 
 
+def series_detail(series_id: int) -> dict:
+    """The run's own identity — what the tidy step names folders and files after.
+    {title, year, year_end, publisher, issue_count, type}."""
+    d = _get(f"series/{int(series_id)}/")
+    pub = d.get("publisher")
+    st = d.get("series_type")
+    return {
+        "title": re.sub(r"\s*\(\d{4}\)\s*$", "", d.get("name") or ""),
+        "year": d.get("year_began"),
+        "year_end": d.get("year_end"),
+        "publisher": pub.get("name") if isinstance(pub, dict) else pub,
+        "issue_count": d.get("issue_count"),
+        "type": st.get("name") if isinstance(st, dict) else st,
+    }
+
+
 def releases_between(after: str, before: str) -> list[dict]:
     """Every issue Metron has with a store date in [after, before] — the weekly
     what's-new check in a handful of requests."""

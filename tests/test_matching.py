@@ -423,3 +423,12 @@ class TestGetComicsMirrorCapture:
     def test_unknown_link_has_no_mirrors(self, monkeypatch):
         gc = self._client(monkeypatch, {})
         assert gc.mirror_urls("https://elsewhere/x.cbz") == []
+
+
+def test_ampersand_is_a_word_not_punctuation():
+    """'Batman & the Joker' (our folder) must match 'Batman and The Joker' (the post)."""
+    from kometa.getcomics_client import _normalize, _series_matches
+    ours = _normalize("Batman & the Joker - The Deadly Duo")
+    post = _normalize("Batman and The Joker – The Deadly Duo #3 (2023)")
+    assert ours == "batman and the joker the deadly duo"
+    assert _series_matches(ours, post)

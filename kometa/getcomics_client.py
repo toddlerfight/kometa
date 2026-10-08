@@ -38,6 +38,11 @@ _FORMAT_WORDS = frozenset({'vol', 'volume', 'tpb', 'hc', 'omnibus', 'compendium'
 
 def _normalize(text: str) -> str:
     text = text.lower()
+    # '&' is a word, not punctuation: our folder says 'Batman & the Joker', the
+    # post says 'Batman and The Joker', and stripping the ampersand left us
+    # comparing 'batman the joker' to 'batman and the joker' — seven issues
+    # sitting on GetComics, 'not found' every time.
+    text = re.sub(r'\s*&\s*', ' and ', text)
     text = re.sub(r'[–—‒\-]+', ' ', text)   # all dash variants → space
     text = re.sub(r'[^\w\s]', ' ', text)     # strip remaining punctuation
     return re.sub(r'\s+', ' ', text).strip() # collapse whitespace

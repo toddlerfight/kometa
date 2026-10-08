@@ -203,9 +203,13 @@ def _issue_queries(title: str, issue_number: float) -> list[str]:
     right there (Last Ronin II #2-4, 2026-10-03). Padded first, then the bare
     title as a net: the scorer still demands issue-number evidence before acting,
     so casting wide can't grab the wrong issue."""
-    if issue_number == int(issue_number):
-        return [f"{title} {int(issue_number):03d}", title]
-    return [f"{title} {issue_number}", title]
+    num = f"{int(issue_number):03d}" if issue_number == int(issue_number) else str(issue_number)
+    # Indexers match literally and releases spell '&' out — 'Batman and the
+    # Joker 003' exists, 'Batman & the Joker 003' gets nothing. Ask both ways.
+    titles = [title]
+    if "&" in title:
+        titles.append(re.sub(r"\s*&\s*", " and ", title))
+    return [f"{t} {num}" for t in titles] + titles
 
 
 def _drop_failed_sources(results: list[dict], exclude_urls) -> list[dict]:
