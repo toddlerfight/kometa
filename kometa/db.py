@@ -332,6 +332,19 @@ def _migrate(path=DB_PATH):
                 UNIQUE(tracked_series_id, issue_number)
             )
         """)
+        # Releases that failed DELIVERY for an ISSUE, not for a queue row. The
+        # row-level failed_sources list dies with the row — Deadly Class #47's
+        # second row bought the exact same no-pages NZB its first row had already
+        # condemned. This outlives re-queues, retries and Clear history.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS failed_releases (
+                tracked_series_id INTEGER NOT NULL,
+                issue_number      REAL NOT NULL,
+                url               TEXT NOT NULL,
+                failed_at         TEXT DEFAULT (datetime('now')),
+                UNIQUE(tracked_series_id, issue_number, url)
+            )
+        """)
         dq_cols = [r[1] for r in conn.execute("PRAGMA table_info(download_queue)")]
         if "retry_after" not in dq_cols:
             conn.execute("ALTER TABLE download_queue ADD COLUMN retry_after TEXT")
@@ -1229,6 +1242,22 @@ def add_failed_source(queue_id, url, path=DB_PATH):
             "UPDATE download_queue SET failed_sources = ?, updated_at = datetime('now') WHERE id = ?",
             (_json.dumps(sources), queue_id),
         )
+        # ...and against the issue itself, so a fresh row for the same issue
+        # inherits the verdict instead of re-buying the corpse.
+        conn.execute(
+            "INSERT OR IGNORE INTO failed_releases (tracked_series_id, issue_number, url) "
+            "SELECT tracked_series_id, issue_number, ? FROM download_queue WHERE id = ?",
+            (url, queue_id),
+        )
+
+
+def failed_releases_for(tracked_series_id, issue_number, path=DB_PATH) -> set:
+    """Release URLs that already failed delivery for this issue, whatever row
+    asked for it."""
+    with _connect(path) as conn:
+        return {r[0] for r in conn.execute(
+            "SELECT url FROM failed_releases WHERE tracked_series_id = ? AND issue_number = ?",
+            (tracked_series_id, issue_number))}
 
 
 def add_failed_channel(queue_id, channel, path=DB_PATH):

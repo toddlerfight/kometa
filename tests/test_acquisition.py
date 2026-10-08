@@ -251,6 +251,23 @@ class TestFailedSourceBlacklist:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert acq._failed_sources(q) == {"http://nzb/a", "http://nzb/b"}
 
+    def test_failed_source_outlives_the_queue_row(self, wired):
+        # Deadly Class #47: the row that condemned the NZB was removed, the issue
+        # re-queued, and the fresh row bought the same no-pages release again.
+        db_path, series = wired
+        db.queue_issue(series, 47.0, db_path)
+        qid = _qid_for(db_path, series, 47.0)
+        db.add_failed_source(qid, "http://nzb/no-pages", path=db_path)
+        db.remove_queue_item(qid, path=db_path)
+        db.queue_issue(series, 47.0, db_path)
+        q = next(x for x in db.get_queue(db_path) if x["id"] == _qid_for(db_path, series, 47.0))
+        assert q["id"] != qid and not q.get("failed_sources")
+        assert acq._failed_sources(q) == {"http://nzb/no-pages"}
+        # another issue of the same series is not tarred with it
+        db.queue_issue(series, 48.0, db_path)
+        q48 = next(x for x in db.get_queue(db_path) if x["issue_number"] == 48.0)
+        assert acq._failed_sources(q48) == set()
+
     def test_usenet_failure_benches_channel(self, wired, monkeypatch):
         db_path, series = wired
         db.queue_issue(series, 1.0, db_path)

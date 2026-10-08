@@ -341,9 +341,16 @@ def _failed_sources(item) -> set:
     searches as exclusions so a retry buys a different release, not the same
     corpse on a loop."""
     try:
-        return set(json.loads(item.get("failed_sources") or "[]"))
+        mine = set(json.loads(item.get("failed_sources") or "[]"))
     except (ValueError, TypeError):
-        return set()
+        mine = set()
+    # Plus what any EARLIER row for this issue learned — the per-row list is
+    # gone once a row is removed and re-queued; the per-issue table isn't.
+    try:
+        mine |= db.failed_releases_for(item["tracked_series_id"], item["issue_number"], DB_PATH)
+    except Exception:
+        pass
+    return mine
 
 
 def _failed_channels(item) -> set:
