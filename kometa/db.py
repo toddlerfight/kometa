@@ -986,10 +986,16 @@ def move_books_to_series(old_folder, new_folder, parent_id, parent_shelf_id, pat
             (new_prefix, len(old_prefix) + 1, parent_id, parent_shelf_id, len(old_prefix), old_prefix)).rowcount
 
 
-def set_book_owner(book_path, tracked_series_id, shelf_series_id, path=DB_PATH) -> int:
+def set_book_owner(book_path, tracked_series_id, shelf_series_id, number="keep", path=DB_PATH) -> int:
+    """number: the issue number to store — None for 'this is not an issue' (a
+    filed collection). The shelf upsert COALESCEs numbers, so a stale '1' from
+    an old '#001' name survives rescans unless cleared here explicitly."""
     with _connect(path) as conn:
-        return conn.execute("UPDATE books SET tracked_series_id = ?, shelf_series_id = ? WHERE path = ?",
-                            (tracked_series_id, shelf_series_id, book_path)).rowcount
+        if number == "keep":
+            return conn.execute("UPDATE books SET tracked_series_id = ?, shelf_series_id = ? WHERE path = ?",
+                                (tracked_series_id, shelf_series_id, book_path)).rowcount
+        return conn.execute("UPDATE books SET tracked_series_id = ?, shelf_series_id = ?, number = ? WHERE path = ?",
+                            (tracked_series_id, shelf_series_id, number, book_path)).rowcount
 
 
 def set_series_title(series_id, title, path=DB_PATH):

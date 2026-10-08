@@ -110,7 +110,8 @@ def test_file_under_moves_the_trade_into_its_run_and_drops_the_stub(lib, monkeyp
     assert os.path.isfile(os.path.join(lib["folder"], r["files"][0])) and not os.path.exists(stub)
     assert db.get_series_by_id(stub_id, lib["db"]) is None
     with db._connect(lib["db"]) as c:
-        row = c.execute("SELECT path, tracked_series_id FROM books WHERE path LIKE '%Deluxe%'").fetchone()
+        row = c.execute("SELECT path, tracked_series_id, number FROM books WHERE path LIKE '%Deluxe%'").fetchone()
         assert row[0] == os.path.join(lib["folder"], r["files"][0]) and row[1] == sid
+        assert row[2] is None                                                       # was '1' from '#001' — not an issue
     with pytest.raises(tidy.TidyError):
         tidy.file_under(sid, sid, lib["db"])

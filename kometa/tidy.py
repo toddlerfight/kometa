@@ -171,7 +171,9 @@ def file_under(series_id: int, parent_id: int, path=None) -> dict:
     for a, b in moved:
         os.rename(a, b)
         db.rename_book_path(a, b, path)
-        db.set_book_owner(b, parent_id, parent_shelf, path)      # progress now lives on the parent's page
+        # progress now lives on the parent's page; number cleared — a collection
+        # is not issue #1, whatever the old file name said
+        db.set_book_owner(b, parent_id, parent_shelf, number=None, path=path)
     db.dequeue_waiting_series(series_id, path)
     db.remove_shelf_series_by_path(src, path)
     db.remove_series(series_id, path)
