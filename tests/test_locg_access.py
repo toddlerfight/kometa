@@ -91,3 +91,21 @@ def test_a_knock_while_paused_does_not_extend_the_pause(wired, monkeypatch):
     monkeypatch.setattr(FakeSession, "__init__", refusing)
     lc.probe()
     assert lc._pause["until"] == until                        # same clock, not +3h
+
+
+def test_probe_matrix_tries_handshakes_until_one_passes_and_forgets_nothing(wired, monkeypatch):
+    db.set_config({"locg_cf_clearance": "abc", "locg_user_agent": "Chrome/154"}, wired)
+    seen = []
+    orig_init = FakeSession.__init__
+    def init(self, impersonate="chrome", **k):
+        orig_init(self, **k)
+        seen.append(impersonate)
+        self.status, self.resp_headers = (200, {}) if impersonate == "chrome145" else (403, {"cf-mitigated": "challenge"})
+    monkeypatch.setattr(FakeSession, "__init__", init)
+    monkeypatch.setattr(lc.time, "sleep", lambda s: None)
+    r = lc.probe_matrix()
+    assert [x["status"] for x in r] == [403, 403, 200] and seen[-1] == "chrome145"
+    assert db.get_config(wired).get("locg_cf_clearance") == "abc"          # a refusal in the matrix forgets nothing
+    db.set_config({"locg_impersonate": "chrome145"}, wired)
+    lc._access_cache["ts"] = 0.0
+    assert lc._impersonation() == "chrome145"

@@ -324,14 +324,28 @@ def disconnect_integration(integration: str):
     return get_config()
 
 
-_EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at"]}
+_EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at", "locg_impersonate"]}
 
 
 @app.post("/api/test/locg")
 def test_locg_access():
-    """Settings 'test' for the LOCG card — the same single knock as 'Test LOCG now'."""
-    from kometa.locg_client import probe
-    r = probe()
+    """Settings 'test' for the LOCG card. With a pass pasted: try every handshake
+    Kometa can wear, remember the one LOCG accepts (config locg_impersonate),
+    lift the pause. None accepted → the pass is forgotten, and you're told which
+    handshakes were refused. No pass: the same single knock as 'Test LOCG now'."""
+    from kometa import locg_client as lc
+    if lc._access()[0]:
+        results = lc.probe_matrix()
+        hit = next((r for r in results if r["status"] == 200), None)
+        if hit:
+            db.set_config({"locg_impersonate": hit["target"], "locg_paused_until": "0"}, DB_PATH)
+            lc._pause["until"] = 0.0
+            lc._access_cache["ts"] = 0.0
+            return {"ok": True, "detail": f"LOCG accepted your pass with the {hit['target']} handshake — pause lifted"}
+        lc._forget_access()
+        tried = ", ".join(f"{r['target']} {r['status'] or 'err'}" for r in results)
+        return {"ok": False, "error": f"LOCG refused the pass with every handshake ({tried})"}
+    r = lc.probe()
     return {"ok": True, "detail": r["detail"]} if r["ok"] else {"ok": False, "error": r["detail"]}
 
 

@@ -63,11 +63,58 @@ def _access() -> tuple[str, str]:
     return _access_cache["val"]
 
 
+# Every handshake curl_cffi can wear, newest Chrome first. Cloudflare may bind
+# a clearance to the TLS fingerprint as well as IP + UA, and 'chrome' is a
+# generic one; the test button tries them all and remembers the one that works.
+_TARGETS = ["chrome", "chrome146", "chrome145", "chrome142", "chrome136", "chrome133a", "chrome131",
+            "chrome124", "edge", "safari", "safari184", "safari260", "firefox", "firefox147"]
+
+
+def probe_matrix() -> list[dict]:
+    """With a pass pasted: one request per handshake, no pause bookkeeping,
+    nothing forgotten. Returns [{target, status}]. Empty when there's no pass."""
+    from curl_cffi import requests as _cffi
+    cookie, ua = _access()
+    if not cookie:
+        return []
+    out = []
+    for target in _TARGETS:
+        try:
+            s = _cffi.Session(impersonate=target)
+        except Exception:
+            continue                                  # this curl_cffi doesn't know it
+        _apply_access(s)
+        try:
+            r = s.get(f"{BASE}/search/ajax_issues", params={"query": "Batman"},
+                      headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"}, timeout=25)
+            out.append({"target": target, "status": r.status_code})
+            if r.status_code == 200:
+                break
+        except Exception as e:
+            out.append({"target": target, "status": None, "error": str(e)[:80]})
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+        time.sleep(1.0)
+    return out
+
+
 def _impersonation() -> str:
     """The TLS handshake to wear. Cloudflare binds a pass to the browser that
     earned it, and a Safari User-Agent on a Chrome handshake reads as a lie —
-    so match the fingerprint family to the pasted UA. No pass → Chrome, as ever."""
+    so match the fingerprint family to the pasted UA. No pass → Chrome, as ever.
+    A handshake the test button proved (config locg_impersonate) wins outright."""
     cookie, ua = _access()
+    if cookie:
+        try:
+            from kometa import db
+            chosen = (db.get_config(db.DB_PATH).get("locg_impersonate") or "").strip()
+            if chosen:
+                return chosen
+        except Exception:
+            pass
     u = (ua or "").lower()
     if not cookie or not u:
         return "chrome"
