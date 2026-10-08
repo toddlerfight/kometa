@@ -627,24 +627,15 @@ async function _addAsIssue(seriesId, targetId) {
   const sub = me.title.replace(/\s*\(\d{4}\)\s*$/, '');
   const preview = n => `${esc(stem)} #${String(n).padStart(2, '0')} - ${esc(sub)}`;
   showModal(`
-    <div class="modal-header"><h2>Add as issue</h2></div>
-    <div class="modal-body">
-      <div class="settings-field"><label class="settings-field-label u-label" for="add-num">Issue number in ${esc(stem)}</label>
-        <input class="settings-input" id="add-num" type="number" min="1" step="1" value="${next}" style="max-width:120px"></div>
-      <div style="margin-top:12px;color:var(--tq);font-size:12px">Becomes</div>
-      <div id="add-preview" style="margin-top:4px"><b>${preview(next)}</b></div>
-    </div>
+    <div class="modal-header"><h2>Add to ${esc(stem)}?</h2></div>
+    <div class="modal-body"><b>${preview(next)}</b></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="add-issue-btn">Add</button>
     </div>`);
-  document.getElementById('add-num').oninput = (ev) => {
-    const n = parseInt(ev.target.value, 10);
-    document.getElementById('add-preview').innerHTML = `<b>${preview(n > 0 ? n : next)}</b>`;
-  };
   document.getElementById('add-issue-btn').onclick = async (ev) => {
     const b = ev.currentTarget; b.disabled = true; b.textContent = 'Moving…';
-    const number = parseInt(document.getElementById('add-num').value, 10) || next;
+    const number = next;
     try {
       const res = await fetch('/api/report/combine/add', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: [seriesId], into: targetId, number }) });
