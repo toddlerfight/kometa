@@ -2109,6 +2109,7 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .nm-status { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--tq); white-space: nowrap; }
 .nm-status.amber { color: var(--amb); }
 .nm-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+#toast.toast-show { pointer-events: auto; }   /* the Undo button has to take a click */
 .toast-action { margin-left: 10px; font-weight: 700; }
 @media (max-width: 760px) {
   .nm-row { flex-wrap: wrap; }

@@ -652,7 +652,7 @@ async function _odDismiss(bookId, btn) {
   try { await api.post(`/api/books/${bookId}/dismiss`, {}); }
   catch (e) { showToast('Couldn\u2019t hide that', 'error'); return; }
   await _animateTileOut(tile);
-  showToastAction('Hidden from Continue reading — your place is kept', 'Undo', async () => {
+  showToastAction('Hidden from Continue reading', 'Undo', async () => {
     try { await api.post(`/api/books/${bookId}/dismiss?undo=1`, {}); renderOnDeck(); } catch {}
   });
 }
