@@ -775,7 +775,8 @@ def set_series_locg(series_id: int, req: MatchRequest):
         raise HTTPException(404)
     db.set_locg_series_id(series_id, req.locg_id, DB_PATH)
     db.set_match_status(series_id, "manual", DB_PATH)
-    threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), _sync_one),
+    threading.Thread(target=sync_one_guarded,
+                     args=(db.get_series_by_id(series_id, DB_PATH), lambda x: _sync_one(x, force=True)),
                      daemon=True).start()
     return db.get_series_by_id(series_id, DB_PATH)
 
@@ -932,11 +933,16 @@ def sync_all():
 
 
 @app.post("/api/sync/{series_id}")
-def sync_one(series_id: int):
+def sync_one(series_id: int, force: bool = False):
+    """force=1 = you asked (pull-to-refresh): refetch LOCG regardless. The
+    automatic on-view refresh doesn't pass it, so it only asks LOCG for what
+    can have changed."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    threading.Thread(target=sync_one_guarded, args=(s, _sync_one), daemon=True).start()
+    threading.Thread(target=sync_one_guarded,
+                     args=(s, (lambda x: _sync_one(x, force=True)) if force else _sync_one),
+                     daemon=True).start()
     return {"ok": True}
 
 

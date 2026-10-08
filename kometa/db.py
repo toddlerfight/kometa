@@ -277,6 +277,10 @@ def _migrate(path=DB_PATH):
         series_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
         if "match_status" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN match_status TEXT")
+        # When the LOCG issue list was last fetched — the whole point being NOT to
+        # refetch a finished run's unchanging list three times a day.
+        if "locg_fetched_at" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_fetched_at TEXT")
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
@@ -929,8 +933,14 @@ def set_folder_path(series_id, folder_path, path=DB_PATH):
         )
 
 
+def set_locg_fetched(series_id, when, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET locg_fetched_at = ? WHERE id = ?", (when, series_id))
+
+
 def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
     with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET locg_fetched_at = NULL WHERE id = ?", (series_id,))
         conn.execute(
             "UPDATE tracked_series SET locg_series_id = ? WHERE id = ?",
             (locg_series_id, series_id),

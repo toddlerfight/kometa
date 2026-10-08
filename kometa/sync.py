@@ -105,7 +105,38 @@ def _best_komga_match_by_path(candidates, folder_path):
     return hits[0] if len(hits) == 1 else None
 
 
-def sync_one(series: dict):
+# --- How much LOCG a sync is allowed (2026-10-08) ------------------------------
+# Every sync used to refetch the full issue list AND the trades list for every
+# series — ~800 LOCG calls a day, nearly all returning what we already had.
+# What actually changes on LOCG: new solicitations (monthly, ~3 months out),
+# shifting dates and fresh covers for UPCOMING issues. A finished run doesn't.
+ACTIVE_WINDOW_DAYS = 180     # a release this recent (or any upcoming) = still moving
+DORMANT_REFRESH_DAYS = 30    # a finished run's list: monthly at most
+TRADES_REFRESH_DAYS = 30
+
+
+def _locg_issues_due(series: dict) -> bool:
+    """Should this (non-forced) sync refetch the LOCG issue list?"""
+    from datetime import date, datetime, timedelta, timezone
+    fetched = series.get("locg_fetched_at")
+    if not fetched:
+        return True                                   # never fetched (or relinked)
+    recent = str(date.today() - timedelta(days=ACTIVE_WINDOW_DAYS))
+    if any(i.get("store_date") and i["store_date"] >= recent
+           for i in db.get_issues_for_series(series["id"], DB_PATH)):
+        return True                                   # ongoing: cadence is the caller's
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=DORMANT_REFRESH_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    return fetched < cutoff                           # finished run: monthly at most
+
+
+def _trades_due(series: dict) -> bool:
+    cached = db.get_trades(series["id"], DB_PATH)
+    return not cached or cached["age"] > TRADES_REFRESH_DAYS * 86400
+
+
+def sync_one(series: dict, force: bool = False):
+    """force = you asked (pull-to-refresh, Match now, a new LOCG link): fetch
+    everything. Otherwise LOCG is only asked for what can have changed."""
     if series.get("kind") == "arc":
         # Arcs are populated from ComicVine on add and carry no single-title
         # issue_status, so the normal sync (Komga link, LOCG issues, trades)
@@ -230,8 +261,11 @@ def sync_one(series: dict):
             if locg_id:
                 db.set_locg_series_id(series["id"], locg_id, DB_PATH)
                 series = dict(series, locg_series_id=locg_id)
-        if locg_id:
+        fetch_issues = bool(locg_id) and (force or _locg_issues_due(series))
+        if fetch_issues:
+            fetched_any = False
             for li in get_issues_anon(locg_id):
+                fetched_any = True
                 num = li["number"]
                 if num not in issue_map:
                     issue_map[num] = {"store_date": li["store_date"], "image": li["cover"], "locg_issue_id": li.get("locg_issue_id")}
@@ -242,6 +276,9 @@ def sync_one(series: dict):
                         issue_map[num]["image"] = li["cover"]
                     if not issue_map[num].get("locg_issue_id"):
                         issue_map[num]["locg_issue_id"] = li.get("locg_issue_id")
+            if fetched_any:
+                from datetime import datetime, timezone
+                db.set_locg_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
     except Exception as e:
         logger.warning(f"LoCG supplement failed for '{series['title']}': {e}")
 
@@ -250,7 +287,7 @@ def sync_one(series: dict):
     # open. Enrich with the two stored facts (owned from the folder, komga_book_id
     # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
     # never fail an issue sync.
-    if locg_id:
+    if locg_id and (force or _trades_due(series)):
         try:
             trades = select_editions(get_trades_anon(locg_id))
             enrich_trades(series, trades, books=komga_books)

@@ -270,7 +270,7 @@ async function sweepSeries(id, btn) {
 // is the client-side twin of that guard.
 const _syncInFlight = new Set();
 
-async function syncSeries(id, btn, pre = null) {
+async function syncSeries(id, btn, pre = null, force = false) {
   const _resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Sync'; } };
   if (_syncInFlight.has(id)) { _resetBtn(); return; }
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
@@ -281,7 +281,7 @@ async function syncSeries(id, btn, pre = null) {
     // auto-sync) — reuse it instead of an identical back-to-back GET.
     before = pre || await api.get(`/api/series/${id}`);
     preSynced = before.last_synced;
-    await api.post(`/api/sync/${id}`, {});
+    await api.post(`/api/sync/${id}${force ? '?force=1' : ''}`, {});
   } catch (e) {
     _syncInFlight.delete(id);
     _resetBtn();
@@ -3529,7 +3529,7 @@ function _ptrRefresh() {
     const id = currentParams.id;
     _autoSynced.add(id);          // we're syncing right now — don't double-fire
     _autoPollDone.delete(id);     // you asked for fresh: earn a fresh auto-populate poll
-    syncSeries(id, null);         // background; re-renders again if it changed anything
+    syncSeries(id, null, null, true);   // you pulled = you asked: full LOCG refresh
     showToast('Syncing series…');
     return renderSeriesDetail(id);
   }
