@@ -432,3 +432,11 @@ def test_ampersand_is_a_word_not_punctuation():
     post = _normalize("Batman and The Joker – The Deadly Duo #3 (2023)")
     assert ours == "batman and the joker the deadly duo"
     assert _series_matches(ours, post)
+
+
+def test_prowlarr_asks_both_ways_when_the_title_has_an_ampersand():
+    from kometa.prowlarr_client import _issue_queries
+    assert _issue_queries("Batman & the Joker - The Deadly Duo", 3) == [
+        "Batman & the Joker - The Deadly Duo 003", "Batman and the Joker - The Deadly Duo 003",
+        "Batman & the Joker - The Deadly Duo", "Batman and the Joker - The Deadly Duo"]
+    assert _issue_queries("Saga", 2) == ["Saga 002", "Saga"]

@@ -10,6 +10,7 @@ corpse.
 """
 import datetime
 import logging
+import re
 import requests
 
 from kometa.naming import _season_from_title
