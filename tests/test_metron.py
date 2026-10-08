@@ -54,6 +54,8 @@ def lib(tmp_path, db_path, monkeypatch):
         monkeypatch.setattr(mod, "DB_PATH", db_path)
     monkeypatch.setattr(sync, "_komga", lambda: None)
     monkeypatch.setattr(mc, "configured", lambda: True)
+    import kometa.locg_client as lc
+    monkeypatch.setattr(lc, "_pause", {"until": 0.0})      # LOCG open: _match may fall back to it
     return db_path
 
 
