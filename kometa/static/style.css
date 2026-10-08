@@ -2102,3 +2102,5 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   .nm-row { flex-wrap: wrap; }
   .nm-actions { width: 100%; justify-content: flex-end; }
 }
+
+.match-source { margin-left: 6px; opacity: .7; }

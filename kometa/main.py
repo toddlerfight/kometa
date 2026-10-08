@@ -835,16 +835,24 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
 
 
 class MatchRequest(BaseModel):
-    locg_id: int
+    locg_id: int | None = None
+    metron_id: int | None = None
 
 
 @app.patch("/api/series/{series_id}/locg", status_code=200)
 def set_series_locg(series_id: int, req: MatchRequest):
-    """You picked the run: link it, mark it as your choice, refresh in the background."""
+    """You picked the run (on Metron or LOCG): link it, mark it as your choice,
+    refresh in the background. Route name predates Metron."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    db.set_locg_series_id(series_id, req.locg_id, DB_PATH)
+    if not (req.locg_id or req.metron_id):
+        raise HTTPException(400, "Pick a run")
+    if req.locg_id:
+        db.set_locg_series_id(series_id, req.locg_id, DB_PATH)
+    if req.metron_id:
+        db.set_metron_series_id(series_id, req.metron_id, DB_PATH)
+        db.set_metron_link(series_id, "linked", DB_PATH)
     db.set_match_status(series_id, "manual", DB_PATH)
     threading.Thread(target=sync_one_guarded,
                      args=(db.get_series_by_id(series_id, DB_PATH), lambda x: _sync_one(x, force=True)),
@@ -901,6 +909,21 @@ def set_page_max(series_id: int, req: PageMaxRequest):
 
 
 # --- search ---
+
+@app.get("/api/search/metron")
+def search_metron(q: str):
+    """Run candidates from Metron for the picker — same row shape as /api/search/locg."""
+    from kometa import metron_client
+    if not metron_client.configured():
+        return []
+    try:
+        rows = metron_client.search_series(q)
+    except metron_client.MetronUnavailable as e:
+        raise HTTPException(502, str(e))
+    return [{"id": r["id"], "series": r["title"], "publisher": {"name": r["publisher"]},
+             "year_began": r["year"], "cover": None, "issue_count": r["issue_count"], "source": "metron"}
+            for r in rows]
+
 
 @app.get("/api/search/locg")
 def search_locg(q: str):

@@ -149,10 +149,22 @@ def _match(series: dict) -> tuple[int | None, int | None]:
     only when Metron has no confident answer (or isn't configured). Raises when
     a source that's needed didn't answer: that's 'try later', not 'no match'."""
     from kometa import metron_client
+    from kometa.locg_client import locg_paused
+    title, _ = _title_and_year(series["title"])
+    if len(re.sub(r"\W", "", title)) < 3 or not re.search(r"[A-Za-z]", title):
+        # '01', '06', '08' (a RoboCop rip filed by volume number): nothing any
+        # catalogue can be asked. Straight to Needs matching — you name it.
+        return None, None
     if metron_client.configured():
         mid = find_metron_match(series)
         if mid:
             return mid, None
+        if locg_paused():
+            # Metron answered and wasn't sure; LOCG is shut. Asking LOCG would
+            # raise, and three of those in a row used to abort the whole tick on
+            # the SAME three series every time — 782 pending, matched 0. Hand it
+            # to you instead: Needs matching, with Metron candidates to pick from.
+            return None, None
     return None, find_confident_match(series)
 
 

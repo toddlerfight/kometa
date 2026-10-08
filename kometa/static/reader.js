@@ -403,24 +403,32 @@ async function renderShelfSeries(id) {
 async function _loadMatchCandidates(seriesId, q) {
   const box = document.getElementById('match-results');
   if (!box) return;
-  box.innerHTML = '<div class="state-msg" style="padding:10px 0;font-size:11px">Searching LOCG…</div>';
-  let rows = [];
-  try { rows = (await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`)).filter(r => !r.needs_resolve); } catch {}
+  box.innerHTML = '<div class="state-msg" style="padding:10px 0;font-size:11px">Searching…</div>';
+  // Metron first (the API built for this), LOCG alongside when it's open to us.
+  // Either can be shut; whatever answers is what you pick from.
+  const enc = encodeURIComponent(q);
+  const [metron, locg] = await Promise.all([
+    api.get(`/api/search/metron?q=${enc}`).catch(() => []),
+    api.get(`/api/search/locg?q=${enc}`).then(r => r.filter(x => !x.needs_resolve)).catch(() => []),
+  ]);
   if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
-  box.innerHTML = rows.length ? rows.slice(0, 8).map(r => `
+  const rows = metron.map(r => ({ ...r, source: 'metron' })).slice(0, 8)
+    .concat(locg.map(r => ({ ...r, source: 'locg' })).slice(0, 8));
+  box.innerHTML = rows.length ? rows.map(r => `
     <div class="match-row">
       ${r.cover ? `<img src="${esc(r.cover)}" alt="" loading="lazy">` : '<div class="match-nocover"></div>'}
       <div class="match-row-text"><div>${esc(r.series)}</div>
-        <div class="u-label" style="color:var(--tq)">${esc([r.publisher?.name, r.year_began].filter(Boolean).join(' · '))}</div></div>
-      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this)">This one</button>
+        <div class="u-label" style="color:var(--tq)">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null].filter(Boolean).join(' · '))}
+          <span class="match-source">${r.source === 'metron' ? 'Metron' : 'LOCG'}</span></div></div>
+      <button class="btn btn-primary btn-sm" onclick="_pickMatch(${seriesId}, ${r.id}, this, '${r.source}')">This one</button>
     </div>`).join('')
-    : '<div class="state-msg" style="padding:10px 0;font-size:11px">No LOCG series found — try a different search.</div>';
+    : '<div class="state-msg" style="padding:10px 0;font-size:11px">No series found — try a different search.</div>';
 }
 
-async function _pickMatch(seriesId, locgId, btn) {
+async function _pickMatch(seriesId, runId, btn, source = 'locg') {
   if (btn) { btn.disabled = true; btn.textContent = 'Linking…'; }
   try {
-    await api.patch(`/api/series/${seriesId}/locg`, { locg_id: locgId });
+    await api.patch(`/api/series/${seriesId}/locg`, source === 'metron' ? { metron_id: runId } : { locg_id: runId });
     showToast('Linked — fetching its issues, trades and covers');
     renderSeriesDetail(seriesId);
   } catch (e) {
