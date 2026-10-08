@@ -817,6 +817,20 @@ def add_series(req: AddSeriesRequest):
     added = db.get_series_by_id(new_id, DB_PATH)
 
     def _bg_sync():
+        # A pick with no catalogue id (a ComicVine volume while LOCG is shut) would
+        # sync to an EMPTY page and sit there until the trickle got round to it.
+        # Ask Metron by title first, the same confident rule the matcher uses.
+        if not (added.get("locg_series_id") or added.get("metron_series_id")):
+            try:
+                from kometa.shelf_import import find_metron_match
+                mid = find_metron_match(added)
+                if mid:
+                    db.set_metron_series_id(new_id, mid, DB_PATH)
+                    db.set_metron_link(new_id, "linked", DB_PATH)
+                    added.update(metron_series_id=mid)
+                    logger.info(f"Add {title!r}: linked to Metron {mid} by title")
+            except Exception as e:
+                logger.info(f"Add {title!r}: Metron title match skipped: {e}")
         sync_one_guarded(added, _sync_one)
         if req.on_pull_list:
             issues = db.get_issues_for_series(new_id, DB_PATH)
