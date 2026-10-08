@@ -1540,11 +1540,11 @@ async function renderSeriesDetail(id) {
               onclick="confirmDelete(${s.id})">Remove</button>
           </div>
         </div>
-        ${s.match_status === 'needs_match' ? `
+        ${`
         <div class="match-search"><input class="browse-search" id="match-q" value="${esc(s.title)}" placeholder="Search by title"
           onkeydown="if(event.key==='Enter')_loadMatchCandidates(${s.id}, this.value)">
           <button class="btn btn-ghost btn-sm" onclick="_loadMatchCandidates(${s.id}, document.getElementById('match-q').value)">Search</button></div>
-        <div class="match-results" id="match-results"><div class="match-hint">Searching…</div></div>` : ''}
+        <div class="match-results" id="match-results"><div class="match-hint">Searching…</div></div>`}
       </div>` : '';
 
   setApp(`
@@ -1571,7 +1571,7 @@ async function renderSeriesDetail(id) {
 
   if (detailTab === 'trades') _loadTradesPanel(id);
   if (detailTab === 'arcs') _loadArcsPanel(id);
-  if (s.match_status === 'needs_match') _loadMatchCandidates(id, s.title);
+  if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
   if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
 
