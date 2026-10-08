@@ -228,6 +228,10 @@ function _rdQueueSave(page, completed) {
 
 async function _rdSave(page, completed) {
   if (!_rd.book) return;
+  // Opening a book is not reading it. Page 1 is never recorded — turn a page
+  // and it counts — so Continue reading holds what you're IN, not what you
+  // glanced at (2026-10-08: thirteen page-1 ghosts from an afternoon's poking).
+  if (page <= 1 && !completed) return;
   const key = `${page}:${!!completed}`;
   if (_rd.lastSaved === key) return;
   const body = { page, updated_at: new Date().toISOString() };
