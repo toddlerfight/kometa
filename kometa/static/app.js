@@ -627,7 +627,7 @@ async function renderNeedsMatch() {
     <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
       ? ` — ${waiting} still in the queue` : ''}. Open one to pick its run, or Remove what's trash.
       <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Single-file series report →</a></div>
-    <input class="browse-search nm-search" id="nm-search" type="search" placeholder="Search titles, publishers, folders"
+    <input class="browse-search nm-search" id="nm-search" type="text" placeholder="Search titles, publishers, folders"
       value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
     <div class="nm-list" id="nm-list">${_nmListHtml()}</div>`);
   if (_nmQuery) document.getElementById('nm-search')?.focus();
