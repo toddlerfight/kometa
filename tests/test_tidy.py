@@ -86,3 +86,9 @@ def test_file_and_folder_names():
     assert tidy.folder_name("Saga", None) == "Saga"
     assert tidy.file_name("Batman & The Joker: The Deadly Duo", 7, 2023, ".cbz") == "Batman & The Joker - The Deadly Duo #007 (2023).cbz"
     assert tidy.file_name("Saga", 34.1, 2016, ".cbz") == "Saga #034.1 (2016).cbz"
+
+
+def test_folder_year_is_the_shelf_year_not_the_cover_date_year(lib, monkeypatch):
+    monkeypatch.setattr(mc, "series_detail", lambda sid: {"title": "Batman: Damned", "year": 2019})  # cover-date year
+    p = tidy.plan(lib["sid"], lib["db"])
+    assert p["year"] == 2018 and p["target_folder"].endswith("Batman - Damned (2018)")        # #1 shipped 2018

@@ -78,6 +78,13 @@ def plan(series_id: int, path=None) -> dict:
         raise TidyError("The series has no folder on disk")
     ident = _run_identity(s)
     issue_years = {i["number"]: (i.get("store_date") or "")[:4] for i in db.get_issues_for_series(series_id, path)}
+    # Metron's year_began is the COVER-date year, which runs ~2 months ahead of
+    # the shelf date: a run that hit shops in Nov 2022 says 2023. Files carry
+    # shelf years, so the folder takes the earliest shelf year we know — a folder
+    # '(2023)' holding '#001 (2022)' is the kind of thing a tidy should remove.
+    shelf_years = sorted(int(y) for y in issue_years.values() if y.isdigit())
+    if shelf_years:
+        ident["year"] = min(shelf_years[0], ident["year"] or shelf_years[0])
 
     target_folder = os.path.join(os.path.dirname(folder), folder_name(ident["title"], ident["year"]))
     ops, leave = [], []
