@@ -435,34 +435,39 @@ let _matchRows = [];
 async function _pickMatch(seriesId, runId, btn, source = 'locg') {
   const r = (_matchRows || []).find(x => x.id === runId && x.source === source) || { id: runId, source };
   const s = _detailSeries && _detailSeries.id === seriesId ? _detailSeries : null;
-  const files = s ? (s.issues || []).filter(i => i.owned).length : null;
+  // Count FILES on the shelf, not owned issues: a trade or a one-file folder
+  // with no issue number is 0 issues and 1 file, and '0 files' is a lie.
+  let files = s ? (s.issues || []).filter(i => i.owned).length : null;
+  if (s && s.shelf_id) {
+    try { files = (await api.get(`/api/shelf/${s.shelf_id}`)).books.length; } catch {}
+  }
   const warns = [];
   if (files != null && r.issue_count != null && files > r.issue_count)
     warns.push(`Your folder has ${files} files; this run has ${r.issue_count} issues.`);
   if (s && s.publisher && r.publisher?.name && s.publisher.toLowerCase() !== r.publisher.name.toLowerCase())
     warns.push(`Folder is filed under ${s.publisher}; this run is ${r.publisher.name}.`);
   showModal(`
-    <div class="modal-header"><h2>Link this run?</h2></div>
+    <div class="modal-header"><h2>Match this run?</h2></div>
     <div class="modal-body">
       <div style="font-weight:600">${esc(r.series || 'Run #' + runId)}</div>
       <div class="u-label" style="color:var(--tq);margin-top:4px">${esc([r.publisher?.name, r.year_began, r.issue_count ? `${r.issue_count} issues` : null, source === 'metron' ? 'Metron' : 'LOCG'].filter(Boolean).join(' · '))}</div>
       ${s ? `<div class="u-label" style="color:var(--tq);margin-top:10px">Your folder: ${esc(s.title)}${s.publisher ? ' · ' + esc(s.publisher) : ''}${files != null ? ` · ${files} file${files === 1 ? '' : 's'}` : ''}</div>` : ''}
       ${warns.length ? `<div style="margin-top:10px;color:var(--amb);font-size:13px">${warns.map(esc).join('<br>')}</div>` : ''}
-      <div style="margin-top:10px;color:var(--tq);font-size:12px">The folder and files stay as they are. Linking gives this series its issue list, details and covers.</div>
+      <div style="margin-top:10px;color:var(--tq);font-size:12px">The folder and files stay as they are. Matching gives this series its issue list, details and covers.</div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" id="link-run-btn">Link</button>
+      <button class="btn btn-primary" id="link-run-btn">Match</button>
     </div>`);
   document.getElementById('link-run-btn').onclick = async (ev) => {
-    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Linking…';
+    const b = ev.currentTarget; b.disabled = true; b.textContent = 'Matching…';
     try {
       await api.patch(`/api/series/${seriesId}/locg`, source === 'metron' ? { metron_id: runId } : { locg_id: runId });
       closeModal();
-      showToast(`Linked to ${r.series || 'the run'} — fetching issues and covers`);
+      showToast(`Matched to ${r.series || 'the run'} — fetching issues and covers`);
       _awaitSync(seriesId);
     } catch (e) {
-      closeModal(); showToast('Couldn’t link that run', 'error');
+      closeModal(); showToast('Couldn’t match that run', 'error');
     }
   };
 }

@@ -2129,3 +2129,5 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 /* --- single-file report --- */
 .singles-group { margin-top: var(--sp-lg, 24px); }
 .singles-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+
+.nm-search { display: block; max-width: 420px; margin-bottom: 10px; }

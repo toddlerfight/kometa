@@ -622,11 +622,30 @@ async function renderNeedsMatch() {
     return;
   }
   const waiting = rows.filter(s => s.match_status === 'pending').length;
+  _nmRows = rows;
   setApp(`
     <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
-      ? ` — ${waiting} still in the queue (a few a day, politely)` : ''}. Open one to pick its run, or Remove what's trash.
+      ? ` — ${waiting} still in the queue` : ''}. Open one to pick its run, or Remove what's trash.
       <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Single-file series report →</a></div>
-    <div class="nm-list">${rows.map((s, i) => _needsRowHtml(s, i)).join('')}</div>`);
+    <input class="browse-search nm-search" id="nm-search" type="search" placeholder="Search titles, publishers, folders"
+      value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
+    <div class="nm-list" id="nm-list">${_nmListHtml()}</div>`);
+  if (_nmQuery) document.getElementById('nm-search')?.focus();
+}
+
+// Search the in-tray: title, publisher or folder, as you type. Kept across
+// re-renders (a match fading out shouldn't wipe what you were looking for).
+let _nmRows = [], _nmQuery = '';
+function _nmFilter(q) {
+  _nmQuery = q;
+  const el = document.getElementById('nm-list');
+  if (el) el.innerHTML = _nmListHtml();
+}
+function _nmListHtml() {
+  const q = _nmQuery.trim().toLowerCase();
+  const rows = q ? _nmRows.filter(s => [s.title, s.publisher, s.folder_path].some(v => (v || '').toLowerCase().includes(q))) : _nmRows;
+  if (!rows.length) return `<div class="nm-intro" style="padding:14px 0">Nothing matches "${esc(_nmQuery)}".</div>`;
+  return rows.map((s, i) => _needsRowHtml(s, i)).join('');
 }
 
 // --- Single-file series report (read-only) ----------------------------------------
