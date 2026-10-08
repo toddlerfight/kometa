@@ -38,7 +38,7 @@ class TestParse:
         assert fc.parse_entry("Batman: Year 100 Vol 1 1") == {"series": "Batman: Year 100", "volume": 1, "number": 1.0}
         assert fc.parse_entry("Batman Chronicles #11") == {"series": "Batman Chronicles", "volume": 1, "number": 11.0}
         assert fc.parse_entry("Superior Spider-Man Vol 1 27.NOW")["number"] == 27.0
-        assert fc.parse_entry("DC Black Label") is None
+        assert fc.parse_entry("DC Black Label")["number"] == 1.0          # a bare title reads as a one-shot
 
     def test_dc_page(self):
         p = fc.parse_collection(DC_WIKITEXT, "dc")
@@ -102,3 +102,23 @@ class TestPageScore:
         q = "Batman: Year One: The Deluxe Edition"
         assert fc._score(q, "Batman: Year One (Collected)") > fc._score(q, "DC Finest: Batman: Year One & Two (Collected)")
         assert fc._score(q, "Batman: Year Two - 30th Anniversary Deluxe Edition (Collected)") < fc.MIN_SCORE
+
+
+class TestParseShapes:
+    def test_wikilink_list_and_bare_one_shot_and_notes_ignored(self):
+        w = """{{Collected Edition
+| Year = 2005
+| IssueList =
+*[[Batman Vol 1 404|Batman #404]] (''Who I Am'')
+*[[Batman Vol 1 405|Batman #405]]
+* {{c|Batman: The Killing Joke}}
+| Notes =
+* Also see {{c|Countdown #31}} and [[Batman Vol 1 500|Batman #500]].
+}}"""
+        p = fc.parse_collection(w, "dc")
+        assert [(e["series"], e["number"]) for e in p["collects"]] == [
+            ("Batman", 404.0), ("Batman", 405.0), ("Batman: The Killing Joke", 1.0)]
+
+    def test_bare_entry_is_a_one_shot(self):
+        assert fc.parse_entry("Batman: The Killing Joke") == {"series": "Batman: The Killing Joke", "volume": 1, "number": 1.0}
+        assert fc.parse_entry("Category:Year One") is None

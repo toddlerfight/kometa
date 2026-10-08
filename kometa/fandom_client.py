@@ -77,7 +77,9 @@ def parse_entry(text: str) -> dict | None:
     t = text.strip().split("|")[0].strip()
     m = _ENTRY_RE.match(t) or _HASH_RE.match(t)
     if not m:
-        return None
+        # a bare title is a one-shot — 'Batman: The Killing Joke' IS issue #1 of itself
+        t = re.sub(r"\s*\(.*?\)\s*$", "", t).strip()
+        return {"series": t, "volume": 1, "number": 1.0} if t and not t.lower().startswith(("category:", "file:")) else None
     num = m.group("num").upper().replace(".NOW", "")
     try:
         number = float(num)
@@ -98,8 +100,13 @@ def parse_collection(w: str, wiki: str) -> dict | None:
     isbn = _field(w, "ISBN")
     collects = []
     if wiki == "dc":
-        for e in re.findall(r"\{\{c\|([^}]+)\}\}", w):
-            p = parse_entry(e)
+        # Only the IssueList block — Notes mention other books ('Countdown #31')
+        # that the collection does NOT collect. Two list shapes in the wild:
+        # {{c|Batman: Year 100 Vol 1 1}} and [[Batman Vol 1 404|Batman #404]].
+        m = re.search(r"^\|\s*IssueList\s*=(.*?)(?=^\|\s*\w+\s*=|\Z)", w, re.M | re.S)
+        block = m.group(1) if m else w
+        for m in re.finditer(r"\{\{c\|([^}]+)\}\}|\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", block):   # in page order
+            p = parse_entry(m.group(1) or m.group(2))
             if p:
                 collects.append(p)
         mode = "collected"
@@ -160,8 +167,11 @@ def lookup_collection(title: str, publisher: str | None) -> dict | None:
             if h not in hits and (wiki != "dc" or h.endswith("(Collected)")):
                 hits.append(h)
     ranked = sorted(((_score(q, h), h) for h in hits), key=lambda x: (-x[0], len(x[1])))
+    best = ranked[0][0] if ranked else 0.0
     for score, page in ranked[:3]:
-        if score < MIN_SCORE:
+        # a page that won't parse must not hand the win to a clearly worse title
+        # ('Batman: Year One' unparsed → 'The Joker: Year One', 2026-10-08)
+        if score < MIN_SCORE or score < best - 0.1:
             break
         w = wikitext(wiki, page)
         if not w:
