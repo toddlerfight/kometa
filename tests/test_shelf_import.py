@@ -16,6 +16,8 @@ from tests.test_reader import make_book
 def shelf(tmp_path, db_path, monkeypatch):
     for mod in (sh, si, sync, main):
         monkeypatch.setattr(mod, "DB_PATH", db_path)
+    import kometa.metron_client as mc
+    monkeypatch.setattr(mc, "configured", lambda: False)    # LOCG-only path unless a test opts in
     root = tmp_path / "comics"
     for pub, ser, files in [("Marvel Comics", "Hawkeye", ["Hawkeye #001 (2016).cbz", "Hawkeye #002 (2017).cbz"]),
                             ("DC Comics", "Batman - Knightfall", ["Batman - Knightfall Omnibus.cbz"])]:

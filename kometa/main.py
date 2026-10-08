@@ -258,6 +258,15 @@ class TestProwlarrRequest(BaseModel):
     apikey: str | None = None
 
 
+@app.post("/api/test/metron")
+def test_metron():
+    from kometa import metron_client
+    if not metron_client.configured():
+        return {"ok": False, "error": "Not configured"}
+    ok, detail = metron_client.test()
+    return {"ok": ok, "detail" if ok else "error": detail}
+
+
 @app.post("/api/test/prowlarr")
 def test_prowlarr(req: TestProwlarrRequest):
     url = req.url or _stored("prowlarr_url")
@@ -355,6 +364,11 @@ def get_config():
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
         "torrent_enabled":     cfg.get("torrent_enabled", "1") != "0",
         "comicvine_enabled":   cfg.get("comicvine_enabled", "1") != "0",
+        # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
+        "metron_user":         cfg.get("metron_user", ""),
+        "metron_pass":         "",
+        "metron_configured":   bool(cfg.get("metron_user", "") and cfg.get("metron_pass", "")),
+        "metron_enabled":      cfg.get("metron_enabled", "1") != "0",
     }
 
 
@@ -378,6 +392,9 @@ class ConfigRequest(BaseModel):
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
     comicvine_enabled:  str | None = None   # "1"/"0" — metadata source toggle
+    metron_user:        str | None = None
+    metron_pass:        str | None = None
+    metron_enabled:     str | None = None   # "1"/"0" — primary metadata source
 
 
 @app.patch("/api/config")

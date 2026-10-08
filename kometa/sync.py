@@ -115,10 +115,10 @@ DORMANT_REFRESH_DAYS = 30    # a finished run's list: monthly at most
 TRADES_REFRESH_DAYS = 30
 
 
-def _locg_issues_due(series: dict) -> bool:
-    """Should this (non-forced) sync refetch the LOCG issue list?"""
+def _issues_due(series: dict, stamp_key: str = "locg_fetched_at") -> bool:
+    """Should this (non-forced) sync refetch an issue list (LOCG or Metron)?"""
     from datetime import date, datetime, timedelta, timezone
-    fetched = series.get("locg_fetched_at")
+    fetched = series.get(stamp_key)
     if not fetched:
         return True                                   # never fetched (or relinked)
     recent = str(date.today() - timedelta(days=ACTIVE_WINDOW_DAYS))
@@ -127,6 +127,21 @@ def _locg_issues_due(series: dict) -> bool:
         return True                                   # ongoing: cadence is the caller's
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DORMANT_REFRESH_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     return fetched < cutoff                           # finished run: monthly at most
+
+
+LOCG_WITH_METRON_DAYS = 7   # Metron has the list; LOCG only adds far-ahead solicits
+
+
+def _locg_issues_due(series: dict, have_metron: bool = False) -> bool:
+    if have_metron:
+        # Metron covers the issue list. LOCG's one extra — solicitations months
+        # ahead — only matters for series you're pulling, and weekly is plenty.
+        if not series.get("on_pull_list"):
+            return False
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=LOCG_WITH_METRON_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+        return (series.get("locg_fetched_at") or "") < cutoff
+    return _issues_due(series, "locg_fetched_at")
 
 
 def _trades_due(series: dict) -> bool:
@@ -256,12 +271,31 @@ def sync_one(series: dict, force: bool = False):
         # A shelf-imported series the importer couldn't match confidently is
         # waiting for YOU to pick its run — a title guess here is exactly the
         # silent wrong-run match that state exists to prevent.
-        if not locg_id and series.get("title") and series.get("match_status") not in ("pending", "needs_match"):
+        # Title-guessing is only for series added the old way (match_status NULL).
+        # Shelf-imported ones are matched by the confident matcher — never guessed.
+        if not locg_id and series.get("title") and series.get("match_status") is None:
             locg_id = find_series_id_anon(series["title"], series.get("year_began"))
             if locg_id:
                 db.set_locg_series_id(series["id"], locg_id, DB_PATH)
                 series = dict(series, locg_series_id=locg_id)
-        fetch_issues = bool(locg_id) and (force or _locg_issues_due(series))
+        # Metron first — the API built for this. Its list is the base; LOCG adds
+        # what Metron doesn't have yet (far-ahead solicitations) on top.
+        have_metron = False
+        mid = series.get("metron_series_id")
+        if mid:
+            from kometa import metron_client
+            if metron_client.configured() and (force or _issues_due(series, "metron_fetched_at")):
+                try:
+                    for mi in metron_client.series_issues(mid):
+                        issue_map[mi["number"]] = {"store_date": mi["store_date"], "image": mi["image"],
+                                                   "locg_issue_id": None}
+                    if issue_map:
+                        from datetime import datetime, timezone
+                        db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
+                except metron_client.MetronUnavailable as e:
+                    logger.info(f"Metron unavailable for {series['title']!r}: {e}")
+            have_metron = bool(series.get("metron_fetched_at")) or bool(issue_map)
+        fetch_issues = bool(locg_id) and (force or _locg_issues_due(series, have_metron))
         if fetch_issues:
             fetched_any = False
             for li in get_issues_anon(locg_id):

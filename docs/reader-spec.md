@@ -81,6 +81,27 @@ shelf page built then is transitional and retires).
    is a **real but separate task, later**: dry-run report first, then series by
    series — renames churn Komga books and Kometa's path-keyed progress.
 
+## Metadata sources: Metron first, LOCG at a trickle
+
+Agreed 2026-10-08, after LOCG began challenging Kometa (Cloudflare) under
+~800 calls/day. Probe of the library (memory: reference_metron_coverage):
+Metron found 27–28/30 pull-list series and 13/20 shelf series, had every one
+of this week's releases, but lags far-ahead solicitations (Midnight X-Men: #1
+only; LOCG had #2 and #3).
+
+1. **Metron is the primary source** — a documented API built for tools like
+   this (basic auth, ≤30 requests/minute, honoured with a global rate limiter
+   and Retry-After backoff). Used for: **matching** shelf series, **issue
+   lists** and back catalogue, and the weekly **what's new** check.
+2. **LOCG becomes a trickle** for what only it has: **far-ahead
+   solicitations**, **variant covers**, community data. Never a bulk job; the
+   3-hour backoff on any refusal stays. No routing around its bot protection.
+3. **Matching** tries Metron first, then LOCG. Titles are searched as written
+   AND with folder-style " - " turned into ": " (shelf hits 8→13 in the probe).
+   Confident-only rule unchanged: one candidate agreeing on title, publisher
+   and year, else Needs match.
+4. Credentials live in Settings (DB config), not the host .env.
+
 ## On Deck
 
 Four sections. Each is its own row/area (layout is a mock-up question).

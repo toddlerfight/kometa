@@ -281,6 +281,12 @@ def _migrate(path=DB_PATH):
         # refetch a finished run's unchanging list three times a day.
         if "locg_fetched_at" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_fetched_at TEXT")
+        if "metron_fetched_at" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_fetched_at TEXT")
+        # Outcome of linking an already-tracked series to Metron: 'linked' / 'none'
+        # (Metron couldn't place it confidently — don't ask again every tick).
+        if "metron_link" not in series_cols:
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_link TEXT")
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
@@ -1600,3 +1606,19 @@ def shelf_id_for_series(series_id, path=DB_PATH):
     with _connect(path) as conn:
         r = conn.execute("SELECT id FROM shelf_series WHERE tracked_series_id = ?", (series_id,)).fetchone()
         return r["id"] if r else None
+
+
+def set_metron_series_id(series_id, metron_series_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = ?, metron_fetched_at = NULL WHERE id = ?",
+                     (metron_series_id, series_id))
+
+
+def set_metron_fetched(series_id, when, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_fetched_at = ? WHERE id = ?", (when, series_id))
+
+
+def set_metron_link(series_id, outcome, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_link = ? WHERE id = ?", (outcome, series_id))

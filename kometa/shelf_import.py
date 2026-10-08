@@ -36,6 +36,7 @@ THROTTLE_S = float(os.environ.get("KOMETA_IMPORT_THROTTLE_S", "10"))
 # you want sooner: "Match now" on its page.
 TRICKLE_MINUTES = 20
 TRICKLE_HOURS = range(8, 22)   # local time
+METRON_PER_TICK = 5
 
 PENDING, AUTO, NEEDS_MATCH, MANUAL = "pending", "auto", "needs_match", "manual"
 MAX_FAILURES_IN_A_ROW = 3
@@ -95,20 +96,21 @@ def import_new_folders() -> list[int]:
     return new_ids
 
 
-def find_confident_match(series: dict, search=search_series_strict) -> int | None:
-    """The LOCG series id, or None unless exactly one candidate agrees on title,
-    publisher and (when there's any year evidence) year."""
+def _confident(rows, series: dict) -> int | None:
+    """Exactly one candidate agreeing on title, publisher and (when there's any
+    year evidence) year — else None. Shared by Metron and LOCG matching."""
     title, folder_year = _title_and_year(series["title"])
-    want = norm_key(title)
+    from kometa.metron_client import title_variants
+    wants = {norm_key(t) for t in title_variants(title)}
     pub = _pub_key(series.get("publisher") or "")
     years = _file_years(series.get("folder_path") or "")
     first_year = folder_year or (years[0] if years else None)
     passing = []
-    for r in search(title):
+    for r in rows:
         if r.get("comic"):
             continue
         cand_title, cand_year_in_title = _title_and_year(r.get("title") or "")
-        if norm_key(cand_title) != want:
+        if norm_key(cand_title) not in wants:
             continue
         if pub and r.get("publisher") and _pub_key(r["publisher"]) != pub:
             continue
@@ -120,6 +122,38 @@ def find_confident_match(series: dict, search=search_series_strict) -> int | Non
         return int(passing[0]["id"])
     # several runs share the name and nothing on disk says which — or none fit
     return None
+
+
+def find_confident_match(series: dict, search=search_series_strict) -> int | None:
+    """LOCG: the series id, or None. Searches the title as written and with
+    folder-style ' - ' as ': '. Raises if LOCG doesn't answer."""
+    from kometa.metron_client import title_variants
+    title, _ = _title_and_year(series["title"])
+    rows, seen = [], set()
+    for q in title_variants(title):
+        for r in search(q):
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                rows.append(r)
+    return _confident(rows, series)
+
+
+def find_metron_match(series: dict, search=None) -> int | None:
+    """Metron: the series id, or None. Raises MetronUnavailable if it doesn't answer."""
+    from kometa import metron_client
+    return _confident((search or metron_client.search_series)(series["title"]), series)
+
+
+def _match(series: dict) -> tuple[int | None, int | None]:
+    """(metron_id, locg_id). Metron first — it's the API built for this; LOCG
+    only when Metron has no confident answer (or isn't configured). Raises when
+    a source that's needed didn't answer: that's 'try later', not 'no match'."""
+    from kometa import metron_client
+    if metron_client.configured():
+        mid = find_metron_match(series)
+        if mid:
+            return mid, None
+    return None, find_confident_match(series)
 
 
 def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
@@ -134,7 +168,7 @@ def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
         pending = [s for s in db.get_all_series(DB_PATH) if s.get("match_status") == PENDING]
         for s in pending[:limit] if limit else pending:
             try:
-                locg_id = find_confident_match(s)
+                metron_id, locg_id = _match(s)
                 failures_in_a_row = 0
             except Exception as e:
                 # LOCG didn't answer (2026-10-08: a Cloudflare challenge). That is
@@ -149,8 +183,11 @@ def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
                     break
                 sleep(THROTTLE_S)
                 continue
-            if locg_id:
-                db.set_locg_series_id(s["id"], locg_id, DB_PATH)
+            if metron_id or locg_id:
+                if metron_id:
+                    db.set_metron_series_id(s["id"], metron_id, DB_PATH)
+                if locg_id:
+                    db.set_locg_series_id(s["id"], locg_id, DB_PATH)
                 db.set_match_status(s["id"], AUTO, DB_PATH)
                 done[AUTO] += 1
             else:
@@ -180,12 +217,44 @@ def trickle_tick(now_hour: int | None = None):
     from datetime import datetime
     from kometa.scheduler import TZ
     hour = now_hour if now_hour is not None else datetime.now(TZ).hour
-    if hour not in TRICKLE_HOURS or locg_paused():
+    from kometa import metron_client
+    metron = metron_client.configured()
+    if hour not in TRICKLE_HOURS or (locg_paused() and not metron):
         return
     try:
-        match_pending(limit=1, sleep=lambda s: None)
+        # Metron is an API built for this: a handful per tick (~200 a day, well
+        # inside its 5,000) clears the backlog in days. LOCG-only: one per tick.
+        match_pending(limit=METRON_PER_TICK if metron else 1, sleep=lambda s: None)
+        if metron:
+            link_metron_existing()
     except Exception as e:
         logger.warning(f"Import trickle failed: {e}")
+
+
+def link_metron_existing(limit: int = METRON_PER_TICK) -> int:
+    """Series you added the old way (LOCG-matched) gain a Metron link, pull list
+    first — that's where nearly all the LOCG traffic was. Confident-only, same
+    rule. A series Metron can't place confidently is remembered ('none') so it
+    isn't asked again every tick."""
+    from kometa import metron_client
+    if not metron_client.configured():
+        return 0
+    todo = [s for s in db.get_all_series(DB_PATH)
+            if s.get("kind") != "arc" and not s.get("metron_series_id")
+            and s.get("match_status") in (None, AUTO, MANUAL) and s.get("metron_link") is None]
+    todo.sort(key=lambda s: (not s.get("on_pull_list"), s["title"].lower()))
+    linked = 0
+    for s in todo[:limit]:
+        try:
+            mid = find_metron_match(s)
+        except metron_client.MetronUnavailable as e:
+            logger.info(f"Metron link paused: {e}")
+            break
+        if mid:
+            db.set_metron_series_id(s["id"], mid, DB_PATH)
+            linked += 1
+        db.set_metron_link(s["id"], "linked" if mid else "none", DB_PATH)
+    return linked
 
 
 def match_one(series_id: int) -> str:
@@ -193,15 +262,15 @@ def match_one(series_id: int) -> str:
     Raises when LOCG doesn't answer — that's not 'no match'."""
     from kometa.sync import sync_one, sync_one_guarded
     s = db.get_series_by_id(series_id, DB_PATH)
-    locg_id = find_confident_match(s)
+    metron_id, locg_id = _match(s)
+    if metron_id:
+        db.set_metron_series_id(series_id, metron_id, DB_PATH)
     if locg_id:
         db.set_locg_series_id(series_id, locg_id, DB_PATH)
-        db.set_match_status(series_id, AUTO, DB_PATH)
-    else:
-        db.set_match_status(series_id, NEEDS_MATCH, DB_PATH)
+    db.set_match_status(series_id, AUTO if (metron_id or locg_id) else NEEDS_MATCH, DB_PATH)
     threading.Thread(target=sync_one_guarded, args=(db.get_series_by_id(series_id, DB_PATH), sync_one),
                      daemon=True).start()
-    return AUTO if locg_id else NEEDS_MATCH
+    return AUTO if (metron_id or locg_id) else NEEDS_MATCH
 
 
 def import_in_background():
