@@ -78,3 +78,16 @@ def test_anon_session_rebuilds_when_the_pass_changes(wired):
     g2 = lc._anon_get_fn()
     assert len(FakeSession.made) == 2 and FakeSession.made[1].headers["cookie:cf_clearance"] == "fresh"
     assert lc._anon_get_fn() is g2 and len(FakeSession.made) == 2   # same pass → no rebuild
+
+
+def test_a_knock_while_paused_does_not_extend_the_pause(wired, monkeypatch):
+    import time
+    until = time.time() + 1800                                # paused for another 30 min
+    lc._pause["until"] = until
+    orig_init = FakeSession.__init__
+    def refusing(self, **k):
+        orig_init(self, **k)
+        self.status, self.resp_headers = 403, {"cf-mitigated": "challenge"}
+    monkeypatch.setattr(FakeSession, "__init__", refusing)
+    lc.probe()
+    assert lc._pause["until"] == until                        # same clock, not +3h

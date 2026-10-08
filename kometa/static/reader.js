@@ -487,10 +487,11 @@ async function _showLocgPause(seriesId) {
   if (!st.paused_until || currentView !== 'series-detail' || currentParams.id !== seriesId) return;
   const banner = document.getElementById('match-banner');
   if (!banner) return;
-  banner.querySelectorAll('button').forEach(b => { b.disabled = true; });   // (the test button is added after)
+  // Nothing is disabled: matching runs through Metron and doesn't care that LOCG
+  // is shut. (It used to grey out Match now — with the one source that worked.)
   if (!banner.querySelector('.match-paused')) {
     banner.insertAdjacentHTML('beforeend', `<div class="match-paused u-label">LOCG is pausing us until
-      ${esc(st.paused_until_label)} — it refused our requests. Matching resumes after that.
+      ${esc(st.paused_until_label)} — it refused our requests. Matching carries on through Metron; only LOCG extras (far-ahead solicits) wait.
       <button class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="_testLocg(this)">Test LOCG now</button></div>`);
   }
 }

@@ -151,6 +151,10 @@ def _note_refusal(r):
     if _access()[0]:
         logger.info("LOCG refused a request carrying your browser's pass — it has expired; forgetting it")
         _forget_access()
+    # A refusal while ALREADY paused (a 'Test LOCG now' knock) doesn't push the
+    # clock out again — four hopeful clicks were turning 3h into most of a day.
+    if time.time() < _paused_until():
+        return
     until = time.time() + PAUSE_SECONDS
     _pause["until"] = until
     logger.warning(f"LOCG refused us ({r.status_code}) — pausing ALL LOCG traffic for "

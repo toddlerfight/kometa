@@ -1152,9 +1152,9 @@ async function renderSeriesDetail(id) {
   const matchBanner = (s.match_status === 'needs_match' || s.match_status === 'pending')
     ? `<div class="match-banner" id="match-banner">
         <div class="match-banner-text">${s.match_status === 'pending'
-          ? `<b>Not matched to LOCG yet.</b> This series came from your shelf; matching trickles through in the background (a few a day, to stay polite to LOCG). Want it now?
+          ? `<b>Not matched to a run yet.</b> This series came from your shelf; matching trickles through in the background (a handful every 20 minutes, through Metron). Want it now?
              <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="_matchNow(${s.id}, this)">Match now</button>`
-          : '<b>Pick the run.</b> More than one LOCG series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}
+          : '<b>Pick the run.</b> More than one series could be this folder (or none clearly fits). Choose one to get its issue list, trades and covers.'}
           <button class="btn btn-danger btn-sm" style="margin-left:8px" title="Remove this series and move its folder to the bin"
             onclick="_trashSeries(${s.id}, this, true)">Remove</button></div>
         ${s.match_status === 'needs_match' ? `
