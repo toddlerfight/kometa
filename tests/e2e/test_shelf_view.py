@@ -53,7 +53,7 @@ def test_new_folder_becomes_a_series_pull_off_and_readable(app, app_server):
 
         row.locator(".nm-main").click()
         banner = app.locator("#match-banner")
-        expect(banner).to_contain_text("Not matched to LOCG yet")   # waits for the trickle…
+        expect(banner).to_contain_text("Not matched to a run yet")  # waits for the trickle…
         banner.get_by_role("button", name="Match now").click()       # …unless you ask
         expect(app.locator("#match-banner")).to_contain_text("Pick the run")
         expect(app.locator(".pull-switch input")).not_to_be_checked()
