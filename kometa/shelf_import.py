@@ -36,7 +36,7 @@ THROTTLE_S = float(os.environ.get("KOMETA_IMPORT_THROTTLE_S", "10"))
 # you want sooner: "Match now" on its page.
 TRICKLE_MINUTES = 20
 TRICKLE_HOURS = range(8, 22)   # local time
-METRON_PER_TICK = 5
+METRON_PER_TICK = 20
 
 PENDING, AUTO, NEEDS_MATCH, MANUAL = "pending", "auto", "needs_match", "manual"
 MAX_FAILURES_IN_A_ROW = 3
