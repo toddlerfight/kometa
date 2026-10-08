@@ -35,7 +35,7 @@ THROTTLE_S = float(os.environ.get("KOMETA_IMPORT_THROTTLE_S", "10"))
 # urgent: every series is readable now, matching only adds metadata. Anything
 # you want sooner: "Match now" on its page.
 TRICKLE_MINUTES = 20
-TRICKLE_HOURS = range(8, 22)   # local time
+TRICKLE_HOURS = range(0, 24)   # around the clock — Metron is an API with a daily budget, not a site we tiptoe past
 METRON_PER_TICK = 20
 
 PENDING, AUTO, NEEDS_MATCH, MANUAL = "pending", "auto", "needs_match", "manual"

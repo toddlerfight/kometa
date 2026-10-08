@@ -191,19 +191,19 @@ class TestPoliteness:
         lc._note_refusal(R())
         assert lc.locg_paused() is None
 
-    def test_trickle_is_one_series_daytime_only_and_respects_the_pause(self, shelf, monkeypatch):
+    def test_trickle_runs_round_the_clock_one_locg_series_and_respects_the_pause(self, shelf, monkeypatch):
         import kometa.locg_client as lc
         si.import_new_folders()
         seen = []
         monkeypatch.setattr(si, "match_pending", lambda limit=None, sleep=None: seen.append(limit))
         monkeypatch.setattr(lc, "_pause", {"until": 0.0})
         si.trickle_tick(now_hour=3)
-        assert seen == []                                          # night: nothing
+        assert seen == [1]                                         # night too — Metron is an API, not a site we tiptoe past
         si.trickle_tick(now_hour=11)
-        assert seen == [1]                                         # day: exactly one
-        monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})  # paused
+        assert seen == [1, 1]                                      # LOCG-only (no Metron): exactly one per tick
+        monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})  # paused and no Metron: nothing
         si.trickle_tick(now_hour=11)
-        assert seen == [1]
+        assert seen == [1, 1]
 
     def test_match_now_links_or_hands_you_the_choice(self, shelf, monkeypatch):
         si.import_new_folders()
