@@ -651,9 +651,42 @@ async function _odDismiss(bookId, btn) {
   const tile = document.getElementById(`od-${bookId}`);
   try { await api.post(`/api/books/${bookId}/dismiss`, {}); }
   catch (e) { showToast('Couldn\u2019t hide that', 'error'); return; }
-  if (tile) { tile.style.transition = 'opacity .25s'; tile.style.opacity = '0'; setTimeout(() => tile.remove(), 260); }
+  await _animateTileOut(tile);
   showToastAction('Hidden from Continue reading — your place is kept', 'Undo', async () => {
     try { await api.post(`/api/books/${bookId}/dismiss?undo=1`, {}); renderOnDeck(); } catch {}
+  });
+}
+
+// A tile leaves a grid the way an Activity row leaves a list: it fades and
+// shrinks (--t-mid), then the tiles after it slide into the gap (--t-slow,
+// --ease-out) instead of jumping — FLIP: measure, remove, measure, play the
+// difference backwards. Reduced motion: it's just gone.
+function _animateTileOut(tile) {
+  return new Promise(resolve => {
+    if (!tile) { resolve(); return; }
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const grid = tile.parentElement;
+    if (reduce || !grid) { tile.remove(); resolve(); return; }
+    const others = [...grid.children].filter(el => el !== tile);
+    const before = new Map(others.map(el => [el, el.getBoundingClientRect()]));
+    tile.classList.add('od-leaving');
+    setTimeout(() => {
+      tile.remove();
+      let moving = 0;
+      for (const el of others) {
+        const a = before.get(el), b = el.getBoundingClientRect();
+        const dx = a.left - b.left, dy = a.top - b.top;
+        if (!dx && !dy) continue;
+        moving++;
+        el.style.transition = 'none';
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        void el.offsetWidth;
+        el.style.transition = 'transform var(--t-slow) var(--ease-out)';
+        el.style.transform = '';
+        el.addEventListener('transitionend', () => { el.style.transition = ''; }, { once: true });
+      }
+      setTimeout(resolve, moving ? 300 : 0);
+    }, 200);
   });
 }
 

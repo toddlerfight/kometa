@@ -2187,3 +2187,6 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-card:hover .od-x, .od-card:focus-within .od-x { opacity: 1; }
 @media (hover: none) { .od-x { opacity: .85; } }
 .od-x:hover { background: var(--pink); color: var(--ink, #000); }
+
+/* a tile on its way out: fade and shrink before the neighbours slide in */
+.od-leaving { opacity: 0 !important; transform: scale(.88); transition: opacity var(--t-mid) var(--ease-in), transform var(--t-mid) var(--ease-in); pointer-events: none; }
