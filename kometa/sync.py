@@ -288,7 +288,7 @@ def sync_one(series: dict, force: bool = False):
                 try:
                     for mi in metron_client.series_issues(mid):
                         issue_map[mi["number"]] = {"store_date": mi["store_date"], "image": mi["image"],
-                                                   "locg_issue_id": None}
+                                                   "locg_issue_id": None, "metron_issue_id": mi.get("metron_issue_id")}
                     if issue_map:
                         from datetime import datetime, timezone
                         db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
@@ -337,7 +337,7 @@ def sync_one(series: dict, force: bool = False):
     # --- Upsert merged issue list (one transaction — not a connection per issue) ---
     db.upsert_issue_status_many(
         [(series["id"], num, data["store_date"], num in owned_numbers,
-          book_map.get(num), data.get("image"), data.get("locg_issue_id"))
+          book_map.get(num), data.get("image"), data.get("locg_issue_id"), data.get("metron_issue_id"))
          for num, data in issue_map.items()],
         path=DB_PATH,
     )

@@ -141,6 +141,53 @@ def series_issues(series_id: int) -> list[dict]:
     return out
 
 
+# Metron credits the whole masthead — President, Publisher, Chief Creative
+# Officer. Jim Lee did not draw your issue of Absolute Batman. Off the list.
+_MASTHEAD_ROLES = {"president", "publisher", "chief creative officer", "editor in chief",
+                   "executive editor", "group editor", "senior editor", "associate editor",
+                   "assistant editor", "editor"}
+
+
+def issue_detail(metron_issue_id: int) -> dict:
+    """Everything the issue modal shows, from one request: description, credits
+    and the covers (main + variants, with images). Same shape the LOCG scrape
+    produced, so the Details and Variants tabs don't care which source answered.
+
+    Variants carry no id on Metron — the image filename (a UUID) stands in, and
+    `large` holds the real URL so the injector never has to guess it."""
+    d = _get(f"issue/{int(metron_issue_id)}/")
+    credits = []
+    for c in d.get("credits") or []:
+        for role in c.get("role") or [{"name": "Other"}]:
+            name = role.get("name") or "Other"
+            if name.lower() in _MASTHEAD_ROLES:
+                continue
+            credits.append({"role": name, "name": c.get("creator"), "people_id": None,
+                            "metron_creator_id": c.get("id")})
+    covers = []
+    if d.get("image"):
+        covers.append({"id": f"m{d['id']}", "name": "Cover A (Main)", "thumb": d["image"], "large": d["image"]})
+    seen = set()
+    for v in d.get("variants") or []:
+        img = v.get("image")
+        if not img:
+            continue
+        vid = re.sub(r"\W", "", img.rsplit("/", 1)[-1].rsplit(".", 1)[0]) or f"v{len(covers)}"
+        if vid in seen:
+            continue
+        seen.add(vid)
+        covers.append({"id": vid, "name": v.get("name") or f"Variant {len(covers)}", "thumb": img, "large": img})
+    return {
+        "desc": d.get("desc") or "",
+        "credits": credits,
+        "covers": covers,
+        "store_date": d.get("store_date"),
+        "foc_date": d.get("foc_date"),
+        "arcs": [a.get("name") for a in d.get("arcs") or [] if isinstance(a, dict)],
+        "source": "metron",
+    }
+
+
 def releases_between(after: str, before: str) -> list[dict]:
     """Every issue Metron has with a store date in [after, before] — the weekly
     what's-new check in a handful of requests."""

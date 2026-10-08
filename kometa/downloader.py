@@ -43,11 +43,14 @@ def _patch_comic_info(xml_bytes: bytes, added_covers: int) -> bytes:
         return xml_bytes
 
 
-def _download_cover(cover_id: str) -> bytes | None:
-    """Plain requests, no scraper — the covers sit on public S3, and there is no
-    Cloudflare bouncer guarding a bucket that never asked for one."""
+def _download_cover(cover) -> bytes | None:
+    """Plain requests, no scraper — the covers sit on public S3 (LOCG) or
+    static.metron.cloud, and neither has a Cloudflare bouncer. `cover` is a
+    cover dict carrying its own `large` URL (Metron), or a bare LOCG id."""
+    url = cover.get("large") if isinstance(cover, dict) and cover.get("large") else \
+        S3_LARGE.format(cover["id"] if isinstance(cover, dict) else cover)
     try:
-        r = requests.get(S3_LARGE.format(cover_id), timeout=30)
+        r = requests.get(url, timeout=30)
     except requests.RequestException:
         return None
     return r.content if r.status_code == 200 and r.content else None
@@ -264,11 +267,10 @@ def inject_covers(cbz_path: str, selected: list, primary_id: str,
     # Bare requests.get per thread — no shared session state to trip over.
     # (Empty selection used to hand ThreadPoolExecutor max_workers=0, which is
     # a ValueError — now it's just a repack with zero covers.)
-    ids = [c['id'] for c in selected]
     datas = []
-    if ids:
-        with ThreadPoolExecutor(max_workers=min(8, len(ids))) as ex:
-            datas = list(ex.map(_download_cover, ids))
+    if selected:
+        with ThreadPoolExecutor(max_workers=min(8, len(selected))) as ex:
+            datas = list(ex.map(_download_cover, selected))
     variant_pages = [(c['id'], c.get('name', c['id']), d)
                      for c, d in zip(selected, datas) if d]
 

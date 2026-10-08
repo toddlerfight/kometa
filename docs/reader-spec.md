@@ -92,10 +92,14 @@ only; LOCG had #2 and #3).
 1. **Metron is the primary source** — a documented API built for tools like
    this (basic auth, ≤30 requests/minute, honoured with a global rate limiter
    and Retry-After backoff). Used for: **matching** shelf series, **issue
-   lists** and back catalogue, and the weekly **what's new** check.
+   lists** and back catalogue, the weekly **what's new** check, and (added
+   2026-10-08) **issue details and variant covers** — its issue record carries
+   the description, credits and every variant with an image, so the modal's
+   Details and Variants tabs ask Metron first and LOCG only for issues Metron
+   lacks (`kometa/issue_meta.py`; one request per issue, cached a week).
 2. **LOCG becomes a trickle** for what only it has: **far-ahead
-   solicitations**, **variant covers**, community data. Never a bulk job; the
-   3-hour backoff on any refusal stays. No routing around its bot protection.
+   solicitations** and community data. Never a bulk job; the 3-hour backoff
+   on any refusal stays. No routing around its bot protection.
 3. **Matching** tries Metron first, then LOCG. Titles are searched as written
    AND with folder-style " - " turned into ": " (shelf hits 8→13 in the probe).
    Confident-only rule unchanged: one candidate agreeing on title, publisher

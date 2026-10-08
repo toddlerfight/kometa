@@ -22,7 +22,6 @@ import kometa.db as db
 from kometa.sources import (
     komga as _komga, comics_root as _comics_root, comicvine as _comicvine,
 )
-from kometa.locg_client import fetch_variants as _locg_variants_anon
 from kometa.naming import (
     find_issue_file as _find_issue_file, normalize_url as _normalize_url, _resolve_dir,
 )
@@ -1185,22 +1184,19 @@ def clear_queue_history():
 
 @app.get("/api/series/{series_id}/issues/{number}/locg-details")
 def get_issue_locg_details(series_id: int, number: float):
-    """Description + credits from LOCG (keyless). Cached per locg_issue_id; the
-    external kometa-recommend project also consumes this cache."""
+    """Description + credits — Metron first, LOCG for issues Metron lacks
+    (kometa.issue_meta). Route name kept for the frontend; cached either way
+    (the external kometa-recommend project also reads the LOCG entries)."""
+    from kometa import issue_meta
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
-    if not issue or not issue.get("locg_issue_id"):
+    if not issue or not (issue.get("locg_issue_id") or issue.get("metron_issue_id")):
         raise HTTPException(404)
-    lid = issue["locg_issue_id"]
-    cached = db.get_issue_details_cache(lid, DB_PATH)
-    if cached is not None:
-        return cached
     try:
-        detail = _locg_issue_details(lid)
+        d = issue_meta.details_for(issue, DB_PATH)
     except Exception as e:
-        raise HTTPException(502, "LOCG details fetch failed") from e
-    db.set_issue_details_cache(lid, detail, DB_PATH)
-    return detail
+        raise HTTPException(502, "Details fetch failed") from e
+    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source")}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
@@ -1229,11 +1225,12 @@ def get_issue_variants(series_id: int, number: float):
     primary = prefs["primary_id"] if prefs else None
 
     locg_issue_id = issue.get("locg_issue_id")
-    if not locg_issue_id:
+    if not (locg_issue_id or issue.get("metron_issue_id")):
         return {"covers": [], "locg_issue_id": None, "selected_ids": sel_ids, "primary_id": primary}
+    from kometa import issue_meta
     try:
-        data = _locg_variants_anon(locg_issue_id)
-        return {"covers": data["covers"], "locg_issue_id": locg_issue_id,
+        data = issue_meta.details_for(issue, DB_PATH, want_covers=True)
+        return {"covers": data.get("covers", []), "locg_issue_id": locg_issue_id, "source": data.get("source"),
                 "selected_ids": sel_ids, "primary_id": primary}
     except Exception as e:
         raise HTTPException(502, detail=str(e)) from e

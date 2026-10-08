@@ -462,14 +462,24 @@ def set_config(updates: dict, path=DB_PATH):
 # --- Issue details cache (LOCG desc + credits for the Details tab; the external
 #     kometa-recommend project also reads this cache) ---
 
-def get_issue_details_cache(locg_issue_id, path=DB_PATH):
+def get_issue_details_cache(locg_issue_id, path=DB_PATH, max_age_days=None):
+    """Cached details, or None. The key is a LOCG issue id for LOCG entries and
+    'metron:<id>' for Metron ones (same table — the Details tab doesn't care).
+    max_age_days: treat older entries as missing (variants keep arriving for
+    an issue right up to release; LOCG entries were never re-fetched)."""
     import json
     with _connect(path) as conn:
         row = conn.execute(
-            "SELECT data_json FROM issue_details_cache WHERE locg_issue_id = ?",
+            "SELECT data_json, fetched_at FROM issue_details_cache WHERE locg_issue_id = ?",
             (str(locg_issue_id),),
         ).fetchone()
-        return json.loads(row["data_json"]) if row else None
+        if not row:
+            return None
+        if max_age_days is not None and row["fetched_at"]:
+            age = conn.execute("SELECT julianday('now') - julianday(?)", (row["fetched_at"],)).fetchone()[0]
+            if age is not None and age > max_age_days:
+                return None
+        return json.loads(row["data_json"])
 
 
 def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
@@ -760,34 +770,37 @@ def set_owned_bulk(tracked_series_id, numbers, owned, path=DB_PATH):
 
 
 _UPSERT_ISSUE_SQL = """
-    INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id, metron_issue_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(tracked_series_id, number) DO UPDATE SET
         store_date      = COALESCE(excluded.store_date, store_date),
         owned        = excluded.owned,
         komga_book_id   = excluded.komga_book_id,
         metron_image    = excluded.metron_image,
-        locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
+        locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id),
+        metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id)
 """
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None, locg_issue_id=None, path=DB_PATH):
+def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None,
+                        locg_issue_id=None, metron_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(_UPSERT_ISSUE_SQL,
-                     (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image, locg_issue_id))
+                     (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image,
+                      locg_issue_id, metron_issue_id))
 
 
 def upsert_issue_status_many(rows, path=DB_PATH):
     """Full-fidelity upsert_issue_status for many rows in ONE transaction. rows =
     (tracked_series_id, number, store_date, owned, komga_book_id, metron_image,
-    locg_issue_id) tuples. The per-issue sync loop was paying a connect/commit
-    (fsync) cycle per issue, per series, per sync."""
+    locg_issue_id[, metron_issue_id]) tuples. The per-issue sync loop was paying
+    a connect/commit (fsync) cycle per issue, per series, per sync."""
     if not rows:
         return
     with _connect(path) as conn:
         conn.executemany(_UPSERT_ISSUE_SQL,
-                         [(sid, num, sd, int(owned), kbid, img, lid)
-                          for sid, num, sd, owned, kbid, img, lid in rows])
+                         [(r[0], r[1], r[2], int(r[3]), r[4], r[5], r[6], r[7] if len(r) > 7 else None)
+                          for r in rows])
 
 
 def set_komga_book_id(series_id, number, book_id, path=DB_PATH):

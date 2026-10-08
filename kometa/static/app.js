@@ -3121,7 +3121,9 @@ async function showIssueModal(seriesId, number) {
     footerAction = `<button class="btn btn-primary" onclick="setIssueIgnored(${seriesId}, ${number}, false)">Stop ignoring</button>`;
   }
 
-  const hasLocgId = !!issue.locg_issue_id;
+  // Details + variants come from Metron OR LOCG now (kometa/issue_meta.py) —
+  // either id lights the tabs up. Name kept so the template below reads as before.
+  const hasLocgId = !!(issue.locg_issue_id || issue.metron_issue_id);
 
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
@@ -3147,7 +3149,7 @@ async function showIssueModal(seriesId, number) {
         </div>
         ${hasLocgId ? `
         <div class="issue-modal-panel" id="impanel-variants">
-          <div id="variant-area" class="variant-loading">Loading covers from LOCG…</div>
+          <div id="variant-area" class="variant-loading">Loading covers…</div>
           <div id="variant-footer" class="variant-footer" style="display:none">
             <div class="variant-hint" id="variant-hint">Click a cover to view it large — include or ★ it from there.</div>
             <button class="btn btn-primary btn-sm" id="variant-apply-btn" disabled
