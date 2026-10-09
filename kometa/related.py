@@ -319,6 +319,13 @@ def because_rows(max_rows: int = 2, min_items: int = 4, path=None, exclude=None,
     seeds = _recent_series(path)
     if not seeds:
         return [], False
+    # what you rated highly anchors before what you merely read (spec: ratings feed suggestions)
+    try:
+        from kometa.marks import rated_series
+        rated = rated_series(path)
+        seeds.sort(key=lambda s: -(rated.get(s) or 0))
+    except Exception as e:
+        logger.info(f"Because-row: ratings skipped: {e}")
     sig, nb = _signals(path), _list_neighbours(path)
     titles = {s["id"]: s["title"] for s in db.get_all_series(path)}
     with db._connect(path) as conn:

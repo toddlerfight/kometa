@@ -126,6 +126,7 @@ function _rdRender() {
           <div class="rd-menu hidden" id="rd-menu">
             <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
             <button onclick="_rdMarkRead()">Mark as read</button>
+            <button onclick="_rdToggleFav()">${_rd.book.favourite ? '★ Favourited' : '☆ Favourite'}</button>
             ${(_rd.book.series_id || _rd.book.shelf_id) ? `<button onclick="_rdGoSeries()">Go to series</button>` : ''}
           </div>
         </div>
@@ -152,14 +153,94 @@ function _rdRenderEnd() {
     <div class="rd-end">
       <div class="rd-end-done">✓ FINISHED</div>
       <div class="rd-end-title">${esc(_rdTitle())}</div>
+      <div class="rd-end-marks">${_markRowHtml(b)}</div>
+      <div class="rd-end-next" id="rd-end-next"></div>
       <div class="rd-end-actions">
         <button class="btn btn-ghost" onclick="_rdEnded(false)">‹ Last page</button>
         <button class="btn btn-primary" onclick="_rdExit()">Done</button>
       </div>
-      <div class="rd-end-note" id="rd-end-note">${_rd.list ? 'Looking for the next on the list…' : 'Up next arrives with On Deck.'}</div>
+      <div class="rd-end-note" id="rd-end-note">${_rd.list ? 'Looking for the next on the list…' : 'Looking for the next issue…'}</div>
     </div>`;
   _rdQueueSave(b.page_count, true);
-  if (_rd.list) _rdListNext(_rd.list, b.id);
+  // From a list the list's next is primary; otherwise the series' own next.
+  if (_rd.list) _rdListNext(_rd.list, b.id); else _rdSeriesNext(b.id);
+}
+
+// Netflix-style: the next book's cover and a countdown that opens it. Only
+// when the next book is on the shelf; any tap or key cancels. Never starts
+// anywhere but this screen.
+const RD_COUNTDOWN_S = 6;
+async function _rdSeriesNext(bookId, secondary = false) {
+  let n = null;
+  try { n = await api.get(`/api/books/${bookId}/next`); } catch {}
+  if (!_rd.book || _rd.book.id !== bookId || !_rd.ended) return;
+  const note = document.getElementById('rd-end-note');
+  const host = document.getElementById('rd-end-next');
+  if (!n) { if (note && !secondary) note.textContent = ''; return; }
+  if (n.status !== 'book') {
+    if (note && !secondary) note.textContent = n.label;
+    else if (note && secondary && !note.textContent) note.textContent = `In the series: ${n.label}`;
+    return;
+  }
+  if (secondary) {
+    document.querySelector('.rd-end-actions')?.insertAdjacentHTML('beforeend',
+      `<button class="btn btn-ghost" onclick="navigate('read', {book: ${n.book_id}})">Next in series: ${esc(n.label)} ›</button>`);
+    return;
+  }
+  if (note) note.textContent = '';
+  host.innerHTML = `
+    <div class="rd-next-card" role="button" tabindex="0" onclick="_rdOpenNext(${n.book_id})" onkeydown="if(event.key==='Enter')_rdOpenNext(${n.book_id})">
+      <img class="rd-next-cover" src="/api/books/${n.book_id}/cover" alt="">
+      <div class="rd-next-text"><div class="u-label" style="color:var(--tq)">Up next</div>
+        <div class="rd-next-title">${esc(n.title)} ${esc(n.label)}</div>
+        <div class="rd-next-count" id="rd-next-count">Starting in ${RD_COUNTDOWN_S}…</div></div>
+    </div>`;
+  _rdStartCountdown(n.book_id);
+}
+
+function _rdStartCountdown(nextId) {
+  _rdCancelCountdown();
+  let left = RD_COUNTDOWN_S;
+  const tick = () => {
+    left -= 1;
+    const c = document.getElementById('rd-next-count');
+    if (!_rd.ended || !c) return _rdCancelCountdown();
+    if (left <= 0) { _rdCancelCountdown(); _rdOpenNext(nextId); return; }
+    c.textContent = `Starting in ${left}…`;
+  };
+  _rd.countdown = setInterval(tick, 1000);
+  // any touch, click or key anywhere cancels — capture phase, before handlers
+  _rd.cancelCountdown = () => {
+    _rdCancelCountdown();
+    const c = document.getElementById('rd-next-count');
+    if (c) c.textContent = 'Tap to read';
+  };
+  _rdEl().addEventListener('pointerdown', _rd.cancelCountdown, { capture: true, once: true });
+  document.addEventListener('keydown', _rd.cancelCountdown, { capture: true, once: true });
+}
+
+function _rdCancelCountdown() {
+  if (_rd.countdown) { clearInterval(_rd.countdown); _rd.countdown = null; }
+  if (_rd.cancelCountdown) {
+    _rdEl().removeEventListener('pointerdown', _rd.cancelCountdown, { capture: true });
+    document.removeEventListener('keydown', _rd.cancelCountdown, { capture: true });
+    _rd.cancelCountdown = null;
+  }
+}
+
+function _rdOpenNext(id) {
+  _rdCancelCountdown();
+  navigate('read', _rd.list ? { book: id, list: _rd.list } : { book: id });
+}
+
+async function _rdToggleFav() {
+  const b = _rd.book;
+  try {
+    const r = await api.put(`/api/books/${b.id}/mark`, { favourite: !b.favourite });
+    b.favourite = r.favourite; b.rating = r.rating;
+    showToast(r.favourite ? 'Favourited' : 'Removed from favourites');
+    document.getElementById('rd-menu')?.classList.add('hidden');
+  } catch { showToast('Couldn’t save that', 'error'); }
 }
 
 // From a reading list, 'next' is the list's next, not the series'.
@@ -169,7 +250,7 @@ async function _rdListNext(listId, bookId) {
   if (!_rd.book || _rd.book.id !== bookId || _rd.list !== listId) return;
   const note = document.getElementById('rd-end-note');
   const actions = document.querySelector('.rd-end-actions');
-  if (!nb) { if (note) note.textContent = 'That was the last one on the list.'; return; }
+  if (!nb) { if (note) note.textContent = 'That was the last one on the list.'; _rdSeriesNext(bookId, true); return; }
   try {
     const next = await api.get(`/api/books/${nb}`);
     if (!_rd.book || _rd.book.id !== bookId) return;
@@ -203,6 +284,7 @@ function _rdStep(dir) {
 
 function _rdEnded(on) {
   _rd.ended = on;
+  if (!on) _rdCancelCountdown();
   if (!on) _rd.at = _rd.spreads.length - 1;
   _rdRender();
 }

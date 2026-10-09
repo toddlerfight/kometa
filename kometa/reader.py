@@ -336,7 +336,16 @@ def _book_payload(book: dict) -> dict:
         "pages": [{"w": w, "h": h, "wide": bool(w and h and w > h)} for _, w, h in book["pages"]],
         "finish_within_pages": FINISH_WITHIN_PAGES,
         "progress": db.get_progress(READER_ID, book["id"], DB_PATH),
+        **_mark(book["id"]),
     }
+
+
+def _mark(book_id: int) -> dict:
+    from kometa.marks import get_mark
+    try:
+        return get_mark("book", book_id, DB_PATH)
+    except Exception:
+        return {"favourite": False, "rating": None}
 
 
 def _book_or_404(book_id: int) -> dict:

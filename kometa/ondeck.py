@@ -192,5 +192,6 @@ def dismiss_book(book_id: int, undo: int = 0):
 
 @router.get("/api/ondeck")
 def on_deck():
+    from kometa.marks import favourites
     return {"continue": continue_reading(), "next": up_next(), "soon": coming_soon(),
-            "released": recent_released(), "added": recent_added()}
+            "released": recent_released(), "added": recent_added(), "favourites": favourites()}

@@ -367,6 +367,7 @@ const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
+  { key: 'favourites', label: '★ Favourites' },
 ];
 
 const _isReading = s => (s.in_progress ?? 0) > 0 || (s.read_count ?? 0) > 0;
@@ -494,6 +495,7 @@ function _renderBrowseResults() {
   let filtered = all.filter(s => {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
+    if (toggles.favourites && !s.favourite) return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -559,7 +561,7 @@ function _renderBrowseResults() {
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="${esc(thumbSrc)}" alt="${esc(s.title)}"
             loading="lazy" onerror="${thumbFall}">
-          ${nextRelease}
+          ${nextRelease}${s.favourite ? '<div class="series-card-fav" title="Favourite">★</div>' : ''}
         </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
@@ -629,6 +631,11 @@ async function renderOnDeck() {
         <span class="od-tag${c.status === 'not_owned' ? ' amber' : ''}">${esc(c.status_label)}</span></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
+  const favCard = c => c.kind === 'series' ? `
+    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)}" onclick="navigate('series-detail', {id: ${c.series_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail', {id: ${c.series_id}})">
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">★</span></div>
+      <div class="issue-tile-num">${esc(c.series)}</div>
+    </div>` : bookCard(c, '★');
   const row = (title, help, cards, empty) => `
     <div class="od-row">
       <div class="od-head"><span class="series-card-title">${title}</span></div>
@@ -644,7 +651,8 @@ async function renderOnDeck() {
     row('Recently released', 'newest release dates you own, one card per series', (d.released || []).map(c => bookCard(c)),
         'Nothing with a release date yet.') +
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
-        'Nothing new on the shelf.')
+        'Nothing new on the shelf.') +
+    ((d.favourites || []).length ? row('Favourites', 'what you starred', d.favourites.map(favCard), '') : '')
   );
   // what the task rows already show never repeats in a discovery row
   const onPage = [...new Set([...d.continue, ...d.next, ...d.soon, ...(d.released || []), ...(d.added || [])].map(c => c.series_id).filter(Boolean))];
@@ -701,7 +709,7 @@ function _relCard(r) {
   return `<div class="series-card rel-card" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
     <div class="series-card-img-wrap"><img class="series-card-cover" src="/api/series/${r.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
-      <div class="series-card-count" style="color:${r.owned && r.owned >= r.total ? 'var(--pri)' : 'var(--tq)'}">${r.owned || 0}/${r.total || 0}</div></div>
+      <div class="series-card-count" style="color:${r.owned && r.owned >= r.total ? 'var(--pri)' : 'var(--tq)'}">${r.total ? `${r.owned || 0}/${r.total}` : ''}</div></div>
     <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
     ${because ? `<div class="series-card-publisher u-truncate rel-because">${because}</div>` : ''}
   </div>`;
@@ -802,6 +810,7 @@ function _bookActions(c) {
     c.series_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('series-detail', {id: ${c.series_id}})">Go to series</button>`
       : c.shelf_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('shelf', {id: ${c.shelf_id}})">Go to series</button>` : '',
     c.dismissable ? `<button class="sheet-btn" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : '',
+    `<button class="sheet-btn" onclick="closeModal(); _toggleBookFav(${c.book_id})">☆ Favourite</button>`,
     c.completed ? `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, false)">Mark as unread</button>`
                 : `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, true)">Mark as read</button>`,
   ].filter(Boolean).join('');
@@ -1720,6 +1729,7 @@ async function renderSeriesDetail(id) {
   document.getElementById('topbar-title').textContent = s.title;
   document.getElementById('topbar-chips').innerHTML = chips;
   document.getElementById('topbar-actions').innerHTML = `
+    ${_favBtn(s)}
     ${pullBtn}
     ${oversizedBtn}
     ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
@@ -3980,6 +3990,15 @@ async function showIssueModal(seriesId, number, opts = {}) {
     </div>
   `);
 
+  // Owned: the star and the 1–5 rating, on the book behind the issue.
+  if (st === 'owned') {
+    const bookP = opts.book ? api.get(`/api/books/${opts.book.book_id}`) : api.get(`/api/series/${seriesId}/issues/${number}/book`);
+    bookP.then(bk => {
+      const host = document.getElementById('issue-modal-details');
+      if (host && bk) host.insertAdjacentHTML('beforebegin', _markRowHtml(bk));
+    }).catch(() => {});
+  }
+
   // Owned but no Komga book id? The id is stamped lazily server-side (the
   // thumbnail route's self-heal, or Komga just finished scanning a fresh
   // download) — often AFTER this page's issue list was fetched, so the cached
@@ -4435,3 +4454,45 @@ async function boot() {
 }
 
 boot();
+
+
+// --- Favourites + ratings (kometa/marks.py) --------------------------------------
+// A star on anything, 1–5 on an issue. Reading state: keyed by row id, not path.
+function _favBtn(s) {
+  const r = s.rating || s.rating_derived;
+  return `<button class="btn btn-sm btn-ghost fav-btn${s.favourite ? ' on' : ''}" id="fav-btn-${s.id}" title="${s.favourite ? 'Favourite — tap to remove' : 'Favourite'}"
+    onclick="_toggleSeriesFav(${s.id}, this)">${s.favourite ? '★' : '☆'}${r ? ` <span class="fav-rating">${r}</span>` : ''}</button>`;
+}
+
+async function _toggleSeriesFav(id, btn) {
+  const on = !btn.classList.contains('on');
+  btn.classList.toggle('on', on); btn.firstChild.textContent = on ? '★' : '☆';
+  try { await api.put(`/api/series/${id}/mark`, { favourite: on }); if (_detailSeries?.id === id) _detailSeries.favourite = on; }
+  catch { btn.classList.toggle('on', !on); btn.firstChild.textContent = on ? '☆' : '★'; showToast('Couldn’t save that', 'error'); }
+}
+
+async function _toggleBookFav(bookId) {
+  try {
+    const cur = await api.get(`/api/books/${bookId}`);
+    const r = await api.put(`/api/books/${bookId}/mark`, { favourite: !cur.favourite });
+    showToast(r.favourite ? 'Favourited' : 'Removed from favourites');
+  } catch { showToast('Couldn’t save that', 'error'); }
+}
+
+function _markRowHtml(bk) {
+  const dots = [1, 2, 3, 4, 5].map(n => `<button class="rating-dot${bk.rating >= n ? ' on' : ''}" data-n="${n}" title="${n} of 5" aria-label="Rate ${n}"
+      onclick="_setBookMark(${bk.id}, {rating: ${n}}, this.closest('.mark-row'))">★</button>`).join('');
+  return `<div class="mark-row" id="mark-row-${bk.id}">
+    <button class="mark-star${bk.favourite ? ' on' : ''}" title="Favourite" aria-label="Favourite"
+      onclick="_setBookMark(${bk.id}, {favourite: !this.classList.contains('on')}, this.closest('.mark-row'))">${bk.favourite ? '★' : '☆'}</button>
+    <span class="rating-dots">${dots}</span>
+    ${bk.rating ? `<button class="rating-clear u-label" onclick="_setBookMark(${bk.id}, {clear_rating: true}, this.closest('.mark-row'))">clear</button>` : ''}
+  </div>`;
+}
+
+async function _setBookMark(bookId, patch, row) {
+  try {
+    const r = await api.put(`/api/books/${bookId}/mark`, patch);
+    if (row) row.outerHTML = _markRowHtml({ id: bookId, ...r });
+  } catch { showToast('Couldn’t save that', 'error'); }
+}

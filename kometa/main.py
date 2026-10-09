@@ -166,6 +166,8 @@ from kometa.trending import router as _trending_router      # what shops sold mo
 app.include_router(_trending_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
 app.include_router(_opds_router)
+from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series
+app.include_router(_marks_router)
 from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
 app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
@@ -478,7 +480,10 @@ def list_series():
     summaries = db.get_all_series_summaries(DB_PATH)
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
              "calendar_date": None, "out_today": 0, "card_image": None}
-    return [dict(s, **summaries.get(s["id"], empty)) for s in series]
+    from kometa.marks import marks_for
+    fav = marks_for("series", DB_PATH)
+    return [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
+                 rating=fav.get(s["id"], {}).get("rating")) for s in series]
 
 
 def _cached_trades(series: dict) -> list[dict] | None:
@@ -501,6 +506,14 @@ def _with_book_ids(series: dict, trades: list[dict]) -> list[dict]:
         b = db.get_book_by_path(os.path.join(folder, t["file"]), DB_PATH) if folder and t.get("file") else None
         t["book_id"] = b["id"] if b else None
     return trades
+
+
+def _series_marks(series_id: int) -> dict:
+    from kometa.marks import series_rating
+    try:
+        return series_rating(series_id, DB_PATH)
+    except Exception:
+        return {"favourite": False, "rating": None, "rating_derived": None, "rated_issues": 0}
 
 
 @app.get("/api/series/{series_id}")
@@ -550,7 +563,7 @@ def get_series(series_id: int):
         from kometa.arc import arc_includes_series
         arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
                         if arc_includes_series(a["source_titles"], s["title"])) or None
-    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades,
+    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
                 **_summary(issues))
 
