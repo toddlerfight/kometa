@@ -303,6 +303,31 @@ def _by_file(path, names: list[str]) -> dict[str, dict]:
     return out
 
 
+def _subtitle_book(name: str, idx: dict, path, books_cache: dict):
+    """('Series - Subtitle' entry) → (shelf series, the book whose file name
+    carries the subtitle), or None. Splits at the LAST separator so a run that
+    itself has a dash ('Batman - One Bad Day') still finds its prefix."""
+    import os
+    parts = re.split(r"\s+-\s+|:\s+", _YEAR.sub("", name).strip())
+    if len(parts) < 2:
+        return None
+    for cut in range(len(parts) - 1, 0, -1):
+        prefix, sub = " - ".join(parts[:cut]), " ".join(parts[cut:])
+        sh = next((idx[k] for k in _keys(prefix) if k in idx), None)
+        if not sh:
+            continue
+        if sh["id"] not in books_cache:
+            books_cache[sh["id"]] = _books(sh["id"], path)
+        want = norm_key(sub)
+        with db._connect(path) as conn:
+            names = {r["id"]: os.path.basename(r["path"]) for r in conn.execute(
+                "SELECT id, path FROM books WHERE shelf_series_id = ?", (sh["id"],))}
+        for b in books_cache[sh["id"]]:
+            if want and want in norm_key(os.path.splitext(names.get(b["id"], ""))[0]):
+                return sh, b
+    return None
+
+
 def _book_view(b: dict) -> dict:
     import os
     n = b.get("number")
@@ -377,6 +402,12 @@ def resolve(list_id: int, path=None) -> dict:
             rows.sort(key=lambda b: b["path"])
             entry.update(status="owned", shelf_id=rows[0]["shelf_series_id"], series_id=rows[0].get("tracked_series_id"),
                          books=[_book_view(b) for b in rows], expanded=len(rows) > 1)
+        elif not hit and _subtitle_book(series_name, idx, path, books_cache) is not None:
+            # 'Batman - One Bad Day - The Riddler': a one-shot Combine folded into
+            # a run as '#001 - The Riddler'. The prefix is the run, the tail is in
+            # the file name.
+            sh, book = _subtitle_book(series_name, idx, path, books_cache)
+            entry.update(status="owned", shelf_id=sh["id"], series_id=sh.get("tracked_series_id"), books=[book])
         elif hit and nb and want_n is not None and series_name != it["series"]:
             # the numbered-folder shape: that one issue of the combined run
             if hit["id"] not in books_cache:

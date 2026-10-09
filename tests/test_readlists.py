@@ -162,3 +162,21 @@ def test_covers_for_gaps_come_from_comicvine_then_metron_and_are_remembered(shel
     assert e[4]["cover"] is None and not e[4]["cover_pending"]          # a miss is remembered as ''
     assert rl.fill_covers(lid, path=shelf, cv=CV(), metron_search=search, metron_issues=issues)["filled"] == 0
     assert calls.count("Sir Edward Grey, Witchfinder") == 1              # asked once, not every open
+
+
+def test_a_one_shot_folded_into_a_run_resolves_by_its_subtitle(shelf, tmp_path):
+    """Komga still says 'Batman - One Bad Day - The Riddler'; the shelf has
+    'Batman - One Bad Day #001 - The Riddler.cbz' inside the combined run."""
+    root = tmp_path / "comics" / "DC Comics"
+    folder = root / "Batman - One Bad Day"
+    folder.mkdir(parents=True)
+    files = ["Batman - One Bad Day #001 - The Riddler (2022).cbz", "Batman - One Bad Day #002 - Two Face (2022).cbz"]
+    for f in files:
+        make_cbz(folder / f)
+    sid = db.upsert_shelf_series(str(folder), "Batman - One Bad Day", "DC Comics", None, 2, "2026-10-09T00:00:00Z", shelf)
+    db.index_books([(str(folder / f), 10, 1.0, float(i + 1), sid, None) for i, f in enumerate(files)], shelf)
+    cbl = b"""<ReadingList><Name>Bat</Name><Books><Book Series="Batman - One Bad Day - The Riddler" Number="1" />
+<Book Series="Batman - One Bad Day - Two Face" Number="1" /><Book Series="Batman - One Bad Day - Nobody" Number="1" /></Books></ReadingList>"""
+    e = rl.resolve(rl.import_cbl(cbl, path=shelf), path=shelf)["entries"]
+    assert [x["status"] for x in e] == ["owned", "owned", "not_on_shelf"]
+    assert [b["label"] for x in e[:2] for b in x["books"]] == ["#1", "#2"]
