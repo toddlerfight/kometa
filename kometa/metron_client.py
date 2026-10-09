@@ -21,6 +21,8 @@ BASE = "https://metron.cloud/api/"
 USER_AGENT = "Kometa/1.0 (personal pull-list tool)"
 MIN_INTERVAL_S = 3.5            # ~17/min, under the burst limit of 20
 DAILY_FLOOR = 200               # stop for the day with this many left of the 5,000
+UNREACHABLE_PAUSE_S = 300       # after a connection failure, everyone fails fast this long
+REQUEST_TIMEOUT_S = 15
 
 _lock = threading.Lock()
 _state = {"last": 0.0, "paused_until": 0.0}
@@ -68,7 +70,7 @@ def _get(path: str, **params) -> dict:
         _state["last"] = time.time()
         req = urllib.request.Request(url, headers={"Authorization": auth, "User-Agent": USER_AGENT})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as r:
                 body = json.load(r)
                 lim = r.headers.get("X-Ratelimit-Sustained-Limit")
                 if lim and _state.get("sustained_limit") != lim:
@@ -91,6 +93,13 @@ def _get(path: str, **params) -> dict:
                 logger.warning(f"Metron rate-limited us — waiting {int(retry)}s")
             raise MetronUnavailable(f"Metron answered {e.code}") from e
         except (urllib.error.URLError, TimeoutError) as e:
+            # Circuit breaker. With Metron dropping our packets (2026-10-10) every
+            # caller sat through its own 30 s timeout, serialised by this lock, and
+            # page requests queued behind them until the worker pool ran dry — the
+            # Activity page "stalled". One unreachable now fails everyone fast for
+            # UNREACHABLE_PAUSE_S; the next call after that probes again.
+            _state["paused_until"] = time.time() + UNREACHABLE_PAUSE_S
+            logger.warning(f"Metron unreachable ({e}) — not asking again for {UNREACHABLE_PAUSE_S}s")
             raise MetronUnavailable(f"Metron unreachable: {e}") from e
 
 

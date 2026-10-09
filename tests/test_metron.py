@@ -150,3 +150,22 @@ def test_burst_exhausted_pauses_until_its_reset_without_a_429(monkeypatch):
     with pytest.raises(m.MetronUnavailable):
         m._get("publisher/", name="Image")                      # the next call waits, it doesn't knock
     m._state["paused_until"] = 0.0
+
+
+def test_unreachable_trips_a_breaker_so_callers_fail_fast(monkeypatch):
+    import urllib.request, urllib.error, time
+    import kometa.metron_client as m
+    monkeypatch.setattr(m, "_creds", lambda: ("token", "t"))
+    monkeypatch.setattr(m, "MIN_INTERVAL_S", 0)
+    m._state["paused_until"] = 0.0
+    calls = []
+    def dead(req, timeout=30):
+        calls.append(1); raise urllib.error.URLError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", dead)
+    import pytest
+    with pytest.raises(m.MetronUnavailable):
+        m._get("publisher/", name="Image")
+    with pytest.raises(m.MetronUnavailable):
+        m._get("publisher/", name="Image")                      # no second network attempt
+    assert len(calls) == 1 and m._state["paused_until"] > time.time() + 200
+    m._state["paused_until"] = 0.0
