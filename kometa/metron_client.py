@@ -56,7 +56,7 @@ def _get(path: str, **params) -> dict:
     creds = _creds()
     if not creds:
         raise MetronUnavailable("Metron isn't configured")
-    auth = f"Token {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
+    auth = f"Bearer {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     with _lock:                                    # one request at a time, spaced
         now = time.time()
