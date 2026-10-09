@@ -424,15 +424,21 @@ async function openIssueReader(seriesId, number) {
 
 // One book on the shelf as a tile: cover, read tick or progress bar, label.
 // `extra` rides into the reader ({list: id} keeps 'next' on the list's order).
-function _bookTile(b, seriesTitle, extra = {}) {
+// `ctx` names the series behind the book ({series_id} or {shelf_id}) so the
+// tile's ⋯ can open the same modal the On Deck cards use.
+function _bookTile(b, seriesTitle, extra = {}, ctx = {}) {
   const p = b.progress;
   const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
     : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
   const go = `navigate('read', ${JSON.stringify({ book: b.id, ...extra }).replace(/"/g, "'")})`;
-  return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(seriesTitle)} ${esc(b.label)}"
+  const actions = JSON.stringify({ book_id: b.id, series: seriesTitle, label: b.label, number: b.number ?? null,
+    series_id: ctx.series_id || null, shelf_id: ctx.shelf_id || null, dismissable: false,
+    completed: !!(p && p.completed), page_count: b.page_count || null }).replace(/"/g, '&quot;');
+  return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" id="od-${b.id}" tabindex="0" role="button" title="${esc(seriesTitle)} ${esc(b.label)}"
       onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
     <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
-      onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
+      onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}
+      <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${actions})">⋯</button></div>
     <div class="issue-tile-num">${esc(b.label)}</div>
   </div>`;
 }
@@ -458,7 +464,7 @@ async function renderShelfSeries(id) {
   const nx = _shelfNextBook(s.books);
   if (nx) document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${nx.book.id}})">${esc(nx.label)}</button>`;
-  const tiles = s.books.map(b => _bookTile(b, s.title)).join('');
+  const tiles = s.books.map(b => _bookTile(b, s.title, {}, { shelf_id: id })).join('');
   setApp(s.books.length
     ? `<div class="issue-grid">${tiles}</div>`
     : '<div class="state-msg">No readable books in this folder.</div>');
@@ -944,7 +950,7 @@ async function renderReadList(id) {
     if (_rlTab === 'on shelf' && !owned) continue;
     if (_rlTab === 'not here' && owned) continue;
     if (owned) {
-      for (const b of e.books) tiles.push(_bookTile({ ...b, label: `${e.series} ${b.label}` }, e.series, { list: id }));
+      for (const b of e.books) tiles.push(_bookTile({ ...b, label: `${e.series} ${b.label}` }, e.series, { list: id }, { series_id: e.series_id, shelf_id: e.shelf_id }));
     } else {
       const label = `${e.series}${e.number ? ' #' + e.number : ''}`;
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');

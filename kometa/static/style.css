@@ -2220,7 +2220,7 @@ body.touch .od-x, body.touch .od-go, body.touch .rl-get { opacity: .85; }
 .od-menu { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; z-index: 2;
   background: rgba(0,0,0,.75); color: var(--tp); font-size: 15px; line-height: 26px; text-align: center; cursor: pointer;
   opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
-.od-card:hover .od-menu, .od-card:focus-within .od-menu, .rl-gap:hover .od-menu, .rl-gap:focus-within .od-menu, .od-menu:disabled { opacity: 1; }
+.issue-tile:hover .od-menu, .issue-tile:focus-within .od-menu, .od-card:hover .od-menu, .od-card:focus-within .od-menu, .od-menu:disabled { opacity: 1; }
 .od-menu:hover { background: var(--pri); color: var(--ink, #000); }
 .od-menu.on { color: var(--pri); } .od-menu.off { color: var(--tq); }
 body.touch .od-menu { opacity: .85; }
@@ -2230,3 +2230,4 @@ body.touch .od-menu { opacity: .85; }
 /* reading-list chips: neutral while open, amber while reading */
 .chip-neutral { color: var(--tq); border: 1px solid var(--bd); }
 .chip-reading { color: var(--amb); border: 1px solid var(--amb); }
+.issue-tile .issue-tile-img { position: relative; }
