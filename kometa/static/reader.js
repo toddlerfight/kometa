@@ -939,7 +939,7 @@ async function renderReadList(id) {
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
       tiles.push(`<div class="issue-tile rl-gap" id="rl-item-${e.item_id}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
         <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}
-          <button class="rl-get" title="Get this: track the run without pulling it, fetch what this entry covers" onclick="event.stopPropagation(); _rlGet(${id}, ${e.item_id}, this)">GET</button></div>
+          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${JSON.stringify(label).replace(/"/g, '&quot;')}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">⋯</button></div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }
@@ -960,20 +960,32 @@ async function _rlFillCovers(id) {
 }
 
 
+// A gap tile's ⋯: Get it, or go to the run if part of it is on the shelf.
+function _rlGapActions(listId, itemId, label, seriesId, shelfId) {
+  showModal(`
+    <div class="modal-header"><h2>${esc(label)}</h2></div>
+    <div class="modal-body action-sheet">
+      <button class="sheet-btn" onclick="closeModal(); _rlGet(${listId}, ${itemId}, document.getElementById('rl-item-${itemId}')?.querySelector('.od-menu'))">Get — track the run, fetch what this entry covers</button>
+      ${seriesId ? `<button class="sheet-btn" onclick="closeModal(); navigate('series-detail', {id: ${seriesId}})">Go to series</button>`
+        : shelfId ? `<button class="sheet-btn" onclick="closeModal(); navigate('shelf', {id: ${shelfId}})">Go to series</button>` : ''}
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+}
+
 // --- Get: an entry you don't have becomes an acquisition --------------------------
 // One entry: track the run (pull list off) if it isn't tracked, queue what the
 // entry covers. The tile reports the outcome in place; a run no catalogue knows
 // says so rather than pretending.
 async function _rlGet(listId, itemId, btn) {
-  btn.disabled = true; btn.textContent = '…';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     const r = await api.post(`/api/readlists/${listId}/items/${itemId}/get`, {});
     if (r.result === 'queued') {
       showToast(`${r.series_title}: ${r.queued} queued${r.created ? ', now tracked' : ''}${r.upcoming ? `, ${r.upcoming} not out yet` : ''}`);
-      btn.textContent = 'QUEUED'; btn.classList.add('on');
-    } else if (r.result === 'owned') { btn.textContent = 'HAVE'; }
-    else { showToast(r.detail || 'No catalogue knows that run', 'error'); btn.textContent = 'UNKNOWN'; btn.classList.add('off'); }
-  } catch (e) { btn.disabled = false; btn.textContent = 'GET'; showToast('Couldn’t get that', 'error'); }
+      if (btn) { btn.textContent = '✓'; btn.classList.add('on'); }
+    } else if (r.result === 'owned') { if (btn) btn.textContent = '✓'; }
+    else { showToast(r.detail || 'No catalogue knows that run', 'error'); if (btn) { btn.textContent = '?'; btn.classList.add('off'); } }
+  } catch (e) { if (btn) { btn.disabled = false; btn.textContent = '⋯'; } showToast('Couldn’t get that', 'error'); }
 }
 
 // Every gap on the list, in the background; the top-bar button shows progress.

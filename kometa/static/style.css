@@ -2216,3 +2216,14 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-go:hover { background: var(--pri); color: var(--ink, #000); }
 /* touch: nothing is hover-revealed, it's just there */
 body.touch .od-x, body.touch .od-go, body.touch .rl-get { opacity: .85; }
+/* one ⋯ per card: the actions live in a sheet, not scattered over the cover */
+.od-menu { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; z-index: 2;
+  background: rgba(0,0,0,.75); color: var(--tp); font-size: 15px; line-height: 26px; text-align: center; cursor: pointer;
+  opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
+.od-card:hover .od-menu, .od-card:focus-within .od-menu, .rl-gap:hover .od-menu, .rl-gap:focus-within .od-menu, .od-menu:disabled { opacity: 1; }
+.od-menu:hover { background: var(--pri); color: var(--ink, #000); }
+.od-menu.on { color: var(--pri); } .od-menu.off { color: var(--tq); }
+body.touch .od-menu { opacity: .85; }
+.action-sheet { display: flex; flex-direction: column; gap: 6px; }
+.sheet-btn { text-align: left; padding: 11px 14px; border: 1px solid var(--bd); border-radius: var(--r-md, 8px); background: var(--su2); color: var(--tp); font: inherit; cursor: pointer; }
+.sheet-btn:hover { border-color: var(--pri); }

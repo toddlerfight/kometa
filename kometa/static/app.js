@@ -619,8 +619,7 @@ async function renderOnDeck() {
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
-        ${dismissable ? `<button class="od-x" title="Not now — hide from Continue reading, keep my place" aria-label="Not now" onclick="event.stopPropagation(); _odDismiss(${c.book_id}, this)">×</button>` : ''}
-        ${series(c) ? `<button class="od-go" title="Go to series" aria-label="Go to series" onclick="event.stopPropagation(); ${series(c)}">↗</button>` : ''}
+        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
@@ -647,6 +646,33 @@ async function renderOnDeck() {
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.')
   );
+}
+
+// One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.
+// Same shape as the reader's own ⋯ — tap the thing, get its actions.
+function _bookActions(c) {
+  const rows = [
+    `<button class="sheet-btn" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>`,
+    c.series_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('series-detail', {id: ${c.series_id}})">Go to series</button>`
+      : c.shelf_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('shelf', {id: ${c.shelf_id}})">Go to series</button>` : '',
+    c.dismissable ? `<button class="sheet-btn" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : '',
+    c.completed ? `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, false)">Mark as unread</button>`
+                : `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, true)">Mark as read</button>`,
+  ].filter(Boolean).join('');
+  showModal(`
+    <div class="modal-header"><h2>${esc(c.series)} ${esc(c.label || '')}</h2></div>
+    <div class="modal-body action-sheet">${rows}</div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+}
+
+async function _bookSetRead(bookId, read) {
+  try {
+    const b = await api.get(`/api/books/${bookId}`);
+    const page = read ? (b.page_count || 1) : 1;
+    await api.put(`/api/books/${bookId}/progress`, { page, completed: read, updated_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') });
+    showToast(read ? 'Marked as read' : 'Marked as unread');
+    if (currentView === 'ondeck') renderOnDeck();
+  } catch (e) { showToast('Couldn’t change that', 'error'); }
 }
 
 // 'Not now' on a Continue reading tile: hidden, place kept, back the next time
