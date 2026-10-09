@@ -3943,7 +3943,10 @@ async function showIssueModal(seriesId, number, opts = {}) {
   // Called from elsewhere (an arc's cross-title reading order) — _detailSeries is
   // the ARC's payload, not this issue's own series — fetch it fresh instead of
   // silently no-op'ing, so the SAME real modal works from any context.
-  let homeSeries = _detailSeries?.id === seriesId ? _detailSeries : null;
+  // The cached series payload is only trusted WHILE on its page: left behind,
+  // it goes stale (a download lands, the issue flips to owned) and On Deck's ⋯
+  // would show 'Missing · Download' for a book you're holding.
+  let homeSeries = currentView === 'series-detail' && _detailSeries?.id === seriesId ? _detailSeries : null;
   let issue = homeSeries?.issues?.find(i => i.number === number);
   if (!issue) {
     try {
@@ -3956,7 +3959,8 @@ async function showIssueModal(seriesId, number, opts = {}) {
     if (!issue) return;
   }
 
-  const st = issueStatus(issue);
+  // A card that hands us a book is on the shelf whatever the issue row says
+  const st = opts.book ? 'owned' : issueStatus(issue);
 
   _issueVariantCovers   = [];
   _issueVariantSelected = new Set();
