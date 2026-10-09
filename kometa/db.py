@@ -1566,6 +1566,24 @@ def set_variant_prefs(tracked_series_id, number, selected: list, primary_id: str
         """, (tracked_series_id, number, json.dumps(selected), primary_id))
 
 
+def variant_cover_url(tracked_series_id, number, path=DB_PATH) -> str | None:
+    """The image of the variant you chose for one issue, or None. The single
+    source every cover route consults first — the series tile did, the book
+    cover (On Deck, list and shelf tiles) didn't, so a pick showed on one page."""
+    with _connect(path) as conn:
+        r = conn.execute("SELECT selected, primary_id FROM variant_prefs WHERE tracked_series_id = ? AND number = ?",
+                         (tracked_series_id, number)).fetchone()
+    if not r:
+        return None
+    try:
+        sel = json.loads(r["selected"])
+        prim = next((c for c in sel if c.get("id") == r["primary_id"]), None)
+        url = prim and (prim.get("large") or prim.get("thumb"))
+        return url if url and str(url).startswith("http") else None
+    except (ValueError, TypeError):
+        return None
+
+
 def get_variant_prefs(tracked_series_id, number, path=DB_PATH):
     with _connect(path) as conn:
         row = conn.execute(

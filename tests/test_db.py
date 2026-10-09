@@ -197,3 +197,12 @@ def test_rename_book_path_rereads_the_number_from_the_new_name(db_path, tmp_path
     db.index_books([(str(tmp_path / "Before Watchmen - Dr. Manhattan #002 (2012).cbz"), 10, 1.0, None, sh, sid)], db_path)
     assert db.reparse_null_numbers(db_path) == 1
     assert db.reparse_null_numbers(db_path) == 0
+
+
+def test_variant_cover_url_is_the_chosen_variants_image(db_path, series):
+    import json
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO variant_prefs (tracked_series_id, number, selected, primary_id) VALUES (?, 2.0, ?, 'v2')",
+                  (series, json.dumps([{"id": "v1", "large": "https://x/v1.jpg"}, {"id": "v2", "large": "https://x/v2.jpg"}])))
+    assert db.variant_cover_url(series, 2.0, db_path) == "https://x/v2.jpg"
+    assert db.variant_cover_url(series, 3.0, db_path) is None

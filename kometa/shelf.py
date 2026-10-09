@@ -218,6 +218,14 @@ def book_cover(book_id: int):
     b = db.get_book(book_id, DB_PATH)
     if not b:
         raise HTTPException(404, "No such book")
+    # Your chosen variant wins, the same precedence the series page's tile has.
+    if b.get("tracked_series_id") and b.get("number") is not None:
+        url = db.variant_cover_url(b["tracked_series_id"], b["number"], DB_PATH)
+        if url:
+            from kometa.thumbnails import _image_or_none
+            resp = _image_or_none(url)
+            if resp:
+                return resp
     return _cover_response(b["path"])
 
 
