@@ -651,8 +651,19 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     if not dest_dir:
         db.update_queue_state(qid, "failed", error="No folder set for this series", path=DB_PATH)
         return
+    # A name-only grab (a reading-list gap no catalogue knows) can't be verified
+    # against an issue list, so it isn't placed: it downloads into a holding
+    # folder and waits for you to confirm (kometa/proposals.py). GetComics only —
+    # its posts are titled by the comic; usenet by name alone is where the
+    # German audiobooks came from.
+    confirm = bool(meta.get("confirm"))
+    if confirm:
+        from kometa.proposals import holding_dir
+        dest_dir = holding_dir(qid)
 
     query = f"{title} {label}".strip()
+    if confirm and meta.get("year") and str(meta["year"]) not in query:
+        query = f"{query} {meta['year']}"
 
     def _search_nzb(prowlarr):
         return search_usenet_pack(prowlarr, query, series_year=item.get("year_began"))
@@ -670,9 +681,9 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
                                        status_fn=lambda s, qid=qid: set_search_status(qid, s),
                                        exclude_urls=_failed_sources(item))
     if not dl_url:
-        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
+        if not confirm and _fallback_usenet_torrent(item, qid, _search_nzb, query):
             return
-        db.update_queue_state(qid, "not_found", error="No result on GetComics, Usenet or torrent", path=DB_PATH)
+        db.update_queue_state(qid, "not_found", error="No result on GetComics" + ("" if confirm else ", Usenet or torrent"), path=DB_PATH)
         return
 
     if dl_url in downloaded_urls:
@@ -721,6 +732,10 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
         return
     clear_progress(qid)
+    if confirm:
+        from kometa.proposals import propose
+        propose(qid, placed, dl_url, DB_PATH)
+        return
     # Content check: when the grab was a PACK, the volume we asked for must be
     # among the extracted files. GetComics range posts lie ("Vol. 1 – 10" shipping
     # only 1–5) and download_trade has no number validation of its own — without

@@ -2706,6 +2706,7 @@ async function _renderPullListContent() {
 // Activity chips and the issue-tile tooltip both read from here — there were
 // two drifting copies of this mapping before.
 const QUEUE_STATE = {
+  proposed:        ['chip chip-upcoming', 'Confirm?'],
   queued:          ['chip chip-muted',  'Queued'],
   searching:       ['chip chip-active', 'Searching'],
   found:           ['chip chip-muted',  'Found'],
@@ -2774,7 +2775,7 @@ let _activitySig = null;
 let _activityRemoving = false;   // true while a row/card is animating out
 
 // States that live in the "In Progress" section; everything else is history.
-const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing'];
+const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing','proposed'];
 
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
@@ -2855,7 +2856,9 @@ function _actThumb(q) {
   if (!q.tracked_series_id) return '';
   const seriesThumb = `/api/series/${q.tracked_series_id}/thumbnail`;
   if (q.kind === 'trade') {
-    // The trade's own LOCG cover (stashed in meta), falling back to the series.
+    // A proposal shows the cover of what actually came back; otherwise the
+    // trade's own LOCG cover (stashed in meta), falling back to the series.
+    if (q.state === 'proposed') return `<img src="/api/queue/${q.id}/proposal-cover" alt="" onerror="this.src='${seriesThumb}'">`;
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
     return `<img src="${esc(m.cover || seriesThumb)}" alt="" onerror="this.src='${seriesThumb}'">`;
   }
@@ -2895,6 +2898,13 @@ function _actSubHtml(q) {
           <div class="act-progress-text" id="acttext-${q.id}">${pct}%${esc(_actProgressDetail(q))}</div>
         </div>`;
   }
+  if (q.state === 'proposed') {
+    let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
+    const f = (m.proposal && m.proposal.files) || [];
+    const pages = f.reduce((a, x) => a + (x.pages || 0), 0), mb = Math.round(f.reduce((a, x) => a + (x.size || 0), 0) / 1048576);
+    const name = f.length ? f[0].path.split('/').pop() : '';
+    return `<div class="act-row-reason" style="color:var(--amb)">Found by name, not verified — ${f.length} file${f.length === 1 ? '' : 's'}, ${pages} pages, ${mb} MB${name ? ' · ' + esc(name) : ''}. Is this it?</div>`;
+  }
   const reason = _actReason(q);
   return reason ? `<div class="act-row-reason">${esc(reason)}</div>` : '';
 }
@@ -2902,6 +2912,12 @@ function _actSubHtml(q) {
 // Chip + buttons cluster for a row's current state.
 function _actActionsHtml(q) {
   let btns = '';
+  if (q.state === 'proposed') {
+    btns = `
+            <button class="btn btn-ghost btn-sm" onclick="proposalDecide(${q.id}, 'reject', this)" title="Not it — bin it and remember the release">Reject</button>
+            <button class="btn btn-primary btn-sm" onclick="proposalDecide(${q.id}, 'confirm', this)" title="Place it on the shelf">Confirm</button>`;
+    return `${_actChip(q.state)}${btns}`;
+  }
   if (q.state === 'queued') {
     // Queued items can stall on a retry_after backoff (dupe guard). Give the
     // user the wheel: kick a search right now, or yank it from the queue.
@@ -2915,6 +2931,15 @@ function _actActionsHtml(q) {
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>`;
   }
   return `${_actChip(q.state)}${btns}`;
+}
+
+async function proposalDecide(qid, action, btn) {
+  btn.disabled = true;
+  try {
+    const r = await api.post(`/api/queue/${qid}/${action}`, {});
+    showToast(action === 'confirm' ? `Placed${r.placed ? ` — ${r.placed.length} file${r.placed.length === 1 ? '' : 's'}` : ''}` : 'Rejected — the next search tries something else');
+    renderActivity();
+  } catch (e) { btn.disabled = false; showToast(`Couldn’t ${action}`, 'error'); }
 }
 
 function _actRowHtml(q) {

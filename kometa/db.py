@@ -1188,6 +1188,25 @@ def queue_trade(tracked_series_id, locg_id, title, vol=None, vol_range=None, cov
         """, (tracked_series_id, locg_id, meta))
 
 
+def set_queue_meta(qid, updates: dict, path=DB_PATH):
+    """Merge keys into a queue row's meta_json (None removes a key)."""
+    with _connect(path) as conn:
+        row = conn.execute("SELECT meta_json FROM download_queue WHERE id = ?", (qid,)).fetchone()
+        if row is None:
+            return
+        try:
+            meta = json.loads(row[0] or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        for k, v in updates.items():
+            if v is None:
+                meta.pop(k, None)
+            else:
+                meta[k] = v
+        conn.execute("UPDATE download_queue SET meta_json = ?, updated_at = datetime('now') WHERE id = ?",
+                     (json.dumps(meta), qid))
+
+
 def complete_trade(qid, path=DB_PATH):
     """Mark a trade download done. Unlike complete_download there's no issue_status
     to reconcile — ownership is read from the folder (the file we just placed)."""

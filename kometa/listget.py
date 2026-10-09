@@ -116,8 +116,7 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
     if not series:
         run = _find_run(entry, item, search_metron, search_locg)
         if not run:
-            return {"entry": entry["series"], "result": "unknown",
-                    "detail": "No catalogue knows this run (Metron, LOCG)"}
+            return _propose_trade(list_id, entry, item, res, path, root)
         series = _existing_for(run, path)
         if not series:
             series = _track(run, list_id, path, root)
@@ -146,6 +145,47 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
             "upcoming": sum(1 for i in wanted if not i["owned"] and i["store_date"] and i["store_date"] > today)}
 
 
+def _propose_trade(list_id: int, entry: dict, item: dict, res: dict, path, root: str) -> dict:
+    """No catalogue knows the run: make a shelf-only series for the entry and
+    queue a name-only trade search that lands as a proposal to confirm."""
+    from kometa.proposals import PROPOSAL_LOCG_SENTINEL
+    title = re.sub(r"\s*\(\d{4}\)\s*$", "", entry["series"]).strip()
+    # the CBL names no publisher; borrow the one the list's resolved entries share
+    pubs = {}
+    for e in res["entries"]:
+        sid = e.get("series_id")
+        if sid:
+            s_ = db.get_series_by_id(sid, path)
+            if s_ and s_.get("publisher"):
+                pubs[s_["publisher"]] = pubs.get(s_["publisher"], 0) + 1
+    publisher = max(pubs, key=pubs.get) if pubs else "Unknown"
+    existing = next((s_ for s_ in db.get_all_series(path) if s_.get("kind") != "arc"
+                     and norm_key(s_["title"]) == norm_key(title)), None)
+    if existing:
+        series = existing
+    else:
+        folder = _resolve_dir(root, publisher, title)
+        sid = db.add_series(title=title, publisher=publisher, year_began=int(item["volume"]) if _YEAR4.match(item.get("volume") or "") else None,
+                            folder_path=folder, on_pull_list=False, path=path)
+        db.set_match_status(sid, "manual", path); db.set_metron_link(sid, "none", path); db.set_locg_link(sid, "none", path)
+        db.set_from_list(sid, list_id, path)
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            pass
+        series = db.get_series_by_id(sid, path)
+    db.queue_trade(series["id"], PROPOSAL_LOCG_SENTINEL, title, cover=item.get("cover_url") or None,
+                   edition_title=title, path=path)
+    with db._connect(path) as c:
+        qid = c.execute("SELECT id FROM download_queue WHERE tracked_series_id = ? AND locg_id = ?",
+                        (series["id"], PROPOSAL_LOCG_SENTINEL)).fetchone()[0]
+    db.set_queue_meta(qid, {"confirm": True, "year": item.get("volume") if _YEAR4.match(item.get("volume") or "") else None,
+                            "list_id": list_id, "item_id": item["id"]}, path)
+    return {"entry": entry["series"], "result": "proposed_search", "series_id": series["id"], "series_title": series["title"],
+            "created": series is not existing, "queued": 1, "ignored": 0, "upcoming": 0, "queue_id": qid,
+            "detail": "No catalogue knows this run — searching by name; the result waits for your confirmation in Activity"}
+
+
 def _sync(series: dict):
     from kometa.sync import sync_one, sync_one_guarded
     sync_one_guarded(series, lambda s: sync_one(s, force=True))
@@ -165,9 +205,11 @@ def get_missing(list_id: int, path=None, **kw) -> dict:
     for e in gaps:
         try:
             r = get_entry(list_id, e["item_id"], path, **kw)
-            if r["result"] == "queued":
+            if r["result"] in ("queued", "proposed_search"):
                 out["queued"] += r["queued"]
                 out["created"] += int(r["created"])
+                if r["result"] == "proposed_search":
+                    out["proposals"] = out.get("proposals", 0) + 1
             elif r["result"] in ("unknown", "no_issues"):
                 out["unknown"].append(e["series"])
         except Exception as ex:
@@ -201,7 +243,7 @@ def api_get_entry(list_id: int, item_id: int):
         r = get_entry(list_id, item_id)
     except ListGetError as e:
         raise HTTPException(404, str(e))
-    if r["result"] == "queued" and r["queued"]:
+    if r["result"] in ("queued", "proposed_search") and r["queued"]:
         from kometa.acquisition import _process_queue
         threading.Thread(target=_process_queue, daemon=True).start()
     return r

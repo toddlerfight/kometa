@@ -70,6 +70,12 @@ def test_unknown_run_and_owned_entry(listdb):
     e = {x["series"]: x for x in rl.resolve(listdb["lid"], listdb["db"])["entries"]}
     r = lg.get_entry(listdb["lid"], e["Hellboy: The Chained Coffin and Others"]["item_id"], listdb["db"],
                      search_metron=lambda q: [], search_locg=lambda q: [], sync=_fake_sync, root=listdb["root"])
-    assert r["result"] == "unknown"
+    # no catalogue knows it → a No-run series of its own + a name-only trade search that waits for confirmation
+    assert r["result"] == "proposed_search" and r["created"]
+    s = db.get_series_by_id(r["series_id"], listdb["db"])
+    assert s["title"] == "Hellboy: The Chained Coffin and Others" and s["metron_link"] == "none" and s["on_pull_list"] == 0
+    import json
+    q = next(x for x in db.get_queue(listdb["db"]) if x["id"] == r["queue_id"])
+    assert q["kind"] == "trade" and json.loads(q["meta_json"])["confirm"] is True and json.loads(q["meta_json"])["year"] == "1998"
     r = lg.get_entry(listdb["lid"], e["Hellboy: Seed of Destruction"]["item_id"], listdb["db"], root=listdb["root"])
     assert r["result"] == "owned"
