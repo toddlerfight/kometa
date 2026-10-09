@@ -2240,3 +2240,5 @@ body.touch .od-menu { opacity: .85; }
 /* a rule between sections: On Deck rows, and the series page's grid / shelf files / related */
 .od-row + .od-row, .sug-row, .rel-row, .shelf-files { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); }
 .od-row + .od-row { margin-top: var(--sp-lg, 20px); }
+.trend-row { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); }
+.trend-rank { left: 6px; right: auto; }

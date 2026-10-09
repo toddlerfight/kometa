@@ -162,6 +162,8 @@ from kometa.proposals import router as _proposals_router    # downloads you conf
 app.include_router(_proposals_router)
 from kometa.related import router as _related_router        # related to this series / suggestions on On Deck
 app.include_router(_related_router)
+from kometa.trending import router as _trending_router      # what shops sold most (ICv2)
+app.include_router(_trending_router)
 from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
 app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the

@@ -647,6 +647,44 @@ async function renderOnDeck() {
         'Nothing new on the shelf.')
   );
   _loadSuggestions();
+  _loadTrending();
+}
+
+// --- Trending (kometa/trending.py): what shops sold most, from ICv2 ----------------
+function _trendCard(e) {
+  const owned = e.owned && e.series_id;
+  const go = owned ? `navigate('series-detail', {id: ${e.series_id}})` : '';
+  const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
+  const action = owned ? ''
+    : e.metron_series_id
+      ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
+      : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
+  return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(e.title)} · ${esc(e.publisher || '')}">
+    <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+      <div class="series-card-next-release trend-rank">#${e.rank}</div>${action}</div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(e.series)}</div>
+      <div class="series-card-count" style="color:${owned ? (e.have_issue ? 'var(--pri)' : 'var(--amb)') : 'var(--tq)'}">${owned ? (e.have_issue ? 'have it' : label || 'on shelf') : label}</div></div>
+    <div class="series-card-publisher u-truncate">${esc(e.publisher || '')}</div>
+  </div>`;
+}
+
+async function _loadTrending(attempt = 0) {
+  let d;
+  try { d = await api.get('/api/trending'); } catch { return; }
+  if (currentView !== 'ondeck') return;
+  const app = document.getElementById('app');
+  app.querySelector('.trend-row')?.remove();
+  if (!d.comics.length && !d.graphic_novels.length) return;
+  if (d.pending && attempt < 4) setTimeout(() => _loadTrending(attempt + 1), 5000);
+  const month = d.month ? ` · ${esc(d.month)}` : '';
+  app.insertAdjacentHTML('beforeend', `<div class="od-row trend-row">
+    <div class="od-head"><span class="series-card-title">Trending</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">top sellers in comic shops${month} · ICv2</span></div>
+    <div class="series-grid">${d.comics.slice(0, 24).map(_trendCard).join('')}</div>
+    ${d.graphic_novels.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">Trending collected editions</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">top graphic novels${month} · ICv2</span></div>
+      <div class="series-grid">${d.graphic_novels.slice(0, 12).map(_trendCard).join('')}</div>` : ''}
+  </div>`);
 }
 
 // --- Related / Suggestions (kometa/related.py) ----------------------------------
@@ -2063,10 +2101,11 @@ function _wizardPaintHi() {
 }
 let _wizardState = { idx: -1, source: 'locg', locgId: null };
 
-function showAddWizard() {
+function showAddWizard(query = '') {
   // Can't track or file a series with nowhere to put it. If the comics folder
   // isn't usable, channel the user to set it first — just-in-time, not a gate.
   if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
+  if (query) setTimeout(() => { const i = document.getElementById('wizard-search'); if (i) { i.value = query; wizardSearch(); } }, 50);
   _wizardResults = [];
   _wizardLastQuery = '';
   _wizardState = { idx: -1, source: 'locg', locgId: null };
