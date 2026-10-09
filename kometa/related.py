@@ -619,7 +619,9 @@ def creator_rows(series_id: int, max_rows: int = 2, min_items: int = 4, path=Non
     series = {s["id"]: s for s in db.get_all_series(path)}
     rows, pending = [], False
     for cid, name, verb in _top_creators(series_id, sig, max_creators=max_rows + 2):
-        shelf = _creator_shelf(cid, sig, series, exclude=series_id, name=name)
+        # same rule both sides of the row: a cover alone isn't 'more from' anyone
+        shelf = [x for x in _creator_shelf(cid, sig, series, exclude=series_id, name=name)
+                 if not (x.get("why") and x["why"][0].startswith("Cover:"))]
         cat, p = _creator_catalogue(cid, path, series, cached_only, name=name)
         pending = pending or p
         items = shelf + cat
