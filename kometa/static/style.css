@@ -2267,4 +2267,6 @@ body.touch .od-menu { opacity: .85; }
 .credit-link { background: none; border: 0; padding: 0; font: inherit; color: var(--tp); cursor: pointer; text-decoration: underline dotted var(--tq); text-underline-offset: 3px; }
 .credit-link:hover, .credit-link:focus-visible { color: var(--pri); text-decoration-color: var(--pri); }
 .creator-modal { max-height: 60vh; overflow-y: auto; }
-.creator-modal .series-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.creator-modal .series-grid { grid-template-columns: repeat(auto-fill, 140px); gap: 18px 14px; }
+.creator-modal .series-card, .creator-modal .series-card-img-wrap { width: 140px; }
+.creator-modal .series-card-title { font-size: 12px; }
