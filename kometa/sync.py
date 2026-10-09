@@ -392,17 +392,17 @@ def sync_one_guarded(series: dict, fn=None) -> bool:
     return True
 
 
-def _scan_folder_edition_names(folder_path: str) -> set[str]:
-    """Normalized stems of NON-volume-numbered comic files on disk — the ownership
-    key for no-volume editions (OGNs, Compendiums, year HCs) that carry no volume
-    number for scan_folder_volumes to see."""
-    names = set()
+def _scan_folder_edition_names(folder_path: str) -> dict[str, str]:
+    """Normalized stem → file name of NON-volume-numbered comic files on disk —
+    the ownership key for no-volume editions (OGNs, Compendiums, year HCs) that
+    carry no volume number for scan_folder_volumes to see."""
+    names: dict[str, str] = {}
     try:
         for name in os.listdir(folder_path):
             stem, ext = os.path.splitext(name)
             if ext.lower() in OWNED_EXTS and _parse_volume_number(name) is None:
                 # the year a file carries ('DIE HC (2022)') is not part of the edition's name
-                names.add(_norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", stem)))
+                names.setdefault(_norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", stem)), name)
     except Exception:
         pass
     return names
@@ -419,13 +419,16 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     for the issue book map) to avoid a second full paginated get_books."""
     folder = series.get("folder_path")
     vol_entries = _scan_folder_volume_entries(folder) if folder else []
-    owned_names = _scan_folder_edition_names(folder) if folder else set()
+    owned_names = _scan_folder_edition_names(folder) if folder else {}
 
     # Volume ownership is EDITION-AWARE: the trade's special-edition words
     # (absolute/omnibus/…) must equal the file's, or a plain Vol 1 TPB on disk
     # stamps "Absolute Vol. 1 HC" owned and the sweep never fetches the real one.
     def _vol_owned(vol, kws):
         return any(v == vol and _edition_keywords(name) == kws for v, name in vol_entries)
+
+    def _vol_file(vol, kws):
+        return next((name for v, name in vol_entries if v == vol and _edition_keywords(name) == kws), None)
 
     kbook_by_volkey, kbook_by_name = {}, {}
     if books is None:
@@ -444,8 +447,12 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
 
     for t in trades:
         kws = _edition_keywords(t.get("title", ""))
+        # `file`: the file on disk this edition IS — the series page keeps it off
+        # 'Also on the shelf' and the Trades tab reads it
+        t["file"] = None
         if t.get("vol") is not None:
             t["owned"] = _vol_owned(t["vol"], kws)
+            t["file"] = _vol_file(t["vol"], kws) if t["owned"] else None
             t["komga_book_id"] = kbook_by_volkey.get((t["vol"], kws))
         elif t.get("vol_range"):
             lo, hi = t["vol_range"]
@@ -458,6 +465,7 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
             # name. Without this an owned OGN reads forever-missing on the Trades tab.
             key = _norm_name(t.get("title", ""))
             t["owned"] = bool(key) and key in owned_names
+            t["file"] = owned_names.get(key) if t["owned"] else None
             t["komga_book_id"] = kbook_by_name.get(key)
     return trades
 

@@ -1752,10 +1752,11 @@ function _tradeTileHtml(t) {
   // Same tile skeleton as issues so the grid stays visually identical. The format
   // (TPB/HC) rides in the corner badge slot; the volume is the bottom label.
   const cover = t.cover ? `<img src="${esc(t.cover)}" alt="${esc(tag)}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : '';
-  const click = t.locg_id
-    ? ` tabindex="0" role="button" onclick="showTradeModal('${esc(t.locg_id)}')"
-        onkeydown="if(event.key==='Enter'||event.key===' ')showTradeModal('${esc(t.locg_id)}')"`
-    : '';
+  // Owned and on the shelf → the tile reads it, like an owned issue. Otherwise
+  // the details modal (with its download) as before.
+  const go = (t.owned && t.book_id) ? `navigate('read', {book: ${t.book_id}})`
+    : t.locg_id ? `showTradeModal('${esc(t.locg_id)}')` : '';
+  const click = go ? ` tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}"` : '';
   // Owned (file on disk) → no download arrow, owned styling. Otherwise the same
   // ↓ arrow missing singles get; stopPropagation so the tile click doesn't fire.
   const dlBtn = (t.locg_id && !t.owned)

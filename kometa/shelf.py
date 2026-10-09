@@ -173,6 +173,12 @@ def shelf_detail(shelf_id: int):
     s = db.get_shelf_series(shelf_id, DB_PATH)
     if not s:
         raise HTTPException(404, "No such shelf series")
+    # files the Trades tab already shows as owned editions: the series page keeps
+    # them off 'Also on the shelf' so a trade isn't listed twice
+    trade_files = set()
+    if s.get("tracked_series_id"):
+        cached = db.get_trades(s["tracked_series_id"], DB_PATH)
+        trade_files = {t["file"] for t in (cached or {}).get("trades", []) if t.get("file")}
     books = []
     for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"]):
         if not os.path.exists(b["path"]):
@@ -180,6 +186,7 @@ def shelf_detail(shelf_id: int):
         books.append({
             "id": b["id"],
             "number": b["number"],
+            "trade": os.path.basename(b["path"]) in trade_files,
             "label": f"#{b['number']:g}" if b["number"] is not None else os.path.splitext(os.path.basename(b["path"]))[0],
             "page_count": b["page_count"],
             "progress": None if b["progress_page"] is None else

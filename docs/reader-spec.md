@@ -214,6 +214,23 @@ Four sections. Each is its own row/area (layout is a mock-up question).
   (they hang off the book/issue row, not the path), and a native/OPDS client that
   can't express them simply doesn't see them.
 
+## Related to this series *(added 2026-10-09)*
+
+A row on the series page: other series you'd read because you read this one.
+Three signals, each labelled so you know why it's there:
+
+- **Same creators** — writer/artist credits from Metron (ComicVine as fallback),
+  weighted toward the writer. The kometa-recommend side project already does this
+  from LOCG credits; fold its scoring in rather than redo it.
+- **Same arc or event** — any series sharing a storyline/arc id (Metron arcs,
+  ComicVine arcs) with issues of this one.
+- **Same reading list** — series that sit beside this one on an imported list
+  (Hellboy → B.P.R.D., Abe Sapien). A list is a curated "related", so it ranks first.
+
+Owned series link to their page; unowned ones get the same **Get** as a reading
+list gap (track without pulling, request what's needed). Lazy: computed on first
+open, cached per series, refreshed on a long timeframe or when the series syncs.
+
 ## Explicitly out of scope (for now)
 
 - Panel / guided view.

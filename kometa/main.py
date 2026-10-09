@@ -480,9 +480,18 @@ def _cached_trades(series: dict) -> list[dict] | None:
     if not cached:
         return None
     trades = cached["trades"]
-    if trades and "owned" not in trades[0]:
+    if trades and ("owned" not in trades[0] or "file" not in trades[0]):
         _enrich_trades(series, trades)
         db.set_trades(series["id"], trades, DB_PATH)
+    return _with_book_ids(series, trades)
+
+
+def _with_book_ids(series: dict, trades: list[dict]) -> list[dict]:
+    """An owned trade is a book in the reader: hand its id back with the tile."""
+    folder = series.get("folder_path")
+    for t in trades:
+        b = db.get_book_by_path(os.path.join(folder, t["file"]), DB_PATH) if folder and t.get("file") else None
+        t["book_id"] = b["id"] if b else None
     return trades
 
 
@@ -608,7 +617,7 @@ def get_series_trades(series_id: int):
     trades = _select_editions(_locg_trades(locg_id))
     _enrich_trades(s, trades)
     db.set_trades(series_id, trades, DB_PATH)
-    return {"trades": trades, "cached": False}
+    return {"trades": _with_book_ids(s, trades), "cached": False}
 
 
 @app.get("/api/trade/{locg_id}/details")

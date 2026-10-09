@@ -702,7 +702,7 @@ async function _loadShelfFiles(s, all) {
   let shelf;
   try { shelf = await api.get(`/api/shelf/${s.shelf_id}`); } catch { return; }
   if (currentView !== 'series-detail' || currentParams.id !== s.id) return;
-  const books = all ? shelf.books : shelf.books.filter(b => b.number == null);
+  const books = all ? shelf.books : shelf.books.filter(b => b.number == null && !b.trade);   // trades live on the Trades tab
   if (!books.length) return;
   const tiles = books.map(b => {
     const p = b.progress;
