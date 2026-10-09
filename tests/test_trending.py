@@ -52,7 +52,7 @@ def test_shelf_match_and_metron_enrichment(db_path):
     assert sent["number"] == "6"                           # not '6.0' — Metron's filter is literal
     def lookup(series, number):
         asked.append((series, number))
-        return {"results": [{"series": {"id": 500, "name": "Batman Day 2026 (2026)", "year_began": 2026}, "image": "https://m/x.jpg"}]} if "Batman Day" in series else {"results": []}
+        return {"results": [{"series": {"id": 500, "name": "Batman Day 2026 - Batman of Two Worlds (2026)", "year_began": 2026}, "image": "https://m/x.jpg"}]} if "Batman Day" in series else {"results": []}
     n = tr.enrich_catalogue(data, db_path, lookup=lookup)
     assert n == 2 and by[1]["metron_series_id"] == 500 and by[1]["cover"] == "https://m/x.jpg" and by[6]["catalogue_miss"]
     assert ("Absolute Batman", 24.0) not in asked          # owned rows aren't looked up
@@ -74,3 +74,11 @@ def test_enrich_prefers_the_newest_run_for_a_number_one(db_path):
                        {"series": {"id": 2, "name": "Doom Patrol (2026)", "year_began": 2026}, "image": "new"}]}
     tr.enrich_catalogue(data, db_path, lookup=lambda s_, n: res)
     assert data["comics"][0]["metron_series_id"] == 2 and data["comics"][0]["cover"] == "new"
+
+
+def test_enrich_refuses_a_contains_match(db_path):
+    data = {"comics": [dict(tr.parse_title("X-Men #1"), rank=32)], "graphic_novels": []}
+    res = {"results": [{"series": {"id": 9, "name": "All-New X-Men (2013)", "year_began": 2013}, "image": "wrong"}]}
+    tr.enrich_catalogue(data, db_path, lookup=lambda s_, n: res)
+    assert data["comics"][0].get("metron_series_id") is None and data["comics"][0]["catalogue_miss"]
+    assert tr._same_name("The Doom Patrol (2026)", "Doom Patrol")

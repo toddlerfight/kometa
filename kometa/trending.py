@@ -160,6 +160,11 @@ def match_shelf(entries: list[dict], path) -> None:
             e["cover"] = e.get("cover") or f"/api/series/{s['id']}/thumbnail"
 
 
+def _same_name(catalogue: str, chart: str) -> bool:
+    a = norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", catalogue)); b = norm_key(chart)
+    return a == b or a == f"the {b}" or b == f"the {a}"
+
+
 _enriching = {"on": False}
 
 
@@ -180,8 +185,11 @@ def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, 
             except Exception as ex:
                 logger.info(f"Trending enrich skipped {e['series']!r}: {ex}")
                 continue
-            # several same-named runs answer a '#1' — the chart means the newest one
-            hit = max(r.get("results") or [], key=lambda x: (x.get("series") or {}).get("year_began") or 0, default=None)
+            # Metron's name filter is a contains-match ('X-Men' answers All-New X-Men):
+            # keep the same-named runs only, and of those the newest — the chart means this year's
+            same = [x for x in r.get("results") or []
+                    if _same_name((x.get("series") or {}).get("name") or "", e["series"])]
+            hit = max(same, key=lambda x: (x.get("series") or {}).get("year_began") or 0, default=None)
             if hit:
                 ser = hit.get("series") or {}
                 e["metron_series_id"] = ser.get("id")
