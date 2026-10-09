@@ -2182,8 +2182,8 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-card .issue-tile-num { display: none; }
 
 /* On Deck 'not now' — a small × on the tile, shown on hover (always on touch) */
-.od-x { position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border: 0; border-radius: 50%; z-index: 2;
-  background: rgba(0,0,0,.75); color: var(--tp); font-size: 16px; line-height: 24px; text-align: center; cursor: pointer;
+.od-x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 0; border-radius: 50%; z-index: 2; padding: 0;
+  background: rgba(0,0,0,.75); color: var(--tp); font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
   opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
 .od-card:hover .od-x, .od-card:focus-within .od-x { opacity: 1; }
 @media (hover: none) { .od-x { opacity: .85; } }
@@ -2217,8 +2217,8 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 /* touch: nothing is hover-revealed, it's just there */
 body.touch .od-x, body.touch .od-go, body.touch .rl-get { opacity: .85; }
 /* one ⋯ per card: the actions live in a sheet, not scattered over the cover */
-.od-menu { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; z-index: 2;
-  background: rgba(0,0,0,.75); color: var(--tp); font-size: 15px; line-height: 26px; text-align: center; cursor: pointer;
+.od-menu { position: absolute; bottom: 4px; right: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; z-index: 2; padding: 0;
+  background: rgba(0,0,0,.75); color: var(--tp); font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
   opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
 .issue-tile:hover .od-menu, .issue-tile:focus-within .od-menu, .od-card:hover .od-menu, .od-card:focus-within .od-menu, .od-menu:disabled { opacity: 1; }
 .od-menu:hover { background: var(--pri); color: var(--ink, #000); }
