@@ -822,8 +822,9 @@ async function showBookModal(c) {
   // a trade's file name already carries the series: don't say it twice
   const title = label && series && label.toLowerCase().startsWith(series.toLowerCase().replace(/\s*\(\d{4}\)$/, '')) ? label : `${series} ${label}`.trim();
   const completed = bk?.progress?.completed ?? c.completed;
-  const goSeries = c.series_id ? `_wantTab = 'trades'; navigate('series-detail', {id: ${c.series_id}})`
-    : c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '';
+  const seriesId = c.series_id || bk?.series_id || null;          // the book knows its run even when the card didn't
+  const goSeries = seriesId ? `_wantTab = 'trades'; navigate('series-detail', {id: ${seriesId}})`
+    : c.shelf_id && currentView !== 'shelf' ? `navigate('shelf', {id: ${c.shelf_id}})` : '';
   const pages = bk?.page_count ? `${bk.page_count} pages` : '';
   const prog = bk?.progress && !completed ? ` · on page ${bk.progress.page}` : (completed ? ' · read' : '');
   document.getElementById('modal').classList.add('modal-wide');

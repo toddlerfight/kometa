@@ -546,7 +546,7 @@ async function renderShelfSeries(id) {
   const nx = _shelfNextBook(s.books);
   if (nx) document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${nx.book.id}})">${esc(nx.label)}</button>`;
-  const tiles = s.books.map(b => _bookTile(b, s.title, {}, { shelf_id: id })).join('');
+  const tiles = s.books.map(b => _bookTile(b, s.title, {}, { shelf_id: id, series_id: s.tracked_series_id || null })).join('');
   setApp(s.books.length
     ? `<div class="issue-grid">${tiles}</div>`
     : '<div class="state-msg">No readable books in this folder.</div>');
