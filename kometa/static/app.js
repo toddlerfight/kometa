@@ -646,6 +646,52 @@ async function renderOnDeck() {
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.')
   );
+  _loadSuggestions();
+}
+
+// --- Related / Suggestions (kometa/related.py) ----------------------------------
+// One card shape for both rows: the series' cover, its title, and WHY it's here
+// — a shared creator, a shared arc, or 'on a reading list together'.
+function _relCard(r) {
+  const go = `navigate('series-detail', {id: ${r.series_id}})`;
+  const why = (r.why || []).join(' · ');
+  const because = r.because && r.because.length ? `because you read ${r.because.map(esc).join(', ')}` : '';
+  return `<div class="series-card rel-card" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+    <div class="series-card-img-wrap"><img class="series-card-cover" src="/api/series/${r.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
+      <div class="series-card-count" style="color:${r.owned && r.owned >= r.total ? 'var(--pri)' : 'var(--tq)'}">${r.owned || 0}/${r.total || 0}</div></div>
+    <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
+    ${because ? `<div class="series-card-publisher u-truncate rel-because">${because}</div>` : ''}
+  </div>`;
+}
+
+async function _loadRelated(id) {
+  let d;
+  try { d = await api.get(`/api/series/${id}/related`); } catch { return; }
+  if (currentView !== 'series-detail' || currentParams.id !== id) return;
+  const app = document.getElementById('app');
+  app.querySelector('.rel-row')?.remove();
+  if (!d.related.length && !d.pending) return;
+  app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
+    <div class="od-head"><span class="series-card-title">Related</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">same creators · same arc · same reading list</span></div>
+    ${d.related.length ? `<div class="series-grid">${d.related.map(_relCard).join('')}</div>`
+      : '<div class="od-empty">Nothing yet — the catalogue is still being asked about this series.</div>'}
+  </div>`);
+}
+
+async function _loadSuggestions() {
+  let d;
+  try { d = await api.get('/api/ondeck/suggestions'); } catch { return; }
+  if (currentView !== 'ondeck') return;
+  const app = document.getElementById('app');
+  app.querySelector('.sug-row')?.remove();
+  if (!d.suggestions.length) return;
+  app.insertAdjacentHTML('beforeend', `<div class="od-row sug-row">
+    <div class="od-head"><span class="series-card-title">Suggestions</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">near what you've been reading — unstarted series first</span></div>
+    <div class="series-grid">${d.suggestions.map(_relCard).join('')}</div>
+  </div>`);
 }
 
 // One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.
@@ -1634,6 +1680,7 @@ async function renderSeriesDetail(id) {
   if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
   if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
+  if (detailTab === 'all') _loadRelated(id);
 
   // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now
   // that its run is loaded. Cleared so it fires once.

@@ -2231,3 +2231,7 @@ body.touch .od-menu { opacity: .85; }
 .chip-neutral { color: var(--tq); border: 1px solid var(--bd); }
 .chip-reading { color: var(--amb); border: 1px solid var(--amb); }
 .issue-tile .issue-tile-img { position: relative; }
+/* related / suggestions cards: the why-line is the point */
+.rel-card .rel-why { color: var(--tq); text-transform: none; letter-spacing: 0; }
+.rel-card .rel-because { color: var(--td); text-transform: none; letter-spacing: 0; }
+.rel-row, .sug-row { margin-top: var(--sp-xl); }

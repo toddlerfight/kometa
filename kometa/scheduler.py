@@ -133,6 +133,16 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             next_run_time=datetime.now(TZ) + timedelta(minutes=1),
         )
 
+    # Related/Suggestions signals: one Metron call per series, a few per tick,
+    # stops at the first refusal. The rows render from whatever is cached.
+    try:
+        from kometa.related import trickle_signals
+        scheduler.add_job(trickle_signals, IntervalTrigger(minutes=30), id="related_signals_trickle",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=3))
+    except Exception as e:
+        logger.warning(f"Related signals trickle not scheduled: {e}")
+
     scheduler.start()
     logger.info(f"Scheduler started — syncing+sweeping at {hours} {TZ.key}, queue every 5min, usenet poll every {USENET_POLL_SECONDS}s, release-day retry daily 15/17/19/21/23 {TZ.key}")
     return scheduler
