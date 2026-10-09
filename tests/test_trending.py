@@ -44,3 +44,13 @@ def test_shelf_match_and_metron_enrichment(db_path):
     n = tr.enrich_catalogue(data, db_path, lookup=lookup)
     assert n == 2 and by[1]["metron_series_id"] == 500 and by[1]["cover"] == "https://m/x.jpg" and by[6]["catalogue_miss"]
     assert ("Absolute Batman", 24.0) not in asked          # owned rows aren't looked up
+
+
+def test_same_named_runs_pick_the_one_with_the_issue_else_newest(db_path):
+    old = db.add_series(title="Batman (1940)", publisher="DC Comics", year_began=1940, folder_path=None, on_pull_list=False, path=db_path)
+    new = db.add_series(title="Batman (2025)", publisher="DC Comics", year_began=2025, folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(old, 13.0, "1942-01-01", 1, path=db_path)
+    rows = [dict(tr.parse_title("Batman #13"), rank=5), dict(tr.parse_title("Batman #99"), rank=6)]
+    tr.match_shelf(rows, db_path)
+    assert rows[0]["series_id"] == old and rows[0]["have_issue"]
+    assert rows[1]["series_id"] == new and not rows[1].get("have_issue")

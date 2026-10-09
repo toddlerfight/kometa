@@ -124,25 +124,36 @@ def _save(data: dict, path):
 
 
 # --- matching the shelf and the catalogue ---------------------------------------------
-def _shelf_index(path) -> dict[str, dict]:
-    idx = {}
+def _shelf_index(path) -> dict[str, list[dict]]:
+    idx: dict[str, list[dict]] = {}
     for s in db.get_all_series(path):
         if s.get("kind") == "arc":
             continue
         for k in {norm_key(s["title"]), norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"]))}:
-            idx.setdefault(k, s)
+            idx.setdefault(k, []).append(s)
     return idx
+
+
+def _pick_run(cands: list[dict], number, path) -> tuple[dict | None, dict | None]:
+    """Same-named runs (Batman 1940 / 2016 / 2025): the one that has the issue,
+    else the newest — a chart row is always the current run."""
+    if not cands:
+        return None, None
+    if number is not None:
+        for s in cands:
+            i = next((x for x in db.get_issues_for_series(s["id"], path) if x["number"] == number), None)
+            if i:
+                return s, i
+    return max(cands, key=lambda s: s.get("year_began") or 0), None
 
 
 def match_shelf(entries: list[dict], path) -> None:
     idx = _shelf_index(path)
     for e in entries:
-        s = idx.get(norm_key(e["series"]))
+        s, i = _pick_run(idx.get(norm_key(e["series"]), []), e.get("number"), path)
         e["series_id"] = s["id"] if s else None
         e["owned"] = bool(s)
         if s and e.get("number") is not None:
-            issues = {i["number"]: i for i in db.get_issues_for_series(s["id"], path)}
-            i = issues.get(e["number"])
             e["have_issue"] = bool(i and i.get("owned"))
             e["cover"] = e.get("cover") or (f"/api/series/{s['id']}/issues/{e['number']:g}/thumbnail" if i else f"/api/series/{s['id']}/thumbnail")
         elif s:
