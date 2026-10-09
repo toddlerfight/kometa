@@ -3550,6 +3550,7 @@ async function renderSettings() {
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('League of Comic Geeks', 'your browser’s pass', 'locg', true, cfg.locg_cf_configured)}
           ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies' })}
+          <div class="settings-help" id="locg-topup-status">${_locgTopupLine(cfg)}</div>
           <div class="settings-help">${cfg.locg_cf_configured
             ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.locg_user_agent))}. It lasts a few hours and is forgotten the moment LOCG refuses it. Paste from the browser that has LOCG open.`
             : 'LOCG challenges anything that isn’t a browser. When yours gets through, its cookie lets Kometa ride the same session — same house, same IP — at the usual trickle. Optional; Metron covers nearly everything now.'}</div>
@@ -3591,6 +3592,28 @@ const _SETTINGS_FIELDS = {
 };
 
 const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', locg: 'locg' };
+
+// LOCG is a filler: what it owes us waits in a queue (kometa/topup.py) and
+// drains while a pass is live. The card says which state we're in and what's waiting.
+function _locgTopupLine(cfg) {
+  const n = cfg.locg_topup_waiting || 0;
+  const waiting = n ? `${n} item${n === 1 ? '' : 's'} waiting` : 'nothing waiting';
+  const state = cfg.locg_paused_until ? `paused until ${esc(cfg.locg_paused_until)}`
+    : cfg.locg_pass_live ? 'live' : 'no pass';
+  const btn = n && cfg.locg_pass_live ? ` <button class="btn-link" onclick="_locgTopupNow(this)">${cfg.locg_topup_draining ? 'topping up…' : 'top up now'}</button>` : '';
+  return `LOCG pass: ${state} · ${waiting}${btn}`;
+}
+
+async function _locgTopupNow(btn) {
+  btn.disabled = true; btn.textContent = 'topping up…';
+  try {
+    const r = await api.post('/api/locg/topup', {});
+    _whisper('locg', r.started ? 'top-up started' : (r.error || 'already running'), !r.ok);
+    setTimeout(async () => {
+      try { const cfg = await api.get('/api/config'); const el = document.getElementById('locg-topup-status'); if (el) el.innerHTML = _locgTopupLine(cfg); } catch {}
+    }, 8000);
+  } catch (e) { btn.disabled = false; btn.textContent = 'top up now'; _whisper('locg', 'couldn’t start', true); }
+}
 
 // 'Chrome 154 on macOS' from a User-Agent — for the LOCG card's status line.
 function _browserName(ua) {

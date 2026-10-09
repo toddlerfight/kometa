@@ -166,6 +166,14 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
         logger.warning(f"Images trickle not scheduled: {e}")
+    # The LOCG top-up queue drains in small bursts while a pass is live.
+    try:
+        from kometa.topup import scheduled_drain
+        scheduler.add_job(scheduled_drain, IntervalTrigger(minutes=15), id="locg_topup_drain",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=6))
+    except Exception as e:
+        logger.warning(f"LOCG top-up drain not scheduled: {e}")
     try:
         from kometa.related import warm_lists, LISTS_TTL_S
         scheduler.add_job(warm_lists, IntervalTrigger(seconds=LISTS_TTL_S - 10), id="related_lists_warm",

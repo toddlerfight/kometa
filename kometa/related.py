@@ -69,6 +69,15 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
     rows = [r for r in record.issues_for_series(series_id, path) if r.get("credits")]
     rows.sort(key=lambda r: (r.get("source") != "metron", r["number"]))
     issue = None if rows else _representative_issue(series_id, path)
+    if not rows and not issue:
+        # an LOCG-only run: its credits come when a pass is live — queue it
+        try:
+            s_ = db.get_series_by_id(series_id, path)
+            if s_ and s_.get("locg_series_id"):
+                from kometa import topup
+                topup.enqueue("credits", str(series_id), path)
+        except Exception as e:
+            logger.info(f"Signals: top-up enqueue skipped for {series_id}: {e}")
     if rows:
         d = rows[0]
         for c in d.get("credits") or []:
