@@ -3058,6 +3058,7 @@ const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_u
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
   _activitySig = null;          // force a full rebuild when entering the view
+  _actVisitMark = _actSeen();   // what had been seen BEFORE this visit
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Activity';
   document.getElementById('topbar-actions').innerHTML = `
@@ -3070,11 +3071,8 @@ async function renderActivity() {
   await _refreshActivity();
 }
 
-// Done rows older than this are history (server timestamps are UTC 'YYYY-MM-DD HH:MM:SS')
 let _actShowHistory = false;
-function _actHistoryCutoff() {
-  return new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-}
+let _actVisitMark = '';       // the seen mark at the moment this visit began
 function _toggleActHistory() {
   _actShowHistory = !_actShowHistory;
   _activitySig = null;
@@ -3089,9 +3087,11 @@ async function _refreshActivity() {
   if (_activityRemoving) return;
   const all = await api.get('/api/queue');
   _ackActivity(all);   // you're looking at it — acknowledge + clear the badge
-  // Done rows older than a day are history: out of the way unless asked for.
-  // Failed and not-found stay until you deal with them.
-  const queue = _actShowHistory ? all : all.filter(q => q.state !== 'done' || (q.updated_at || '') > _actHistoryCutoff());
+  // A done row you've already seen on an EARLIER visit is history: it shows
+  // once, on the visit after it landed, then gets out of the way. Failed and
+  // not-found stay until you deal with them. The mark is fixed for the visit
+  // so rows don't vanish mid-look while the page polls.
+  const queue = _actShowHistory ? all : all.filter(q => q.state !== 'done' || (q.updated_at || '') > _actVisitMark);
   const hidden = all.length - queue.length;
   const hb = document.getElementById('act-history-btn');
   if (hb) { hb.textContent = _actShowHistory ? 'Hide history' : `History${hidden ? ' (' + hidden + ')' : ''}`; hb.classList.toggle('btn-primary', _actShowHistory); hb.classList.toggle('btn-ghost', !_actShowHistory); }
