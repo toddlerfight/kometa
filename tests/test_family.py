@@ -15,7 +15,10 @@ def test_specials_fold_under_the_run_and_ongoings_do_not():
             _s(6, "Batman: The Dark Knight Returns", "Limited Series", owned=4),   # one-word parent: a subtitle is NOT a special
             _s(7, "Batman Annual 2025", "Annual", owned=1),
             _s(8, "Dark Nights - Metal", "Limited Series", owned=6),
-            _s(9, "- Dark Nights - Metal - The Casting", "One-Shot", owned=1)]
+            _s(9, "- Dark Nights - Metal - The Casting", "One-Shot", owned=1),
+            dict(_s(10, "Batman Beyond (2012)", "Single Issue", owned=30), year_began=2012),
+            dict(_s(11, "Batman Beyond - Volume 01 (1999)", "Limited Series", owned=6), year_began=1999),
+            dict(_s(12, "Batman Beyond - Rebirth", "One-Shot", owned=1), year_began=2016)]
     attach_families(rows)
     by = {r["id"]: r for r in rows}
     assert by[2]["family_parent"] == 1 and by[3]["family_parent"] == 1
@@ -23,3 +26,4 @@ def test_specials_fold_under_the_run_and_ongoings_do_not():
     assert by[4]["family_parent"] is None
     assert by[6]["family_parent"] is None and by[7]["family_parent"] == 5
     assert by[9]["family_parent"] == 8                                   # leading '- ' ignored, ' - ' subtitle counts
+    assert by[11]["family_parent"] is None and by[12]["family_parent"] == 10   # an older run is not a special of a newer one

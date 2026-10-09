@@ -73,6 +73,11 @@ def attach_families(series: list[dict]) -> list[dict]:
                 continue
             if not (subtitle or special_word):
                 continue
+            # a special comes with or after its run, never before it: the 1999
+            # 'Batman Beyond - Volume 01' is not a special of Batman Beyond (2012)
+            cy, py = child.get("year_began"), parent.get("year_began")
+            if cy and py and cy < py - 1:
+                continue
             if best is None or len(ptitle) > len(_base(best["title"])):
                 best = parent
         if best is not None:
