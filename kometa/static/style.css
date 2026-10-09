@@ -2206,3 +2206,4 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .rl-get.off { border-color: var(--tq); color: var(--tq); }
 @media (hover: none) { .rl-get { opacity: 1; } }
 .rl-gap .issue-tile-img { position: relative; }
+.nav-item.nav-hidden { display: none; }

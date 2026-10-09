@@ -741,6 +741,9 @@ function _updateNeedsBadge(n) {
   if (!el) return;
   el.textContent = n || '';
   el.className = 'nav-badge' + (n ? ' amber' : '');
+  // Nothing to match → no menu item. It comes back by itself the moment a new
+  // folder lands on the shelf (every count refresh passes through here).
+  el.closest('.nav-item')?.classList.toggle('nav-hidden', !n);
 }
 
 async function renderNeedsMatch() {
@@ -4206,6 +4209,8 @@ async function boot() {
   const { view, params } = _parseHash();
   navigate(view, params);
   _startBadgePolling();
+  // the Needs matching item's count, without waiting for the Library to load
+  api.get('/api/series').then(rows => _updateNeedsBadge(rows.filter(_needsMatch).length)).catch(() => {});
 }
 
 boot();
