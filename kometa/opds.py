@@ -61,6 +61,23 @@ def _nav_entry(eid: str, title: str, href: str, summary: str = "") -> str:
             + (f'<content type="text">{escape(summary)}</content>' if summary else '') + '</entry>')
 
 
+def _page_count(b: dict, path) -> int:
+    """The reader fills page_count the first time a book is opened; almost every
+    book on a fresh shelf hasn't been. PSE needs a count up front, so an
+    unopened book gets a cheap one from the archive's entry list (central
+    directory only — no page is read) and remembers it."""
+    if b.get("page_count"):
+        return b["page_count"]
+    from kometa.naming import _archive_entry_names, _IMAGE_EXTS
+    names = _archive_entry_names(b["path"]) or []
+    n = sum(1 for x in names if x.lower().endswith(_IMAGE_EXTS)
+            and not x.startswith("__MACOSX") and not os.path.basename(x).startswith("."))
+    if n:
+        with db._connect(path) as conn:
+            conn.execute("UPDATE books SET page_count = ? WHERE id = ? AND (page_count IS NULL OR page_count = 0)", (n, b["id"]))
+    return n
+
+
 def _label(b: dict) -> str:
     n = b.get("number")
     if n is not None:
@@ -68,15 +85,16 @@ def _label(b: dict) -> str:
     return os.path.splitext(os.path.basename(b["path"]))[0]
 
 
-def book_entry(b: dict, series_title: str, progress: dict | None = None) -> str:
+def book_entry(b: dict, series_title: str, progress: dict | None = None, path=None) -> str:
     """One Atom entry: cover, thumbnail, download, and the PSE stream link.
     PSE page numbers are 0-based (the template's {pageNumber}); the reader's
     own route is 1-based, so /opds/books/{id}/pages/{n} bridges the two."""
     bid = b["id"]
     media = MEDIA.get(os.path.splitext(b["path"])[1].lower(), "application/octet-stream")
     title = f"{series_title} {_label(b)}" if b.get("number") is not None else _label(b)
+    count = _page_count(b, path or DB_PATH)
     pse = f'<link rel="http://vaemendis.net/opds-pse/stream" type="image/jpeg" ' \
-          f'href="/opds/books/{bid}/pages/{{pageNumber}}?maxWidth={{maxWidth}}" pse:count="{b.get("page_count") or 0}"'
+          f'href="/opds/books/{bid}/pages/{{pageNumber}}?maxWidth={{maxWidth}}" pse:count="{count}"'
     if progress and progress.get("page"):
         pse += f' pse:lastRead="{int(progress["page"])}" pse:lastReadDate="{escape(_iso(progress.get("updated_at")))}"'
     pse += "/>"
@@ -86,7 +104,7 @@ def book_entry(b: dict, series_title: str, progress: dict | None = None) -> str:
             f'<link rel="http://opds-spec.org/image/thumbnail" href="/api/books/{bid}/cover" type="image/jpeg"/>'
             f'<link rel="http://opds-spec.org/acquisition" href="/opds/books/{bid}/file" type={quoteattr(media)}/>'
             f'{pse}'
-            f'<content type="text">{escape(series_title)} · {b.get("page_count") or "?"} pages</content></entry>')
+            f'<content type="text">{escape(series_title)} · {count or "?"} pages</content></entry>')
 
 
 def _progress_for(book_ids: list[int], path) -> dict[int, dict]:
@@ -111,7 +129,7 @@ def _books_sql(path, where: str, params: tuple, order: str, limit: int | None = 
 def _entries(books: list[dict], path) -> list[str]:
     prog = _progress_for([b["id"] for b in books], path)
     return [book_entry(b, b.get("series_title") or _YEAR.sub("", os.path.basename(os.path.dirname(b["path"]))),
-                       prog.get(b["id"])) for b in books if os.path.exists(b["path"])]
+                       prog.get(b["id"]), path) for b in books if os.path.exists(b["path"])]
 
 
 # --- feeds ------------------------------------------------------------------------
@@ -231,7 +249,7 @@ def api_opensearch():
     return Response(content=OPENSEARCH, media_type="application/opensearchdescription+xml")
 
 
-@router.get("/opds/books/{book_id}/file")
+@router.api_route("/opds/books/{book_id}/file", methods=["GET", "HEAD"])
 def api_file(book_id: int):
     b = db.get_book(book_id, DB_PATH)
     if not b or not os.path.exists(b["path"]):
@@ -245,6 +263,9 @@ def api_page(book_id: int, page: int, maxWidth: int | None = None):
     """PSE page: 0-based, optional maxWidth → the reader's own buckets."""
     from kometa import reader
     book = reader._book_or_404(book_id)
+    if not book.get("pages"):
+        # first open: the reader's own scan fills the page list (and the real count)
+        book = reader.ensure_book(book["path"], book.get("tracked_series_id"), book.get("number"))
     if not 0 <= page < (book["page_count"] or 0):
         raise HTTPException(404, "No such page")
     try:

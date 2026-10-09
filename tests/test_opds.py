@@ -68,3 +68,13 @@ def test_titles_with_ampersands_are_well_formed(db_path, tmp_path):
     sid = db.upsert_shelf_series(str(folder), "Batman & Robin", "DC", None, 1, "2026-10-09T00:00:00Z", db_path)
     db.index_books([(str(folder / "Batman & Robin #001.cbz"), 10, 1.0, 1.0, sid, None)], db_path)
     ET.fromstring(op.series_feed(0, db_path)); ET.fromstring(op.one_series_feed(sid, db_path))
+
+
+def test_an_unopened_book_gets_a_cheap_page_count_from_the_archive(db_path, tmp_path):
+    sid, ids = _shelf(db_path, tmp_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE books SET page_count = NULL WHERE id = ?", (ids[0],))
+    feed = ET.fromstring(op.one_series_feed(sid, db_path))
+    pse = feed.find("a:entry/a:link[@rel='http://vaemendis.net/opds-pse/stream']", NS)
+    assert pse.get("{http://vaemendis.net/opds-pse/ns}count") == "2"            # make_cbz writes two images
+    assert db.get_book(ids[0], db_path)["page_count"] == 2                        # and it's remembered
