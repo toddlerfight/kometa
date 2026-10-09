@@ -164,6 +164,8 @@ from kometa.related import router as _related_router        # related to this se
 app.include_router(_related_router)
 from kometa.trending import router as _trending_router      # what shops sold most (ICv2)
 app.include_router(_trending_router)
+from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
+app.include_router(_opds_router)
 from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
 app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
