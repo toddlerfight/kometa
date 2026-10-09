@@ -213,6 +213,11 @@ def series_thumbnail(series_id: int):
         None
     )
     if img_url:
+        # the record's own store (kometa/images.py): on disk by key, kept for good
+        from kometa import images
+        resp = images.serve(images.series_key(series_id), img_url, "metron", path=DB_PATH)
+        if resp:
+            return resp
         return _cached_image_response(img_url)
     # No issues with art at all — a collections-only LOCG entry ('Batman: Bad
     # Seeds' is just its TPB + HC) painted a black void on the card. Its trades
@@ -333,7 +338,8 @@ def issue_thumbnail(series_id: int, number: float, request: Request = None):
     # (relative paths that can never load; older syncs stored them as-is)
     mi = issue.get("metron_image") if issue else None
     if mi and mi.startswith("http") and "no-cover" not in mi:
-        resp = _image_or_none(mi)
+        from kometa import images
+        resp = images.serve(images.issue_key(series_id, number), mi, "metron", path=DB_PATH) or _image_or_none(mi)
         if resp:
             return resp
 
