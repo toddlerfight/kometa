@@ -58,8 +58,13 @@ def ensure_tables(path=None):
                 cv_issue    TEXT,
                 file        TEXT
             )""")
-        if "file" not in [r[1] for r in conn.execute("PRAGMA table_info(reading_list_items)")]:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(reading_list_items)")]
+        if "file" not in cols:
             conn.execute("ALTER TABLE reading_list_items ADD COLUMN file TEXT")
+        if "cover_url" not in cols:
+            # a catalogue cover for an entry that isn't on the shelf: NULL = not
+            # looked yet, '' = looked and nothing, else the image URL (cached)
+            conn.execute("ALTER TABLE reading_list_items ADD COLUMN cover_url TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rli_list ON reading_list_items(list_id, position)")
 
 
@@ -356,7 +361,9 @@ def resolve(list_id: int, path=None) -> dict:
             series_name, want_n = nb[0], float(nb[1])
         hit = next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
-                 "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": []}
+                 "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": [],
+                 "item_id": it["id"], "cover": f"/api/readlists/{list_id}/items/{it['id']}/cover" if it.get("cover_url") else None,
+                 "cover_pending": it.get("cover_url") is None}
         bf = by_file.get(it.get("file") or "")
         if bf:
             # the file itself is on the shelf — no guessing from the title
@@ -427,6 +434,65 @@ def next_book(list_id: int, after: int, path=None) -> int | None:
     return seq[i + 1] if i + 1 < len(seq) else None
 
 
+# --- covers for the gaps -------------------------------------------------------------
+def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_issues=None, limit_metron: int = 40) -> dict:
+    """Give every not-on-shelf entry a catalogue cover, once. ComicVine first —
+    a CBL names the issue id, so it's one batched lookup for the whole list —
+    then Metron by title for the rest (slow, throttled, capped per call). A
+    miss is remembered as '' so a list isn't re-asked every open."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    res = resolve(list_id, path)
+    todo = [e for e in res["entries"] if e["status"] != "owned" and e["cover_pending"]]
+    if not todo:
+        return {"filled": 0, "missed": 0, "left": 0}
+    items = {it["id"]: it for it in get_items(list_id, path)}
+    found: dict[int, str] = {}
+    # 1. ComicVine by issue id, in one batch
+    if cv is None:
+        from kometa import sources
+        try:
+            cv = sources.comicvine()
+        except Exception:
+            cv = None
+    ids = {e["item_id"]: items[e["item_id"]].get("cv_issue") for e in todo}
+    if cv and any(ids.values()):
+        meta = cv.get_issues_meta([v for v in ids.values() if v])
+        for iid, cvi in ids.items():
+            url = cvi and (meta.get(str(cvi)) or {}).get("image_url")
+            if url:
+                found[iid] = url
+    # 2. Metron by title for what's left, a few per call
+    rest = [e for e in todo if e["item_id"] not in found][:limit_metron]
+    if rest:
+        from kometa import metron_client
+        search = metron_search or (metron_client.search_series if metron_client.configured() else None)
+        issues = metron_issues or metron_client.series_issues
+        for e in rest:
+            if not search:
+                break
+            try:
+                rows = search(_YEAR.sub("", e["series"]))
+                hit = next((r for r in rows if norm_key(r["title"]) == norm_key(_YEAR.sub("", e["series"]))), None) or (rows[0] if rows else None)
+                img = None
+                if hit:
+                    n = _num(e["number"])
+                    for i in issues(hit["id"]):
+                        if i.get("image") and (n is None or i["number"] == n or img is None):
+                            img = i["image"]
+                            if n is None or i["number"] == n:
+                                break
+                found[e["item_id"]] = img or ""
+            except Exception as ex:
+                logger.info(f"Reading list cover: Metron skipped {e['series']!r}: {ex}")
+                break
+    with db._connect(path) as conn:
+        for iid, url in found.items():
+            conn.execute("UPDATE reading_list_items SET cover_url = ? WHERE id = ?", (url, iid))
+    filled = sum(1 for u in found.values() if u)
+    return {"filled": filled, "missed": len(found) - filled, "left": len(todo) - len(found)}
+
+
 # --- API --------------------------------------------------------------------------
 class ImportUrlRequest(BaseModel):
     url: str
@@ -443,6 +509,26 @@ def api_list(list_id: int):
         return resolve(list_id)
     except KeyError:
         raise HTTPException(404, "No such reading list")
+
+
+@router.post("/api/readlists/{list_id}/covers")
+def api_fill_covers(list_id: int):
+    """Covers for the gaps: ComicVine in one batch now, a slice of Metron now,
+    the rest on the next call. The page calls this until 'left' is 0."""
+    try:
+        return fill_covers(list_id)
+    except KeyError:
+        raise HTTPException(404, "No such reading list")
+
+
+@router.get("/api/readlists/{list_id}/items/{item_id}/cover")
+def api_item_cover(list_id: int, item_id: int):
+    from kometa.thumbnails import _cached_image_response
+    with db._connect(DB_PATH) as conn:
+        r = conn.execute("SELECT cover_url FROM reading_list_items WHERE id = ? AND list_id = ?", (item_id, list_id)).fetchone()
+    if not r or not r[0]:
+        raise HTTPException(404)
+    return _cached_image_response(r[0])
 
 
 @router.get("/api/readlists/{list_id}/next")

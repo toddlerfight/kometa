@@ -145,3 +145,20 @@ def test_renamed_shapes_still_resolve(shelf, tmp_path):
     assert e[1]["status"] == "owned" and e[1]["books"][0]["label"].startswith("Hellboy - Seed of Destruction - The Deluxe")
     assert e[2]["status"] == "owned" and [b["label"] for b in e[2]["books"]] == ["#1", "#2"]
     assert e[3]["status"] == "missing"
+
+
+def test_covers_for_gaps_come_from_comicvine_then_metron_and_are_remembered(shelf):
+    lid = rl.import_cbl(CBL, path=shelf)
+    class CV:
+        def get_issues_meta(self, ids): return {"218367": {"image_url": "https://cv/seed.jpg"}}
+    calls = []
+    def search(q): calls.append(q); return [{"id": 9, "title": "Hellboy: The Chained Coffin and Others"}] if "Chained" in q else []
+    def issues(sid): return [{"number": 1.0, "image": "https://metron/chained.jpg"}]
+    r = rl.fill_covers(lid, path=shelf, cv=CV(), metron_search=search, metron_issues=issues)
+    # Seed of Destruction is owned → not asked; Witchfinder #3 (missing) and Chained Coffin (not on shelf) are
+    assert r["filled"] == 1 and r["left"] == 0
+    e = {x["position"]: x for x in rl.resolve(lid, path=shelf)["entries"]}
+    assert e[5]["cover"] and e[5]["cover"].endswith(f"/items/{e[5]['item_id']}/cover") and not e[5]["cover_pending"]
+    assert e[4]["cover"] is None and not e[4]["cover_pending"]          # a miss is remembered as ''
+    assert rl.fill_covers(lid, path=shelf, cv=CV(), metron_search=search, metron_issues=issues)["filled"] == 0
+    assert calls.count("Sir Edward Grey, Witchfinder") == 1              # asked once, not every open

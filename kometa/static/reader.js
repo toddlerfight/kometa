@@ -928,11 +928,22 @@ async function renderReadList(id) {
       const label = `${e.series}${e.number ? ' #' + e.number : ''}`;
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
       tiles.push(`<div class="issue-tile rl-gap" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
-        <div class="issue-tile-img unknown missing"></div>
+        <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}</div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }
   setApp(`
     <div class="issue-tabs-row"><div class="issue-tabs">${tabs}</div></div>
     ${tiles.length ? `<div class="issue-grid rl-grid">${tiles.join('')}</div>` : '<div class="state-msg">Nothing here.</div>'}`);
+  // Gaps without a cover yet: ask the catalogue (ComicVine in one go, Metron a
+  // few at a time) and repaint when something landed. Each answer is cached on
+  // the list, so this runs down to nothing after the first few opens.
+  if (l.entries.some(e => e.status !== 'owned' && e.cover_pending)) _rlFillCovers(id);
+}
+
+async function _rlFillCovers(id) {
+  try {
+    const r = await api.post(`/api/readlists/${id}/covers`, {});
+    if (currentView === 'readlist' && currentParams.id === id && r.filled) renderReadList(id);
+  } catch {}
 }
