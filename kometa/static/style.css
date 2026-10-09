@@ -2184,6 +2184,7 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 /* On Deck 'not now' — a small × on the tile, shown on hover (always on touch) */
 .od-x { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 0; border-radius: 50%; z-index: 2; padding: 0;
   background: rgba(0,0,0,.75); color: var(--tp); font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  padding-bottom: 3px;               /* the glyph sits low in its box: nudge it up to look centred */
   opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
 .od-card:hover .od-x, .od-card:focus-within .od-x { opacity: 1; }
 @media (hover: none) { .od-x { opacity: .85; } }
