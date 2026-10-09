@@ -235,6 +235,25 @@ the NAS** (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those
   `KomgaClient.set_book_number` (locked `numberLock`/`numberSortLock`) so Komga's own
   labels AND ordering are correct. After re-writing a CBZ (variant cover inject), call
   `analyze_book` so Komga re-extracts the cover.
+- **Metron API — READ THIS BEFORE TOUCHING IT** (source: Metron-Project/metron
+  `api/RATELIMIT.md`, `fail2ban/jail.d/metron.conf`, `api/throttle.py`; verified 2026-10-10
+  after Kometa got the house IP banned for 24h):
+  - Auth is `Authorization: Bearer <token>` (token from metron.cloud account page). Basic
+    auth is legacy (Mokkari 5 removed it). NEVER probe auth schemes against the live API:
+    **3 × HTTP 401 within 5 minutes = 24-hour IP ban** (fail2ban `metron-nginx-401`).
+  - Other bans: 10 × 403 / 5 min → 24h; 20 × 404 / 2 min → 1h; 20 dropped connections
+    (499) / 60s → 1h; 5 requests without a User-Agent / 60s → 24h; any UA containing
+    `comictagger` → 24h on the first request. Always send a User-Agent.
+  - Limits per authenticated user: burst 20/min, sustained 5,000/day (donors get a higher
+    sustained limit). Don't hardcode: read `X-RateLimit-{Burst,Sustained}-{Limit,Remaining,Reset}`
+    on every response and pause until `Reset` when `Remaining` hits 0. On 429 honour
+    `Retry-After` exactly; exponential backoff is for network/5xx only.
+  - Repeated 429 days trigger a warning email to the account, then token revocation /
+    account disable. One client, ONE throttle: never run a second process (sweep, script,
+    `docker exec`) with its own pacing against Metron — route everything through
+    `kometa/metron_client.py` in the app process.
+  - Reduce calls: use filters and `modified_gt`; `If-Modified-Since` saves bandwidth, not
+    requests. Admin contact: admin@metron.cloud; Matrix `#metrondb:matrix.org`.
 - **SABnzbd**: `http://$NAS_HOST:8080`, api_key in `/volume1/docker/config/sabnzbd/sabnzbd.ini`.
 - **Prowlarr** (indexer proxy): `http://$NAS_HOST:9696`, ApiKey in
   `/volume1/docker/config/prowlarr/config.xml`. Usenet indexers are NZBFinder (id 9) +

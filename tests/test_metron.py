@@ -126,3 +126,27 @@ class TestSync:
         db.set_locg_fetched(sid, "2026-01-01 00:00:00", lib)        # pretend it had a LOCG fetch once
         sync.sync_one(db.get_series_by_id(sid, lib))
         assert calls["locg"] == 0
+
+
+def test_burst_exhausted_pauses_until_its_reset_without_a_429(monkeypatch):
+    """Metron's own guidance: when Burst-Remaining reads 0, stop until Burst-Reset —
+    don't fire the next request and get the 429 (and the ban that follows abuse)."""
+    import io, json, time, urllib.request
+    import kometa.metron_client as m
+    monkeypatch.setattr(m, "_creds", lambda: ("token", "t"))
+    monkeypatch.setattr(m, "MIN_INTERVAL_S", 0)
+    m._state["paused_until"] = 0.0
+    class R(io.BytesIO):
+        status = 200
+        headers = {"X-Ratelimit-Burst-Limit": "20", "X-Ratelimit-Burst-Remaining": "0",
+                   "X-Ratelimit-Burst-Reset": str(int(time.time()) + 30),
+                   "X-Ratelimit-Sustained-Remaining": "4000", "X-Ratelimit-Sustained-Reset": str(int(time.time()) + 3600)}
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=30: R(json.dumps({"results": []}).encode()))
+    assert m._get("publisher/", name="Image") == {"results": []}
+    assert m._state["paused_until"] > time.time() + 20
+    import pytest
+    with pytest.raises(m.MetronUnavailable):
+        m._get("publisher/", name="Image")                      # the next call waits, it doesn't knock
+    m._state["paused_until"] = 0.0

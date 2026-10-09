@@ -74,11 +74,15 @@ def _get(path: str, **params) -> dict:
                 if lim and _state.get("sustained_limit") != lim:
                     _state["sustained_limit"] = lim
                     logger.info(f"Metron: sustained limit is {lim} a day for this account")
-                left = r.headers.get("X-Ratelimit-Sustained-Remaining")
-                if left is not None and int(left) < DAILY_FLOOR:
-                    reset = float(r.headers.get("X-Ratelimit-Sustained-Reset") or time.time() + 3600)
-                    _state["paused_until"] = reset
-                    logger.warning(f"Metron: {left} requests left today — pausing until its reset")
+                # Their RATELIMIT.md, verbatim: read BOTH counters on every response and
+                # pause until the window resets once a Remaining hits zero — never wait
+                # to be told 429. Sustained first: running out for the day costs most.
+                for scope, floor in (("Sustained", DAILY_FLOOR), ("Burst", 0)):
+                    left = r.headers.get(f"X-Ratelimit-{scope}-Remaining")
+                    if left is not None and int(left) <= floor:
+                        reset = float(r.headers.get(f"X-Ratelimit-{scope}-Reset") or time.time() + 60)
+                        _state["paused_until"] = max(_state["paused_until"], reset)
+                        logger.warning(f"Metron: {scope.lower()} remaining {left} — pausing until its reset")
                 return body
         except urllib.error.HTTPError as e:
             if e.code == 429:
