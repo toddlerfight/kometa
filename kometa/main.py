@@ -507,9 +507,29 @@ def list_series():
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
              "calendar_date": None, "out_today": 0, "card_image": None}
     from kometa.marks import marks_for
+    from kometa.family import attach_families
     fav = marks_for("series", DB_PATH)
-    return [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
+    rows = [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
                  rating=fav.get(s["id"], {}).get("rating")) for s in series]
+    return attach_families(rows)
+
+
+def _family_for(series_id: int) -> dict:
+    """The series' family for its page: the parent (if it is a special) and its
+    specials (if it is a run), as light rows the cards can draw."""
+    try:
+        rows = {r["id"]: r for r in list_series()}
+    except Exception:
+        return {"family_parent": None, "family_children": []}
+    me = rows.get(series_id)
+    if not me:
+        return {"family_parent": None, "family_children": []}
+    light = lambda r: {"id": r["id"], "title": r["title"], "owned": r.get("owned") or 0,
+                       "total": (r.get("owned") or 0) + (r.get("missing") or 0), "metron_type": r.get("metron_type"),
+                       "calendar_date": r.get("calendar_date"), "publisher": r.get("publisher")}
+    parent = rows.get(me.get("family_parent")) if me.get("family_parent") else None
+    return {"family_parent": light(parent) if parent else None,
+            "family_children": [light(rows[c]) for c in me.get("family_children") or [] if c in rows]}
 
 
 def _cached_trades(series: dict) -> list[dict] | None:
@@ -589,7 +609,7 @@ def get_series(series_id: int):
         from kometa.arc import arc_includes_series
         arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
                         if arc_includes_series(a["source_titles"], s["title"])) or None
-    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id),
+    return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id), **_family_for(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
                 **_summary(issues))
 

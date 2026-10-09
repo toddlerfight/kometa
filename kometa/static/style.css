@@ -2272,3 +2272,5 @@ body.touch .od-menu { opacity: .85; }
 .creator-modal .series-grid { grid-template-columns: repeat(auto-fill, 140px); gap: 18px 14px; }
 .creator-modal .series-card, .creator-modal .series-card-img-wrap { width: 140px; }
 .creator-modal .series-card-title { font-size: 12px; }
+.series-card-specials { color: var(--tq); font-weight: 400; margin-left: 4px; }
+.specials-row { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); margin-top: var(--sp-xl); }

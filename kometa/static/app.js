@@ -369,6 +369,7 @@ const BROWSE_TOGGLES = [
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
   { key: 'favourites', label: '♥ Favourites' },
+  { key: 'specials',   label: 'Specials' },     // unfold annuals / one-shots from under their runs
 ];
 
 const _isReading = s => (s.in_progress ?? 0) > 0 || (s.read_count ?? 0) > 0;
@@ -497,6 +498,7 @@ function _renderBrowseResults() {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.favourites && !s.favourite) return false;
+    if (s.family_parent && !toggles.specials && !search) return false;   // folded under its run (a search still finds it)
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -569,7 +571,7 @@ function _renderBrowseResults() {
         </div>
         <div class="series-card-footer">
           <div class="series-card-title">${esc(s.title)}</div>
-          <div class="series-card-count" style="color:${color}">${s.owned}/${total}</div>
+          <div class="series-card-count" style="color:${color}">${s.owned}/${total}${s.family_children?.length ? ` <span class="series-card-specials" title="${s.family_children.length} special${s.family_children.length > 1 ? 's' : ''} folded under this run">+${s.family_children.length}</span>` : ''}</div>
         </div>
         ${pub}
       </div>
@@ -797,6 +799,25 @@ function _paintRelated(id, d, attempt = 0) {
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>`).join('')}
   </div>`);
   _rowSig(app.querySelector('.rel-row'), sig);
+}
+
+// The run's specials — annuals, one-shots, tie-ins the catalogue files as their
+// own series (kometa/family.py). Their own pages, their own dates; shown here so
+// the Library can fold them under the run.
+function _paintSpecials(s) {
+  const app = document.getElementById('app');
+  app.querySelector('.specials-row')?.remove();
+  app.insertAdjacentHTML('beforeend', `<div class="od-row specials-row">
+    <div class="od-head"><span class="series-card-title">Specials</span></div>
+    <div class="series-grid">${s.family_children.map(c => `
+      <div class="series-card rel-card" tabindex="0" role="button" onclick="navigate('series-detail', {id: ${c.id}})" title="${esc(c.title)}">
+        <div class="series-card-img-wrap"><img class="series-card-cover" src="/api/series/${c.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
+          ${c.calendar_date ? `<div class="series-card-next-release">${_fmtReleaseDate(c.calendar_date)}</div>` : ''}</div>
+        <div class="series-card-footer"><div class="series-card-title">${esc(c.title.replace(new RegExp('^' + s.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[:\\-–]?\\s*', 'i'), '') || c.title)}</div>
+          <div class="series-card-count" style="color:${c.owned && c.owned >= c.total ? 'var(--pri)' : 'var(--tq)'}">${c.owned}/${c.total}</div></div>
+        <div class="series-card-publisher u-truncate">${esc(c.metron_type || '')}</div>
+      </div>`).join('')}</div>
+  </div>`);
 }
 
 // A credited person, tapped: everything by them. Shelf first (tap → series),
@@ -1767,6 +1788,7 @@ async function renderSeriesDetail(id) {
     released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
     s.from_list_id ? `<a class="chip chip-collected" title="Tracked by a reading list's Get — pull list off, only what the list asked for" onclick="navigate('readlist', {id: ${s.from_list_id}})">◆ from a reading list</a>` : '',
+    s.family_parent ? `<a class="chip chip-neutral" title="A special of this run" onclick="navigate('series-detail', {id: ${s.family_parent.id}})">part of ${esc(s.family_parent.title)}</a>` : '',
   ].filter(Boolean).join('');
 
   // An on/off switch, not a button: pulling is a state you can see and undo.
@@ -1887,6 +1909,7 @@ async function renderSeriesDetail(id) {
   if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
   if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
+  if (detailTab === 'all' && s.family_children?.length) _paintSpecials(s);
   if (detailTab === 'all') relP.then(d => d && _paintRelated(id, d));
 
   // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now
