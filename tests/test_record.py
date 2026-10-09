@@ -97,3 +97,100 @@ def test_reading_list_covers_come_from_the_record_first(db_path):
     r = rl.fill_covers(lid, path=db_path, cv=CV(), metron_search=lambda q: [], metron_issues=lambda s: [])
     e = {x["number"]: x for x in rl.resolve(lid, path=db_path)["entries"]}
     assert r["filled"] == 1 and e["2"]["cover"] and not e["2"]["cover_pending"]
+
+
+# --- trades into the record ----------------------------------------------------------
+from tests.conftest import make_cbz
+from kometa import metron_client
+
+SIBLINGS = {
+    "East of West": [
+        {"id": 4528, "series": "East of West (2013)", "year_began": 2013, "issue_count": 45, "series_type": {"id": 13, "name": "Single Issue"}},
+        {"id": 7131, "series": "East of West TPB (2013)", "year_began": 2013, "issue_count": 2, "series_type": {"id": 10, "name": "Trade Paperback"}},
+        {"id": 9000, "series": "East of West HC (2015)", "year_began": 2015, "issue_count": 1, "series_type": {"id": 8, "name": "Hardcover"}},
+        {"id": 4529, "series": "East of West: The World (2014)", "year_began": 2014, "issue_count": 1, "series_type": {"id": 5, "name": "One-Shot"}},
+        {"id": 1234, "series": "West TPB (1999)", "year_began": 1999, "issue_count": 3, "series_type": {"id": 10, "name": "Trade Paperback"}},
+        {"id": 1235, "series": "East of West TPB (1990)", "year_began": 1990, "issue_count": 3, "series_type": {"id": 10, "name": "Trade Paperback"}},
+    ]}
+ISSUES = {7131: [{"number": 1.0, "store_date": "2013-09-11", "image": "https://m/v1.jpg", "metron_issue_id": 501},
+                 {"number": 2.0, "store_date": "2014-03-01", "image": "https://m/v2.jpg", "metron_issue_id": 502}],
+          9000: [{"number": 1.0, "store_date": "2015-01-01", "image": "https://m/hc1.jpg", "metron_issue_id": 601}]}
+DETAIL = {501: {"title": "The Promise", "page": 156, "isbn": "9781607067702", "price": "9.99", "desc": "Year one.",
+                "name": ["One: Out of the Wasteland", "Two: Above All"]},
+          502: {"title": "We Are All One", "page": 128, "isbn": "9781607068556", "price": "14.99", "desc": "", "name": []},
+          601: {"title": "Year One", "page": 300, "isbn": "9781632150004", "price": "49.99", "desc": "", "name": []}}
+
+
+def _eow(db_path, tmp_path, monkeypatch, locg=None):
+    import kometa.sync as sync
+    monkeypatch.setattr(sync, "_komga", lambda: None)
+    folder = tmp_path / "East of West"; folder.mkdir()
+    sid = db.add_series(title="East of West", publisher="Image", year_began=2013, folder_path=str(folder), on_pull_list=False, path=db_path)
+    db.set_metron_series_id(sid, 4528, db_path)
+    if locg:
+        db.set_locg_series_id(sid, locg, db_path)
+    make_cbz(folder / "East of West v01 - The Promise.cbz")
+    make_cbz(folder / "East of West - The World (2014).cbz")
+    return db.get_series_by_id(sid, db_path)
+
+
+def test_collected_siblings_share_the_base_name_a_collected_type_and_a_sane_year(db_path, tmp_path, monkeypatch):
+    s = _eow(db_path, tmp_path, monkeypatch)
+    sibs = rec.collected_siblings(s, search=lambda q: SIBLINGS.get(q, []))
+    assert [(x["id"], x["format"]) for x in sibs] == [(7131, "TPB"), (9000, "HC")]   # not the run, the one-shot, 'West', or 1990's
+
+
+def test_fill_trades_from_metron_writes_the_record_and_the_cache_the_tab_reads(db_path, tmp_path, monkeypatch):
+    s = _eow(db_path, tmp_path, monkeypatch)
+    trades = rec.fill_trades(s, path=db_path, search=lambda q: SIBLINGS.get(q, []), issues=lambda sid: ISSUES.get(sid, []),
+                             detail=lambda iid: DETAIL[iid])
+    by = {(t["vol"], t["format"]): t for t in trades}
+    v1 = by[(1, "TPB")]
+    assert v1["title"] == "East of West Vol. 1: The Promise TPB" and v1["locg_id"] == "m501" and v1["isbn"] == "9781607067702"
+    assert v1["owned"] and v1["file"] == "East of West v01 - The Promise.cbz"            # the volume file on disk
+    assert not by[(2, "TPB")]["owned"] and by[(1, "HC")]["title"] == "East of West Vol. 1: Year One HC"
+    assert db.get_trades(s["id"], db_path)["trades"][0]["metron_issue_id"] == 501            # trades_cache: what the tab reads
+    with db._connect(db_path) as c:
+        keys = sorted(r[0] for r in c.execute("SELECT key FROM trade_record WHERE tracked_series_id = ?", (s["id"],)))
+    assert keys == ["m501", "m502", "m601"]
+    d = rec.trade_details("m501", db_path)
+    assert "Collects: One: Out of the Wasteland" in d["desc"] and "156 pages" in d["desc"] and rec.trade_details("12345", db_path) is None
+
+
+def test_locg_merges_by_volume_and_format_only_while_open(db_path, tmp_path, monkeypatch):
+    s = _eow(db_path, tmp_path, monkeypatch, locg=777)
+    locg = [{"format": "TPB", "title": "East of West Vol. 1 TP", "locg_id": "88", "cover": "https://l/1.jpg", "vol": 1, "vol_range": None, "is_variant": False},
+            {"format": "TPB", "title": "East of West Compendium TP", "locg_id": "89", "cover": None, "vol": None, "vol_range": None, "is_variant": False}]
+    kw = dict(path=db_path, search=lambda q: SIBLINGS.get(q, []), issues=lambda sid: ISSUES.get(sid, []), detail=lambda iid: DETAIL[iid])
+    closed = rec.fill_trades(s, locg_fetch=lambda lid: locg, locg_open=lambda: False, **kw)
+    assert all(t["source"] == "metron" for t in closed) and len(closed) == 3            # LOCG shut: Metron only
+    opened = rec.fill_trades(s, locg_fetch=lambda lid: locg, locg_open=lambda: True, **kw)
+    by = {t["title"]: t for t in opened}
+    assert by["East of West Vol. 1: The Promise TPB"]["locg_trade_id"] == "88"           # known to both: Metron row keeps, gains the id
+    assert by["East of West Compendium TP"]["source"] == "locg" and len(opened) == 4     # LOCG-only edition appended
+
+
+def test_metron_key_never_collides_with_locg_ids_or_the_sentinels():
+    from kometa.acquisition import PACK_LOCG_SENTINEL
+    from kometa.proposals import PROPOSAL_LOCG_SENTINEL
+    assert rec.metron_key(501) == "m501"
+    assert rec.metron_key(1) not in {str(PACK_LOCG_SENTINEL), str(PROPOSAL_LOCG_SENTINEL), "1"}
+
+
+def test_trades_trickle_fills_pull_list_first_and_stops_at_metrons_refusal(db_path, tmp_path, monkeypatch):
+    import kometa.sync as sync
+    monkeypatch.setattr(sync, "_komga", lambda: None)
+    a = db.add_series(title="A", publisher="X", folder_path=None, on_pull_list=False, path=db_path)
+    b = db.add_series(title="B", publisher="X", folder_path=None, on_pull_list=True, path=db_path)
+    for sid in (a, b):
+        db.set_metron_series_id(sid, 10 + sid, db_path)
+    calls = []
+    def fake_fill(series, path=None, **kw):
+        calls.append(series["title"])
+        if series["title"] == "A":
+            raise metron_client.MetronUnavailable("429")
+        db.set_trades(series["id"], [], path)
+        return []
+    monkeypatch.setattr(rec, "fill_trades", fake_fill)
+    assert rec.trades_trickle(limit=5, path=db_path) == 1
+    assert calls == ["B", "A"]                                                            # pull list first; refusal ends the tick

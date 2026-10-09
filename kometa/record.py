@@ -12,6 +12,7 @@ it's old. Nothing asks a catalogue at request time.
 """
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -40,6 +41,13 @@ def ensure_tables(path=None):
             metron_series_id INTEGER, locg_series_id INTEGER, cv_volume_id TEXT,
             source TEXT, fetched_at TEXT, fill_state TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_issue_record_state ON issue_record(fill_state, fetched_at)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS trade_record (
+            tracked_series_id INTEGER NOT NULL, key TEXT NOT NULL,
+            title TEXT, vol INTEGER, vol_range_json TEXT, format TEXT, edition_title TEXT, subtitle TEXT,
+            cover TEXT, store_date TEXT, page_count INTEGER, isbn TEXT, price TEXT, desc TEXT, collects_json TEXT,
+            metron_series_id INTEGER, metron_issue_id INTEGER, locg_id TEXT,
+            source TEXT, fetched_at TEXT,
+            PRIMARY KEY (tracked_series_id, key))""")
 
 
 def _now() -> str:
@@ -277,3 +285,209 @@ def _safe_refresh(sid: int, number: float, path):
         fill_issue(sid, number, path, force=True)
     except Exception as e:
         logger.info(f"Record refresh for {sid}#{number} skipped: {e}")
+
+
+# --- trades: collected editions, Metron first, LOCG second --------------------------
+# Metron files a run's collected editions as SIBLING series ('East of West TPB
+# (2013)', type Trade Paperback) whose issues are the volumes. LOCG lists them
+# under the run itself, by name only. Both land here as one list per series,
+# written to trades_cache in the shape the Trades tab, the shelf page, tidy and
+# refresh_trades_owned already read — so none of them change.
+COLLECTED_TYPES = {"Trade Paperback": "TPB", "Hardcover": "HC", "Omnibus": "Omnibus", "Graphic Novel": "GN"}
+TRADE_DETAIL_BUDGET = 20        # issue details fetched per fill, for subtitle / pages / ISBN
+TRADES_TRICKLE_LIMIT = 5
+_FORMAT_SUFFIX_RE = re.compile(r"\s+(?:tpb|tp|hc|omnibus|gn|ogn|compendium|deluxe(?: edition)?|library edition|"
+                               r"absolute|hardcover|trade paperback|collected edition|book)$", re.I)
+
+
+def metron_key(metron_issue_id: int) -> str:
+    """The queue/tab key for a Metron-sourced trade. The Trades tab, the download
+    endpoint and download_queue all key on a TEXT locg_id; LOCG's are digits,
+    the pack and proposal sentinels are -1 / -2, so 'm<id>' can collide with none."""
+    return f"m{int(metron_issue_id)}"
+
+
+def _base_name(name: str) -> str:
+    t = re.sub(r"\s*\(\d{4}\)\s*$", "", name or "").strip()
+    prev = None
+    while prev != t:
+        prev, t = t, _FORMAT_SUFFIX_RE.sub("", t).strip(" :-")
+    return t
+
+
+def collected_siblings(series: dict, search=None) -> list[dict]:
+    """Metron series that are this run's collected editions: same base name,
+    a collected type, begun no earlier than the year before the run."""
+    from kometa import metron_client
+    from kometa.naming import norm_key
+    want = norm_key(_base_name(series["title"]))
+    year = series.get("year_began")
+    raw = search or (lambda q: metron_client._get("series/", name=q).get("results", []))
+    out, seen = [], set()
+    for q in metron_client.title_variants(_base_name(series["title"])):
+        for r in raw(q):
+            st = r.get("series_type")
+            fmt = COLLECTED_TYPES.get(st.get("name") if isinstance(st, dict) else st)
+            if not fmt or r["id"] in seen:
+                continue
+            if norm_key(_base_name(r.get("series") or r.get("name") or "")) != want:
+                continue
+            if year and r.get("year_began") and r["year_began"] < year - 1:
+                continue
+            seen.add(r["id"])
+            out.append({"id": r["id"], "name": r.get("series") or r.get("name"), "format": fmt,
+                        "year": r.get("year_began"), "issue_count": r.get("issue_count")})
+    return out
+
+
+def _metron_trades(series: dict, search=None, issues=None, detail=None, budget: int = TRADE_DETAIL_BUDGET) -> list[dict]:
+    from kometa import metron_client
+    issues = issues or metron_client.series_issues
+    detail = detail or (lambda iid: metron_client._get(f"issue/{int(iid)}/"))
+    base = _base_name(series["title"])
+    out, looked = [], 0
+    for sib in collected_siblings(series, search):
+        for i in issues(sib["id"]):
+            n = i.get("number")
+            vol = int(n) if n is not None and float(n) == int(n) else None
+            t = {"format": sib["format"], "vol": vol, "vol_range": None, "is_variant": False,
+                 "cover": i.get("image"), "store_date": i.get("store_date"),
+                 "metron_series_id": sib["id"], "metron_issue_id": i.get("metron_issue_id"),
+                 "locg_id": metron_key(i["metron_issue_id"]) if i.get("metron_issue_id") else None,
+                 "subtitle": None, "page_count": None, "isbn": None, "price": None, "desc": None, "collects": [],
+                 "source": "metron"}
+            if i.get("metron_issue_id") and looked < budget:
+                looked += 1
+                try:
+                    d = detail(i["metron_issue_id"])
+                    t["subtitle"] = (d.get("title") or "").strip() or None
+                    t["page_count"] = d.get("page")
+                    t["isbn"] = d.get("isbn") or None
+                    t["price"] = d.get("price")
+                    t["desc"] = d.get("desc") or None
+                    t["collects"] = [x for x in (d.get("name") or []) if isinstance(x, str)]
+                except metron_client.MetronUnavailable:
+                    raise
+                except Exception as e:
+                    logger.info(f"Trade detail for {base!r} vol {vol} skipped: {e}")
+            label = f"{base} Vol. {vol}" if vol is not None else base
+            t["title"] = f"{label}: {t['subtitle']} {sib['format']}" if t["subtitle"] else f"{label} {sib['format']}"
+            t["edition_title"] = t["title"]
+            out.append(t)
+    return out
+
+
+def _merge_locg(trades: list[dict], locg: list[dict]) -> list[dict]:
+    """An edition both catalogues know keeps the Metron row and gains the LOCG id;
+    the rest of LOCG's list is appended as is."""
+    by = {(t.get("vol"), t.get("format")): t for t in trades if t.get("vol") is not None}
+    for l in locg:
+        hit = by.get((l.get("vol"), l.get("format"))) if l.get("vol") is not None else None
+        if hit:
+            hit["locg_trade_id"] = l.get("locg_id")
+            hit["cover"] = hit.get("cover") or l.get("cover")
+        else:
+            trades.append(dict(l, source="locg"))
+    return trades
+
+
+def fill_trades(series, force: bool = False, path=None, books=None, search=None, issues=None, detail=None,
+                locg_fetch=None, locg_open=None, enrich=None) -> list[dict]:
+    """The series' collected editions into trade_record AND trades_cache (enriched
+    with owned/file, the two stored facts). Metron first; LOCG only when open.
+    Raises MetronUnavailable so a trickle can stop; any LOCG trouble is logged."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    if isinstance(series, int):
+        series = db.get_series_by_id(series, path)
+    if not series:
+        return []
+    from kometa import locg_client
+    trades: list[dict] = []
+    if series.get("metron_series_id"):
+        trades = _metron_trades(series, search=search, issues=issues, detail=detail)
+    locg_id = series.get("locg_series_id")
+    if locg_id:
+        is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
+        if is_open:
+            try:
+                # through sync's names, not locg_client's: that's the seam the LOCG
+                # budget tests (and any caller counting LOCG traffic) hook
+                from kometa import sync as _sync
+                fetch = locg_fetch or (lambda lid: _sync.select_editions(_sync.get_trades_anon(lid)))
+                trades = _merge_locg(trades, fetch(locg_id))
+            except Exception as e:
+                logger.info(f"Trades: LOCG skipped for {series.get('title')!r}: {e}")
+    if not trades and not force:
+        cached = db.get_trades(series["id"], path)
+        if cached and cached["trades"]:
+            return cached["trades"]
+    from kometa.sync import enrich_trades
+    (enrich or enrich_trades)(series, trades, books=books)
+    with db._connect(path) as conn:
+        for t in trades:
+            key = metron_key(t["metron_issue_id"]) if t.get("metron_issue_id") else f"l:{t.get('locg_id')}"
+            conn.execute("""INSERT OR REPLACE INTO trade_record (tracked_series_id, key, title, vol, vol_range_json, format,
+                edition_title, subtitle, cover, store_date, page_count, isbn, price, desc, collects_json,
+                metron_series_id, metron_issue_id, locg_id, source, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         (series["id"], key, t.get("title"), t.get("vol"), json.dumps(t.get("vol_range")), t.get("format"),
+                          t.get("edition_title"), t.get("subtitle"), t.get("cover"), t.get("store_date"), t.get("page_count"),
+                          t.get("isbn"), t.get("price"), t.get("desc"), json.dumps(t.get("collects") or []),
+                          t.get("metron_series_id"), t.get("metron_issue_id"),
+                          str(t.get("locg_trade_id") or (t.get("locg_id") if t.get("source") == "locg" else "") or "") or None,
+                          t.get("source") or "locg", _now()))
+    db.set_trades(series["id"], trades, path)
+    return trades
+
+
+def trade_details(key: str, path=None) -> dict | None:
+    """The trade modal's Details for a Metron-sourced edition: description and
+    what it collects, from the record. None for an LOCG key (the live scrape)."""
+    path = path or DB_PATH
+    if not str(key).startswith("m"):
+        return None
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT * FROM trade_record WHERE key = ? LIMIT 1", (key,)).fetchone()
+    if not r:
+        return {"desc": "", "credits": [], "source": "metron"}
+    collects = json.loads(r["collects_json"] or "[]")
+    desc = r["desc"] or ""
+    if collects:
+        desc = (desc + "\n\n" if desc else "") + "Collects: " + "; ".join(collects)
+    bits = [b for b in (f"{r['page_count']} pages" if r["page_count"] else None, f"ISBN {r['isbn']}" if r["isbn"] else None,
+                        f"Released {r['store_date']}" if r["store_date"] else None) if b]
+    if bits:
+        desc = (desc + "\n\n" if desc else "") + " · ".join(bits)
+    return {"desc": desc, "credits": [], "source": "metron", "store_date": r["store_date"]}
+
+
+def pending_trade_series(path=None, limit: int = 50) -> list[dict]:
+    """Series with a catalogue id and no trades list yet, pull list first."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT s.* FROM tracked_series s LEFT JOIN trades_cache c ON c.tracked_series_id = s.id
+            WHERE (s.kind IS NULL OR s.kind != 'arc') AND c.tracked_series_id IS NULL
+              AND (s.metron_series_id IS NOT NULL OR s.locg_series_id IS NOT NULL)
+            ORDER BY s.on_pull_list DESC, s.id LIMIT ?""", (limit,))]
+
+
+def trades_trickle(limit: int = TRADES_TRICKLE_LIMIT, path=None) -> int:
+    """Scheduler tick: a few series' trade lists, stopping at Metron's first refusal."""
+    path = path or DB_PATH
+    from kometa import metron_client
+    done = 0
+    for s in pending_trade_series(path, limit=limit * 3):
+        if done >= limit:
+            break
+        try:
+            fill_trades(s, path=path)
+            done += 1
+        except metron_client.MetronUnavailable as e:
+            logger.info(f"Trades trickle paused: {e}")
+            break
+        except Exception as e:
+            logger.info(f"Trades trickle skipped {s.get('title')!r}: {e}")
+    return done

@@ -257,3 +257,20 @@ Kometa keeps its own record of series and issue details (`kometa/record.py`) and
 - **When it fills.** A scheduler trickle (`record_trickle`, every 10 minutes, 25 issues per tick) takes the oldest unfilled issues, pull-list series first, and stops at Metron's first refusal. New issues written by sync are picked up by the next tick. Opening an issue's details fills its row on the spot if absent.
 - **TTLs.** A `full` or `partial` row is refreshed in the background when it is opened and older than 90 days. A `miss` is retried after 7 days.
 - **Readers.** The issue modal's details, Related and Suggestions signals, reading-list gap covers and OPDS summaries read the record first. The Variants tab keeps its live merge of Metron and LOCG covers. Trades are not yet in the record.
+
+**Trades (added 2026-10-10).** Collected editions are part of the record. Metron is
+the primary source: a run's collected editions are sibling series of type Trade
+Paperback, Hardcover, Omnibus or Graphic Novel that share the run's base name and
+began no earlier than the year before it; their issues are the volumes, and one
+issue detail per volume supplies the subtitle, page count, ISBN, price and the
+stories collected (a bounded number of details per fill). LOCG is merged second,
+only while a browser pass is live: an edition known to both keeps the Metron row
+and gains the LOCG id; editions only LOCG lists are appended. Rows live in
+`trade_record` keyed by `m<metron issue id>` or `l<LOCG id>`, and the merged list
+is also written to `trades_cache` in the shape the Trades tab, the shelf page,
+tidy and the owned re-stamp already read, so those paths are unchanged. Sync fills
+trades for any series with a Metron or LOCG id on the existing 30-day cadence; a
+scheduler trickle fills five series without a list every ten minutes, pull list
+first, stopping at Metron's first refusal. A Metron-sourced edition is queued for
+download under the key `m<id>`, which cannot collide with LOCG ids or the pack and
+proposal sentinels; the download itself is searched by title and volume as before.
