@@ -159,3 +159,10 @@ def test_file_under_strips_the_issue_hash_from_a_volume_name():
     stem = tidy._clean_scene_name(re.sub(r"\s*#\s*\d+(?:\.\d+)?", "", "Rumble - Vol. 1 #001 (2015) (Digital)"))
     assert stem == "Rumble - Vol. 1 (2015)"
     assert parse_issue_number(stem + ".cbz", "Rumble") is None
+
+
+def test_unknown_publisher_moves_into_the_existing_publisher_folder_whatever_its_case(tmp_path):
+    import kometa.tidy as tidy
+    (tmp_path / "BOOM! Studios").mkdir()
+    assert tidy._existing_dir_name(str(tmp_path), "Boom! Studios") == "BOOM! Studios"
+    assert tidy._existing_dir_name(str(tmp_path), "Image Comics") == "Image Comics"

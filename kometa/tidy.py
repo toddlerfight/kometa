@@ -69,6 +69,21 @@ def _is_rar(path: str) -> bool:
         return False
 
 
+def _existing_dir_name(root: str, name: str) -> str:
+    """The on-disk spelling of a publisher folder, if one already exists that
+    differs only in case or punctuation ('BOOM! Studios' vs Metron's 'Boom!
+    Studios'): the NAS is case-sensitive, so a new spelling would be a second
+    folder beside the real one."""
+    want = re.sub(r"[^a-z0-9]", "", name.lower())
+    try:
+        for d in os.listdir(root):
+            if os.path.isdir(os.path.join(root, d)) and re.sub(r"[^a-z0-9]", "", d.lower()) == want:
+                return d
+    except OSError:
+        pass
+    return name
+
+
 def plan(series_id: int, path=None) -> dict:
     """The dry run: every operation tidy WOULD do, and every file it would leave."""
     path = path or DB_PATH
@@ -93,7 +108,7 @@ def plan(series_id: int, path=None) -> dict:
     parent = os.path.dirname(folder)
     if os.path.basename(parent).lower() == "unknown" and ident.get("publisher"):
         from kometa import sources
-        parent = os.path.join(sources.comics_root(), _safe(ident["publisher"]))
+        parent = os.path.join(sources.comics_root(), _existing_dir_name(sources.comics_root(), _safe(ident["publisher"])))
     target_folder = os.path.join(parent, folder_name(ident["title"], ident["year"]))
     ops, leave = [], []
     if os.path.realpath(target_folder) != os.path.realpath(folder):
