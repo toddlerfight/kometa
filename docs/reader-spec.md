@@ -247,3 +247,13 @@ Layout and visual decisions are deliberately not made here: On Deck row order an
 density, card design per row, reader chrome (scrubber, controls, tap zones),
 end-screen design, dismiss affordance. Research patterns to draw on are in
 `reader-research.md` §2.
+
+## Local catalogue record *(added 2026-10-09)*
+
+Kometa keeps its own record of series and issue details (`kometa/record.py`) and reads from it rather than from a catalogue at request time.
+
+- **Tables.** `issue_record` (keyed by tracked series id and issue number): description, credits with Metron creator ids where known, arcs, covers, store and cover dates, page count, price, ISBN, catalogue ids, source, fetched time and fill state (`full`, `partial`, `miss`). `series_record` (keyed by tracked series id): description, publisher, years, series type, issue count, catalogue ids, source, fetched time and fill state.
+- **Fill order.** Metron first, for issues that carry a Metron id. LOCG second, only while LOCG is not paused, for issues known there and not on Metron; such rows are `partial` (names without ids, no covers). An issue known to neither is written as a `miss`.
+- **When it fills.** A scheduler trickle (`record_trickle`, every 10 minutes, 25 issues per tick) takes the oldest unfilled issues, pull-list series first, and stops at Metron's first refusal. New issues written by sync are picked up by the next tick. Opening an issue's details fills its row on the spot if absent.
+- **TTLs.** A `full` or `partial` row is refreshed in the background when it is opened and older than 90 days. A `miss` is retried after 7 days.
+- **Readers.** The issue modal's details, Related and Suggestions signals, reading-list gap covers and OPDS summaries read the record first. The Variants tab keeps its live merge of Metron and LOCG covers. Trades are not yet in the record.
