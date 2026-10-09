@@ -663,13 +663,14 @@ async function renderOnDeck() {
 // --- Trending (kometa/trending.py): what shops sold most, from ICv2 ----------------
 function _trendCard(e) {
   const owned = e.owned && e.series_id;
-  const go = owned ? `navigate('series-detail', {id: ${e.series_id}})` : '';
+  const go = owned ? `navigate('series-detail', {id: ${e.series_id}})`
+    : `showCatalogueModal(${JSON.stringify({ title: e.metron_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] }).replace(/"/g, '&quot;')})`;
   const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
   const action = owned ? ''
     : e.metron_series_id
       ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
       : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
-  return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(e.title)} · ${esc(e.publisher || '')}">
+  return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" title="${esc(e.title)} · ${esc(e.publisher || '')}">
     <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <div class="series-card-next-release trend-rank">#${e.rank}</div>${action}</div>
     <div class="series-card-footer"><div class="series-card-title">${esc(e.series)}</div>
@@ -734,7 +735,8 @@ function _gapCard(r) {
 function _catalogueCard(r) {
   const why = (r.why || []).join(' · ');
   const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
-  return `<div class="series-card rel-card rel-gap" tabindex="0" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}">
+  const open = `showCatalogueModal(${JSON.stringify(r).replace(/"/g, '&quot;')})`;
+  return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}" onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' ')${open}">
     <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(r.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <button class="od-menu rel-get" title="Track this series (pull list off)" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
@@ -802,22 +804,72 @@ async function _loadBecause(exclude, attempt = 0) {
 // Same shape as the reader's own ⋯ — tap the thing, get its actions.
 function _bookActions(c) {
   // A tracked series' issue: the series page's own modal, cover and details and
-  // all, with the card's actions in its footer. An untracked shelf book has no
-  // catalogue page to show, so it gets the plain sheet.
+  // all, with the card's actions in its footer. A trade or an untracked shelf
+  // book has no issue to look up, so it gets the same modal shape built from
+  // the book itself (cover, pages, star, rating) — never a bare list of buttons.
   if (c.series_id && c.number != null) return showIssueModal(c.series_id, c.number, { book: c });
-  const rows = [
-    `<button class="sheet-btn" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>`,
-    c.series_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('series-detail', {id: ${c.series_id}})">Go to series</button>`
-      : c.shelf_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('shelf', {id: ${c.shelf_id}})">Go to series</button>` : '',
-    c.dismissable ? `<button class="sheet-btn" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : '',
-    `<button class="sheet-btn" onclick="closeModal(); _toggleBookFav(${c.book_id})">☆ Favourite</button>`,
-    c.completed ? `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, false)">Mark as unread</button>`
-                : `<button class="sheet-btn" onclick="closeModal(); _bookSetRead(${c.book_id}, true)">Mark as read</button>`,
-  ].filter(Boolean).join('');
+  return showBookModal(c);
+}
+
+// The issue modal's shape for a book that isn't an issue: trades, one-shots,
+// untracked shelf books. Same cover column, same footer slots.
+async function showBookModal(c) {
+  let bk = null;
+  try { bk = await api.get(`/api/books/${c.book_id}`); } catch {}
+  const label = c.label || '';
+  const series = c.series || bk?.title || '';
+  // a trade's file name already carries the series: don't say it twice
+  const title = label && series && label.toLowerCase().startsWith(series.toLowerCase().replace(/\s*\(\d{4}\)$/, '')) ? label : `${series} ${label}`.trim();
+  const completed = bk?.progress?.completed ?? c.completed;
+  const goSeries = c.series_id ? `detailTab = 'trades'; navigate('series-detail', {id: ${c.series_id}})`
+    : c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '';
+  const pages = bk?.page_count ? `${bk.page_count} pages` : '';
+  const prog = bk?.progress && !completed ? ` · on page ${bk.progress.page}` : (completed ? ' · read' : '');
+  document.getElementById('modal').classList.add('modal-wide');
   showModal(`
-    <div class="modal-header"><h2>${esc(c.series)} ${esc(c.label || '')}</h2></div>
-    <div class="modal-body action-sheet">${rows}</div>
-    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`);
+    <div class="issue-modal-layout">
+      ${_modalCoverHtml(`/api/books/${c.book_id}/cover`, label)}
+      <div class="issue-modal-info">
+        <div class="issue-modal-num">${esc(title)}</div>
+        <div class="issue-modal-series">${esc(series)}</div>
+        <div class="issue-modal-meta">${esc([bk?.publisher, pages].filter(Boolean).join(' · '))}${esc(prog)}</div>
+        <div style="margin:8px 0"><span class="chip chip-complete">On the shelf</span>${c.number == null ? ' <span class="chip chip-collected">Collected edition</span>' : ''}</div>
+        ${bk ? _markRowHtml(bk) : ''}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${goSeries ? `<button class="btn btn-ghost" onclick="closeModal(); ${goSeries}">Go to series</button>` : ''}
+      ${c.dismissable ? `<button class="btn btn-ghost" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : ''}
+      <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${c.book_id}, ${completed ? 'false' : 'true'})">${completed ? 'Mark as unread' : 'Mark as read'}</button>
+      <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>
+    </div>`);
+}
+
+// A series that isn't on the shelf (Related's "By the same people", Trending):
+// the same modal, the catalogue's facts, and Track where Read would be.
+function showCatalogueModal(r) {
+  const why = (r.why || []).filter(Boolean);
+  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.metron_title || r.title, publisher_name: r.publisher || '',
+    year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
+  document.getElementById('modal').classList.add('modal-wide');
+  showModal(`
+    <div class="issue-modal-layout">
+      ${_modalCoverHtml(r.cover || '', r.title)}
+      <div class="issue-modal-info">
+        <div class="issue-modal-num">${esc(r.title)}</div>
+        <div class="issue-modal-series">${esc([r.publisher, r.year].filter(Boolean).join(' · '))}</div>
+        <div style="margin:8px 0"><span class="chip" style="color:var(--tq);border-color:var(--tq)">Not on the shelf</span>
+          ${r.total ? `<span class="chip chip-neutral">${r.total} issues</span>` : ''}${r.rank ? `<span class="chip chip-neutral">#${r.rank} this month</span>` : ''}</div>
+        ${why.length ? `<div class="issue-modal-meta">${why.map(esc).join(' · ')}</div>` : ''}
+        <div class="issue-modal-meta" style="margin-top:10px;color:var(--td)">Track adds it to the Library with the pull list off: issues and covers from the catalogue, nothing downloaded until you ask.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${r.metron_series_id ? `<button class="btn btn-primary" onclick="closeModal(); _relTrack(${payload}, this)">Track series</button>`
+        : `<button class="btn btn-primary" onclick="closeModal(); showAddWizard(${JSON.stringify(r.title).replace(/"/g, '&quot;')})">Find in catalogue</button>`}
+    </div>`);
 }
 
 async function _bookSetRead(bookId, read) {
