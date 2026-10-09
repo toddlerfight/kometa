@@ -177,9 +177,10 @@ def related(series_id: int, limit: int = 12, path=None, signals=None, neighbours
         for sid, w2 in cidx.get(k, []):
             if sid == series_id:
                 continue
+            if min(w, w2) < 1.0:             # a shared letterer or colorist is not a relation
+                continue
             scores[sid] += min(w, w2)
-            if min(w, w2) >= 1.0:            # name the writer or artist, not the letterer
-                why[sid].append(name)
+            why[sid].append(name)
     my_arcs = {norm_key(a): a for a in me["arcs"]}
     for sid, s in sig.items():
         if sid == series_id:
