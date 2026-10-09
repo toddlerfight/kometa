@@ -767,17 +767,40 @@ function _paintRelated(id, d, attempt = 0) {
   if (d.pending && attempt < 4) setTimeout(() => _loadRelated(id, attempt + 1), 4000);
   const app = document.getElementById('app');
   app.querySelector('.rel-row')?.remove();
-  const out = d.outward || [];
-  if (!d.related.length && !out.length && !d.pending) return;
+  // one row per weighty credit — "More from Paul Pope" — the name is the reason
+  const creators = d.creators || [];
+  if (!d.related.length && !creators.length && !d.pending) return;
   app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
     <div class="od-head"><span class="series-card-title">Related</span>
       <span class="u-label" style="color:var(--tq);margin-left:10px">on your shelf · same creators · same arc · same reading list</span></div>
     ${d.related.length ? `<div class="series-grid">${d.related.map(_relCard).join('')}</div>`
       : '<div class="od-empty">Nothing on the shelf yet — the catalogue is still being asked about this series.</div>'}
-    ${out.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">By the same people</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">not on your shelf · Track puts them there</span></div>
-      <div class="series-grid">${out.map(_relCard).join('')}</div>` : ''}
+    ${creators.map(r => `<div class="od-head" style="margin-top:14px"><span class="series-card-title">More from ${esc(r.name)}</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">on your shelf first · then the catalogue, Track puts them there</span></div>
+      <div class="series-grid">${r.items.map(_relCard).join('')}</div>`).join('')}
   </div>`);
+}
+
+// A credited person, tapped: everything by them. Shelf first (tap → series),
+// then the catalogue (Track). Same lookup as the "More from" rows.
+async function showCreatorModal(creatorId, name, attempt = 0) {
+  let d;
+  try { d = await api.get(`/api/creators/${creatorId}?name=${encodeURIComponent(name || '')}`); }
+  catch { showToast('Couldn’t look that person up', 'error'); return; }
+  const paint = () => `
+    <div class="modal-header"><h2>${esc(d.name || name || 'Creator')}</h2>
+      <div class="u-label" style="color:var(--tq)">${d.shelf.length} on your shelf · ${d.catalogue.length} in the catalogue${d.pending ? ' · still looking…' : ''}</div></div>
+    <div class="modal-body creator-modal">
+      ${d.shelf.length ? `<div class="od-head"><span class="series-card-title">On the shelf</span></div><div class="series-grid">${d.shelf.map(_relCard).join('')}</div>` : ''}
+      ${d.catalogue.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">In the catalogue</span>
+        <span class="u-label" style="color:var(--tq);margin-left:10px">Track puts them on the shelf</span></div><div class="series-grid">${d.catalogue.map(_relCard).join('')}</div>` : ''}
+      ${!d.shelf.length && !d.catalogue.length ? `<div class="od-empty">${d.pending ? 'Asking the catalogue…' : 'Nothing else by them that Metron knows.'}</div>` : ''}
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
+  if (attempt === 0) document.getElementById('modal').classList.add('modal-wide');
+  else if (!document.querySelector('#modal .creator-modal')) return;      // they closed it: stop looking
+  showModal(paint());
+  if (d.pending && attempt < 2) setTimeout(() => showCreatorModal(creatorId, name, attempt + 1), 4000);
 }
 
 // "Because you read {series}" (kometa/related.py because_rows): one row per
@@ -3893,13 +3916,17 @@ function _renderIssueDetails(desc, credits) {
   if (credits && credits.length) {
     const grouped = {};
     for (const c of credits) {
-      if (c.name) (grouped[c.role || 'Other'] = grouped[c.role || 'Other'] || []).push(c.name);
+      if (c.name) (grouped[c.role || 'Other'] = grouped[c.role || 'Other'] || []).push(c);
     }
+    // a name with a Metron id is a door: tap it for everything by that person
+    const person = c => c.metron_creator_id
+      ? `<button class="credit-link" onclick="showCreatorModal(${c.metron_creator_id}, ${JSON.stringify(c.name).replace(/"/g, '&quot;')})">${esc(c.name)}</button>`
+      : esc(c.name);
     html += '<div class="issue-modal-credits">' +
-      Object.entries(grouped).map(([role, names]) =>
+      Object.entries(grouped).map(([role, people]) =>
         `<div class="issue-modal-credit-row">
           <div class="issue-modal-credit-role u-label">${esc(role)}</div>
-          <div class="issue-modal-credit-name">${names.map(esc).join(', ')}</div>
+          <div class="issue-modal-credit-name">${people.map(person).join(', ')}</div>
         </div>`).join('') + '</div>';
   }
   _animateModalHeight(() => {

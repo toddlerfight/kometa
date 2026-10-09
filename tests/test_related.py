@@ -113,3 +113,47 @@ def test_because_rows_anchor_on_recent_reading_use_a_series_once_and_need_four(d
     assert all(x["because"] == [] for x in rows[0]["items"])           # the row title is the reason
     rows, _ = rel.because_rows(path=db_path, exclude=[others[0]])      # a task row already shows Paper Girls
     assert rows == []                                                    # three left: under the bar, no row
+
+
+def _series_ids(db_path, title, creators):
+    """Like _series but the credits carry Metron creator ids: (role, name, id)."""
+    sid = db.add_series(title=title, publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    rel.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json) VALUES (?, ?, ?)",
+                  (sid, json.dumps([{"role": r, "name": n, "id": i} for r, n, i in creators]), "[]"))
+    return sid
+
+
+def test_creator_rows_one_per_weighty_credit_shelf_first_then_catalogue(db_path):
+    pope, villa = ("artist", "Paul Pope", 7), ("colorist", "José Villarrubia", 8)
+    me = _series_ids(db_path, "Batman - Year 100", [("writer", "Paul Pope", 7), pope, villa])
+    shelf = [_series_ids(db_path, t, [pope]) for t in ("100%", "Heavy Liquid")]
+    _series_ids(db_path, "Mister X", [villa])
+    assert rel._cached_works(7, db_path) is None                                  # creates the table
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO creator_works (creator_id, works_json) VALUES (7, ?)", (json.dumps([
+            {"metron_series_id": 501, "title": "THB", "year": 1994, "count": 6, "cover": "https://m/thb.jpg"},
+            {"metron_series_id": 502, "title": "Escapo", "year": 1996, "count": 2, "cover": None},
+            {"metron_series_id": 503, "title": "Heavy Liquid", "year": 1999, "count": 5, "cover": None},   # on the shelf already
+            {"metron_series_id": 504, "title": "One-off", "year": 2000, "count": 1, "cover": None}]),))     # a single issue isn't a run
+    rows, pending = rel.creator_rows(me, path=db_path)
+    assert not pending and [r["name"] for r in rows] == ["Paul Pope"]          # the colorist carries no weight
+    items = rows[0]["items"]
+    assert [x["title"] for x in items] == ["100%", "Heavy Liquid", "THB", "Escapo"]
+    assert [x["kind"] for x in items] == ["owned", "owned", "catalogue", "catalogue"]
+    assert all(x["why"] == [] for x in items) and me not in [x.get("series_id") for x in items]
+    rows, _ = rel.creator_rows(me, path=db_path, min_items=5)
+    assert rows == []                                                             # under the bar, no row
+    page = rel.creator_page(7, path=db_path)
+    assert page["name"] == "Paul Pope" and [x["title"] for x in page["shelf"]] == ["Batman - Year 100", "100%", "Heavy Liquid"]
+    assert [x["title"] for x in page["catalogue"]] == ["THB", "Escapo"]
+
+
+def test_creator_rows_wait_on_the_catalogue_when_uncached(db_path, monkeypatch):
+    me = _series_ids(db_path, "Saga", [("writer", "Brian K. Vaughan", 9)])
+    for t in ("Paper Girls", "Y: The Last Man", "Ex Machina", "Runaways"):
+        _series_ids(db_path, t, [("writer", "Brian K. Vaughan", 9)])
+    monkeypatch.setattr(rel, "_fill_works_in_background", lambda ids, path: None)
+    rows, pending = rel.creator_rows(me, path=db_path)
+    assert pending and [x["title"] for x in rows[0]["items"]] == ["Paper Girls", "Y: The Last Man", "Ex Machina", "Runaways"]

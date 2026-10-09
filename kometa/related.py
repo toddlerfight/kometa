@@ -506,6 +506,83 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
     return (res, pending) if cached_only else res
 
 
+# --- per-creator: "More from {Name}" rows, and the creator modal ---------------------
+def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict], exclude: int | None = None) -> list[dict]:
+    """Shelf series carrying this creator id in their signals, as owned cards."""
+    out = []
+    for sid, s_ in sig.items():
+        if sid == exclude or sid not in series or series[sid].get("kind") == "arc":
+            continue
+        if any(c.get("id") == creator_id for c in s_["creators"]):
+            s = series[sid]
+            out.append({"kind": "owned", "series_id": sid, "title": s["title"], "publisher": s.get("publisher"),
+                        "owned": s.get("owned") or 0, "total": (s.get("owned") or 0) + (s.get("missing") or 0),
+                        "why": [], "because": [], "score": 0.0})
+    return out
+
+
+def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_only: bool = True, fetch=None) -> tuple[list[dict], bool]:
+    """Catalogue works by this creator not on the shelf, as catalogue cards. → (rows, pending)."""
+    have_ids = {s.get("metron_series_id") for s in series.values() if s.get("metron_series_id")}
+    have_titles = {norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"])) for s in series.values()}
+    if cached_only:
+        works = _cached_works(creator_id, path)
+        if works is None:
+            _fill_works_in_background([creator_id], path)
+            return [], True
+    else:
+        works = creator_works(creator_id, path, fetch)
+    out = [{"kind": "catalogue", "metron_series_id": w["metron_series_id"], "title": w["title"], "year": w["year"],
+            "cover": w["cover"], "score": float(w["count"]), "why": [], "owned": 0, "total": w["count"]}
+           for w in works
+           if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2]
+    return out, False
+
+
+def _top_creators(series_id: int, sig: dict[int, dict], max_creators: int) -> list[tuple[int, str, str]]:
+    """(id, name, verb) for the series' weightiest credited people with a Metron id."""
+    weight: dict[int, tuple[float, str, str]] = {}
+    for c in sig.get(series_id, {}).get("creators", []):
+        w = _ROLE_WEIGHT.get(c.get("role"), 1.0)
+        if w >= 2.0 and c.get("id"):
+            prev = weight.get(c["id"], (0, "", ""))
+            weight[c["id"]] = (prev[0] + w, c["name"], "wrote" if w >= 3 else "drew")
+    return [(cid, name, verb) for cid, (w, name, verb) in sorted(weight.items(), key=lambda kv: -kv[1][0])[:max_creators]]
+
+
+def creator_rows(series_id: int, max_rows: int = 2, min_items: int = 4, path=None, cached_only: bool = True):
+    """The series page's 'More from {Name}' rows: one per weighty credit, shelf
+    series by them first, then catalogue runs. The title is the reason, so the
+    cards carry none. Rows under min_items don't exist. → (rows, pending)."""
+    path = path or DB_PATH
+    sig = _signals(path)
+    series = {s["id"]: s for s in db.get_all_series(path)}
+    rows, pending = [], False
+    for cid, name, verb in _top_creators(series_id, sig, max_creators=max_rows + 2):
+        shelf = _creator_shelf(cid, sig, series, exclude=series_id)
+        cat, p = _creator_catalogue(cid, path, series, cached_only)
+        pending = pending or p
+        items = shelf + cat
+        if len(items) < min_items:
+            continue
+        rows.append({"creator_id": cid, "name": name, "role_verb": verb, "items": items[:16]})
+        if len(rows) >= max_rows:
+            break
+    return rows, pending
+
+
+def creator_page(creator_id: int, name: str | None = None, path=None, cached_only: bool = True) -> dict:
+    """The creator modal: everything by one person, shelf then catalogue."""
+    path = path or DB_PATH
+    sig = _signals(path)
+    series = {s["id"]: s for s in db.get_all_series(path)}
+    if not name:
+        name = next((c["name"] for s_ in sig.values() for c in s_["creators"] if c.get("id") == creator_id), None)
+    shelf = _creator_shelf(creator_id, sig, series)
+    cat, pending = _creator_catalogue(creator_id, path, series, cached_only)
+    return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}
+
+
 def _safe_fill(series_id: int):
     try:
         fill_signals(series_id, DB_PATH)
@@ -529,7 +606,18 @@ def api_related(series_id: int):
         out, out_pending = outward([series_id], limit=8, cached_only=True)
     except Exception as e:
         logger.info(f"Related: outward skipped: {e}")
-    return {"related": related(series_id), "outward": out, "pending": pending or out_pending}
+    creators, c_pending = [], False
+    try:
+        creators, c_pending = creator_rows(series_id, path=DB_PATH)
+    except Exception as e:
+        logger.info(f"Related: creator rows skipped: {e}")
+    return {"related": related(series_id), "outward": out, "creators": creators,
+            "pending": pending or out_pending or c_pending}
+
+
+@router.get("/api/creators/{creator_id}")
+def api_creator(creator_id: int, name: str = ""):
+    return creator_page(creator_id, name or None, path=DB_PATH)
 
 
 @router.get("/api/ondeck/because")

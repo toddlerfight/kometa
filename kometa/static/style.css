@@ -2262,3 +2262,9 @@ body.touch .od-menu { opacity: .85; }
 .rd-next-cover { width: 64px; height: 96px; object-fit: cover; border-radius: 3px; background: #222; }
 .rd-next-title { color: var(--tp); font-weight: 700; margin: 2px 0; }
 .rd-next-count { color: var(--pri); font-size: var(--fs-label); letter-spacing: var(--track); }
+
+/* --- creators: tappable credits, the creator modal --- */
+.credit-link { background: none; border: 0; padding: 0; font: inherit; color: var(--tp); cursor: pointer; text-decoration: underline dotted var(--tq); text-underline-offset: 3px; }
+.credit-link:hover, .credit-link:focus-visible { color: var(--pri); text-decoration-color: var(--pri); }
+.creator-modal { max-height: 60vh; overflow-y: auto; }
+.creator-modal .series-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
