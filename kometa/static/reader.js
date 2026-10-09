@@ -126,7 +126,7 @@ function _rdRender() {
           <div class="rd-menu hidden" id="rd-menu">
             <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
             <button onclick="_rdMarkRead()">Mark as read</button>
-            <button onclick="_rdToggleFav()">${_rd.book.favourite ? '★ Favourited' : '☆ Favourite'}</button>
+            <button onclick="_rdToggleFav()">${_rd.book.favourite ? '♥ Favourited' : '♡ Favourite'}</button>
             ${(_rd.book.series_id || _rd.book.shelf_id) ? `<button onclick="_rdGoSeries()">Go to series</button>` : ''}
           </div>
         </div>

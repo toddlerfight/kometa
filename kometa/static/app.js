@@ -368,7 +368,7 @@ const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
-  { key: 'favourites', label: '★ Favourites' },
+  { key: 'favourites', label: '♥ Favourites' },
 ];
 
 const _isReading = s => (s.in_progress ?? 0) > 0 || (s.read_count ?? 0) > 0;
@@ -562,7 +562,7 @@ function _renderBrowseResults() {
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="${esc(thumbSrc)}" alt="${esc(s.title)}"
             loading="lazy" onerror="${thumbFall}">
-          ${nextRelease}${s.favourite ? '<div class="series-card-fav" title="Favourite">★</div>' : ''}
+          ${nextRelease}${s.favourite ? '<div class="series-card-fav" title="Favourite">♥</div>' : ''}
         </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
@@ -634,9 +634,9 @@ async function renderOnDeck() {
     </div>`;
   const favCard = c => c.kind === 'series' ? `
     <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)}" onclick="navigate('series-detail', {id: ${c.series_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail', {id: ${c.series_id}})">
-      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">★</span></div>
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">♥</span></div>
       <div class="issue-tile-num">${esc(c.series)}</div>
-    </div>` : bookCard(c, '★');
+    </div>` : bookCard(c, '♥');
   const row = (title, help, cards, empty) => `
     <div class="od-row">
       <div class="od-head"><span class="series-card-title">${title}</span></div>
@@ -4516,14 +4516,14 @@ boot();
 function _favBtn(s) {
   const r = s.rating || s.rating_derived;
   return `<button class="btn btn-sm btn-ghost fav-btn${s.favourite ? ' on' : ''}" id="fav-btn-${s.id}" title="${s.favourite ? 'Favourite — tap to remove' : 'Favourite'}"
-    onclick="_toggleSeriesFav(${s.id}, this)">${s.favourite ? '★' : '☆'}${r ? ` <span class="fav-rating">${r}</span>` : ''}</button>`;
+    onclick="_toggleSeriesFav(${s.id}, this)">${s.favourite ? '♥' : '♡'}${r ? ` <span class="fav-rating">★ ${r}</span>` : ''}</button>`;
 }
 
 async function _toggleSeriesFav(id, btn) {
   const on = !btn.classList.contains('on');
-  btn.classList.toggle('on', on); btn.firstChild.textContent = on ? '★' : '☆';
+  btn.classList.toggle('on', on); btn.firstChild.textContent = on ? '♥' : '♡';
   try { await api.put(`/api/series/${id}/mark`, { favourite: on }); if (_detailSeries?.id === id) _detailSeries.favourite = on; }
-  catch { btn.classList.toggle('on', !on); btn.firstChild.textContent = on ? '☆' : '★'; showToast('Couldn’t save that', 'error'); }
+  catch { btn.classList.toggle('on', !on); btn.firstChild.textContent = on ? '♡' : '♥'; showToast('Couldn’t save that', 'error'); }
 }
 
 async function _toggleBookFav(bookId) {
@@ -4535,13 +4535,14 @@ async function _toggleBookFav(bookId) {
 }
 
 function _markRowHtml(bk) {
+  // Rating on the left, favourite (a heart) on the right, nothing in between —
+  // six stars in a row read as one control. Tapping the lit star again clears.
   const dots = [1, 2, 3, 4, 5].map(n => `<button class="rating-dot${bk.rating >= n ? ' on' : ''}" data-n="${n}" title="${n} of 5" aria-label="Rate ${n}"
-      onclick="_setBookMark(${bk.id}, {rating: ${n}}, this.closest('.mark-row'))">★</button>`).join('');
+      onclick="_setBookMark(${bk.id}, ${bk.rating === n ? '{clear_rating: true}' : `{rating: ${n}}`}, this.closest('.mark-row'))">★</button>`).join('');
   return `<div class="mark-row" id="mark-row-${bk.id}">
-    <button class="mark-star${bk.favourite ? ' on' : ''}" title="Favourite" aria-label="Favourite"
-      onclick="_setBookMark(${bk.id}, {favourite: !this.classList.contains('on')}, this.closest('.mark-row'))">${bk.favourite ? '★' : '☆'}</button>
     <span class="rating-dots">${dots}</span>
-    ${bk.rating ? `<button class="rating-clear u-label" onclick="_setBookMark(${bk.id}, {clear_rating: true}, this.closest('.mark-row'))">clear</button>` : ''}
+    <button class="mark-heart${bk.favourite ? ' on' : ''}" title="${bk.favourite ? 'Favourited — tap to remove' : 'Favourite'}" aria-label="Favourite" aria-pressed="${!!bk.favourite}"
+      onclick="_setBookMark(${bk.id}, {favourite: !this.classList.contains('on')}, this.closest('.mark-row'))">${bk.favourite ? '♥' : '♡'}</button>
   </div>`;
 }
 

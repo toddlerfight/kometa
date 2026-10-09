@@ -2244,17 +2244,18 @@ body.touch .od-menu { opacity: .85; }
 .trend-rank { left: 6px; right: auto; }
 
 /* --- favourites + ratings --- */
-.series-card-fav { position: absolute; top: 6px; left: 6px; color: var(--amb); font-size: 13px; text-shadow: 0 0 4px #000; }
+.series-card-fav { position: absolute; top: 6px; left: 6px; color: var(--pink); font-size: 13px; text-shadow: 0 0 4px #000; }
 .series-card-img-wrap { position: relative; }
 .fav-btn.on { color: var(--amb); border-color: var(--amb); }
 .fav-rating { font-size: 10px; letter-spacing: 0; opacity: .8; margin-left: 2px; }
-.mark-row { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px; }
-.mark-star, .rating-dot { background: none; border: 0; color: var(--td); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px; }
-.mark-star.on { color: var(--amb); }
+.mark-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 10px 0 6px; max-width: 320px; }
+.mark-heart, .rating-dot { background: none; border: 0; color: var(--td); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px; }
+.mark-heart { font-size: 22px; margin-left: auto; }
+.mark-heart.on { color: var(--pink); }
+.fav-btn.on { color: var(--pink); border-color: var(--pink); }
 .rating-dots { display: inline-flex; gap: 2px; }
 .rating-dot.on { color: var(--pri); }
 .rating-dot:hover, .rating-dot:focus-visible { color: var(--tp); }
-.rating-clear { background: none; border: 0; color: var(--tq); cursor: pointer; }
 .rd-end-marks .mark-row { justify-content: center; margin: 4px 0 8px; }
 .rd-end-next { margin: 6px 0 10px; }
 .rd-next-card { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border: 1px solid var(--bd); border-radius: var(--r-md, 8px); background: var(--s1, #111); cursor: pointer; max-width: 420px; }
