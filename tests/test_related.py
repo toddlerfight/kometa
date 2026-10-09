@@ -55,7 +55,7 @@ def test_fill_signals_uses_the_lowest_owned_issue(db_path):
     assert rel.fill_signals(sid, db_path, detail=detail)
     assert asked == [12]
     sig = rel._signals(db_path)[sid]
-    assert sig["creators"] == [{"role": "writer", "name": "Brian K. Vaughan"}] and sig["arcs"] == ["Chapter One"]
+    assert sig["creators"] == [{"role": "writer", "name": "Brian K. Vaughan", "id": None}] and sig["arcs"] == ["Chapter One"]
 
 
 def test_a_long_list_only_relates_true_neighbours(db_path, monkeypatch):
@@ -69,3 +69,22 @@ def test_a_long_list_only_relates_true_neighbours(db_path, monkeypatch):
     short = {"entries": fake["entries"][:5]}
     monkeypatch.setattr(rl, "resolve", lambda lid, path=None: short)
     assert set(rel._list_neighbours(db_path)[ids[0]]) == set(ids[1:5])
+
+
+def test_outward_finds_what_the_shelf_lacks_by_the_same_people(db_path):
+    rel.ensure_tables(db_path)
+    saga = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.set_metron_series_id(saga, 916, db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json) VALUES (?, ?, '[]')",
+                  (saga, json.dumps([{"role": "writer", "name": "Brian K. Vaughan", "id": 7}, {"role": "letterer", "name": "Fonografiks", "id": 9}])))
+    def fetch(cid):
+        assert cid == 7
+        return ([{"series": {"id": 916, "name": "Saga (2012)", "year_began": 2012}, "image": "s.jpg"}] * 3
+                + [{"series": {"id": 55, "name": "Paper Girls (2015)", "year_began": 2015}, "image": "p.jpg"}] * 5
+                + [{"series": {"id": 56, "name": "We Stand On Guard (2015)", "year_began": 2015}, "image": None}] * 1)
+    out = rel.outward([saga], path=db_path, fetch=fetch)
+    assert [o["title"] for o in out] == ["Paper Girls"]            # Saga is owned; one-issue credits are noise
+    assert out[0]["why"] == ["Brian K. Vaughan wrote it"] and out[0]["cover"] == "p.jpg"
+    # cached: a second call doesn't fetch
+    assert rel.outward([saga], path=db_path, fetch=lambda cid: (_ for _ in ()).throw(AssertionError("fetched twice")))[0]["title"] == "Paper Girls"

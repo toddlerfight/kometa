@@ -654,6 +654,7 @@ async function renderOnDeck() {
 // — a shared creator, a shared arc, or 'on a reading list together'.
 function _relCard(r) {
   if (r.kind === 'gap') return _gapCard(r);
+  if (r.kind === 'catalogue') return _catalogueCard(r);
   const go = `navigate('series-detail', {id: ${r.series_id}})`;
   const why = (r.why || []).join(' · ');
   const because = r.because && r.because.length ? `because you read ${r.because.map(esc).join(', ')}` : '';
@@ -680,18 +681,45 @@ function _gapCard(r) {
   </div>`;
 }
 
+// A series you don't have at all, by someone whose work you've been reading:
+// the catalogue's cover, and Track puts it on the shelf (pull list off).
+function _catalogueCard(r) {
+  const why = (r.why || []).join(' · ');
+  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
+  return `<div class="series-card rel-card rel-gap" tabindex="0" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}">
+    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(r.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+      <button class="od-menu rel-get" title="Track this series (pull list off)" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
+      <div class="series-card-count" style="color:var(--tq)">${r.year || ''}</div></div>
+    <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
+  </div>`;
+}
+
+async function _relTrack(payload, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const added = await api.post('/api/series', payload);
+    showToast(`Tracking ${added.title}`);
+    navigate('series-detail', { id: added.id });
+  } catch (e) { btn.disabled = false; btn.textContent = 'TRACK'; showToast('Couldn’t track that', 'error'); }
+}
+
 async function _loadRelated(id) {
   let d;
   try { d = await api.get(`/api/series/${id}/related`); } catch { return; }
   if (currentView !== 'series-detail' || currentParams.id !== id) return;
   const app = document.getElementById('app');
   app.querySelector('.rel-row')?.remove();
-  if (!d.related.length && !d.pending) return;
+  const out = d.outward || [];
+  if (!d.related.length && !out.length && !d.pending) return;
   app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
     <div class="od-head"><span class="series-card-title">Related</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">same creators · same arc · same reading list</span></div>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">on your shelf · same creators · same arc · same reading list</span></div>
     ${d.related.length ? `<div class="series-grid">${d.related.map(_relCard).join('')}</div>`
-      : '<div class="od-empty">Nothing yet — the catalogue is still being asked about this series.</div>'}
+      : '<div class="od-empty">Nothing on the shelf yet — the catalogue is still being asked about this series.</div>'}
+    ${out.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">By the same people</span>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">not on your shelf · Track puts them there</span></div>
+      <div class="series-grid">${out.map(_relCard).join('')}</div>` : ''}
   </div>`);
 }
 

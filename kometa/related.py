@@ -67,7 +67,7 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
         d = (detail or metron_client.issue_detail)(issue["metron_issue_id"])
         for c in d.get("credits") or []:
             if c.get("name"):
-                creators.append({"role": (c.get("role") or "").lower(), "name": c["name"]})
+                creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
         arcs = [a for a in (d.get("arcs") or []) if a]
     with db._connect(path) as conn:
         conn.execute("INSERT OR REPLACE INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) "
@@ -82,6 +82,11 @@ def _signals(path) -> dict[int, dict]:
                                          "arcs": json.loads(r["arcs_json"] or "[]"),
                                          "fetched_at": r["fetched_at"]}
                 for r in conn.execute("SELECT * FROM series_signals")}
+
+
+def _needs_ids(sig: dict) -> bool:
+    """Signals written before creator ids were kept can't look outward."""
+    return any(c.get("id") is None for c in sig.get("creators", []) if _ROLE_WEIGHT.get(c.get("role"), 1.0) >= 2.0)
 
 
 def _stale(fetched_at: str | None) -> bool:
@@ -99,7 +104,7 @@ def trickle_signals(limit: int = 20, path=None) -> int:
     path = path or DB_PATH
     have = _signals(path)
     todo = [s for s in db.get_all_series(path) if s.get("kind") != "arc" and s.get("metron_series_id")
-            and (s["id"] not in have or _stale(have[s["id"]]["fetched_at"]))]
+            and (s["id"] not in have or _stale(have[s["id"]]["fetched_at"]) or _needs_ids(have[s["id"]]))]
     n = 0
     from kometa import metron_client
     for s in todo[:limit]:
@@ -286,6 +291,73 @@ def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> 
     return out
 
 
+# --- outward: the catalogue, not the shelf ---------------------------------------
+def creator_works(creator_id: int, path=None, fetch=None) -> list[dict]:
+    """Series a creator worked on, from Metron's issue list, grouped: [{metron_series_id,
+    title, year, publisher, count, cover}]. Cached 30 days — one creator is one call."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS creator_works (
+            creator_id INTEGER PRIMARY KEY, works_json TEXT, fetched_at TEXT DEFAULT (datetime('now')))""")
+        r = conn.execute("SELECT works_json, fetched_at FROM creator_works WHERE creator_id = ?", (creator_id,)).fetchone()
+    if r and not _stale(r["fetched_at"]):
+        return json.loads(r["works_json"] or "[]")
+    from kometa import metron_client
+    rows = (fetch or (lambda cid: metron_client._all_pages("issue/", max_pages=3, creator_id=cid)))(creator_id)
+    by: dict[int, dict] = {}
+    for i in rows:
+        ser = i.get("series") or {}
+        sid = ser.get("id")
+        if not sid:
+            continue
+        w = by.setdefault(sid, {"metron_series_id": sid, "title": re.sub(r"\s*\(\d{4}\)\s*$", "", ser.get("name") or ""),
+                                "year": ser.get("year_began"), "count": 0, "cover": None})
+        w["count"] += 1
+        if not w["cover"] and i.get("image"):
+            w["cover"] = i["image"]
+    works = sorted(by.values(), key=lambda w: -w["count"])[:60]
+    with db._connect(path) as conn:
+        conn.execute("INSERT OR REPLACE INTO creator_works (creator_id, works_json, fetched_at) VALUES (?, ?, datetime('now'))",
+                     (creator_id, json.dumps(works)))
+    return works
+
+
+def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_creators: int = 5) -> list[dict]:
+    """Series NOT on the shelf by the writers and artists of the seed series."""
+    path = path or DB_PATH
+    sig = _signals(path)
+    weight: dict[int, tuple[float, str, str]] = {}
+    for seed in seed_ids:
+        for c in sig.get(seed, {}).get("creators", []):
+            w = _ROLE_WEIGHT.get(c.get("role"), 1.0)
+            if w >= 2.0 and c.get("id"):
+                prev = weight.get(c["id"], (0, "", ""))
+                weight[c["id"]] = (prev[0] + w, c["name"], "wrote" if w >= 3 else "drew")
+    top = sorted(weight.items(), key=lambda kv: -kv[1][0])[:max_creators]
+    all_series = [s for s in db.get_all_series(path) if s.get("kind") != "arc"]
+    have_ids = {s.get("metron_series_id") for s in all_series if s.get("metron_series_id")}
+    have_titles = {norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"])) for s in all_series}
+    out: dict[int, dict] = {}
+    for cid, (w, name, verb) in top:
+        try:
+            works = creator_works(cid, path, fetch)
+        except Exception as e:
+            logger.info(f"Outward: creator {name!r} skipped: {e}")
+            continue
+        for wk in works:
+            if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2:
+                continue
+            o = out.setdefault(wk["metron_series_id"], {"kind": "catalogue", "metron_series_id": wk["metron_series_id"],
+                                                        "title": wk["title"], "year": wk["year"], "cover": wk["cover"],
+                                                        "score": 0.0, "why": [], "owned": 0, "total": wk["count"]})
+            o["score"] += w * min(wk["count"], 12) / 12
+            o["why"].append(f"{name} {verb} it")
+    res = sorted(out.values(), key=lambda o: -o["score"])[:limit]
+    for o in res:
+        o["why"] = o["why"][:2]
+    return res
+
+
 # --- API --------------------------------------------------------------------------
 @router.get("/api/series/{series_id}/related")
 def api_related(series_id: int):
@@ -300,9 +372,22 @@ def api_related(series_id: int):
         except Exception as e:
             logger.info(f"Related: signals for {s['title']!r} not available yet: {e}")
             pending = True
-    return {"related": related(series_id), "pending": pending}
+    try:
+        out = outward([series_id], limit=8)
+    except Exception as e:
+        logger.info(f"Related: outward skipped: {e}")
+        out = []
+    return {"related": related(series_id), "outward": out, "pending": pending}
 
 
 @router.get("/api/ondeck/suggestions")
 def api_suggestions():
-    return {"suggestions": suggestions()}
+    sug = suggestions()
+    try:
+        out = outward(_recent_series(DB_PATH), limit=10)
+    except Exception as e:
+        logger.info(f"Suggestions: outward skipped: {e}")
+        out = []
+    for o in out:
+        o["because"] = []
+    return {"suggestions": sug + out}
