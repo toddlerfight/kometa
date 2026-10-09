@@ -167,6 +167,14 @@ def _issue_num_present(t: str, s: str, num_int) -> bool:
 _GENERIC_NAMES = {"die", "red", "hulk", "thor", "zombie", "ronin", "revolver", "predator", "alien", "aliens", "war", "fear"}
 
 
+def is_generic_name(series: str) -> bool:
+    """A series name that is also an ordinary word, or too short to be anything
+    else ('Die', 'Red', 'Hulk'): usenet's title search returns hundreds of
+    unrelated posts for these, so the comic-named source goes first."""
+    s = _norm(_fold(series or ""))
+    return len(s) <= 3 or s in _GENERIC_NAMES
+
+
 def _fold(s: str) -> str:
     """'Sécret' reads as 'Secret': diacritics are spelling, not a different name."""
     import unicodedata

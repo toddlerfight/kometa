@@ -450,3 +450,9 @@ def test_a_short_series_name_needs_comic_evidence():
     assert _nzb_score("Die #14 (2020) Digital", "Die", 14.0) == 15
     assert _nzb_score("Saga 014 (2013)", "Saga", 14.0) == 15        # a real name needs no extra proof
     assert _nzb_score("Silver Soldiers 001 (2017) (One Shot) (Antarctic Press) cbr", "Die", 1.0) == 0   # 'die' inside 'soldiers'
+
+
+def test_generic_names_are_known():
+    from kometa.usenet_client import is_generic_name
+    assert is_generic_name("Die") and is_generic_name("Hulk") and is_generic_name("Red")
+    assert not is_generic_name("Saga") and not is_generic_name("Tokyo Ghost")

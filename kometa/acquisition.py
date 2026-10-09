@@ -594,7 +594,11 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
                              series_year=item.get("year_began"), store_date=store_date,
                              exclude_urls=_failed_sources(item))
 
-    if _is_old_issue(store_date):
+    # Back issues go usenet first — except a series whose name is an ordinary
+    # word. 'Die' pulled 250 usenet hits and bought German audiobooks; on
+    # GetComics the post is titled by the comic, so 'Die #4' there IS Die #4.
+    from kometa.usenet_client import is_generic_name
+    if _is_old_issue(store_date) and not is_generic_name(item["title"]):
         if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
             return
         handled, gc_error = _try_getcomics(item, qid, gc, downloaded_urls, store_date)
