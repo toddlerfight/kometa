@@ -304,6 +304,16 @@ def _resolved_lists(path) -> list[dict]:
     return out
 
 
+def warm_lists(path=None) -> int:
+    """Scheduler: keep the resolved lists and the neighbour map warm so the
+    first On Deck after a restart doesn't pay the 2.5 s build. Returns lists."""
+    path = path or DB_PATH
+    _lists_cache["value"] = None
+    n = len(_resolved_lists(path))
+    _list_neighbours(path)
+    return n
+
+
 def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:
     out, seen = [], set()
     for res in _resolved_lists(path):

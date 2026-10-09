@@ -142,6 +142,13 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=3))
     except Exception as e:
         logger.warning(f"Related signals trickle not scheduled: {e}")
+    try:
+        from kometa.related import warm_lists, LISTS_TTL_S
+        scheduler.add_job(warm_lists, IntervalTrigger(seconds=LISTS_TTL_S - 10), id="related_lists_warm",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(seconds=20))
+    except Exception as e:
+        logger.warning(f"Related lists warm not scheduled: {e}")
 
     scheduler.start()
     logger.info(f"Scheduler started — syncing+sweeping at {hours} {TZ.key}, queue every 5min, usenet poll every {USENET_POLL_SECONDS}s, release-day retry daily 15/17/19/21/23 {TZ.key}")
