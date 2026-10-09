@@ -180,3 +180,22 @@ def test_a_one_shot_folded_into_a_run_resolves_by_its_subtitle(shelf, tmp_path):
     e = rl.resolve(rl.import_cbl(cbl, path=shelf), path=shelf)["entries"]
     assert [x["status"] for x in e] == ["owned", "owned", "not_on_shelf"]
     assert [b["label"] for x in e[:2] for b in x["books"]] == ["#1", "#2"]
+
+
+def test_a_trade_of_a_run_held_whole_is_owned_through_the_run(shelf, tmp_path):
+    """'Hellboy in Hell: The Descent' is Vol. 1 of a run the shelf holds 10/10;
+    the entry is owned via the run, not sent off to Get. A partial run stays missing."""
+    root = tmp_path / "comics" / "Dark Horse Comics"
+    tid = db.add_series(title="Hellboy in Hell", publisher="Dark Horse", folder_path=str(root / "Hellboy in Hell"), path=shelf)
+    for n in (1, 2):
+        db.upsert_issue_status(tid, float(n), "2013-01-01", 1, path=shelf)
+    _shelf(shelf, root, "Hellboy in Hell", ["Hellboy in Hell #001.cbz", "Hellboy in Hell #002.cbz"], tracked=tid)
+    pid = db.add_series(title="Lobster Johnson", publisher="Dark Horse", folder_path=str(root / "Lobster Johnson"), path=shelf)
+    for n in (1, 2, 3):
+        db.upsert_issue_status(pid, float(n), "2013-01-01", int(n == 1), path=shelf)
+    _shelf(shelf, root, "Lobster Johnson", ["Lobster Johnson #001.cbz"], tracked=pid)
+    cbl = b"""<ReadingList><Name>HB</Name><Books><Book Series="Hellboy in Hell: The Descent" Number="1" />
+<Book Series="Lobster Johnson: The Burning Hand" Number="1" /></Books></ReadingList>"""
+    e = rl.resolve(rl.import_cbl(cbl, path=shelf), path=shelf)["entries"]
+    assert e[0]["status"] == "owned" and e[0]["via_run"] == "Hellboy in Hell" and [b["label"] for b in e[0]["books"]] == ["#1", "#2"]
+    assert e[1]["status"] == "not_on_shelf"

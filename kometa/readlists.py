@@ -328,6 +328,32 @@ def _subtitle_book(name: str, idx: dict, path, books_cache: dict):
     return None
 
 
+def _complete_run(name: str, idx: dict, path, books_cache: dict):
+    """('Hellboy in Hell: The Descent' entry) → (shelf series, its books) when the
+    base run before the subtitle is on the shelf COMPLETE: every catalogue issue
+    owned, or an untracked folder with files. A trade of a run you hold whole is
+    pages you already have — the resolver says owned, through the run, rather
+    than send Get off to buy them again. Only the base is matched; a partial
+    run stays missing, since the trade's own issues could be the gap."""
+    parts = re.split(r":\s+|\s+-\s+", _YEAR.sub("", name).strip())
+    if len(parts) < 2:
+        return None
+    sh = next((idx[k] for k in _keys(parts[0]) if k in idx), None)
+    if not sh:
+        return None
+    if sh["id"] not in books_cache:
+        books_cache[sh["id"]] = _books(sh["id"], path)
+    books = books_cache[sh["id"]]
+    if not books:
+        return None
+    if sh.get("tracked_series_id"):
+        issues = db.get_issues_for_series(sh["tracked_series_id"], path)
+        if not issues or not all(i.get("owned") for i in issues):
+            return None
+    numbered = [b for b in books if b["number"] is not None]
+    return sh, (numbered or books)
+
+
 def _book_view(b: dict) -> dict:
     import os
     n = b.get("number")
@@ -408,6 +434,11 @@ def resolve(list_id: int, path=None) -> dict:
             # the file name.
             sh, book = _subtitle_book(series_name, idx, path, books_cache)
             entry.update(status="owned", shelf_id=sh["id"], series_id=sh.get("tracked_series_id"), books=[book])
+        elif not hit and (cr := _complete_run(series_name, idx, path, books_cache)) is not None:
+            # a trade of a run held whole: the pages are on the shelf, in the run
+            sh, books = cr
+            entry.update(status="owned", shelf_id=sh["id"], series_id=sh.get("tracked_series_id"),
+                         books=[_book_view(b) for b in books], expanded=len(books) > 1, via_run=sh["title"])
         elif hit and nb and want_n is not None and series_name != it["series"]:
             # the numbered-folder shape: that one issue of the combined run
             if hit["id"] not in books_cache:
