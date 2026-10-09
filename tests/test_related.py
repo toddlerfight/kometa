@@ -90,3 +90,26 @@ def test_outward_finds_what_the_shelf_lacks_by_the_same_people(db_path):
     assert out[0]["why"] == ["Brian K. Vaughan wrote it"] and out[0]["cover"] == "p.jpg"
     # cached: a second call doesn't fetch
     assert rel.outward([saga], path=db_path, fetch=lambda cid: (_ for _ in ()).throw(AssertionError("fetched twice")))[0]["title"] == "Paper Girls"
+
+
+def test_because_rows_anchor_on_recent_reading_use_a_series_once_and_need_four(db_path, tmp_path):
+    bkv = [("writer", "Brian K. Vaughan")]
+    saga = _series(db_path, "Saga", bkv)
+    others = [_series(db_path, t, bkv) for t in ("Paper Girls", "Y: The Last Man", "Ex Machina", "Runaways")]
+    lem = [("writer", "Jeff Lemire")]
+    sweet = _series(db_path, "Sweet Tooth", lem)
+    _series(db_path, "Descender", lem)                      # Jeff Lemire has one neighbour: too few for a row
+    sh = db.upsert_shelf_series(str(tmp_path / "x"), "x", "Image", saga, 1, "2026-10-09T00:00:00Z", db_path)
+    db.index_books([(str(tmp_path / "x" / "Saga #001.cbz"), 10, 1.0, 1.0, sh, saga),
+                    (str(tmp_path / "x" / "Sweet Tooth #001.cbz"), 10, 1.0, 1.0, sh, sweet)], db_path)
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    for name, when in (("Saga #001.cbz", now), ("Sweet Tooth #001.cbz", now - timedelta(days=1))):
+        b = db.get_book_by_path(str(tmp_path / "x" / name), db_path)["id"]
+        db.set_progress("me", b, 5, False, when.strftime("%Y-%m-%dT%H:%M:%SZ"), db_path)
+    rows, pending = rel.because_rows(path=db_path)
+    assert [r["anchor"] for r in rows] == ["Saga"]
+    assert sorted(x["title"] for x in rows[0]["items"]) == ["Ex Machina", "Paper Girls", "Runaways", "Y: The Last Man"]
+    assert all(x["because"] == [] for x in rows[0]["items"])           # the row title is the reason
+    rows, _ = rel.because_rows(path=db_path, exclude=[others[0]])      # a task row already shows Paper Girls
+    assert rows == []                                                    # three left: under the bar, no row

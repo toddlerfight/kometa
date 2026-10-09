@@ -646,7 +646,9 @@ async function renderOnDeck() {
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.')
   );
-  _loadSuggestions();
+  // what the task rows already show never repeats in a discovery row
+  const onPage = [...new Set([...d.continue, ...d.next, ...d.soon, ...(d.released || []), ...(d.added || [])].map(c => c.series_id).filter(Boolean))];
+  _loadBecause(onPage);
   _loadTrending();
 }
 
@@ -767,19 +769,25 @@ function _paintRelated(id, d, attempt = 0) {
   </div>`);
 }
 
-async function _loadSuggestions(attempt = 0) {
+// "Because you read {series}" (kometa/related.py because_rows): one row per
+// anchor, the title is the reason, so no card says why. Rows under four items
+// don't come back; a series shows once across the page.
+async function _loadBecause(exclude, attempt = 0) {
   let d;
-  try { d = await api.get('/api/ondeck/suggestions'); } catch { return; }
+  try { d = await api.get(`/api/ondeck/because?exclude=${exclude.join(',')}`); } catch { return; }
   if (currentView !== 'ondeck') return;
-  if (d.pending && attempt < 4) setTimeout(() => _loadSuggestions(attempt + 1), 4000);
+  if (d.pending && attempt < 4) setTimeout(() => _loadBecause(exclude, attempt + 1), 4000);
   const app = document.getElementById('app');
-  app.querySelector('.sug-row')?.remove();
-  if (!d.suggestions.length) return;
-  app.insertAdjacentHTML('beforeend', `<div class="od-row sug-row">
-    <div class="od-head"><span class="series-card-title">Suggestions</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">near what you've been reading — unstarted series first</span></div>
-    <div class="series-grid">${d.suggestions.map(_relCard).join('')}</div>
-  </div>`);
+  app.querySelectorAll('.sug-row').forEach(e => e.remove());
+  const anchor = app.querySelector('.trend-row');
+  for (const r of d.rows) {
+    const html = `<div class="od-row sug-row">
+      <div class="od-head"><span class="series-card-title">Because you read ${esc(r.anchor)}</span>
+        <span class="u-label" style="color:var(--tq);margin-left:10px">on the shelf first, then what's near it</span></div>
+      <div class="series-grid">${r.items.map(_relCard).join('')}</div>
+    </div>`;
+    if (anchor) anchor.insertAdjacentHTML('beforebegin', html); else app.insertAdjacentHTML('beforeend', html);
+  }
 }
 
 // One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.

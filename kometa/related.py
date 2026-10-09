@@ -308,6 +308,56 @@ def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> 
     return out
 
 
+def because_rows(max_rows: int = 2, min_items: int = 4, path=None, exclude=None, cached_only: bool = True):
+    """On Deck's discovery rows: 'Because you read {series}', one per anchor,
+    the anchors being what you've read most recently. The row title IS the
+    reason, so the cards carry none. Each row mixes what the shelf holds near
+    the anchor (unstarted first), the next gaps on lists the anchor sits on,
+    and catalogue runs by its writers and artists. A series is used once across
+    rows; rows under min_items don't exist. → (rows, pending)."""
+    path = path or DB_PATH
+    seeds = _recent_series(path)
+    if not seeds:
+        return [], False
+    sig, nb = _signals(path), _list_neighbours(path)
+    titles = {s["id"]: s["title"] for s in db.get_all_series(path)}
+    with db._connect(path) as conn:
+        started = {r[0] for r in conn.execute(
+            "SELECT DISTINCT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id WHERE p.reader_id = ?", (READER_ID,))}
+    used = {f"s:{x}" for x in (exclude or [])} | {f"s:{x}" for x in seeds}
+    rows, pending = [], False
+    for seed in seeds:
+        owned = [dict(r, kind="owned", because=[], started=r["series_id"] in started)
+                 for r in related(seed, limit=30, path=path, signals=sig, neighbours=nb)
+                 if f"s:{r['series_id']}" not in used]
+        owned.sort(key=lambda r: (r["started"], -r["score"]))
+        gaps = [g for g in _list_gaps_near([seed], path, titles)
+                if f"s:{g['series_id']}" not in used and f"t:{norm_key(g['title'])}" not in used]
+        cat = []
+        try:
+            cat, p = outward([seed], limit=8, path=path, cached_only=True)
+            pending = pending or p
+        except Exception as e:
+            logger.info(f"Because-row: outward for {seed} skipped: {e}")
+        cat = [dict(c, because=[]) for c in cat if f"m:{c['metron_series_id']}" not in used]
+        # unstarted shelf runs lead (one tap from reading), then the list's next
+        # gaps, then the catalogue, then runs already started
+        items = [r for r in owned if not r["started"]] + gaps + cat + [r for r in owned if r["started"]]
+        if len(items) < min_items:
+            continue
+        items = items[:16]
+        for it in items:
+            if it.get("series_id"):
+                used.add(f"s:{it['series_id']}")
+            if it.get("metron_series_id"):
+                used.add(f"m:{it['metron_series_id']}")
+            used.add(f"t:{norm_key(it['title'])}")
+        rows.append({"anchor_id": seed, "anchor": titles.get(seed, ""), "items": items})
+        if len(rows) >= max_rows:
+            break
+    return rows, pending
+
+
 # --- outward: the catalogue, not the shelf ---------------------------------------
 def _cached_works(creator_id: int, path) -> list[dict] | None:
     with db._connect(path) as conn:
@@ -442,6 +492,14 @@ def api_related(series_id: int):
     except Exception as e:
         logger.info(f"Related: outward skipped: {e}")
     return {"related": related(series_id), "outward": out, "pending": pending or out_pending}
+
+
+@router.get("/api/ondeck/because")
+def api_because(exclude: str = ""):
+    """exclude: series ids already on the page's task rows, comma-separated."""
+    ids = [int(x) for x in exclude.split(",") if x.strip().isdigit()]
+    rows, pending = because_rows(path=DB_PATH, exclude=ids)
+    return {"rows": rows, "pending": pending}
 
 
 @router.get("/api/ondeck/suggestions")
