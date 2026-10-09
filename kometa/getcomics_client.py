@@ -252,6 +252,22 @@ def _title_leads(title_norm: str, post_norm: str) -> bool:
     return bool(re.search(rf"\b{re.escape(title_norm)}\b" + _AFTER_TITLE_RE, post_norm))
 
 
+_STOP = {"the", "a", "an", "and", "of", "vol", "volume", "tpb", "hc"}
+
+
+def _trade_post_matches_loose(title_norm: str, post_norm: str, post_raw: str = "") -> bool:
+    """For a name-only search whose result WAITS FOR CONFIRMATION: every word of
+    the name present in the post, any order ('Hellboy Vol. 3 – The Chained Coffin
+    and Others' for 'Hellboy: The Chained Coffin and Others'), plus a format word
+    or a year, and not a single issue."""
+    words = [w for w in title_norm.split() if w not in _STOP]
+    if not words or not all(re.search(rf"\b{re.escape(w)}\b", post_norm) for w in words):
+        return False
+    if re.search(r'#\s*\d', post_raw):
+        return False
+    return bool(_FORMAT_WORDS & set(post_norm.split())) or bool(re.search(r'\b(19|20)\d{2}\b', post_norm))
+
+
 def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None, post_raw: str = "") -> bool:
     """Trade-aware post matcher — the mirror image of _series_matches, which
     REJECTS format editions. Here we REQUIRE one: the post must name the series,
@@ -510,7 +526,7 @@ class GetComicsClient:
         return None
 
     def search_trade(self, title: str, vol=None, vol_range=None, status_fn=None,
-                     exclude_urls=None) -> tuple[str | None, str | None]:
+                     exclude_urls=None, loose: bool = False) -> tuple[str | None, str | None]:
         """Find a collected edition on GetComics. Returns (download_url, filename)
         or (None, None). 'TPB' is the magic word — 'Volume' returns nothing — and a
         single 'Vol 1 – 6' post can be the jackpot covering many volumes at once.
@@ -525,6 +541,13 @@ class GetComicsClient:
         if vol_range is not None:
             queries.append(f"{title} Vol {vol_range[0]}-{vol_range[1]}")
         queries += [f"{title} TPB", title]
+        if loose:
+            # 'Hellboy: The Chained Coffin and Others' is posted as 'Hellboy Vol. 3 –
+            # The Chained Coffin…': the subtitle alone finds it; the matcher still
+            # wants every word of the full name in the post.
+            sub = re.split(r"\s*[:\u2013\u2014-]\s+", title, maxsplit=1)
+            if len(sub) == 2 and len(sub[1]) >= 6:
+                queries.append(sub[1])
 
         title_norm = _normalize(title)
         seen = set()
@@ -535,7 +558,7 @@ class GetComicsClient:
             logger.info(f"GetComics trade search: {query!r}")
             if status_fn:
                 status_fn(f"GetComics: “{query}”")
-            post_url = self._search_trade_page(query, title_norm, vol, vol_range)
+            post_url = self._search_trade_page(query, title_norm, vol, vol_range, loose=loose)
             if post_url:
                 url, fname = self._extract_download(post_url)
                 if url and url in exclude_urls:
@@ -545,7 +568,7 @@ class GetComicsClient:
                     return url, fname
         return None, None
 
-    def _search_trade_page(self, query: str, title_norm: str, vol, vol_range) -> str | None:
+    def _search_trade_page(self, query: str, title_norm: str, vol, vol_range, loose: bool = False) -> str | None:
         try:
             r = self._get(BASE, params={"s": query})
             r.raise_for_status()
@@ -561,8 +584,10 @@ class GetComicsClient:
             if not a:
                 continue
             text = a.get_text(strip=True)
-            if _trade_post_matches(title_norm, _normalize(text), vol, vol_range, post_raw=text):
-                logger.info(f"GetComics: matched trade post {text!r}")
+            ok = (_trade_post_matches_loose(title_norm, _normalize(text), post_raw=text) if loose
+                  else _trade_post_matches(title_norm, _normalize(text), vol, vol_range, post_raw=text))
+            if ok:
+                logger.info(f"GetComics: matched trade post {text!r}{' (loose)' if loose else ''}")
                 return a.get("href", "")
         return None
 

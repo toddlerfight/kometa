@@ -22,3 +22,12 @@ def test_ogns_and_year_stamped_posts_still_match():
     assert _m("Gigs", "Gigs (2026)")
     assert _m("Hellboy: The Chained Coffin and Others", "Hellboy – The Chained Coffin and Others (1998)")
     assert not _m("Gigs", "Gigs #3 (2026)")
+
+
+def test_loose_match_for_a_confirmed_search():
+    from kometa.getcomics_client import _trade_post_matches_loose
+    L = lambda t, p: _trade_post_matches_loose(_normalize(t), _normalize(p), post_raw=p)
+    assert L("Hellboy: The Chained Coffin and Others", "Hellboy Vol. 3 – The Chained Coffin and Others (TPB) (2004)")
+    assert L("B.P.R.D.: 1946", "B.P.R.D. – 1946 (2008)")
+    assert not L("Hellboy: The Chained Coffin and Others", "Hellboy – Seed of Destruction (TPB) (1994)")
+    assert not L("Hellboy: The Chained Coffin and Others", "Hellboy: The Chained Coffin and Others #2 (1998)")

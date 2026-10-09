@@ -679,7 +679,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         set_search_status(qid, "GetComics…")
         dl_url, hint = gc.search_trade(title, vol=vol, vol_range=vol_range,
                                        status_fn=lambda s, qid=qid: set_search_status(qid, s),
-                                       exclude_urls=_failed_sources(item))
+                                       exclude_urls=_failed_sources(item), **({"loose": True} if confirm else {}))
     if not dl_url:
         if not confirm and _fallback_usenet_torrent(item, qid, _search_nzb, query):
             return
