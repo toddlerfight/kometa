@@ -2237,3 +2237,6 @@ body.touch .od-menu { opacity: .85; }
 .rel-row, .sug-row { margin-top: var(--sp-xl); }
 .rel-gap .series-card-img-wrap { position: relative; }
 .rel-get { width: auto; border-radius: var(--r-sm); padding: 0 8px; font-size: 10px; letter-spacing: .08em; border: 1px solid var(--amb); color: var(--amb); }
+/* a rule between sections: On Deck rows, and the series page's grid / shelf files / related */
+.od-row + .od-row, .sug-row, .rel-row, .shelf-files { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); }
+.od-row + .od-row { margin-top: var(--sp-lg, 20px); }

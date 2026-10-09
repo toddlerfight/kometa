@@ -707,6 +707,10 @@ async function _relTrack(payload, btn) {
 async function _loadRelated(id, attempt = 0) {
   let d;
   try { d = await api.get(`/api/series/${id}/related`); } catch { return; }
+  _paintRelated(id, d, attempt);
+}
+
+function _paintRelated(id, d, attempt = 0) {
   if (currentView !== 'series-detail' || currentParams.id !== id) return;
   // the catalogue is being asked in the background: look again in a few seconds, a few times
   if (d.pending && attempt < 4) setTimeout(() => _loadRelated(id, attempt + 1), 4000);
@@ -1573,6 +1577,9 @@ async function renderSeriesDetail(id) {
 
   const s = await api.get(`/api/series/${id}`);
   _detailSeries = s;
+  // Ask for Related NOW, before the grid's hundred cover requests queue up in
+  // front of it — the row paints once the grid is there.
+  const relP = api.get(`/api/series/${id}/related`).catch(() => null);
   if (s.kind === 'arc') return renderArcDetail(s);
 
   // Self-healing: a never-synced or stale (>1h) series refreshes itself on view,
@@ -1726,7 +1733,7 @@ async function renderSeriesDetail(id) {
   if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
   if (s.shelf_id && (detailTab === 'all' || detailTab === 'owned')) _loadShelfFiles(s, total === 0);
-  if (detailTab === 'all') _loadRelated(id);
+  if (detailTab === 'all') relP.then(d => d && _paintRelated(id, d));
 
   // Arrived by clicking an arc issue (openArcIssue) → open that issue's modal now
   // that its run is loaded. Cleared so it fires once.
