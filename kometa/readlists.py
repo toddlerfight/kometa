@@ -65,6 +65,10 @@ def ensure_tables(path=None):
             # a catalogue cover for an entry that isn't on the shelf: NULL = not
             # looked yet, '' = looked and nothing, else the image URL (cached)
             conn.execute("ALTER TABLE reading_list_items ADD COLUMN cover_url TEXT")
+        if "cover_checked_at" not in cols:
+            # when the catalogue was last asked: a miss is retried after COVER_RETRY_DAYS,
+            # a rotten URL is cleared by the proxy so the next open asks again
+            conn.execute("ALTER TABLE reading_list_items ADD COLUMN cover_checked_at TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rli_list ON reading_list_items(list_id, position)")
 
 
@@ -354,6 +358,23 @@ def _complete_run(name: str, idx: dict, path, books_cache: dict):
     return sh, (numbered or books)
 
 
+COVER_RETRY_DAYS = 7
+
+
+def _cover_pending(it: dict) -> bool:
+    """NULL = never asked; '' = a miss, asked again once it's a week old."""
+    if it.get("cover_url") is None:
+        return True
+    if it.get("cover_url") == "":
+        from datetime import datetime, timedelta
+        chk = it.get("cover_checked_at")
+        try:
+            return not chk or datetime.strptime(chk[:19], "%Y-%m-%dT%H:%M:%S") < datetime.utcnow() - timedelta(days=COVER_RETRY_DAYS)
+        except ValueError:
+            return True
+    return False
+
+
 def _book_view(b: dict) -> dict:
     import os
     n = b.get("number")
@@ -415,7 +436,7 @@ def resolve(list_id: int, path=None) -> dict:
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": [],
                  "item_id": it["id"], "cover": f"/api/readlists/{list_id}/items/{it['id']}/cover" if it.get("cover_url") else None,
-                 "cover_pending": it.get("cover_url") is None}
+                 "cover_pending": _cover_pending(it)}
         bf = by_file.get(it.get("file") or "")
         if bf:
             # the file itself is on the shelf — no guessing from the title
@@ -556,7 +577,7 @@ def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_iss
                 break
     with db._connect(path) as conn:
         for iid, url in found.items():
-            conn.execute("UPDATE reading_list_items SET cover_url = ? WHERE id = ?", (url, iid))
+            conn.execute("UPDATE reading_list_items SET cover_url = ?, cover_checked_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?", (url, iid))
     filled = sum(1 for u in found.values() if u)
     return {"filled": filled, "missed": len(found) - filled, "left": len(todo) - len(found)}
 
@@ -596,7 +617,13 @@ def api_item_cover(list_id: int, item_id: int):
         r = conn.execute("SELECT cover_url FROM reading_list_items WHERE id = ? AND list_id = ?", (item_id, list_id)).fetchone()
     if not r or not r[0]:
         raise HTTPException(404)
-    return _cached_image_response(r[0])
+    try:
+        return _cached_image_response(r[0])
+    except HTTPException:
+        # the URL rotted: forget it, so the next open asks the catalogue again
+        with db._connect(DB_PATH) as conn:
+            conn.execute("UPDATE reading_list_items SET cover_url = NULL WHERE id = ?", (item_id,))
+        raise
 
 
 @router.get("/api/readlists/{list_id}/next")

@@ -199,3 +199,17 @@ def test_a_trade_of_a_run_held_whole_is_owned_through_the_run(shelf, tmp_path):
     e = rl.resolve(rl.import_cbl(cbl, path=shelf), path=shelf)["entries"]
     assert e[0]["status"] == "owned" and e[0]["via_run"] == "Hellboy in Hell" and [b["label"] for b in e[0]["books"]] == ["#1", "#2"]
     assert e[1]["status"] == "not_on_shelf"
+
+
+def test_a_cover_miss_is_retried_after_a_week(shelf):
+    lid = rl.import_cbl(CBL, path=shelf)
+    calls = []
+    def search(q): calls.append(q); return []
+    rl.fill_covers(lid, path=shelf, cv=None, metron_search=search, metron_issues=lambda sid: [])
+    n = len(calls)
+    assert n and rl.fill_covers(lid, path=shelf, cv=None, metron_search=search, metron_issues=lambda sid: [])["left"] == 0
+    assert len(calls) == n                                                   # fresh misses aren't re-asked
+    with db._connect(shelf) as c:
+        c.execute("UPDATE reading_list_items SET cover_checked_at = '2026-01-01T00:00:00Z'")
+    rl.fill_covers(lid, path=shelf, cv=None, metron_search=search, metron_issues=lambda sid: [])
+    assert len(calls) == 2 * n                                               # a week-old miss is asked again
