@@ -75,6 +75,7 @@ const _metronArt = i => (i.metron_image && i.metron_image.startsWith('http')
 let detailTab = 'all';
 let detailSortDesc = true;
 let _autoTabFor = null;   // series id we've already made the B1 trades-default call for
+let _wantTab = null;      // a tab asked for by whoever navigated here (a trade's 'Go to series' → Trades)
 
 function navigate(view, params = {}) {
   currentView = view;
@@ -821,7 +822,7 @@ async function showBookModal(c) {
   // a trade's file name already carries the series: don't say it twice
   const title = label && series && label.toLowerCase().startsWith(series.toLowerCase().replace(/\s*\(\d{4}\)$/, '')) ? label : `${series} ${label}`.trim();
   const completed = bk?.progress?.completed ?? c.completed;
-  const goSeries = c.series_id ? `detailTab = 'trades'; navigate('series-detail', {id: ${c.series_id}})`
+  const goSeries = c.series_id ? `_wantTab = 'trades'; navigate('series-detail', {id: ${c.series_id}})`
     : c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '';
   const pages = bk?.page_count ? `${bk.page_count} pages` : '';
   const prog = bk?.progress && !completed ? ` · on page ${bk.progress.page}` : (completed ? ' · read' : '');
@@ -1716,6 +1717,7 @@ async function renderSeriesDetail(id) {
     if (total === 0 && s.has_trades) detailTab = 'trades';
     _autoTabFor = id;
   }
+  if (_wantTab) { detailTab = _wantTab; _wantTab = null; _autoTabFor = id; }
 
   const chips = [
     released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
