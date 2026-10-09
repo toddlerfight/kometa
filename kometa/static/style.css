@@ -2214,3 +2214,5 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-card:hover .od-go, .od-card:focus-within .od-go { opacity: 1; }
 @media (hover: none) { .od-go { opacity: .85; } }
 .od-go:hover { background: var(--pri); color: var(--ink, #000); }
+/* touch: nothing is hover-revealed, it's just there */
+body.touch .od-x, body.touch .od-go, body.touch .rl-get { opacity: .85; }

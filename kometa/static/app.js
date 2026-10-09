@@ -4202,6 +4202,13 @@ function _ptrFinish(fire) {
 document.addEventListener('touchend', () => _ptrFinish(true));
 document.addEventListener('touchcancel', () => _ptrFinish(false));
 
+// iPadOS tells Safari it can hover, so '(hover: none)' never matches there and
+// every hover-revealed button stayed hidden. Coarse pointer or a touch API is
+// the honest signal: on touch, the buttons are simply there.
+if ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'ontouchstart' in window || navigator.maxTouchPoints > 0) {
+  document.body.classList.add('touch');
+}
+
 async function boot() {
   // Always land on the library. Komga is an optional integration, configured
   // in Settings — never a blocking welcome gate. Kometa runs fine without it:
