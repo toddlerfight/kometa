@@ -216,7 +216,8 @@ def delete_list(list_id: int, path=None):
 
 
 # --- resolution -------------------------------------------------------------------
-_YEAR = re.compile(r"\s*\((?:19|20)\d{2}\)\s*$")
+_YEAR = re.compile(r"\s*\((?:19|20)\d{2}\s*-?\s*(?:(?:19|20)\d{2})?\)\s*$")   # '(2020)', '(2020-)', '(2020-2021)'
+_TRADE_TAIL = re.compile(r"\s*(?:\((?:19|20)\d{2}\)|tpb|hc|\d{2,3})\s*$", re.I)
 _AND_OTHERS = re.compile(r"\s+and\s+others?$", re.I)
 
 
@@ -303,6 +304,26 @@ def _book_view(b: dict) -> dict:
     return {"id": b["id"], "number": n, "label": label, "page_count": b.get("page_count"), "progress": prog}
 
 
+def _trade_index(path) -> dict[str, list[dict]]:
+    """key → books whose FILE NAME is the title: a trade filed under its run keeps
+    its name ('Dark Nights - Metal - The Deluxe Edition (2018).cbz' in the Metal
+    folder), so a list entry naming the deluxe edition finds the file, not the
+    series. Built once per resolve."""
+    import os
+    idx: dict[str, list[dict]] = {}
+    with db._connect(path) as conn:
+        for r in conn.execute("""
+            SELECT b.id, b.path, b.number, b.page_count, b.size, b.mtime, b.shelf_series_id, b.tracked_series_id,
+                   p.page AS progress_page, p.completed, p.updated_at
+            FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+            WHERE b.number IS NULL""", (READER_ID,)):
+            stem = os.path.splitext(os.path.basename(r["path"]))[0]
+            stem = _TRADE_TAIL.sub("", _TRADE_TAIL.sub("", stem))
+            for k in _keys(stem):
+                idx.setdefault(k, []).append(dict(r))
+    return idx
+
+
 def resolve(list_id: int, path=None) -> dict:
     """The list with every entry resolved to books on the shelf (or not)."""
     path = path or DB_PATH
@@ -319,8 +340,16 @@ def resolve(list_id: int, path=None) -> dict:
     out, books_cache = [], {}
     owned = read = 0
     by_file = _by_file(path, [it["file"] for it in items if it.get("file")])
+    trades = None
+    from kometa.combine import _numbered
     for it in items:
-        hit = next((idx[k] for k in _keys(it["series"]) if k in idx), None)
+        series_name, want_n = it["series"], _num(it["number"])
+        # 'Tank Girl - Skidmarks 1 of 4 - …' names one issue of a run that has since
+        # been combined: the run is the base, the number is in the name
+        nb = _numbered(series_name)
+        if nb and not any(k in idx for k in _keys(series_name)):
+            series_name, want_n = nb[0], float(nb[1])
+        hit = next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": []}
         bf = by_file.get(it.get("file") or "")
@@ -328,6 +357,20 @@ def resolve(list_id: int, path=None) -> dict:
             # the file itself is on the shelf — no guessing from the title
             entry.update(status="owned", shelf_id=bf["shelf_series_id"], series_id=bf.get("tracked_series_id"),
                          books=[_book_view(bf)])
+        elif not hit and (trades if trades is not None else (trades := _trade_index(path))) and \
+                any(k in trades for k in _keys(series_name)):
+            # a collected edition filed under its run: the file carries the name
+            rows = next(trades[k] for k in _keys(series_name) if k in trades)
+            rows.sort(key=lambda b: b["path"])
+            entry.update(status="owned", shelf_id=rows[0]["shelf_series_id"], series_id=rows[0].get("tracked_series_id"),
+                         books=[_book_view(b) for b in rows], expanded=len(rows) > 1)
+        elif hit and nb and want_n is not None and series_name != it["series"]:
+            # the numbered-folder shape: that one issue of the combined run
+            if hit["id"] not in books_cache:
+                books_cache[hit["id"]] = _books(hit["id"], path)
+            picked = [b for b in books_cache[hit["id"]] if b["number"] == want_n]
+            entry.update(shelf_id=hit["id"], series_id=hit.get("tracked_series_id"),
+                         status="owned" if picked else "missing", books=picked)
         elif hit:
             entry["shelf_id"], entry["series_id"] = hit["id"], hit.get("tracked_series_id")
             if hit["id"] not in books_cache:

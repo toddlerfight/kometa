@@ -122,3 +122,26 @@ def test_komga_collections_import_as_series_grain_lists(shelf):
     r = rl.resolve(made[0]["id"], path=shelf)
     assert [e["status"] for e in r["entries"]] == ["owned", "owned"]
     assert [b["label"] for b in r["entries"][0]["books"]] == ["#1", "#2"]   # the whole run, in order
+
+
+def test_renamed_shapes_still_resolve(shelf, tmp_path):
+    """Komga (and CBLs) name things the shelf no longer does: a '1 of 4' folder
+    that Combine turned into a run, a deluxe edition filed under its run as a
+    trade, a '(2020-)' year."""
+    root = tmp_path / "comics" / "Dark Horse Comics"
+    folder = root / "Hellboy - Seed of Destruction"
+    make_cbz(folder / "Hellboy - Seed of Destruction - The Deluxe Edition (2018).cbz")
+    sid = db.get_book_by_path(str(folder / "Hellboy - Seed of Destruction #001.cbz"), shelf)["shelf_series_id"]
+    db.index_books([(str(folder / "Hellboy - Seed of Destruction - The Deluxe Edition (2018).cbz"), 10, 1.0, None, sid, None)], shelf)
+    cbl = b"""<ReadingList><Name>Renamed</Name><Books>
+<Book Series="Sir Edward Grey, Witchfinder 2 of 3 - Lost and Gone" Number="1" />
+<Book Series="Hellboy: Seed of Destruction - The Deluxe Edition" Number="1" />
+<Book Series="Hellboy: Seed of Destruction (1994-)" Number="1" />
+<Book Series="Sir Edward Grey, Witchfinder 3 of 3 - The End" Number="1" />
+</Books></ReadingList>"""
+    lid = rl.import_cbl(cbl, path=shelf)
+    e = rl.resolve(lid, path=shelf)["entries"]
+    assert e[0]["status"] == "owned" and [b["label"] for b in e[0]["books"]] == ["#2"]
+    assert e[1]["status"] == "owned" and e[1]["books"][0]["label"].startswith("Hellboy - Seed of Destruction - The Deluxe")
+    assert e[2]["status"] == "owned" and [b["label"] for b in e[2]["books"]] == ["#1", "#2"]
+    assert e[3]["status"] == "missing"
