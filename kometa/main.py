@@ -606,7 +606,7 @@ def get_series_trades(series_id: int):
     if not s:
         raise HTTPException(404)
     locg_id = s["locg_series_id"]
-    if not locg_id:
+    if not locg_id and not s.get("metron_series_id"):
         # Metron-matched, no LOCG id yet: the trickle would get there one series
         # per tick, but you're looking at the tab NOW. One confident LOCG search
         # here (two requests), only while LOCG is open to us.
@@ -635,9 +635,12 @@ def get_series_trades(series_id: int):
         return {"trades": _cached_trades(s), "cached": True}
     # Cold/stale — fetch, enrich (owned + komga) once, store. The enrich here is the
     # periodic scan, not a per-request one; warm reads above never touch the disk.
-    trades = _select_editions(_locg_trades(locg_id))
-    _enrich_trades(s, trades)
-    db.set_trades(series_id, trades, DB_PATH)
+    from kometa.record import fill_trades
+    try:
+        trades = fill_trades(s, force=True)
+    except Exception as e:
+        logger.info(f"Trades: fill failed for {s['title']!r}: {e}")
+        trades = (cached or {}).get("trades") or []
     return {"trades": _with_book_ids(s, trades), "cached": False}
 
 
@@ -645,6 +648,10 @@ def get_series_trades(series_id: int):
 def get_trade_details(locg_id: str):
     """Description + credits for a collected edition — same LOCG page scrape the
     issue modal uses, just addressed by the trade's own comic id."""
+    from kometa.record import trade_details
+    local = trade_details(locg_id)
+    if local is not None:
+        return local
     try:
         return _locg_issue_details(locg_id)
     except Exception as e:

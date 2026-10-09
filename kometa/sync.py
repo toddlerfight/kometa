@@ -328,11 +328,10 @@ def sync_one(series: dict, force: bool = False):
     # open. Enrich with the two stored facts (owned from the folder, komga_book_id
     # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
     # never fail an issue sync.
-    if locg_id and (force or _trades_due(series)):
+    if (locg_id or series.get("metron_series_id")) and (force or _trades_due(series)):
         try:
-            trades = select_editions(get_trades_anon(locg_id))
-            enrich_trades(series, trades, books=komga_books)
-            db.set_trades(series["id"], trades, DB_PATH)
+            from kometa.record import fill_trades
+            fill_trades(series, force=force, books=komga_books, path=DB_PATH)
         except Exception as e:
             logger.warning(f"Trades cache failed for '{series['title']}': {e}")
 
@@ -427,8 +426,18 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     def _vol_owned(vol, kws):
         return any(v == vol and _edition_keywords(name) == kws for v, name in vol_entries)
 
+    # scan_folder_volume_entries lowercases its names for the keyword compare;
+    # the file we stamp must be the REAL name, or the shelf page's dedupe and
+    # the reader's book lookup (both exact-string) never find it.
+    real_names = {}
+    try:
+        real_names = {n.lower(): n for n in os.listdir(folder)} if folder else {}
+    except OSError:
+        pass
+
     def _vol_file(vol, kws):
-        return next((name for v, name in vol_entries if v == vol and _edition_keywords(name) == kws), None)
+        low = next((name for v, name in vol_entries if v == vol and _edition_keywords(name) == kws), None)
+        return real_names.get(low, low) if low else None
 
     kbook_by_volkey, kbook_by_name = {}, {}
     if books is None:
