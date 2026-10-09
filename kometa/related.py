@@ -178,7 +178,8 @@ def related(series_id: int, limit: int = 12, path=None, signals=None, neighbours
             if sid == series_id:
                 continue
             scores[sid] += min(w, w2)
-            why[sid].append(name)
+            if min(w, w2) >= 1.0:            # name the writer or artist, not the letterer
+                why[sid].append(name)
     my_arcs = {norm_key(a): a for a in me["arcs"]}
     for sid, s in sig.items():
         if sid == series_id:
