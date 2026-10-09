@@ -66,3 +66,11 @@ def test_same_named_runs_pick_the_one_with_the_issue_else_newest(db_path):
     tr.match_shelf(rows, db_path)
     assert rows[0]["series_id"] == old and rows[0]["have_issue"]
     assert rows[1]["series_id"] == new and not rows[1].get("have_issue")
+
+
+def test_enrich_prefers_the_newest_run_for_a_number_one(db_path):
+    data = {"comics": [dict(tr.parse_title("Doom Patrol #1"), rank=14)], "graphic_novels": []}
+    res = {"results": [{"series": {"id": 1, "name": "Doom Patrol (1964)", "year_began": 1964}, "image": "old"},
+                       {"series": {"id": 2, "name": "Doom Patrol (2026)", "year_began": 2026}, "image": "new"}]}
+    tr.enrich_catalogue(data, db_path, lookup=lambda s_, n: res)
+    assert data["comics"][0]["metron_series_id"] == 2 and data["comics"][0]["cover"] == "new"

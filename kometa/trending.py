@@ -180,7 +180,8 @@ def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, 
             except Exception as ex:
                 logger.info(f"Trending enrich skipped {e['series']!r}: {ex}")
                 continue
-            hit = (r.get("results") or [None])[0]
+            # several same-named runs answer a '#1' — the chart means the newest one
+            hit = max(r.get("results") or [], key=lambda x: (x.get("series") or {}).get("year_began") or 0, default=None)
             if hit:
                 ser = hit.get("series") or {}
                 e["metron_series_id"] = ser.get("id")
