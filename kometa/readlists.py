@@ -152,6 +152,28 @@ def import_komga(komga=None, path=None) -> list[dict]:
     return out
 
 
+def import_komga_collections(komga=None, min_series: int = 2, path=None) -> list[dict]:
+    """Komga's collections are reading lists at series grain — 'Murphyverse' is
+    ten runs in an order. One entry per series, no number, so each resolves to
+    its whole run in order (the rule the TPB reading orders already use).
+    A one-series collection isn't an order, so it's skipped."""
+    from kometa import sources
+    komga = komga or sources.komga()
+    if not komga:
+        raise RuntimeError("Komga isn't configured")
+    out = []
+    for coll in _pages(komga, "/api/v1/collections"):
+        series = _pages(komga, f"/api/v1/collections/{coll['id']}/series")
+        items = [{"series": s.get("metadata", {}).get("title") or s.get("name") or "", "number": None}
+                 for s in series]
+        items = [it for it in items if it["series"]]
+        if len(items) < min_series:
+            continue
+        lid = save_list(coll["name"], items, "komga", coll["id"], path)
+        out.append({"id": lid, "name": coll["name"], "entries": len(items)})
+    return out
+
+
 def _pages(komga, url: str, size: int = 200) -> list[dict]:
     rows, page = [], 0
     while True:
@@ -400,8 +422,9 @@ async def api_import_body(request: Request, name: str | None = None):
 
 @router.post("/api/readlists/import-komga")
 def api_import_komga():
+    """Komga's read lists AND its collections — both are orders to read in."""
     try:
-        return import_komga()
+        return import_komga() + import_komga_collections()
     except RuntimeError as e:
         raise HTTPException(400, str(e))
     except Exception as e:

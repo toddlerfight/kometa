@@ -88,6 +88,12 @@ class _FakeKomga:
     def _get(self, url, params=None):
         if url == "/api/v1/readlists":
             return {"content": [{"id": "rl1", "name": "Witchfinder arc"}, {"id": "rl2", "name": "Empty"}], "last": True}
+        if url == "/api/v1/collections":
+            return {"content": [{"id": "c1", "name": "Mignolaverse"}, {"id": "c2", "name": "Lonely"}], "last": True}
+        if url == "/api/v1/collections/c1/series":
+            return {"content": [{"metadata": {"title": "Hellboy: Seed of Destruction"}}, {"metadata": {"title": "B.P.R.D.: Plague of Frogs"}}], "last": True}
+        if url == "/api/v1/collections/c2/series":
+            return {"content": [{"metadata": {"title": "Only One"}}], "last": True}
         if url == "/api/v1/readlists/rl1/books":
             return {"content": [
                 {"seriesTitle": "Sir Edward Grey, Witchfinder", "url": "/data/x/Sir Edward Grey, Witchfinder #002.cbz", "metadata": {"number": "1"}},
@@ -108,3 +114,11 @@ def test_komga_lists_import_by_file_name(shelf):
     assert r["source"] == "komga"
     # importing again replaces, same id
     assert rl.import_komga(_FakeKomga(), path=shelf)[0]["id"] == made[0]["id"]
+
+
+def test_komga_collections_import_as_series_grain_lists(shelf):
+    made = rl.import_komga_collections(_FakeKomga(), path=shelf)
+    assert [m["name"] for m in made] == ["Mignolaverse"]          # the one-series collection is no order
+    r = rl.resolve(made[0]["id"], path=shelf)
+    assert [e["status"] for e in r["entries"]] == ["owned", "owned"]
+    assert [b["label"] for b in r["entries"][0]["books"]] == ["#1", "#2"]   # the whole run, in order
