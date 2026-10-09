@@ -87,7 +87,7 @@ def test_outward_finds_what_the_shelf_lacks_by_the_same_people(db_path):
                 + [{"series": {"id": 56, "name": "We Stand On Guard (2015)", "year_began": 2015}, "image": None}] * 1)
     out = rel.outward([saga], path=db_path, fetch=fetch)
     assert [o["title"] for o in out] == ["Paper Girls"]            # Saga is owned; one-issue credits are noise
-    assert out[0]["why"] == ["Brian K. Vaughan wrote it"] and out[0]["cover"] == "p.jpg"
+    assert out[0]["why"] == ["Credit: Brian K. Vaughan"] and out[0]["cover"] == "p.jpg"   # no detail fn: role unknown
     # cached: a second call doesn't fetch
     assert rel.outward([saga], path=db_path, fetch=lambda cid: (_ for _ in ()).throw(AssertionError("fetched twice")))[0]["title"] == "Paper Girls"
 
@@ -157,3 +157,21 @@ def test_creator_rows_wait_on_the_catalogue_when_uncached(db_path, monkeypatch):
     monkeypatch.setattr(rel, "_fill_works_in_background", lambda ids, path: None)
     rows, pending = rel.creator_rows(me, path=db_path)
     assert pending and [x["title"] for x in rows[0]["items"]] == ["Paper Girls", "Y: The Last Man", "Ex Machina", "Runaways"]
+
+
+def test_creator_works_learn_the_role_per_work_and_drop_cover_only_credits(db_path):
+    rel.ensure_tables(db_path)
+    def fetch(cid):
+        return ([{"id": 100 + k, "series": {"id": 300, "name": "Batman: Year 100 (2006)", "year_began": 2006}, "image": "y.jpg"} for k in range(4)]
+                + [{"id": 200 + k, "series": {"id": 400, "name": "Adventure Time (2012)", "year_began": 2012}, "image": "a.jpg"} for k in range(3)])
+    def detail(iid):
+        if iid >= 200:
+            return {"credits": [{"role": "Cover", "name": "Paul Pope", "metron_creator_id": 77}]}
+        return {"credits": [{"role": "Artist", "name": "Paul Pope", "metron_creator_id": 77}, {"role": "Writer", "name": "Paul Pope", "metron_creator_id": 77}]}
+    works = rel.creator_works(77, db_path, fetch=fetch, detail=detail)
+    by = {w["title"]: w for w in works}
+    assert by["Batman: Year 100"]["roles"] == ["artist", "writer"] and not by["Batman: Year 100"]["cover_only"]
+    assert by["Adventure Time"]["cover_only"]
+    assert rel.work_label(by["Batman: Year 100"], "Paul Pope") == "Writer: Paul Pope"
+    cat, _ = rel._creator_catalogue(77, db_path, {}, cached_only=False, name="Paul Pope")
+    assert [c["title"] for c in cat] == ["Batman: Year 100"] and cat[0]["why"] == ["Writer: Paul Pope"]

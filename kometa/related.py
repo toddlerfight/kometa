@@ -427,9 +427,31 @@ def _fill_works_in_background(creator_ids: list[int], path):
     threading.Thread(target=run, daemon=True).start()
 
 
-def creator_works(creator_id: int, path=None, fetch=None) -> list[dict]:
+ROLE_LOOKUPS = 30                     # issue details fetched per creator, to learn the role on each work
+_ROLE_LABEL = {"writer": "Writer", "story": "Writer", "script": "Writer", "plot": "Writer", "artist": "Artist",
+               "penciller": "Artist", "inker": "Inker", "colorist": "Colorist", "letterer": "Letterer", "cover": "Cover"}
+
+
+def _roles_of(detail: dict, creator_id: int) -> list[str]:
+    return sorted({(c.get("role") or "").lower() for c in detail.get("credits") or []
+                   if c.get("metron_creator_id") == creator_id and c.get("role")})
+
+
+def work_label(w: dict, name: str) -> str:
+    """'Artist: Paul Pope' — the person's role on THAT work, not on the seed.
+    Paul Pope drew Batman: Year 100; on Adventure Time he only did a cover."""
+    roles = w.get("roles") or []
+    main = next((r for r in ("writer", "story", "script", "plot", "artist", "penciller", "inker", "colorist", "letterer", "cover")
+                 if r in roles), None)
+    return f"{_ROLE_LABEL.get(main, main.title() if main else 'Credit')}: {name}"
+
+
+def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[dict]:
     """Series a creator worked on, from Metron's issue list, grouped: [{metron_series_id,
-    title, year, publisher, count, cover}]. Cached 30 days — one creator is one call."""
+    title, year, count, cover, roles, cover_only}]. Metron's creator filter answers
+    with EVERY credit, variant covers included — so each work gets one issue-detail
+    look to learn the role, and a cover-only credit is flagged (a variant cover
+    isn't 'more from' anyone). Cached 30 days."""
     path = path or DB_PATH
     with db._connect(path) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS creator_works (
@@ -450,7 +472,22 @@ def creator_works(creator_id: int, path=None, fetch=None) -> list[dict]:
         w["count"] += 1
         if not w["cover"] and i.get("image"):
             w["cover"] = i["image"]
+        if w.get("_issue") is None and i.get("id"):
+            w["_issue"] = i["id"]
     works = sorted(by.values(), key=lambda w: -w["count"])[:60]
+    detail = detail or metron_client.issue_detail
+    looked = 0
+    for w in works:
+        iid = w.pop("_issue", None)
+        w["roles"], w["cover_only"] = [], False
+        if not iid or w["count"] < 2 or looked >= ROLE_LOOKUPS:
+            continue
+        looked += 1
+        try:
+            w["roles"] = _roles_of(detail(iid), creator_id)
+            w["cover_only"] = bool(w["roles"]) and set(w["roles"]) <= {"cover"}
+        except Exception as e:
+            logger.info(f"Creator {creator_id}: role lookup for {w['title']!r} skipped: {e}")
     with db._connect(path) as conn:
         conn.execute("INSERT OR REPLACE INTO creator_works (creator_id, works_json, fetched_at) VALUES (?, ?, datetime('now'))",
                      (creator_id, json.dumps(works)))
@@ -493,13 +530,13 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
                 logger.info(f"Outward: creator {name!r} skipped: {e}")
                 continue
         for wk in works:
-            if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2:
+            if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2 or wk.get("cover_only"):
                 continue
             o = out.setdefault(wk["metron_series_id"], {"kind": "catalogue", "metron_series_id": wk["metron_series_id"],
                                                         "title": wk["title"], "year": wk["year"], "cover": wk["cover"],
                                                         "score": 0.0, "why": [], "owned": 0, "total": wk["count"]})
             o["score"] += w * min(wk["count"], 12) / 12
-            o["why"].append(f"{name} {verb} it")
+            o["why"].append(work_label(wk, name))
     res = sorted(out.values(), key=lambda o: -o["score"])[:limit]
     for o in res:
         o["why"] = o["why"][:2]
@@ -521,7 +558,7 @@ def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict
     return out
 
 
-def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_only: bool = True, fetch=None) -> tuple[list[dict], bool]:
+def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_only: bool = True, fetch=None, name: str | None = None) -> tuple[list[dict], bool]:
     """Catalogue works by this creator not on the shelf, as catalogue cards. → (rows, pending)."""
     have_ids = {s.get("metron_series_id") for s in series.values() if s.get("metron_series_id")}
     have_titles = {norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"])) for s in series.values()}
@@ -533,9 +570,10 @@ def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_on
     else:
         works = creator_works(creator_id, path, fetch)
     out = [{"kind": "catalogue", "metron_series_id": w["metron_series_id"], "title": w["title"], "year": w["year"],
-            "cover": w["cover"], "score": float(w["count"]), "why": [], "owned": 0, "total": w["count"]}
+            "cover": w["cover"], "score": float(w["count"]), "why": [work_label(w, name)] if name else [], "owned": 0, "total": w["count"]}
            for w in works
-           if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2]
+           if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2
+           and not w.get("cover_only")]
     return out, False
 
 
@@ -579,7 +617,7 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     if not name:
         name = next((c["name"] for s_ in sig.values() for c in s_["creators"] if c.get("id") == creator_id), None)
     shelf = _creator_shelf(creator_id, sig, series)
-    cat, pending = _creator_catalogue(creator_id, path, series, cached_only)
+    cat, pending = _creator_catalogue(creator_id, path, series, cached_only, name=name)
     return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}
 
 
