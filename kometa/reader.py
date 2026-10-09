@@ -328,6 +328,7 @@ def _book_payload(book: dict) -> dict:
         "title": title,
         "publisher": publisher,
         "series_id": book.get("tracked_series_id"),
+        "shelf_id": book.get("shelf_series_id"),
         "number": book.get("number"),
         "version": _version(book["size"], book["mtime"]),
         "page_count": book["page_count"],

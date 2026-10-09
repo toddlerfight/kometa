@@ -620,6 +620,7 @@ async function renderOnDeck() {
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
         ${dismissable ? `<button class="od-x" title="Not now — hide from Continue reading, keep my place" aria-label="Not now" onclick="event.stopPropagation(); _odDismiss(${c.book_id}, this)">×</button>` : ''}
+        ${series(c) ? `<button class="od-go" title="Go to series" aria-label="Go to series" onclick="event.stopPropagation(); ${series(c)}">↗</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;

@@ -126,6 +126,7 @@ function _rdRender() {
           <div class="rd-menu hidden" id="rd-menu">
             <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
             <button onclick="_rdMarkRead()">Mark as read</button>
+            ${(_rd.book.series_id || _rd.book.shelf_id) ? `<button onclick="_rdGoSeries()">Go to series</button>` : ''}
           </div>
         </div>
       </div>
@@ -228,6 +229,14 @@ function _rdToggleShift() {
   _rd.spreads = _rdBuildSpreads();
   _rd.at = _rdSpreadOf(cur);
   _rdRender();
+}
+
+// The series this book belongs to, from inside the reader.
+function _rdGoSeries() {
+  const b = _rd.book;
+  if (!b) return;
+  if (b.series_id) navigate('series-detail', { id: b.series_id });
+  else if (b.shelf_id) navigate('shelf', { id: b.shelf_id });
 }
 
 function _rdToggleMenu(e) {
