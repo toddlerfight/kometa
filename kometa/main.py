@@ -412,7 +412,9 @@ def get_config():
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),
         "metron_pass":         "",
-        "metron_configured":   bool(cfg.get("metron_user", "") and cfg.get("metron_pass", "")),
+        "metron_token":        "",
+        "metron_token_set":    bool((cfg.get("metron_token") or "").strip()),
+        "metron_configured":   bool((cfg.get("metron_token") or "").strip() or (cfg.get("metron_user", "") and cfg.get("metron_pass", ""))),
         "metron_enabled":      cfg.get("metron_enabled", "1") != "0",
         # LOCG: your own browser's pass (kometa/locg_client.py). Never echoed back.
         "locg_cf_configured":  bool(cfg.get("locg_cf_clearance", "")),
@@ -443,6 +445,7 @@ class ConfigRequest(BaseModel):
     comicvine_enabled:  str | None = None   # "1"/"0" — metadata source toggle
     metron_user:        str | None = None
     metron_pass:        str | None = None
+    metron_token:       str | None = None   # API token (preferred over user/pass)
     metron_enabled:     str | None = None   # "1"/"0" — primary metadata source
     locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
     locg_user_agent:    str | None = None   # the exact UA that pass was issued to

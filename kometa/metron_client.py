@@ -38,6 +38,12 @@ def _creds():
         return None                    # no readable config = not configured
     if cfg.get("metron_enabled", "1") == "0":
         return None
+    # An API token (metron.cloud → account → API tokens) is the recommended auth:
+    # non-expiring, and donors' higher daily limit is tied to it. Basic auth stays
+    # as the fallback for an older config.
+    tok = (cfg.get("metron_token") or "").strip()
+    if tok:
+        return ("token", tok)
     u, p = cfg.get("metron_user"), cfg.get("metron_pass")
     return (u, p) if u and p else None
 
@@ -50,7 +56,7 @@ def _get(path: str, **params) -> dict:
     creds = _creds()
     if not creds:
         raise MetronUnavailable("Metron isn't configured")
-    auth = "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
+    auth = f"Token {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     with _lock:                                    # one request at a time, spaced
         now = time.time()
@@ -64,6 +70,10 @@ def _get(path: str, **params) -> dict:
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 body = json.load(r)
+                lim = r.headers.get("X-Ratelimit-Sustained-Limit")
+                if lim and _state.get("sustained_limit") != lim:
+                    _state["sustained_limit"] = lim
+                    logger.info(f"Metron: sustained limit is {lim} a day for this account")
                 left = r.headers.get("X-Ratelimit-Sustained-Remaining")
                 if left is not None and int(left) < DAILY_FLOOR:
                     reset = float(r.headers.get("X-Ratelimit-Sustained-Reset") or time.time() + 3600)
@@ -227,6 +237,8 @@ def releases_between(after: str, before: str) -> list[dict]:
 def test() -> tuple[bool, str]:
     try:
         _get("publisher/", name="Image")
-        return True, "Connected"
+        c = _creds()
+        lim = _state.get("sustained_limit")
+        return True, ("Connected with your API token" if c and c[0] == "token" else "Connected") + (f" · {lim} requests a day" if lim else "")
     except MetronUnavailable as e:
         return False, str(e)
