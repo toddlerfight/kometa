@@ -691,10 +691,10 @@ async function _loadTrending(attempt = 0) {
   const month = d.month ? ` · ${esc(d.month)}` : '';
   app.insertAdjacentHTML('beforeend', `<div class="od-row trend-row">
     <div class="od-head"><span class="series-card-title">Trending</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">top sellers in comic shops${month} · ICv2</span></div>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">${month ? esc(d.month) + ' · ' : ''}ICv2</span></div>
     <div class="series-grid">${d.comics.slice(0, 24).map(_trendCard).join('')}</div>
     ${d.graphic_novels.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">Trending collected editions</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">top graphic novels${month} · ICv2</span></div>
+      <span class="u-label" style="color:var(--tq);margin-left:10px">${month ? esc(d.month) + ' · ' : ''}ICv2</span></div>
       <div class="series-grid">${d.graphic_novels.slice(0, 12).map(_trendCard).join('')}</div>` : ''}
   </div>`);
 }
@@ -771,12 +771,10 @@ function _paintRelated(id, d, attempt = 0) {
   const creators = d.creators || [];
   if (!d.related.length && !creators.length && !d.pending) return;
   app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
-    <div class="od-head"><span class="series-card-title">Related</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">on your shelf · same creators · same arc · same reading list</span></div>
+    <div class="od-head"><span class="series-card-title">Related</span></div>
     ${d.related.length ? `<div class="series-grid">${d.related.map(_relCard).join('')}</div>`
       : '<div class="od-empty">Nothing on the shelf yet — the catalogue is still being asked about this series.</div>'}
-    ${creators.map(r => `<div class="od-head" style="margin-top:14px"><span class="series-card-title">More from ${esc(r.name)}</span>
-      <span class="u-label" style="color:var(--tq);margin-left:10px">on your shelf first · then the catalogue, Track puts them there</span></div>
+    ${creators.map(r => `<div class="od-head" style="margin-top:14px"><span class="series-card-title">More from ${esc(r.name)}</span></div>
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>`).join('')}
   </div>`);
 }
@@ -816,8 +814,7 @@ async function _loadBecause(exclude, attempt = 0) {
   const anchor = app.querySelector('.trend-row');
   for (const r of d.rows) {
     const html = `<div class="od-row sug-row">
-      <div class="od-head"><span class="series-card-title">Because you read ${esc(r.anchor)}</span>
-        <span class="u-label" style="color:var(--tq);margin-left:10px">on the shelf first, then what's near it</span></div>
+      <div class="od-head"><span class="series-card-title">Because you read ${esc(r.anchor)}</span></div>
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>
     </div>`;
     if (anchor) anchor.insertAdjacentHTML('beforebegin', html); else app.insertAdjacentHTML('beforeend', html);
