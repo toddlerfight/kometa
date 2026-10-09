@@ -26,7 +26,8 @@ def _shelf(db_path, tmp_path):
 def test_root_and_series_feeds_parse_and_link(db_path, tmp_path):
     sid, _ = _shelf(db_path, tmp_path)
     root = ET.fromstring(op.root_feed())
-    assert [e.find("a:title", NS).text for e in root.findall("a:entry", NS)] == ["Keep reading", "Recently added", "All series"]
+    assert [e.find("a:title", NS).text for e in root.findall("a:entry", NS)] == [
+        "Keep reading", "Next", "Favourites", "Reading lists", "Recently added", "Series by letter", "All series"]
     ser = ET.fromstring(op.series_feed(0, db_path))
     e = ser.find("a:entry", NS)
     assert e.find("a:title", NS).text == "Saga"
@@ -78,3 +79,44 @@ def test_an_unopened_book_gets_a_cheap_page_count_from_the_archive(db_path, tmp_
     pse = feed.find("a:entry/a:link[@rel='http://vaemendis.net/opds-pse/stream']", NS)
     assert pse.get("{http://vaemendis.net/opds-pse/ns}count") == "2"            # make_cbz writes two images
     assert db.get_book(ids[0], db_path)["page_count"] == 2                        # and it's remembered
+
+
+def test_letters_lists_next_and_favourites_feeds(db_path, tmp_path):
+    sid, ids = _shelf(db_path, tmp_path)
+    folder = tmp_path / "comics" / "DC" / "- Batman - Lost"
+    folder.mkdir(parents=True); make_cbz(folder / "Batman - Lost #001.cbz")
+    s2 = db.upsert_shelf_series(str(folder), "- Batman - Lost", "DC", None, 1, "2026-10-09T00:00:00Z", db_path)
+    db.index_books([(str(folder / "Batman - Lost #001.cbz"), 10, 1.0, 1.0, s2, None)], db_path)
+    az = ET.fromstring(op.az_feed(db_path))
+    assert [e.find("a:title", NS).text for e in az.findall("a:entry", NS)] == ["B", "S"]     # the '- ' prefix is ignored
+    b = ET.fromstring(op.series_feed(0, db_path, letter="b"))
+    assert [e.find("a:title", NS).text for e in b.findall("a:entry", NS)] == ["- Batman - Lost"]
+    import kometa.readlists as rl
+    lid = rl.import_cbl(b"""<ReadingList><Name>Saga order</Name><Books><Book Series="Saga" Number="2" />
+<Book Series="Saga" Number="1" /><Book Series="Nope" Number="1" /></Books></ReadingList>""", path=db_path)
+    lists = ET.fromstring(op.lists_feed(db_path))
+    assert lists.find("a:entry/a:title", NS).text == "Saga order"
+    one = ET.fromstring(op.one_list_feed(lid, db_path))
+    assert [e.find("a:title", NS).text for e in one.findall("a:entry", NS)] == ["Saga #2", "Saga #1"]   # list order, gaps skipped
+    import kometa.marks as mk
+    mk.set_mark("book", ids[2], favourite=True, path=db_path)
+    fav = ET.fromstring(op.favourites_feed(db_path))
+    assert [e.find("a:title", NS).text for e in fav.findall("a:entry", NS)] == ["Saga - Compendium (2019)"]
+    assert ET.fromstring(op.next_feed(db_path)).find("a:entry", NS) is None
+
+
+def test_a_streamed_page_is_a_page_read_lagging_the_prefetch(db_path, tmp_path):
+    sid, ids = _shelf(db_path, tmp_path)
+    book = db.get_book(ids[0], db_path)                                 # 22 pages
+    op.note_page_read(book, 0, db_path)
+    assert db.get_progress("me", ids[0], db_path)["page"] == 1
+    for p in range(1, 10):                                              # a burst to page 10 (0-based 9)
+        op.note_page_read(book, p, db_path)
+    assert db.get_progress("me", ids[0], db_path) | {"page": 7} == db.get_progress("me", ids[0], db_path)   # 10 - lag 3
+    op.note_page_read(book, 4, db_path)                                 # going back never moves it
+    assert db.get_progress("me", ids[0], db_path)["page"] == 7
+    op.note_page_read(book, 21, db_path)                                # the last page: finished
+    pr = db.get_progress("me", ids[0], db_path)
+    assert pr["page"] == 22 and pr["completed"] == 1
+    op.note_page_read(book, 3, db_path)
+    assert db.get_progress("me", ids[0], db_path)["completed"] == 1    # re-reading page 4 doesn't un-finish it
