@@ -3063,10 +3063,22 @@ async function renderActivity() {
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
     <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
+    <button class="btn btn-ghost btn-sm" id="act-history-btn" onclick="_toggleActHistory()">History</button>
     <button class="btn btn-ghost btn-sm" onclick="clearHistory(this)">Clear History</button>
   `;
   setApp('<div class="state-msg">Loading...</div>');
   await _refreshActivity();
+}
+
+// Done rows older than this are history (server timestamps are UTC 'YYYY-MM-DD HH:MM:SS')
+let _actShowHistory = false;
+function _actHistoryCutoff() {
+  return new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+}
+function _toggleActHistory() {
+  _actShowHistory = !_actShowHistory;
+  _activitySig = null;
+  _refreshActivity();
 }
 
 async function _refreshActivity() {
@@ -3075,13 +3087,19 @@ async function _refreshActivity() {
   // (a full rebuild here is the flash we're trying to kill). The remover re-polls
   // when it's finished collapsing.
   if (_activityRemoving) return;
-  const queue = await api.get('/api/queue');
-  _ackActivity(queue);   // you're looking at it — acknowledge + clear the badge
+  const all = await api.get('/api/queue');
+  _ackActivity(all);   // you're looking at it — acknowledge + clear the badge
+  // Done rows older than a day are history: out of the way unless asked for.
+  // Failed and not-found stay until you deal with them.
+  const queue = _actShowHistory ? all : all.filter(q => q.state !== 'done' || (q.updated_at || '') > _actHistoryCutoff());
+  const hidden = all.length - queue.length;
+  const hb = document.getElementById('act-history-btn');
+  if (hb) { hb.textContent = _actShowHistory ? 'Hide history' : `History${hidden ? ' (' + hidden + ')' : ''}`; hb.classList.toggle('btn-primary', _actShowHistory); hb.classList.toggle('btn-ghost', !_actShowHistory); }
   // Only the progress %/bytes change between polls; the items + their states usually
   // don't. When they DO change, we reconcile row-by-row IN PLACE — never a full
   // innerHTML rebuild (that recreated every <img> and replayed the cover-in
   // animation on 20 innocent rows because one row moved). See _reconcileActivity.
-  const sig = queue.map(q => `${q.id}:${q.state}`).join('|');
+  const sig = queue.map(q => `${q.id}:${q.state}`).join('|') + (_actShowHistory ? '|h' : '');
   if (sig === _activitySig) {
     queue.forEach(q => {
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
@@ -3250,7 +3268,7 @@ function _buildActivityHtml(queue) {
   if (!queue.length) {
     setApp(`<div class="act-empty">
       <div class="act-empty-icon">◌</div>
-      <div class="act-empty-msg">Nothing in the queue</div>
+      <div class="act-empty-msg">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
       <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
     </div>`);
     return;

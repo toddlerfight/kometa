@@ -1090,7 +1090,6 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
             return
         except WrongIssueError as e:
-            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
             # Clean up the rejected download so it can't be re-scanned or hand-shelved
             # by accident — but ONLY when the source is disposable (usenet job dir).
             # A torrent's payload stays put: it's still seeding.
@@ -1100,6 +1099,17 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
                     logger.info(f"{label}: removed rejected file {target}")
                 except OSError as rm_err:
                     logger.warning(f"{label}: could not remove rejected file {target}: {rm_err}")
+            # The wrong comic is a fact about THIS release, so remember it — the
+            # retry bought the same '1001 Arabian Nights' NZB for Nights #12 three
+            # times because nothing here said so. Then let the next source swing.
+            channel = "torrent" if keep_source else "usenet"
+            db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+            db.add_failed_channel(qid, channel, path=DB_PATH)
+            if channel == "usenet" and _try_torrent(item, qid):
+                return
+            if _gc_rescue(item, qid):
+                return
+            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
             return
 
         # Rename to Kometa format

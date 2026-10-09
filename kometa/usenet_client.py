@@ -197,6 +197,12 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
         return 0
     if not re.search(rf"\b{re.escape(s)}\b", t):      # whole words: 'die' is inside 'soldiers'
         return 0                                       # no series name, no candidate — a bare '001' is not evidence
+    # The series name LEADS a release ('Nights.012.2025.Digital'); a name found
+    # mid-title belongs to a different comic — '1001 Arabian Nights - The
+    # Adventures of Sinbad 012' is not Nights #12, whatever the number says.
+    lead = _norm(_fold(re.sub(r"^(?:\[[^\]]*\]\s*|\(?(?:19|20)\d{2}\)?[\s.]+)+", "", nzb_title))).strip()
+    if not (lead == s or lead.startswith(s + " ")):
+        return 0
     score = 10
     if _issue_num_present(t, s, num_int):
         score += 5

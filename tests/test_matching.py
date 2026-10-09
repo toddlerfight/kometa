@@ -63,7 +63,9 @@ class TestSearchTorrentEvidence:
 
     def test_name_plus_number_required_not_just_high_base(self):
         # A name-only hit (base 10) scores 0 under the evidence gate.
-        assert _nzb_score("Keith Urban - Ripcord 2016", "Ripcord", 0.0) == 10  # documents the hole the gate closes
+        # 2026-10-10: the name no longer counts unless it LEADS the release — an
+        # album with 'Ripcord' mid-title is 0 before the gate even looks
+        assert _nzb_score("Keith Urban - Ripcord 2016", "Ripcord", 0.0) == 0
 
 
 class TestMediaNoiseDisqualified:
@@ -96,7 +98,8 @@ class TestMediaNoiseDisqualified:
     def test_stray_zero_no_longer_buys_the_number_point(self):
         # bare '2 0' with no media markers: name matches (+10) but the number
         # must be next to the series — a floating '0' no longer counts.
-        assert _nzb_score("Some Ripcord audio 2 0 bonus", "Ripcord", 0.0) == 10
+        assert _nzb_score("Some Ripcord audio 2 0 bonus", "Ripcord", 0.0) == 0     # name mid-title: not this comic
+        assert _nzb_score("Ripcord audio 2 0 bonus", "Ripcord", 0.0) == 10
 
     def test_wrong_issue_number_not_matched(self):
         assert _nzb_score("Ripcord 001 (2026) (Digital)", "Ripcord", 0.0) == 10   # 001 is #1, not #0
@@ -456,3 +459,12 @@ def test_generic_names_are_known():
     from kometa.usenet_client import is_generic_name
     assert is_generic_name("Die") and is_generic_name("Hulk") and is_generic_name("Red")
     assert not is_generic_name("Saga") and not is_generic_name("Tokyo Ghost")
+
+
+def test_ampersand_is_a_word_not_punctuation():
+    """'Batman & the Joker' (our folder) must match 'Batman and The Joker' (the post)."""
+    from kometa.getcomics_client import _normalize, _series_matches
+    ours = _normalize("Batman & the Joker - The Deadly Duo")
+    post = _normalize("Batman and The Joker – The Deadly Duo #3 (2023)")
+    assert ours == "batman and the joker the deadly duo"
+    assert _series_matches(ours, post)
