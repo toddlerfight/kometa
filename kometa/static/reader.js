@@ -809,23 +809,26 @@ async function renderReadLists() {
   // The Library's cards: cover, an owned bar, title and count. Here the bar is
   // how much of the list is on the shelf; lime when all of it is.
   const cards = lists.map((l, i) => {
-    const total = l.total || l.entries || 0, owned = l.owned || 0, read = l.read || 0;
-    const pct = total ? Math.round(owned / total * 100) : 0;
-    const color = owned < total ? 'var(--amb)' : (total ? 'var(--pri)' : 'var(--tq)');
+    // The card: the bar is reading progress in books you have; the corner count is
+    // entries on the shelf; an amber line says how many entries aren't here.
+    const total = l.total || l.entries || 0, owned = l.owned || 0;
+    const books = l.books || 0, read = l.books_read || 0, gaps = total - owned;
+    const pct = books ? Math.round(read / books * 100) : 0;
+    const color = gaps ? 'var(--amb)' : (total ? 'var(--pri)' : 'var(--tq)');
     const go = `navigate('readlist', {id: ${l.id}})`;
     const cover = l.cover_book_id ? `<img class="series-card-cover" src="/api/books/${l.cover_book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
       : `<div class="series-card-cover rl-nocover"></div>`;
-    const sub = read ? `${read} READ` : '';
+    const sub = [read ? `${read} READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : ''].filter(Boolean).join(' · ');
     return `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i, 14) * STAGGER_MS}ms" tabindex="0" role="button"
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
         <div class="series-card-img-wrap">${cover}</div>
-        <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:${pct}%;background:${books && read === books ? 'var(--pri)' : 'var(--pri)'}"></div></div>
         <div class="series-card-footer">
           <div class="series-card-title">${esc(l.name)}</div>
           <div class="series-card-count" style="color:${color}">${owned}/${total}</div>
         </div>
-        <div class="series-card-publisher u-truncate">${esc(sub)}</div>
+        <div class="series-card-publisher u-truncate">${sub}</div>
       </div>`;
   }).join('');
   setApp(`<div class="series-grid">${cards}</div>`);
@@ -916,14 +919,22 @@ async function renderReadList(id) {
   }
   const gaps = l.total - l.owned;
   document.getElementById('topbar-title').textContent = l.name;
-  document.getElementById('topbar-chips').innerHTML =
-    `<span class="chip ${l.owned < l.total ? 'chip-missing' : 'chip-complete'}">${l.owned}/${l.total}</span>`;
-  const booksRead = books.filter(b => b.progress?.completed).length;
+  // Chips, each one number: HAVE and MISSING in entries, READ and READING in
+  // books you have. Lime when a count is complete, amber while something is
+  // open, pink for a gap. A chip that would read zero isn't shown.
+  const done = l.books > 0 && l.books_read === l.books;
+  document.getElementById('topbar-chips').innerHTML = [
+    `<span class="chip ${gaps ? 'chip-neutral' : 'chip-complete'}" title="entries on the shelf">HAVE ${l.owned}/${l.total}</span>`,
+    gaps ? `<span class="chip chip-missing" title="entries not on the shelf">${gaps} MISSING</span>` : '',
+    l.books ? `<span class="chip ${done ? 'chip-complete' : 'chip-neutral'}" title="books read, of the ones you have">READ ${l.books_read}/${l.books}</span>` : '',
+    l.books_reading ? `<span class="chip chip-reading" title="books started">${l.books_reading} READING</span>` : '',
+  ].filter(Boolean).join('');
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
-    ${books.length} BOOK${books.length === 1 ? '' : 'S'}${booksRead ? ` · ${booksRead} READ` : ''}${gaps ? ` · ${gaps} NOT HERE` : ''}</span>`;
+    ${l.source === 'komga' ? 'FROM KOMGA' : 'CBL'} · ${l.total} ENTR${l.total === 1 ? 'Y' : 'IES'} · ${books.length} BOOK${books.length === 1 ? '' : 'S'} ON THE SHELF</span>`;
   document.getElementById('topbar-actions').innerHTML = `
     ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
-    ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : ''}
+    ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.books_read || l.books_reading ? 'Continue' : 'Start'}</button>`
+      : (done && books.length ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${books[0].id}, list: ${id}})">Read again</button>` : '')}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
       aria-selected="${_rlTab === t}" onclick="setRlTab('${t}', ${id})" onkeydown="if(event.key==='Enter'||event.key===' ')setRlTab('${t}', ${id})">${t}</div>`).join('');

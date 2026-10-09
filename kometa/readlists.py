@@ -204,7 +204,8 @@ def get_lists(path=None) -> list[dict]:
         except KeyError:
             continue
         first = next((b for e in res["entries"] for b in e["books"]), None)
-        r.update(total=res["total"], owned=res["owned"], read=res["read"], cover_book_id=first["id"] if first else None)
+        r.update(total=res["total"], owned=res["owned"], read=res["read"], books=res["books"],
+                 books_read=res["books_read"], books_reading=res["books_reading"], cover_book_id=first["id"] if first else None)
     return rows
 
 
@@ -406,8 +407,13 @@ def resolve(list_id: int, path=None) -> dict:
             if entry["books"] and all(b["progress"] and b["progress"]["completed"] for b in entry["books"]):
                 read += 1
         out.append(entry)
+    books = [b for e in out for b in e["books"]]
     return {"id": row["id"], "name": row["name"], "source": row["source"], "source_ref": row["source_ref"],
             "entries": out, "total": len(out), "owned": owned, "read": read,
+            # the chips: HAVE/MISSING count entries, READ/READING count books you have
+            "books": len(books),
+            "books_read": sum(1 for b in books if b["progress"] and b["progress"]["completed"]),
+            "books_reading": sum(1 for b in books if b["progress"] and not b["progress"]["completed"]),
             "continue": _continue_point(out)}
 
 

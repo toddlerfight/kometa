@@ -2227,3 +2227,6 @@ body.touch .od-menu { opacity: .85; }
 .action-sheet { display: flex; flex-direction: column; gap: 6px; }
 .sheet-btn { text-align: left; padding: 11px 14px; border: 1px solid var(--bd); border-radius: var(--r-md, 8px); background: var(--su2); color: var(--tp); font: inherit; cursor: pointer; }
 .sheet-btn:hover { border-color: var(--pri); }
+/* reading-list chips: neutral while open, amber while reading */
+.chip-neutral { color: var(--tq); border: 1px solid var(--bd); }
+.chip-reading { color: var(--amb); border: 1px solid var(--amb); }
