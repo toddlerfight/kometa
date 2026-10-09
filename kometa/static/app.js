@@ -663,6 +663,17 @@ async function renderOnDeck() {
   _loadTrending();
 }
 
+// A row that re-polls while the catalogue is still filling must not tear itself
+// down and rebuild with the same content — that read as a flash, three times a
+// page. Paint only when the payload actually changed.
+function _rowUnchanged(selector, payload) {
+  const key = JSON.stringify(payload);
+  const el = document.querySelector(selector);
+  if (el && el.dataset.sig === key) return true;
+  return false;
+}
+function _rowSig(el, payload) { if (el) el.dataset.sig = JSON.stringify(payload); }
+
 // --- Trending (kometa/trending.py): what shops sold most, from ICv2 ----------------
 function _trendCard(e) {
   const owned = e.owned && e.series_id;
@@ -687,9 +698,11 @@ async function _loadTrending(attempt = 0) {
   try { d = await api.get('/api/trending'); } catch { return; }
   if (currentView !== 'ondeck') return;
   const app = document.getElementById('app');
-  app.querySelector('.trend-row')?.remove();
-  if (!d.comics.length && !d.graphic_novels.length) return;
+  if (!d.comics.length && !d.graphic_novels.length) { app.querySelector('.trend-row')?.remove(); return; }
   if (d.pending && attempt < 4) setTimeout(() => _loadTrending(attempt + 1), 5000);
+  const sig = { c: d.comics.slice(0, 24).map(e => [e.rank, e.cover, e.owned]), g: d.graphic_novels.slice(0, 12).map(e => [e.rank, e.cover, e.owned]) };
+  if (_rowUnchanged('.trend-row', sig)) return;
+  app.querySelector('.trend-row')?.remove();
   const month = d.month ? ` · ${esc(d.month)}` : '';
   app.insertAdjacentHTML('beforeend', `<div class="od-row trend-row">
     <div class="od-head"><span class="series-card-title">Trending</span>
@@ -699,6 +712,7 @@ async function _loadTrending(attempt = 0) {
       <span class="u-label" style="color:var(--tq);margin-left:10px">${month ? esc(d.month) + ' · ' : ''}ICv2</span></div>
       <div class="series-grid">${d.graphic_novels.slice(0, 12).map(_trendCard).join('')}</div>` : ''}
   </div>`);
+  _rowSig(app.querySelector('.trend-row'), sig);
 }
 
 // --- Related / Suggestions (kometa/related.py) ----------------------------------
@@ -768,9 +782,11 @@ function _paintRelated(id, d, attempt = 0) {
   // the catalogue is being asked in the background: look again in a few seconds, a few times
   if (d.pending && attempt < 4) setTimeout(() => _loadRelated(id, attempt + 1), 4000);
   const app = document.getElementById('app');
-  app.querySelector('.rel-row')?.remove();
   // one row per weighty credit — "More from Paul Pope" — the name is the reason
   const creators = d.creators || [];
+  const sig = { r: d.related.map(x => x.series_id), c: creators.map(r => [r.creator_id, r.items.map(i => i.series_id || i.metron_series_id)]) };
+  if (_rowUnchanged('.rel-row', sig)) return;
+  app.querySelector('.rel-row')?.remove();
   if (!d.related.length && !creators.length && !d.pending) return;
   app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
     <div class="od-head"><span class="series-card-title">Related</span></div>
@@ -779,6 +795,7 @@ function _paintRelated(id, d, attempt = 0) {
     ${creators.map(r => `<div class="od-head" style="margin-top:14px"><span class="series-card-title">More from ${esc(r.name)}</span></div>
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>`).join('')}
   </div>`);
+  _rowSig(app.querySelector('.rel-row'), sig);
 }
 
 // A credited person, tapped: everything by them. Shelf first (tap → series),
@@ -812,6 +829,8 @@ async function _loadBecause(exclude, attempt = 0) {
   if (currentView !== 'ondeck') return;
   if (d.pending && attempt < 4) setTimeout(() => _loadBecause(exclude, attempt + 1), 4000);
   const app = document.getElementById('app');
+  const sig = d.rows.map(r => [r.anchor_id, r.items.map(i => i.series_id || i.metron_series_id || i.title)]);
+  if (_rowUnchanged('.sug-row', sig)) return;
   app.querySelectorAll('.sug-row').forEach(e => e.remove());
   const anchor = app.querySelector('.trend-row');
   for (const r of d.rows) {
@@ -821,6 +840,7 @@ async function _loadBecause(exclude, attempt = 0) {
     </div>`;
     if (anchor) anchor.insertAdjacentHTML('beforebegin', html); else app.insertAdjacentHTML('beforeend', html);
   }
+  _rowSig(app.querySelector('.sug-row'), sig);
 }
 
 // One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.
