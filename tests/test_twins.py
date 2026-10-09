@@ -112,3 +112,26 @@ def test_merge_takes_the_clean_name_when_the_kept_folder_has_the_arc_dash(tmp_pa
     assert db.get_series_by_id(sid, db_path)["folder_path"] == str(twin)
     with db._connect(db_path) as c:
         assert all(p[0].startswith(str(twin) + "/") for p in c.execute("SELECT path FROM books"))
+
+
+def test_two_tracked_series_on_one_catalogue_id_are_twins(lib):
+    """'I Feel Sick' and 'I Feel Sick - A Book about a Girl', both LOCG 111869:
+    neither folder is untracked, so the title walk can't see them. The one with
+    fewer files is the twin, and its series row goes with its folder."""
+    root = lib["root"]
+    a = os.path.join(root, "SLG Publishing", "I Feel Sick"); b = os.path.join(root, "SLG Publishing", "I Feel Sick - A Book about a Girl")
+    for folder, files in ((a, ["I Feel Sick #001.cbz", "I Feel Sick #002.cbz"]), (b, ["I Feel Sick #001.cbz"])):
+        for f in files:
+            _file(os.path.join(folder, f), b"PK" + b"x" * (60 if folder == a else 10))
+    sa = db.add_series(title="I Feel Sick", publisher="SLG Publishing", folder_path=a, on_pull_list=False, locg_series_id=111869, path=lib["db"])
+    sb = db.add_series(title="I Feel Sick - A Book about a Girl", publisher="SLG Publishing", folder_path=b, on_pull_list=False, locg_series_id=111869, path=lib["db"])
+    sha = db.upsert_shelf_series(a, "I Feel Sick", "SLG Publishing", sa, 2, "2026-10-09T00:00:00.000000Z", lib["db"])
+    shb = db.upsert_shelf_series(b, "I Feel Sick - A Book about a Girl", "SLG Publishing", sb, 1, "2026-10-09T00:00:00.000000Z", lib["db"])
+    db.index_books([(os.path.join(a, "I Feel Sick #001.cbz"), 64, 1.0, 1.0, sha, sa), (os.path.join(a, "I Feel Sick #002.cbz"), 64, 1.0, 2.0, sha, sa),
+                    (os.path.join(b, "I Feel Sick #001.cbz"), 14, 1.0, 1.0, shb, sb)], lib["db"])
+    rows = [r for r in tw.find_twins(lib["db"]) if r.get("same_run")]
+    assert len(rows) == 1 and rows[0]["series_id"] == sa and rows[0]["twin_series_id"] == sb and rows[0]["shelf_id"] == shb
+    r = tw.apply(shb, sa, lib["db"], root=root)
+    assert r["errors"] == [] and r["binned"] == 1
+    assert db.get_series_by_id(sb, lib["db"]) is None and not os.path.exists(b)
+    assert sorted(os.listdir(a)) == ["I Feel Sick #001.cbz", "I Feel Sick #002.cbz"]

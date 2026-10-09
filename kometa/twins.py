@@ -65,8 +65,47 @@ def find_twins(path=None) -> list[dict]:
                     # same name, different publisher: usually a misfiled folder (Last Ronin under
                     # Mirage), sometimes a different book entirely (Atlas's Fear Itself). Flagged, not hidden.
                     "publisher_differs": not _same_publisher(sh.get("publisher"), s.get("publisher"))})
+    # Two TRACKED series on one catalogue id are one run twice — 'I Feel Sick'
+    # and 'I Feel Sick - A Book about a Girl', both LOCG 111869. Neither folder is
+    # untracked, so the title walk above never sees them. The one with fewer
+    # files is the twin; the other keeps the run.
+    by_cat: dict[tuple, list] = {}
+    for s in series:
+        for col in ("metron_series_id", "locg_series_id"):
+            if s.get(col):
+                by_cat.setdefault((col, s[col]), []).append(s)
+    seen = set()
+    for (col, cid), group in by_cat.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda s: (-len(_files(s["folder_path"])), s["id"]))
+        keeper = group[0]
+        for twin in group[1:]:
+            if twin["id"] in seen or os.path.realpath(twin["folder_path"]) == os.path.realpath(keeper["folder_path"]):
+                continue
+            seen.add(twin["id"])
+            sh = next((x for x in db.list_shelf(READER_ID, untracked_only=False, path=path)
+                       if os.path.realpath(x["folder_path"]) == os.path.realpath(twin["folder_path"])), None)
+            if not sh:
+                continue
+            out.append({"shelf_id": sh["id"], "folder": twin["folder_path"], "title": twin["title"], "publisher": twin.get("publisher"),
+                        "book_count": sh.get("book_count"), "series_id": keeper["id"], "series_title": keeper["title"],
+                        "series_folder": keeper["folder_path"], "series_publisher": keeper.get("publisher"),
+                        "publisher_differs": not _same_publisher(twin.get("publisher"), keeper.get("publisher")),
+                        "same_run": True, "twin_series_id": twin["id"]})
     out.sort(key=lambda r: (r["publisher_differs"], r["title"].lower()))
     return out
+
+
+def _same_run(sh: dict, s: dict, path) -> dict | None:
+    """The twin folder's own tracked series, if it shares a catalogue id with `s`."""
+    t = sh.get("tracked_series_id") and db.get_series_by_id(sh["tracked_series_id"], path)
+    if not t or t["id"] == s["id"]:
+        return None
+    for col in ("metron_series_id", "locg_series_id"):
+        if s.get(col) and t.get(col) == s[col]:
+            return t
+    return None
 
 
 def _files(folder: str) -> list[str]:
@@ -89,7 +128,8 @@ def plan(shelf_id: int, series_id: int, path=None) -> dict:
     s = db.get_series_by_id(series_id, path)
     if not sh or not s:
         raise TwinError("No such folder or series")
-    if sh.get("tracked_series_id"):
+    twin_series = _same_run(sh, s, path)
+    if sh.get("tracked_series_id") and not twin_series:
         raise TwinError("That folder is already a series of its own")
     src, dst = sh["folder_path"], s.get("folder_path")
     if not os.path.isdir(src) or not dst or not os.path.isdir(dst):
@@ -111,6 +151,7 @@ def plan(shelf_id: int, series_id: int, path=None) -> dict:
         else:
             moves.append({"number": n, "file": f})
     return {"shelf_id": shelf_id, "series_id": series_id, "twin_title": sh["title"], "series_title": s["title"],
+            "twin_series_id": twin_series["id"] if twin_series else None,
             "twin_folder": src, "series_folder": dst, "moves": moves, "duplicates": dupes, "as_is": asis,
             "counts": {"move": len(moves) + len(asis), "duplicate": len(dupes),
                        "twin_wins": sum(d["keep"] == "twin" for d in dupes)}}
@@ -176,6 +217,10 @@ def apply(shelf_id: int, series_id: int, path=None, root: str | None = None) -> 
     if not done["errors"]:
         db.remove_books_under(src, path)
         db.remove_shelf_series_by_path(src, path)
+        if p.get("twin_series_id"):
+            # the twin was a tracked series of the same run: its row goes with its folder
+            db.dequeue_waiting_series(p["twin_series_id"], path)
+            db.remove_series(p["twin_series_id"], path)
         leftovers = [f for f in os.listdir(src) if not f.startswith(".")]
         if not leftovers:
             shutil.rmtree(src, ignore_errors=True)
