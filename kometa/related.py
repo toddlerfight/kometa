@@ -123,8 +123,24 @@ def trickle_signals(limit: int = 20, path=None) -> int:
 
 
 # --- scoring ----------------------------------------------------------------------
+_nb_cache: dict = {"at": 0.0, "path": None, "value": None}
+NEIGHBOURS_TTL_S = 300
+
+
 def _list_neighbours(path) -> dict[int, dict[int, float]]:
-    """series_id → {other_series_id: weight} from every imported reading list."""
+    """series_id → {other_series_id: weight} from every imported reading list.
+    Resolving every list is the expensive part of this module (19 lists, each a
+    scan of the books table), so it's kept for five minutes — a Related call
+    during a page's cover flood took six seconds without this."""
+    now = time.time()
+    if _nb_cache["value"] is not None and _nb_cache["path"] == path and now - _nb_cache["at"] < NEIGHBOURS_TTL_S:
+        return _nb_cache["value"]
+    value = _compute_list_neighbours(path)
+    _nb_cache.update(at=now, path=path, value=value)
+    return value
+
+
+def _compute_list_neighbours(path) -> dict[int, dict[int, float]]:
     from kometa import readlists
     out: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
     try:

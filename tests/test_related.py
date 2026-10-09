@@ -64,10 +64,12 @@ def test_a_long_list_only_relates_true_neighbours(db_path, monkeypatch):
     fake = {"entries": [{"position": i + 1, "series_id": sid} for i, sid in enumerate(ids)]}
     monkeypatch.setattr(rl, "get_lists", lambda path=None: [{"id": 1}])
     monkeypatch.setattr(rl, "resolve", lambda lid, path=None: fake)
+    rel._nb_cache['value'] = None
     nb = rel._list_neighbours(db_path)
     assert set(nb[ids[5]]) == {ids[3], ids[4], ids[6], ids[7]}
     short = {"entries": fake["entries"][:5]}
     monkeypatch.setattr(rl, "resolve", lambda lid, path=None: short)
+    rel._nb_cache['value'] = None
     assert set(rel._list_neighbours(db_path)[ids[0]]) == set(ids[1:5])
 
 
