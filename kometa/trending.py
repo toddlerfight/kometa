@@ -167,7 +167,7 @@ def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, 
     """Unowned rows: one Metron issue call each → series id + cover, saved back.
     Returns how many were filled."""
     from kometa import metron_client
-    lookup = lookup or (lambda series, number: metron_client._get("issue/", series_name=series, number=str(number or 1)))
+    lookup = lookup or (lambda series, number: metron_client._get("issue/", series_name=series, number=f"{(number or 1):g}"))
     n = 0
     for key, limit in (("comics", limit_comics), ("graphic_novels", limit_gns)):
         for e in [x for x in data.get(key, []) if not x.get("owned") and not x.get("metron_series_id") and not x.get("catalogue_miss")][:limit]:
@@ -203,7 +203,7 @@ def _enrich_in_background(data: dict, path):
         try:
             enrich_catalogue(data, path)
         except Exception as e:
-            logger.info(f"Trending enrich failed: {e}")
+            logger.warning(f"Trending enrich failed: {e}", exc_info=True)
         finally:
             _enriching["on"] = False
     threading.Thread(target=run, daemon=True).start()

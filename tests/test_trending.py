@@ -38,6 +38,18 @@ def test_shelf_match_and_metron_enrichment(db_path):
     assert by[2]["owned"] and by[2]["have_issue"] and by[2]["cover"].endswith("/issues/24/thumbnail")
     assert not by[1]["owned"]
     asked = []
+    tr.enrich_catalogue({"comics": [dict(tr.parse_title("Daredevil #6"), rank=9)], "graphic_novels": []}, db_path,
+                        lookup=lambda s_, n: asked.append((s_, n)) or {"results": []})
+    assert asked == [("Daredevil", 6.0)]
+    import kometa.metron_client as mc
+    sent = {}
+    mc_get = mc._get
+    mc._get = lambda path, **kw: sent.update(kw) or {"results": []}
+    try:
+        tr.enrich_catalogue({"comics": [dict(tr.parse_title("Daredevil #6"), rank=9)], "graphic_novels": []}, db_path)
+    finally:
+        mc._get = mc_get
+    assert sent["number"] == "6"                           # not '6.0' — Metron's filter is literal
     def lookup(series, number):
         asked.append((series, number))
         return {"results": [{"series": {"id": 500, "name": "Batman Day 2026 (2026)", "year_began": 2026}, "image": "https://m/x.jpg"}]} if "Batman Day" in series else {"results": []}
