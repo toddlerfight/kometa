@@ -56,3 +56,16 @@ def test_fill_signals_uses_the_lowest_owned_issue(db_path):
     assert asked == [12]
     sig = rel._signals(db_path)[sid]
     assert sig["creators"] == [{"role": "writer", "name": "Brian K. Vaughan"}] and sig["arcs"] == ["Chapter One"]
+
+
+def test_a_long_list_only_relates_true_neighbours(db_path, monkeypatch):
+    import kometa.readlists as rl
+    ids = [db.add_series(title=f"S{i}", publisher="X", folder_path=None, on_pull_list=False, path=db_path) for i in range(20)]
+    fake = {"entries": [{"position": i + 1, "series_id": sid} for i, sid in enumerate(ids)]}
+    monkeypatch.setattr(rl, "get_lists", lambda path=None: [{"id": 1}])
+    monkeypatch.setattr(rl, "resolve", lambda lid, path=None: fake)
+    nb = rel._list_neighbours(db_path)
+    assert set(nb[ids[5]]) == {ids[3], ids[4], ids[6], ids[7]}
+    short = {"entries": fake["entries"][:5]}
+    monkeypatch.setattr(rl, "resolve", lambda lid, path=None: short)
+    assert set(rel._list_neighbours(db_path)[ids[0]]) == set(ids[1:5])

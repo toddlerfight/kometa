@@ -131,11 +131,18 @@ def _list_neighbours(path) -> dict[int, dict[int, float]]:
         except Exception:
             continue
         seq = [(e["position"], e["series_id"]) for e in res["entries"] if e.get("series_id")]
+        # A short list is an order: everything on it is related. A long one (the
+        # 59-series 'Batman' collection) is a shelf: only true neighbours count,
+        # two positions either side, or every Batman book relates to every other.
+        big = len(seq) > 15
         for i, (pa, a) in enumerate(seq):
             for pb, b in seq:
                 if a == b:
                     continue
-                out[a][b] = max(out[a][b], 2.0 + (1.0 if abs(pa - pb) <= 2 else 0.0))
+                near = abs(pa - pb) <= 2
+                if big and not near:
+                    continue
+                out[a][b] = max(out[a][b], (1.5 if big else 2.0) + (1.0 if near else 0.0))
     return out
 
 
