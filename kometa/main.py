@@ -156,6 +156,8 @@ from kometa.ondeck import router as _ondeck_router          # On Deck: where rea
 app.include_router(_ondeck_router)
 from kometa.readlists import router as _readlists_router    # reading lists: CBL import, resolved against the shelf
 app.include_router(_readlists_router)
+from kometa.listget import router as _listget_router        # 'Get' on a reading list: track without pulling, request what the list needs
+app.include_router(_listget_router)
 from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
 app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the

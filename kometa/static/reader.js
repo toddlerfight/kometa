@@ -905,14 +905,15 @@ async function renderReadList(id) {
     bgImg.style.backgroundImage = `url("/api/books/${books[Math.floor(Math.random() * books.length)].id}/cover")`;
     bg.classList.remove('hidden');
   }
+  const gaps = l.total - l.owned;
   document.getElementById('topbar-title').textContent = l.name;
   document.getElementById('topbar-chips').innerHTML =
     `<span class="chip ${l.owned < l.total ? 'chip-missing' : 'chip-complete'}">${l.owned}/${l.total}</span>`;
   const booksRead = books.filter(b => b.progress?.completed).length;
-  const gaps = l.total - l.owned;
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
     ${books.length} BOOK${books.length === 1 ? '' : 'S'}${booksRead ? ` · ${booksRead} READ` : ''}${gaps ? ` · ${gaps} NOT HERE` : ''}</span>`;
   document.getElementById('topbar-actions').innerHTML = `
+    ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : ''}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
@@ -927,8 +928,9 @@ async function renderReadList(id) {
     } else {
       const label = `${e.series}${e.number ? ' #' + e.number : ''}`;
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
-      tiles.push(`<div class="issue-tile rl-gap" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
-        <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}</div>
+      tiles.push(`<div class="issue-tile rl-gap" id="rl-item-${e.item_id}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
+        <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}
+          <button class="rl-get" title="Get this: track the run without pulling it, fetch what this entry covers" onclick="event.stopPropagation(); _rlGet(${id}, ${e.item_id}, this)">GET</button></div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }
@@ -946,4 +948,49 @@ async function _rlFillCovers(id) {
     const r = await api.post(`/api/readlists/${id}/covers`, {});
     if (currentView === 'readlist' && currentParams.id === id && r.filled) renderReadList(id);
   } catch {}
+}
+
+
+// --- Get: an entry you don't have becomes an acquisition --------------------------
+// One entry: track the run (pull list off) if it isn't tracked, queue what the
+// entry covers. The tile reports the outcome in place; a run no catalogue knows
+// says so rather than pretending.
+async function _rlGet(listId, itemId, btn) {
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const r = await api.post(`/api/readlists/${listId}/items/${itemId}/get`, {});
+    if (r.result === 'queued') {
+      showToast(`${r.series_title}: ${r.queued} queued${r.created ? ', now tracked' : ''}${r.upcoming ? `, ${r.upcoming} not out yet` : ''}`);
+      btn.textContent = 'QUEUED'; btn.classList.add('on');
+    } else if (r.result === 'owned') { btn.textContent = 'HAVE'; }
+    else { showToast(r.detail || 'No catalogue knows that run', 'error'); btn.textContent = 'UNKNOWN'; btn.classList.add('off'); }
+  } catch (e) { btn.disabled = false; btn.textContent = 'GET'; showToast('Couldn’t get that', 'error'); }
+}
+
+// Every gap on the list, in the background; the top-bar button shows progress.
+function _rlGetMissing(listId, count) {
+  showModal(`
+    <div class="modal-header"><h2>Get ${count} missing?</h2></div>
+    <div class="modal-body">Each entry's run is tracked without being put on the pull list, and only the issues the list covers are fetched.
+      Runs no catalogue knows are listed afterwards.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="rl-gm-btn">Get missing</button>
+    </div>`);
+  document.getElementById('rl-gm-btn').onclick = async () => {
+    closeModal();
+    try { await api.post(`/api/readlists/${listId}/get-missing`, {}); } catch { showToast('Couldn’t start', 'error'); return; }
+    _rlPollGetMissing(listId);
+  };
+}
+
+async function _rlPollGetMissing(listId) {
+  const btn = document.getElementById('rl-getmissing');
+  let st;
+  try { st = await api.get(`/api/readlists/${listId}/get-missing`); } catch { return; }
+  if (btn) { btn.disabled = st.running; btn.textContent = st.running ? `Getting ${st.done}/${st.total}…` : `Get missing (${Math.max(0, st.total - st.done)})`; }
+  if (st.running) { setTimeout(() => _rlPollGetMissing(listId), 2500); return; }
+  const unknown = (st.unknown || []).length;
+  showToast(`${st.queued} issues queued across ${st.created} new runs${unknown ? ` · ${unknown} unknown to every catalogue` : ''}`);
+  if (currentView === 'readlist' && currentParams.id === listId) renderReadList(listId);
 }

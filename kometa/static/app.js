@@ -1480,6 +1480,7 @@ async function renderSeriesDetail(id) {
   const chips = [
     released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
+    s.from_list_id ? `<a class="chip chip-collected" title="Tracked by a reading list's Get — pull list off, only what the list asked for" onclick="navigate('readlist', {id: ${s.from_list_id}})">◆ from a reading list</a>` : '',
   ].filter(Boolean).join('');
 
   // An on/off switch, not a button: pulling is a state you can see and undo.

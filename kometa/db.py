@@ -291,6 +291,10 @@ def _migrate(path=DB_PATH):
             # Metron's series type (One-Shot / Limited / Trade Paperback / …) —
             # what tells a one-file folder apart from a stub (kometa/singles.py)
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_type TEXT")
+        if "from_list_id" not in series_cols:
+            # the reading list whose 'Get' tracked this run (pull list off): the
+            # series page says why it exists, and the Library counts it honestly
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN from_list_id INTEGER")
         if "locg_link" not in series_cols:
             # mirror of metron_link: a Metron-matched series tried against LOCG
             # ('linked' / 'none') so the trickle doesn't ask twice
@@ -1807,6 +1811,11 @@ def set_metron_link(series_id, outcome, path=DB_PATH):
 def set_metron_type(series_id, series_type, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET metron_type = ? WHERE id = ?", (series_type or "", series_id))
+
+
+def set_from_list(series_id, list_id, path=DB_PATH):
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET from_list_id = ? WHERE id = ?", (list_id, series_id))
 
 
 def set_locg_link(series_id, outcome, path=DB_PATH):

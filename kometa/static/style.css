@@ -2200,3 +2200,9 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .rl-gap .issue-tile-num { color: var(--tq); }
 .rl-gap[role="button"] { cursor: pointer; }
 .rl-grid .issue-tile-num { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rl-get { position: absolute; left: 6px; bottom: 6px; z-index: 2; font: inherit; font-size: 10px; letter-spacing: .08em; padding: 3px 8px; border-radius: var(--r-sm); border: 1px solid var(--amb); background: rgba(0,0,0,.72); color: var(--amb); cursor: pointer; opacity: 0; transition: opacity var(--t-mid) var(--ease-out); }
+.rl-gap:hover .rl-get, .rl-gap:focus-within .rl-get, .rl-get:disabled { opacity: 1; }
+.rl-get.on { border-color: var(--pri); color: var(--pri); }
+.rl-get.off { border-color: var(--tq); color: var(--tq); }
+@media (hover: none) { .rl-get { opacity: 1; } }
+.rl-gap .issue-tile-img { position: relative; }
