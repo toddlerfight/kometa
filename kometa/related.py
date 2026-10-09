@@ -61,9 +61,21 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
     ask (no Metron issue) — stored as empty so it isn't asked again this month."""
     path = path or DB_PATH
     ensure_tables(path)
-    issue = _representative_issue(series_id, path)
     creators, arcs = [], []
-    if issue:
+    # The local record first (kometa/record.py): a Metron row with creator ids,
+    # else an LOCG row with names — enough for shelf-side Related on runs Metron
+    # hasn't got. The catalogue is asked only when the record holds nothing.
+    from kometa import record
+    rows = [r for r in record.issues_for_series(series_id, path) if r.get("credits")]
+    rows.sort(key=lambda r: (r.get("source") != "metron", r["number"]))
+    issue = None if rows else _representative_issue(series_id, path)
+    if rows:
+        d = rows[0]
+        for c in d.get("credits") or []:
+            if c.get("name"):
+                creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
+        arcs = sorted({a for r in rows for a in (r.get("arcs") or []) if a})
+    elif issue:
         from kometa import metron_client
         d = (detail or metron_client.issue_detail)(issue["metron_issue_id"])
         for c in d.get("credits") or []:
@@ -73,7 +85,7 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
     with db._connect(path) as conn:
         conn.execute("INSERT OR REPLACE INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) "
                      "VALUES (?, ?, ?, datetime('now'))", (series_id, json.dumps(creators), json.dumps(arcs)))
-    return bool(issue)
+    return bool(issue) or bool(rows)
 
 
 def _signals(path) -> dict[int, dict]:

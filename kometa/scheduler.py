@@ -142,6 +142,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=3))
     except Exception as e:
         logger.warning(f"Related signals trickle not scheduled: {e}")
+    # The local catalogue record (kometa/record.py): the backlog fills a few
+    # issues per tick, Metron first, stopping at its first refusal.
+    try:
+        from kometa.record import trickle as record_trickle, TRICKLE_MINUTES as RECORD_MINUTES
+        scheduler.add_job(record_trickle, IntervalTrigger(minutes=RECORD_MINUTES), id="record_trickle",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=2))
+    except Exception as e:
+        logger.warning(f"Record trickle not scheduled: {e}")
     try:
         from kometa.related import warm_lists, LISTS_TTL_S
         scheduler.add_job(warm_lists, IntervalTrigger(seconds=LISTS_TTL_S - 10), id="related_lists_warm",

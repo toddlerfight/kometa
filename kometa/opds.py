@@ -85,6 +85,18 @@ def _label(b: dict) -> str:
     return os.path.splitext(os.path.basename(b["path"]))[0]
 
 
+def _summary(b: dict, path) -> str:
+    """The issue's description from the local record, when it has one."""
+    if b.get("number") is None or not b.get("tracked_series_id"):
+        return ""
+    try:
+        from kometa import record
+        r = record.get_issue(b["tracked_series_id"], b["number"], path or DB_PATH)
+        return (r or {}).get("desc") or ""
+    except Exception:
+        return ""
+
+
 def book_entry(b: dict, series_title: str, progress: dict | None = None, path=None) -> str:
     """One Atom entry: cover, thumbnail, download, and the PSE stream link.
     PSE page numbers are 0-based (the template's {pageNumber}); the reader's
@@ -104,7 +116,9 @@ def book_entry(b: dict, series_title: str, progress: dict | None = None, path=No
             f'<link rel="http://opds-spec.org/image/thumbnail" href="/api/books/{bid}/cover" type="image/jpeg"/>'
             f'<link rel="http://opds-spec.org/acquisition" href="/opds/books/{bid}/file" type={quoteattr(media)}/>'
             f'{pse}'
-            f'<content type="text">{escape(series_title)} · {count or "?"} pages</content></entry>')
+            f'<content type="text">{escape(series_title)} · {count or "?"} pages</content>'
+            + (f'<summary type="text">{escape(summary[:600])}</summary>' if (summary := _summary(b, path)) else '')
+            + '</entry>')
 
 
 def _progress_for(book_ids: list[int], path) -> dict[int, dict]:
@@ -120,7 +134,7 @@ def _progress_for(book_ids: list[int], path) -> dict[int, dict]:
 def _books_sql(path, where: str, params: tuple, order: str, limit: int | None = None) -> list[dict]:
     with db._connect(path) as conn:
         return [dict(r) for r in conn.execute(
-            f"""SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id,
+            f"""SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id, b.tracked_series_id,
                        s.title AS series_title FROM books b
                 LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
                 WHERE {where} ORDER BY {order}""" + (f" LIMIT {int(limit)}" if limit else ""), params)]
@@ -195,7 +209,7 @@ def _books_by_ids(ids: list[int], path) -> list[dict]:
     with db._connect(path) as conn:
         q = ",".join("?" * len(ids))
         rows = {r["id"]: dict(r) for r in conn.execute(f"""SELECT b.id, b.path, b.number, b.page_count, b.added_at,
-            b.shelf_series_id, s.title AS series_title FROM books b LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
+            b.shelf_series_id, b.tracked_series_id, s.title AS series_title FROM books b LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
             WHERE b.id IN ({q})""", ids)}
     return [rows[i] for i in ids if i in rows]
 
@@ -290,7 +304,7 @@ def keep_reading_feed(path=None) -> str:
     path = path or DB_PATH
     with db._connect(path) as conn:
         books = [dict(r) for r in conn.execute("""
-            SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id, s.title AS series_title
+            SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id, b.tracked_series_id, s.title AS series_title
             FROM read_progress p JOIN books b ON b.id = p.book_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
             WHERE p.reader_id = ? AND p.completed = 0 ORDER BY p.updated_at DESC LIMIT 50""", (READER_ID,))]
     return _feed(ACQ, "urn:kometa:opds:keep-reading", "Keep reading", [], _entries(books, path), "/opds/keep-reading")

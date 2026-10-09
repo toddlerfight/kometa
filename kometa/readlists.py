@@ -549,6 +549,15 @@ def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_iss
         return {"filled": 0, "missed": 0, "left": 0}
     items = {it["id"]: it for it in get_items(list_id, path)}
     found: dict[int, str] = {}
+    # 0. The local record (kometa/record.py): an issue we already know the cover of
+    from kometa import record
+    for e in todo:
+        if e.get("series_id") and _num(e["number"]) is not None:
+            r = record.get_issue(e["series_id"], _num(e["number"]), path)
+            img = next((c.get("thumb") or c.get("large") for c in (r or {}).get("covers") or [] if c.get("thumb") or c.get("large")), None)
+            if img:
+                found[e["item_id"]] = img
+    todo = [e for e in todo if e["item_id"] not in found]
     # 1. ComicVine by issue id, in one batch
     if cv is None:
         from kometa import sources

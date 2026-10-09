@@ -1538,16 +1538,16 @@ def get_issue_locg_details(series_id: int, number: float):
     """Description + credits — Metron first, LOCG for issues Metron lacks
     (kometa.issue_meta). Route name kept for the frontend; cached either way
     (the external kometa-recommend project also reads the LOCG entries)."""
-    from kometa import issue_meta
+    from kometa import record
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
     if not issue or not (issue.get("locg_issue_id") or issue.get("metron_issue_id")):
         raise HTTPException(404)
     try:
-        d = issue_meta.details_for(issue, DB_PATH)
+        d = record.details(issue, DB_PATH)        # the local record first; a catalogue only to fill it
     except Exception as e:
         raise HTTPException(502, "Details fetch failed") from e
-    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source")}
+    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source"), "record": d.get("record")}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
