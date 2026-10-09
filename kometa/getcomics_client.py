@@ -238,13 +238,27 @@ def _chunk_links(body) -> list[tuple[int, int, str]]:
     return chunks
 
 
+# What may follow the series name in a trade post's title: the edition, the
+# volume, the year — not another word. 'DIE!namite Vol. 1 (TPB)' normalises to
+# 'die namite vol 1 tpb' and the substring test took it for Die; what follows
+# 'die' there is 'namite', so it isn't.
+_AFTER_TITLE_RE = (r"(?=\s*(?:$|vol(?:ume)?\b|v\d|tpb\b|hc\b|hardcover\b|omnibus\b|deluxe\b|compendium\b|"
+                   r"absolute\b|library\b|collection\b|collected\b|complete\b|the complete\b|book\b|part\b|"
+                   r"edition\b|anniversary\b|gn\b|graphic novel\b|\d{4}\b|\(|#))")
+
+
+def _title_leads(title_norm: str, post_norm: str) -> bool:
+    """The series name, as whole words, followed by nothing but trade-speak."""
+    return bool(re.search(rf"\b{re.escape(title_norm)}\b" + _AFTER_TITLE_RE, post_norm))
+
+
 def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=None, post_raw: str = "") -> bool:
     """Trade-aware post matcher — the mirror image of _series_matches, which
     REJECTS format editions. Here we REQUIRE one: the post must name the series,
     look like a collected edition, and (when we know it) cover the volume we want.
     Note _normalize already turned every dash into a space, so a ranged trade
     reads as 'vol 1 6', not 'vol 1-6'."""
-    if title_norm not in post_norm:
+    if not _title_leads(title_norm, post_norm):
         return False
     has_format = bool(_FORMAT_WORDS & set(post_norm.split()))
     if vol is not None:
