@@ -562,17 +562,20 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
 
 
 # --- per-creator: "More from {Name}" rows, and the creator modal ---------------------
-def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict], exclude: int | None = None) -> list[dict]:
-    """Shelf series carrying this creator id in their signals, as owned cards."""
+def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict], exclude: int | None = None,
+                   name: str | None = None) -> list[dict]:
+    """Shelf series carrying this creator id in their signals, as owned cards,
+    each saying the person's role on THAT series: 'Artist: Paul Pope'."""
     out = []
     for sid, s_ in sig.items():
         if sid == exclude or sid not in series or series[sid].get("kind") == "arc":
             continue
-        if any(c.get("id") == creator_id for c in s_["creators"]):
+        roles = sorted({(c.get("role") or "").lower() for c in s_["creators"] if c.get("id") == creator_id and c.get("role")})
+        if roles:
             s = series[sid]
             out.append({"kind": "owned", "series_id": sid, "title": s["title"], "publisher": s.get("publisher"),
                         "owned": s.get("owned") or 0, "total": (s.get("owned") or 0) + (s.get("missing") or 0),
-                        "why": [], "because": [], "score": 0.0})
+                        "why": [work_label({"roles": roles}, name)] if name else [], "because": [], "score": 0.0})
     return out
 
 
@@ -616,8 +619,8 @@ def creator_rows(series_id: int, max_rows: int = 2, min_items: int = 4, path=Non
     series = {s["id"]: s for s in db.get_all_series(path)}
     rows, pending = [], False
     for cid, name, verb in _top_creators(series_id, sig, max_creators=max_rows + 2):
-        shelf = _creator_shelf(cid, sig, series, exclude=series_id)
-        cat, p = _creator_catalogue(cid, path, series, cached_only)
+        shelf = _creator_shelf(cid, sig, series, exclude=series_id, name=name)
+        cat, p = _creator_catalogue(cid, path, series, cached_only, name=name)
         pending = pending or p
         items = shelf + cat
         if len(items) < min_items:
@@ -635,7 +638,7 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     series = {s["id"]: s for s in db.get_all_series(path)}
     if not name:
         name = next((c["name"] for s_ in sig.values() for c in s_["creators"] if c.get("id") == creator_id), None)
-    shelf = _creator_shelf(creator_id, sig, series)
+    shelf = _creator_shelf(creator_id, sig, series, name=name)
     # everything by this person, covers included — labelled 'Cover: Name' like the modal's credits
     cat, pending = _creator_catalogue(creator_id, path, series, cached_only, name=name, include_cover_only=True)
     return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}

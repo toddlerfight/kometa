@@ -142,7 +142,9 @@ def test_creator_rows_one_per_weighty_credit_shelf_first_then_catalogue(db_path)
     items = rows[0]["items"]
     assert [x["title"] for x in items] == ["100%", "Heavy Liquid", "THB", "Escapo"]
     assert [x["kind"] for x in items] == ["owned", "owned", "catalogue", "catalogue"]
-    assert all(x["why"] == [] for x in items) and me not in [x.get("series_id") for x in items]
+    # every card says the person's role on THAT comic, in the modal's credit format
+    assert all(x["why"] == ["Artist: Paul Pope"] for x in items if x["kind"] == "owned")
+    assert me not in [x.get("series_id") for x in items]
     rows, _ = rel.creator_rows(me, path=db_path, min_items=5)
     assert rows == []                                                             # under the bar, no row
     page = rel.creator_page(7, path=db_path)
