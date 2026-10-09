@@ -186,7 +186,11 @@ def file_under(series_id: int, parent_id: int, path=None, year: int | None = Non
             # 'East of West v03 - There Is No Us (2014) (Digital) (Pym-Empire).cbz': the
             # file already says which volume it is — keep that, drop the scene tags.
             # (The first cut renamed eleven volumes 'TPB (2013) 01'…'11' and lost it all.)
-            name = _clean_scene_name(os.path.splitext(f)[0]) + ext
+            # …but never the '#001' a rip stuck on a trade ('Rumble - Vol. 1 #001
+            # (2015)'): a '#' makes it issue #1 on the next shelf scan, a twin of
+            # the real one. Drop it, and say TPB if nothing in the name does.
+            stem = re.sub(r"\s*#\s*\d+(?:\.\d+)?", "", os.path.splitext(f)[0])
+            name = _clean_scene_name(stem) + ext
         else:
             name = f"{_safe(re.sub(r'\s*:\s*', ' - ', title))}{kind}{y}{'' if len(files) == 1 else f' {i + 1:02d}'}{ext}"
         target = os.path.join(dst, name)

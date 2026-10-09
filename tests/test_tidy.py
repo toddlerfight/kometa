@@ -148,3 +148,14 @@ def test_file_under_keeps_volume_names_and_drops_scene_tags(lib):
     r = tidy.file_under(stub_id, sid, lib["db"])
     assert r["files"] == ["Batman - Damned v01 - The Promise (2019).cbz", "Batman - Damned v02 (2020).cbz"]
     assert tidy._clean_scene_name("East of West v03 - There Is No Us (2014) (Digital) (Pym-Empire)") == "East of West v03 - There Is No Us (2014)"
+
+
+def test_file_under_strips_the_issue_hash_from_a_volume_name():
+    """'Rumble - Vol. 1 #001 (2015)' is a trade wearing an issue number. Filed
+    under its run it must lose the '#', or the next shelf scan reads it as #1."""
+    import re
+    from kometa import tidy
+    from kometa.naming import parse_issue_number
+    stem = tidy._clean_scene_name(re.sub(r"\s*#\s*\d+(?:\.\d+)?", "", "Rumble - Vol. 1 #001 (2015) (Digital)"))
+    assert stem == "Rumble - Vol. 1 (2015)"
+    assert parse_issue_number(stem + ".cbz", "Rumble") is None

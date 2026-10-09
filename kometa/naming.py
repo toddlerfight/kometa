@@ -34,7 +34,11 @@ def _strip_ext(filename: str) -> str:
 
 _COLLECTED_NAME_RE = re.compile(
     r"\b(tpb|hc|omnibus|deluxe|compendium|absolute|library edition|collected|"
-    r"vol(?:ume)?\.?\s*\d+|book\s+(?:one|two|three|\d+))\b", re.I)
+    r"book\s+(?:one|two|three|\d+))\b", re.I)
+# 'v01', 'Vol. 3', 'Volume 10': a volume marker is not an issue number. It's
+# dropped before the bare-number search, so 'Batman - Damned v01 - The Promise
+# (2019)' has no number left (a trade) while 'Batman v2 012' still reads as #12.
+_VOLUME_MARK_RE = re.compile(r"\b(?:v|vol\.?|volume)\s*\d+\b", re.I)
 
 
 def parse_issue_number(filename: str, series_title: str = "") -> float | None:
@@ -56,9 +60,9 @@ def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     if _COLLECTED_NAME_RE.search(name):
         return None
     # Strip series title then find first number under 1000 (avoids years)
-    remainder = name
+    remainder = _VOLUME_MARK_RE.sub('', name)
     if series_title:
-        remainder = re.sub(re.escape(series_title), '', name, count=1, flags=re.IGNORECASE).strip(' -_')
+        remainder = re.sub(re.escape(series_title), '', remainder, count=1, flags=re.IGNORECASE).strip(' -_')
     for m in re.finditer(r'\b(\d+(?:\.\d+)?)\b', remainder):
         val = float(m.group(1))
         if val < 1000:
