@@ -410,3 +410,12 @@ class TestStaleKomgaLink:
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
         assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
+
+
+def test_a_no_volume_edition_on_disk_matches_its_trade_whatever_year_the_file_carries(tmp_path):
+    """'DIE HC' on LOCG, 'DIE HC (2022).cbz' on the shelf: the same book."""
+    from kometa.sync import enrich_trades
+    (tmp_path / "DIE HC (2022).cbz").write_bytes(b"PK\x03\x04")
+    trades = [{"title": "DIE HC", "vol": None}, {"title": "DIE Vol. 1: Fantasy Heartbreaker TP", "vol": 1}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Die"}, trades, books=[])
+    assert [t["owned"] for t in trades] == [True, False]

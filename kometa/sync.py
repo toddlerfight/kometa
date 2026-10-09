@@ -401,7 +401,8 @@ def _scan_folder_edition_names(folder_path: str) -> set[str]:
         for name in os.listdir(folder_path):
             stem, ext = os.path.splitext(name)
             if ext.lower() in OWNED_EXTS and _parse_volume_number(name) is None:
-                names.add(_norm_name(stem))
+                # the year a file carries ('DIE HC (2022)') is not part of the edition's name
+                names.add(_norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", stem)))
     except Exception:
         pass
     return names
