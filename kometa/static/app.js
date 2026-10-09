@@ -793,7 +793,7 @@ async function showCreatorModal(creatorId, name, attempt = 0) {
     <div class="modal-body creator-modal">
       ${d.shelf.length ? `<div class="od-head"><span class="series-card-title">On the shelf</span></div><div class="series-grid">${d.shelf.map(_relCard).join('')}</div>` : ''}
       ${d.catalogue.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">In the catalogue</span>
-        <span class="u-label" style="color:var(--tq);margin-left:10px">Track puts them on the shelf</span></div><div class="series-grid">${d.catalogue.map(_relCard).join('')}</div>` : ''}
+</div><div class="series-grid">${d.catalogue.map(_relCard).join('')}</div>` : ''}
       ${!d.shelf.length && !d.catalogue.length ? `<div class="od-empty">${d.pending ? 'Asking the catalogue…' : 'Nothing else by them that Metron knows.'}</div>` : ''}
     </div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;
