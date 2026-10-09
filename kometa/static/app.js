@@ -704,10 +704,12 @@ async function _relTrack(payload, btn) {
   } catch (e) { btn.disabled = false; btn.textContent = 'TRACK'; showToast('Couldn’t track that', 'error'); }
 }
 
-async function _loadRelated(id) {
+async function _loadRelated(id, attempt = 0) {
   let d;
   try { d = await api.get(`/api/series/${id}/related`); } catch { return; }
   if (currentView !== 'series-detail' || currentParams.id !== id) return;
+  // the catalogue is being asked in the background: look again in a few seconds, a few times
+  if (d.pending && attempt < 4) setTimeout(() => _loadRelated(id, attempt + 1), 4000);
   const app = document.getElementById('app');
   app.querySelector('.rel-row')?.remove();
   const out = d.outward || [];
@@ -723,10 +725,11 @@ async function _loadRelated(id) {
   </div>`);
 }
 
-async function _loadSuggestions() {
+async function _loadSuggestions(attempt = 0) {
   let d;
   try { d = await api.get('/api/ondeck/suggestions'); } catch { return; }
   if (currentView !== 'ondeck') return;
+  if (d.pending && attempt < 4) setTimeout(() => _loadSuggestions(attempt + 1), 4000);
   const app = document.getElementById('app');
   app.querySelector('.sug-row')?.remove();
   if (!d.suggestions.length) return;

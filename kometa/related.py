@@ -16,6 +16,7 @@ in-memory over the cached signals, so the rows are cheap to render.
 import json
 import logging
 import re
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -292,6 +293,36 @@ def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> 
 
 
 # --- outward: the catalogue, not the shelf ---------------------------------------
+def _cached_works(creator_id: int, path) -> list[dict] | None:
+    with db._connect(path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS creator_works (
+            creator_id INTEGER PRIMARY KEY, works_json TEXT, fetched_at TEXT DEFAULT (datetime('now')))""")
+        r = conn.execute("SELECT works_json, fetched_at FROM creator_works WHERE creator_id = ?", (creator_id,)).fetchone()
+    return json.loads(r["works_json"] or "[]") if r and not _stale(r["fetched_at"]) else None
+
+
+_filling: set = set()
+
+
+def _fill_works_in_background(creator_ids: list[int], path):
+    """One thread per batch: the row renders now from cache and fills on the next look."""
+    todo = [c for c in creator_ids if c not in _filling]
+    if not todo:
+        return
+    _filling.update(todo)
+
+    def run():
+        try:
+            for cid in todo:
+                try:
+                    creator_works(cid, path)
+                except Exception as e:
+                    logger.info(f"Outward: creator {cid} fetch failed: {e}")
+        finally:
+            _filling.difference_update(todo)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def creator_works(creator_id: int, path=None, fetch=None) -> list[dict]:
     """Series a creator worked on, from Metron's issue list, grouped: [{metron_series_id,
     title, year, publisher, count, cover}]. Cached 30 days — one creator is one call."""
@@ -322,8 +353,11 @@ def creator_works(creator_id: int, path=None, fetch=None) -> list[dict]:
     return works
 
 
-def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_creators: int = 5) -> list[dict]:
-    """Series NOT on the shelf by the writers and artists of the seed series."""
+def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_creators: int = 5,
+            cached_only: bool = False) -> list[dict] | tuple[list[dict], bool]:
+    """Series NOT on the shelf by the writers and artists of the seed series.
+    cached_only: answer from the creator cache now, fetch the rest in the
+    background, and say whether anything is still coming → (rows, pending)."""
     path = path or DB_PATH
     sig = _signals(path)
     weight: dict[int, tuple[float, str, str]] = {}
@@ -338,12 +372,22 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
     have_ids = {s.get("metron_series_id") for s in all_series if s.get("metron_series_id")}
     have_titles = {norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"])) for s in all_series}
     out: dict[int, dict] = {}
+    pending = False
+    missing = [cid for cid, _ in top if cached_only and _cached_works(cid, path) is None]
+    if missing:
+        pending = True
+        _fill_works_in_background(missing, path)
     for cid, (w, name, verb) in top:
-        try:
-            works = creator_works(cid, path, fetch)
-        except Exception as e:
-            logger.info(f"Outward: creator {name!r} skipped: {e}")
-            continue
+        if cached_only:
+            works = _cached_works(cid, path)
+            if works is None:
+                continue
+        else:
+            try:
+                works = creator_works(cid, path, fetch)
+            except Exception as e:
+                logger.info(f"Outward: creator {name!r} skipped: {e}")
+                continue
         for wk in works:
             if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2:
                 continue
@@ -355,7 +399,14 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
     res = sorted(out.values(), key=lambda o: -o["score"])[:limit]
     for o in res:
         o["why"] = o["why"][:2]
-    return res
+    return (res, pending) if cached_only else res
+
+
+def _safe_fill(series_id: int):
+    try:
+        fill_signals(series_id, DB_PATH)
+    except Exception as e:
+        logger.info(f"Related: signals for series {series_id} not available yet: {e}")
 
 
 # --- API --------------------------------------------------------------------------
@@ -366,28 +417,25 @@ def api_related(series_id: int):
         raise HTTPException(404)
     sig = _signals(DB_PATH)
     pending = False
-    if series_id not in sig or _stale(sig[series_id]["fetched_at"]):
-        try:
-            fill_signals(series_id, DB_PATH)
-        except Exception as e:
-            logger.info(f"Related: signals for {s['title']!r} not available yet: {e}")
-            pending = True
+    if series_id not in sig or _stale(sig[series_id]["fetched_at"]) or _needs_ids(sig[series_id]):
+        pending = True
+        threading.Thread(target=lambda: _safe_fill(series_id), daemon=True).start()
+    out, out_pending = [], False
     try:
-        out = outward([series_id], limit=8)
+        out, out_pending = outward([series_id], limit=8, cached_only=True)
     except Exception as e:
         logger.info(f"Related: outward skipped: {e}")
-        out = []
-    return {"related": related(series_id), "outward": out, "pending": pending}
+    return {"related": related(series_id), "outward": out, "pending": pending or out_pending}
 
 
 @router.get("/api/ondeck/suggestions")
 def api_suggestions():
     sug = suggestions()
+    out, pending = [], False
     try:
-        out = outward(_recent_series(DB_PATH), limit=10)
+        out, pending = outward(_recent_series(DB_PATH), limit=10, cached_only=True)
     except Exception as e:
         logger.info(f"Suggestions: outward skipped: {e}")
-        out = []
     for o in out:
         o["because"] = []
-    return {"suggestions": sug + out}
+    return {"suggestions": sug + out, "pending": pending}
