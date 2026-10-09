@@ -26,6 +26,13 @@ and bugs. After this, Kometa owns the shelf, the reading, and the getting.
      app. "Open in Komga" becomes "Read".
    - **B — native iOS reader (second).** A *standalone reader*: pulls books from the
      Kometa server, reads offline, syncs progress back. **Never does acquisition.**
+     *(Clarified 2026-10-10.)* Reader B talks to Kometa's JSON API, not OPDS; the OPDS
+     feed and the Panels trial were a test of the server, not the plan for B. Beyond
+     reading, B shows the **pull list**: the pulled series as cover cards with the next
+     release date badged on the cover (as the Library does), the current issue and whether
+     it is on the shelf, and a calendar of upcoming issues. Read-only — B never queues a
+     download; "it's not going to pull" is the rule. Fed by `/api/pull-list` and
+     `/api/series` (store dates, owned state, covers), which already exist.
 3. **The server does everything.** Clients never fetch or store on their own behalf.
    The API is **device-neutral from day one**: per-page streaming (A), whole-book
    download and offline-progress sync (B), even though A needs neither of the
