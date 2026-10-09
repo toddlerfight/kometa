@@ -23,7 +23,12 @@ import subprocess
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
-from PIL import Image
+from PIL import Image, ImageFile
+
+# A page missing its last few bytes still has every pixel that matters. Pillow
+# refuses such files by default and a whole cover went 422 over 5 bytes
+# (The Dirt Beneath the Devil #3). Readers tolerate this; so do we.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import kometa.db as db
 from kometa.naming import find_issue_file, _IMAGE_EXTS

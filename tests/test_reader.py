@@ -120,3 +120,17 @@ class TestProgress:
         b = rd.issue_book(shelf[1], 1.0)
         db.set_progress("someone-else", b["id"], 9, True, "2026-10-08T05:00:00Z", shelf[0])
         assert rd.book_detail(b["id"])["progress"] is None
+
+
+def test_a_truncated_cover_still_renders(tmp_path, monkeypatch):
+    """A JPEG short by a few bytes is still a cover, not a 422."""
+    import io, zipfile
+    from PIL import Image
+    from kometa import reader
+    monkeypatch.setattr(reader, "PAGE_CACHE_DIR", str(tmp_path / "cache"))
+    buf = io.BytesIO(); Image.new("RGB", (400, 600), "red").save(buf, "JPEG"); data = buf.getvalue()[:-5]
+    p = tmp_path / "Short #001.cbz"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Short 001-000.jpg", data); z.writestr("Short 001-001.jpg", buf.getvalue())
+    out = reader.get_cover_bytes(str(p))
+    assert out[:2] == b"\xff\xd8" and len(out) > 500
