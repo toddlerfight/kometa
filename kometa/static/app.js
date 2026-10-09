@@ -653,6 +653,7 @@ async function renderOnDeck() {
 // One card shape for both rows: the series' cover, its title, and WHY it's here
 // — a shared creator, a shared arc, or 'on a reading list together'.
 function _relCard(r) {
+  if (r.kind === 'gap') return _gapCard(r);
   const go = `navigate('series-detail', {id: ${r.series_id}})`;
   const why = (r.why || []).join(' · ');
   const because = r.because && r.because.length ? `because you read ${r.because.map(esc).join(', ')}` : '';
@@ -662,6 +663,20 @@ function _relCard(r) {
       <div class="series-card-count" style="color:${r.owned && r.owned >= r.total ? 'var(--pri)' : 'var(--tq)'}">${r.owned || 0}/${r.total || 0}</div></div>
     <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
     ${because ? `<div class="series-card-publisher u-truncate rel-because">${because}</div>` : ''}
+  </div>`;
+}
+
+// A suggestion you don't have: a reading-list gap, with the list's cover for it
+// and Get right on the card (the same Get as the list page).
+function _gapCard(r) {
+  const go = `navigate('readlist', {id: ${r.list_id}})`;
+  const why = (r.why || []).join(' · ');
+  return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(r.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+      <button class="od-menu rel-get" title="Get this" aria-label="Get" onclick="event.stopPropagation(); _rlGet(${r.list_id}, ${r.item_id}, this)">GET</button></div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
+      <div class="series-card-count" style="color:var(--amb)">not here</div></div>
+    <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
   </div>`;
 }
 

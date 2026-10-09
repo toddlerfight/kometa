@@ -246,7 +246,44 @@ def suggestions(limit: int = 16, path=None) -> list[dict]:
         r["because"] = [titles.get(x, "") for x in r["because"][:2]]
         r["why"] = r["why"][:3]
         r["started"] = r["series_id"] in started
-    return out[:limit]
+        r["kind"] = "owned"
+    # Outward: entries you don't have on the lists you've been reading from —
+    # related by the list's own say-so, and one Get away.
+    gaps = _list_gaps_near(seeds, path, titles)
+    return (out + gaps)[:limit + len(gaps)]
+
+
+def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:
+    from kometa import readlists
+    out, seen = [], set()
+    try:
+        lists = readlists.get_lists(path)
+    except Exception:
+        return out
+    for l in lists:
+        try:
+            res = readlists.resolve(l["id"], path)
+        except Exception:
+            continue
+        on_list = {e["series_id"] for e in res["entries"] if e.get("series_id")}
+        touching = [sid for sid in seeds if sid in on_list]
+        if not touching:
+            continue
+        # the next gaps after the furthest seed on the list: what comes next in that order
+        last_pos = max((e["position"] for e in res["entries"] if e.get("series_id") in touching), default=0)
+        n = 0
+        for e in res["entries"]:
+            if e["status"] == "owned" or e["position"] < last_pos or e["series"] in seen:
+                continue
+            seen.add(e["series"])
+            out.append({"kind": "gap", "series_id": e.get("series_id"), "title": e["series"], "list_id": l["id"],
+                        "list_name": l["name"], "item_id": e["item_id"], "cover": e.get("cover"),
+                        "why": [f"next on {l['name']}"], "because": [titles.get(s, "") for s in touching[:1]],
+                        "owned": 0, "total": 0, "score": 0, "started": False})
+            n += 1
+            if n >= per_list:
+                break
+    return out
 
 
 # --- API --------------------------------------------------------------------------

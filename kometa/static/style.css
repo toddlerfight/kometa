@@ -2235,3 +2235,5 @@ body.touch .od-menu { opacity: .85; }
 .rel-card .rel-why { color: var(--tq); text-transform: none; letter-spacing: 0; }
 .rel-card .rel-because { color: var(--td); text-transform: none; letter-spacing: 0; }
 .rel-row, .sug-row { margin-top: var(--sp-xl); }
+.rel-gap .series-card-img-wrap { position: relative; }
+.rel-get { width: auto; border-radius: var(--r-sm); padding: 0 8px; font-size: 10px; letter-spacing: .08em; border: 1px solid var(--amb); color: var(--amb); }
