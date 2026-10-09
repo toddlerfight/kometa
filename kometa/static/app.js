@@ -623,6 +623,7 @@ async function renderOnDeck() {
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
         <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
+        ${dismissable ? `<button class="od-x" title="Not now — hide from Continue reading" aria-label="Not now" onclick="event.stopPropagation(); _odDismiss(${c.book_id}, this)">✕</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
