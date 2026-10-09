@@ -226,7 +226,10 @@ def _keys(title: str) -> set[str]:
     'b p r d' under norm_key and 'bprd' under the tighter key — both count."""
     t = _YEAR.sub("", title or "").strip()
     out = set()
-    for v in (t, _AND_OTHERS.sub("", t)):
+    # 'Tank Girl: Vol. 2' is the shelf's 'Tank Girl 2'; '…: TPB' is the file without it
+    variants = {t, _AND_OTHERS.sub("", t), re.sub(r"\bvol(?:ume)?\.?\s*", "", t, flags=re.I),
+                re.sub(r"[\s:,-]*\b(tpb|hc|gn)\b\s*$", "", t, flags=re.I)}
+    for v in variants:
         k = norm_key(v)
         if k:
             out.add(k)
@@ -318,9 +321,11 @@ def _trade_index(path) -> dict[str, list[dict]]:
             FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
             WHERE b.number IS NULL""", (READER_ID,)):
             stem = os.path.splitext(os.path.basename(r["path"]))[0]
-            stem = _TRADE_TAIL.sub("", _TRADE_TAIL.sub("", stem))
-            for k in _keys(stem):
-                idx.setdefault(k, []).append(dict(r))
+            # both the name as filed and the name with its tail trimmed:
+            # 'Fables - The Deluxe Edition - Book 09' answers to either
+            for st in {stem, _TRADE_TAIL.sub("", stem), _TRADE_TAIL.sub("", _TRADE_TAIL.sub("", stem))}:
+                for k in _keys(st):
+                    idx.setdefault(k, []).append(dict(r))
     return idx
 
 
