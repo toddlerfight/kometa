@@ -522,6 +522,14 @@ def refresh_trades_owned(series_id: int) -> None:
         return
     enrich_trades(series, cached["trades"])
     db.set_trades(series_id, cached["trades"], DB_PATH)
+    # A complete-run PACK lands as single issues, not a volume: the trade row
+    # completes, the trades re-stamp sees nothing, and the issues sat at 0/6
+    # until the next sync (Faithless, 2026-10-09). The folder is the truth for
+    # issues too — reconcile them here, on every trade completion.
+    try:
+        rescan_owned(series)
+    except Exception as e:
+        logger.warning(f"Issue owned-rescan after trade failed for '{series.get('title')}': {e}")
 
 
 def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:

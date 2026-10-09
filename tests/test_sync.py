@@ -437,3 +437,20 @@ def test_a_no_volume_edition_matches_loosely_when_the_words_agree_and_never_stea
     hl = [{"title": "Heavy Liquid TP", "vol": None}, {"title": "Heavy Liquid HC", "vol": None}]
     enrich_trades({"folder_path": str(tmp_path), "title": "Heavy Liquid"}, hl, books=[])
     assert [t["owned"] for t in hl] == [True, False]                       # one file, one trade
+
+
+def test_trade_refresh_also_reconciles_single_issues_from_a_pack(tmp_path, db_path, monkeypatch):
+    """A complete-run pack lands as singles: the trade row completes, and the
+    issues must flip to owned right then, not at the next sync."""
+    import kometa.sync as sync
+    from tests.conftest import make_cbz
+    monkeypatch.setattr(sync, "DB_PATH", db_path)
+    monkeypatch.setattr(sync, "_komga", lambda: None)
+    folder = tmp_path / "Faithless"; folder.mkdir()
+    sid = db.add_series(title="Faithless", publisher="Boom! Studios", folder_path=str(folder), on_pull_list=True, path=db_path)
+    for n in (1, 2):
+        db.upsert_issue_status(sid, float(n), "2019-04-01", 0, path=db_path)
+        make_cbz(folder / f"Faithless #{n:03d}.cbz")
+    db.set_trades(sid, [{"title": "Faithless TP", "vol": None, "owned": False, "file": None}], db_path)
+    sync.refresh_trades_owned(sid)
+    assert [i["owned"] for i in db.get_issues_for_series(sid, db_path)] == [1, 1]

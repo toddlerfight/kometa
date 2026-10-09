@@ -3082,6 +3082,7 @@ function _actProgressDetail(q) {
 // (no per-issue thumbnail), an issue shows "#N" and its own.
 function _actLabel(q) {
   if (q.kind === 'trade') {
+    if (String(q.locg_id) === '-1') return 'Complete run';     // a whole-run pack of singles, not a collected edition
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
     return _volLabel(m, 'Trade');
   }

@@ -814,6 +814,14 @@ def add_series(req: AddSeriesRequest):
     # _resolve_dir finds an existing on-disk folder (variation-tolerant) or returns
     # the canonical new path, so the first sync reconciles owned-vs-missing correctly
     # whether or not the series is already on disk. This is what makes Komga optional.
+    if req.metron_id and not publisher:
+        # Track from a catalogue card carries no publisher (creator works don't):
+        # ask Metron for the run's own, or the folder lands under 'Unknown'.
+        try:
+            from kometa import metron_client
+            publisher = metron_client.series_detail(req.metron_id).get("publisher") or publisher
+        except Exception as e:
+            logger.info(f"Add {title!r}: Metron publisher lookup skipped: {e}")
     if not folder_path:
         folder_path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
 
