@@ -103,7 +103,18 @@ def parse_cbl(data: bytes) -> dict:
     return {"name": name, "items": items}
 
 
+def _forget_resolved():
+    """Related keeps resolved lists warm for a couple of minutes; a list changing
+    shouldn't wait that long."""
+    try:
+        from kometa import related
+        related._lists_cache["value"] = None
+    except Exception:
+        pass
+
+
 def save_list(name: str, items: list[dict], source: str, source_ref: str | None, path=None) -> int:
+    _forget_resolved()
     """Write a list. The same name again is a re-import: replaced in place, id
     kept so links to it survive."""
     path = path or DB_PATH
@@ -220,6 +231,7 @@ def get_items(list_id: int, path=None) -> list[dict]:
 
 
 def delete_list(list_id: int, path=None):
+    _forget_resolved()
     with db._connect(path or DB_PATH) as conn:
         conn.execute("DELETE FROM reading_list_items WHERE list_id = ?", (list_id,))
         conn.execute("DELETE FROM reading_lists WHERE id = ?", (list_id,))

@@ -275,18 +275,39 @@ def suggestions(limit: int = 16, path=None) -> list[dict]:
     return (out + gaps)[:limit + len(gaps)]
 
 
-def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:
+_lists_cache = {"at": 0.0, "path": None, "value": None}
+LISTS_TTL_S = 120
+
+
+def _resolved_lists(path) -> list[dict]:
+    """Every reading list resolved ONCE and kept warm: a Because-rows call used
+    to resolve all nineteen lists per anchor (114 resolutions, 2–4 s a page).
+    Gaps and adjacency change on import or download, not per tap."""
+    import time
     from kometa import readlists
-    out, seen = [], set()
+    now = time.time()
+    if _lists_cache["value"] is not None and _lists_cache["path"] == path and now - _lists_cache["at"] < LISTS_TTL_S:
+        return _lists_cache["value"]
+    out = []
     try:
-        lists = readlists.get_lists(path)
-    except Exception:
-        return out
-    for l in lists:
-        try:
-            res = readlists.resolve(l["id"], path)
-        except Exception:
-            continue
+        readlists.ensure_tables(path)
+        with db._connect(path) as conn:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM reading_lists ORDER BY name")]
+        for lid in ids:
+            try:
+                out.append(readlists.resolve(lid, path))
+            except Exception as e:
+                logger.info(f"Related: list {lid} skipped: {e}")
+    except Exception as e:
+        logger.info(f"Related: lists unavailable: {e}")
+    _lists_cache.update(at=now, path=path, value=out)
+    return out
+
+
+def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:
+    out, seen = [], set()
+    for res in _resolved_lists(path):
+        l = {"id": res["id"], "name": res["name"]}
         on_list = {e["series_id"] for e in res["entries"] if e.get("series_id")}
         touching = [sid for sid in seeds if sid in on_list]
         if not touching:
