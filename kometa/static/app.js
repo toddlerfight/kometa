@@ -619,7 +619,7 @@ async function renderOnDeck() {
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
-        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
+        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
@@ -651,6 +651,10 @@ async function renderOnDeck() {
 // One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.
 // Same shape as the reader's own ⋯ — tap the thing, get its actions.
 function _bookActions(c) {
+  // A tracked series' issue: the series page's own modal, cover and details and
+  // all, with the card's actions in its footer. An untracked shelf book has no
+  // catalogue page to show, so it gets the plain sheet.
+  if (c.series_id && c.number != null) return showIssueModal(c.series_id, c.number, { book: c });
   const rows = [
     `<button class="sheet-btn" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>`,
     c.series_id ? `<button class="sheet-btn" onclick="closeModal(); navigate('series-detail', {id: ${c.series_id}})">Go to series</button>`
@@ -3668,7 +3672,7 @@ function _renderIssueDetails(desc, credits) {
   });
 }
 
-async function showIssueModal(seriesId, number) {
+async function showIssueModal(seriesId, number, opts = {}) {
   clearTimeout(_issueModalPollTimer);
   // Fast path: already viewing this series, its issues are cached on _detailSeries.
   // Called from elsewhere (an arc's cross-title reading order) — _detailSeries is
@@ -3743,6 +3747,16 @@ async function showIssueModal(seriesId, number) {
       ? `<a class="btn btn-ghost komga-read-link" href="${komgaBase()}/book/${esc(issue.komga_book_id)}/read" target="_blank" rel="noopener">Komga</a>`
       : '';
     footerAction = `${komga}<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
+    // Opened from a book card (On Deck): the same modal, with the card's
+    // actions in the footer — the series behind it, Not now, read state.
+    if (opts.book) {
+      const b = opts.book;
+      footerAction = `
+        <button class="btn btn-ghost" onclick="closeModal(); navigate('series-detail', {id: ${seriesId}})">Go to series</button>
+        ${b.dismissable ? `<button class="btn btn-ghost" onclick="closeModal(); _odDismiss(${b.book_id}, document.getElementById('od-${b.book_id}')?.querySelector('.od-menu'))">Not now</button>` : ''}
+        <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${b.book_id}, ${b.completed ? 'false' : 'true'})">${b.completed ? 'Mark as unread' : 'Mark as read'}</button>
+        <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${b.book_id}})">Read</button>`;
+    }
   } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
         title="Stop searching for this issue">Ignore</button>
