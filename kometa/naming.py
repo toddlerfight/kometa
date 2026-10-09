@@ -32,6 +32,11 @@ def _strip_ext(filename: str) -> str:
     return root if re.fullmatch(r"\.(?=[^.]*[A-Za-z])[A-Za-z0-9]{1,5}", ext) else filename
 
 
+_COLLECTED_NAME_RE = re.compile(
+    r"\b(tpb|hc|omnibus|deluxe|compendium|absolute|library edition|collected|"
+    r"vol(?:ume)?\.?\s*\d+|book\s+(?:one|two|three|\d+))\b", re.I)
+
+
 def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     name = _strip_ext(filename)
     # #001 or #1.5
@@ -42,6 +47,14 @@ def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     m = re.search(r'\bIssue\s+(\d+(?:\.\d+)?)\b', name, re.IGNORECASE)
     if m:
         return float(m.group(1))
+    # No '#', no 'Issue N': a bare number is still an issue for 'Saga 2012 005',
+    # but NOT for a collected edition. 'Fables - The Deluxe Edition - Book 09'
+    # and 'Batman (2016) - Vol 10 - Knightmares TPB' are volumes — reading them
+    # as issues #9 and #10 marked issues owned that no single on disk backs, and
+    # put the trades on the issue grid. file_under names trades without '#' for
+    # exactly this reason; the parser has to honour it.
+    if _COLLECTED_NAME_RE.search(name):
+        return None
     # Strip series title then find first number under 1000 (avoids years)
     remainder = name
     if series_title:

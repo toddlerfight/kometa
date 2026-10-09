@@ -382,3 +382,16 @@ class TestCanonicalIssueFilename:
         assert c("Avengers", 34.0, ".cbz") == "Avengers #034.cbz"
         assert c("Avengers", 34.1, ".cbz") == "Avengers #034.1.cbz"
         assert c("Avengers", 34.2, ".cbz") == "Avengers #034.2.cbz"
+
+
+def test_a_collected_edition_without_a_hash_is_not_an_issue():
+    """A trade filed under its run carries no '#' on purpose. Reading its volume
+    number as an issue number marked Fables #9 owned off a deluxe book and put
+    the Batman (2016) trades on the issue grid as #4 to #11."""
+    assert naming.parse_issue_number("Fables - The Deluxe Edition - Book 09.cbz", "Fables") is None
+    assert naming.parse_issue_number("Batman (2016) - Vol 10 - Knightmares TPB.cbz", "Batman (2016)") is None
+    assert naming.parse_issue_number("Bullets - Book TPB (2014) 03.cbz", "100 Bullets") is None
+    assert naming.parse_issue_number("Death of Wolverine Omnibus PART (2025) 02.cbz") is None
+    # a '#' still wins — 'Youngblood - Vol. 1 #009' is issue 9 of volume 1
+    assert naming.parse_issue_number("Youngblood - Vol. 1 #009 (1996).cbz", "Youngblood") == 9.0
+    assert naming.parse_issue_number("Saga 2012 005.cbz", "Saga") == 5.0
