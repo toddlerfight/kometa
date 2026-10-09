@@ -2839,7 +2839,7 @@ function _actReason(q) {
   if (/rate limit.*(retries|giving up)/i.test(e))     return 'Gave up after repeated rate-limits';
   if (/rate limited/i.test(e))                        return 'Rate-limited — will retry automatically';
   if (/RAR.*verify|failed to verify/i.test(e))        return 'Usenet release was incomplete or corrupt';
-  if (/already exists|duplicate/i.test(e))            return 'Looked like a duplicate you already have';
+  if (/already exists|duplicate/i.test(e))            return 'A copy is already on the shelf';
   if (/No folder set/i.test(e))                       return 'No comics folder set for this series';
   return strip(e);                                                                   // fall back to the raw reason
 }

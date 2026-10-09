@@ -314,6 +314,12 @@ def _process_queue_locked():
                 logger.info(f"Queue item {qid}: rate limited — parked until {retry_at} UTC")
             break  # we're blocked either way — stop hammering with the rest of the queue
         except DuplicateIssueError as e:
+            # The file we were about to place is already there. If it's a real,
+            # readable copy of this issue, that IS the download done — the Dirt
+            # Beneath the Devil #3 sat 'queued' with a duplicate error for an
+            # hour while a perfectly good #3 lay in the folder unowned.
+            if _already_have(item, qid, str(e)):
+                continue
             retry_at = (_utcnow() + timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
             db.update_queue_state(qid, "queued", error=str(e), retry_after=retry_at, path=DB_PATH)
             logger.info(f"Duplicate detected for queue item {qid} — requeueing, retry after {retry_at}")
@@ -323,6 +329,24 @@ def _process_queue_locked():
             clear_search_status(qid)
         if pace and i < len(items) - 1:
             time.sleep(2)
+
+
+def _already_have(item, qid, message: str) -> bool:
+    """A duplicate refusal names the file; if that file is on the shelf and
+    readable as this issue, record it as owned and the row as done."""
+    from kometa.naming import counts_as_owned
+    series = db.get_series_by_id(item["tracked_series_id"], DB_PATH)
+    folder = series and series.get("folder_path")
+    filename = message.split(" already exists")[0].strip()
+    if not folder or not filename or item.get("kind") == "trade":
+        return False
+    path = os.path.join(folder, filename)
+    if not os.path.exists(path) or not counts_as_owned(path, series.get("title") or ""):
+        return False
+    db.complete_download(qid, item["tracked_series_id"], item.get("issue_number"), item.get("store_date"),
+                         filename=path, path=DB_PATH)
+    logger.info(f"Queue item {qid}: {filename} was already on the shelf — recorded as owned")
+    return True
 
 
 def _issue_store_date(item) -> str | None:

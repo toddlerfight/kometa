@@ -806,7 +806,7 @@ async function renderReadLists() {
     const go = `navigate('readlist', {id: ${l.id}})`;
     const cover = l.cover_book_id ? `<img class="series-card-cover" src="/api/books/${l.cover_book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
       : `<div class="series-card-cover rl-nocover"></div>`;
-    const sub = read ? `${read} READ` : (l.source === 'komga' ? 'FROM KOMGA' : 'CBL');
+    const sub = read ? `${read} READ` : '';
     return `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i, 14) * STAGGER_MS}ms" tabindex="0" role="button"
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
@@ -908,8 +908,10 @@ async function renderReadList(id) {
   document.getElementById('topbar-title').textContent = l.name;
   document.getElementById('topbar-chips').innerHTML =
     `<span class="chip ${l.owned < l.total ? 'chip-missing' : 'chip-complete'}">${l.owned}/${l.total}</span>`;
+  const booksRead = books.filter(b => b.progress?.completed).length;
+  const gaps = l.total - l.owned;
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
-    ${l.read ? `${l.read} READ · ` : ''}${l.source === 'komga' ? 'FROM KOMGA' : 'CBL'}</span>`;
+    ${books.length} BOOK${books.length === 1 ? '' : 'S'}${booksRead ? ` · ${booksRead} READ` : ''}${gaps ? ` · ${gaps} NOT HERE` : ''}</span>`;
   document.getElementById('topbar-actions').innerHTML = `
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.read ? 'Continue' : 'Start'}</button>` : ''}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
