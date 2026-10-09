@@ -440,3 +440,12 @@ def test_prowlarr_asks_both_ways_when_the_title_has_an_ampersand():
         "Batman & the Joker - The Deadly Duo 003", "Batman and the Joker - The Deadly Duo 003",
         "Batman & the Joker - The Deadly Duo", "Batman and the Joker - The Deadly Duo"]
     assert _issue_queries("Saga", 2) == ["Saga 002", "Saga"]
+
+
+def test_a_short_series_name_needs_comic_evidence():
+    """'Die' is a word in every German title on usenet. Without 'cbr'/'digital'/
+    '#n' beside it and the number in an issue position, it's not the comic."""
+    assert _nzb_score("Oliver Pötzsch - 010 - Die Henkerstochter und das Vermächtnis des Henkers", "Die", 10.0) == 0
+    assert _nzb_score("Die 014 (2020) (Digital) (Zone-Empire).cbr", "Die", 14.0) == 15
+    assert _nzb_score("Die #14 (2020) Digital", "Die", 14.0) == 15
+    assert _nzb_score("Saga 014 (2013)", "Saga", 14.0) == 15        # a real name needs no extra proof

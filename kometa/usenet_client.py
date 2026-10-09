@@ -162,16 +162,28 @@ def _issue_num_present(t: str, s: str, num_int) -> bool:
     return bool(re.search(rf'{re.escape(s)}\s+{re.escape(str(num_int))}\b', t))
 
 
+# Series names that are also ordinary words usenet is full of. 'Saga' is not
+# on the list: it's rare enough as a release title that its own number suffices.
+_GENERIC_NAMES = {"die", "red", "hulk", "thor", "zombie", "ronin", "revolver", "predator", "alien", "aliens", "war", "fear"}
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     """Score an NZB title for relevance. Higher is better; 0 disqualifies."""
     if _looks_non_comic(nzb_title):
         return 0
     t = _norm(nzb_title)
     s = _norm(series)
+    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
+    # A short, ordinary word is not a series name on its own. 'Die' bought a
+    # 2GB German audiobook ('Die Henkerstochter…') and a 466MB mystery for #9:
+    # the word was in the title, the number was somewhere in it, score 15.
+    # Short names need comic evidence beside them AND the number in an issue
+    # position — same rule the pack scorer learned from the Beethoven box set.
+    if (len(s) <= 3 or s in _GENERIC_NAMES) and not (_COMIC_EVIDENCE_RE.search(nzb_title) and _issue_num_present(t, s, num_int)):
+        return 0
     score = 0
     if s in t:
         score += 10
-    num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     if _issue_num_present(t, s, num_int):
         score += 5
     return score
