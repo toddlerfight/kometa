@@ -629,7 +629,9 @@ async function renderOnDeck() {
   const soonCard = c => `
     <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${series(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${series(c)}">
       <div class="issue-tile-img"><img src="/api/series/${c.series_id}/issues/${c.number}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
-        <span class="od-tag${c.status === 'not_owned' ? ' amber' : ''}">${esc(c.status_label)}</span></div>
+        ${c.status === 'upcoming' && c.store_date
+          ? `<div class="series-card-next-release">${_fmtReleaseDate(c.store_date)}</div>`   // the Library's date pill, same everywhere
+          : `<span class="od-tag${c.status === 'not_owned' ? ' amber' : ''}">${esc(c.status_label)}</span>`}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
   const favCard = c => c.kind === 'series' ? `
