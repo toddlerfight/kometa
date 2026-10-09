@@ -341,6 +341,25 @@ def disconnect_integration(integration: str):
 _EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at", "locg_impersonate"]}
 
 
+def _locg_status() -> dict:
+    """Pass live / paused until / what the top-up queue holds (kometa/topup.py)."""
+    try:
+        from kometa import topup
+        return topup.status(DB_PATH)
+    except Exception:
+        return {"locg_pass_live": False, "locg_paused_until": None, "locg_topup_waiting": 0, "locg_topup_by_kind": {}}
+
+
+@app.post("/api/locg/topup")
+def locg_topup_now():
+    """'Top up now': drain the LOCG queue in a thread while the pass is live."""
+    from kometa import topup, locg_client
+    if locg_client.locg_paused() is not None:
+        return {"ok": False, "started": False, "error": "LOCG is paused", **topup.status(DB_PATH)}
+    started = topup.drain_in_background()
+    return {"ok": True, "started": started, **topup.status(DB_PATH)}
+
+
 @app.post("/api/test/locg")
 def test_locg_access():
     """Settings 'test' for the LOCG card. With a pass pasted: try every handshake
@@ -355,6 +374,9 @@ def test_locg_access():
             db.set_config({"locg_impersonate": hit["target"], "locg_paused_until": "0"}, DB_PATH)
             lc._pause["until"] = 0.0
             lc._access_cache["ts"] = 0.0
+            # the paste moment: drain what waited for a pass, in the background
+            from kometa import topup
+            topup.drain_in_background()
             return {"ok": True, "detail": f"LOCG accepted your pass with the {hit['target']} handshake — pause lifted"}
         lc._forget_access()
         tried = ", ".join(f"{r['target']} {r['status'] or 'err'}" for r in results)
@@ -420,6 +442,7 @@ def get_config():
         "locg_cf_configured":  bool(cfg.get("locg_cf_clearance", "")),
         "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
         "locg_user_agent":     cfg.get("locg_user_agent", ""),
+        **_locg_status(),
     }
 
 
@@ -1588,11 +1611,11 @@ def get_issue_variants(series_id: int, number: float):
     locg_issue_id = issue.get("locg_issue_id")
     if not (locg_issue_id or issue.get("metron_issue_id")):
         return {"covers": [], "locg_issue_id": None, "selected_ids": sel_ids, "primary_id": primary}
-    from kometa import issue_meta
+    from kometa import record
     try:
-        data = issue_meta.details_for(issue, DB_PATH, want_covers=True)
+        data = record.variants(issue, DB_PATH)           # the local record first; a catalogue only to fill it
         return {"covers": data.get("covers", []), "locg_issue_id": locg_issue_id, "source": data.get("source"),
-                "selected_ids": sel_ids, "primary_id": primary}
+                "selected_ids": sel_ids, "primary_id": primary, "record": data.get("record")}
     except Exception as e:
         raise HTTPException(502, detail=str(e)) from e
 

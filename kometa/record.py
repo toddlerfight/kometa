@@ -41,6 +41,11 @@ def ensure_tables(path=None):
             metron_series_id INTEGER, locg_series_id INTEGER, cv_volume_id TEXT,
             source TEXT, fetched_at TEXT, fill_state TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_issue_record_state ON issue_record(fill_state, fetched_at)")
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_record)")]
+        if "variants_at" not in cols:
+            # when the cover list was last asked for — separate from the details'
+            # clock, since variants keep landing for weeks after release
+            conn.execute("ALTER TABLE issue_record ADD COLUMN variants_at TEXT")
         conn.execute("""CREATE TABLE IF NOT EXISTS trade_record (
             tracked_series_id INTEGER NOT NULL, key TEXT NOT NULL,
             title TEXT, vol INTEGER, vol_range_json TEXT, format TEXT, edition_title TEXT, subtitle TEXT,
@@ -156,7 +161,9 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
         from kometa import locg_client
         is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
         if not is_open:
-            return None                                        # not a miss: the door was shut
+            from kometa import topup
+            topup.enqueue("issue_details", f"{series_id}:{number:g}", path)
+            return None                                        # not a miss: the door was shut, it's queued
         try:
             found = (locg or (lambda i, p: issue_meta._locg(i, p, False)))(issue, path)
         except Exception as e:
@@ -287,6 +294,145 @@ def _safe_refresh(sid: int, number: float, path):
         logger.info(f"Record refresh for {sid}#{number} skipped: {e}")
 
 
+# --- variants: the cover list, typed, into the record -------------------------------
+VARIANTS_TTL_DAYS = 30          # a settled issue's list is asked again after this
+VARIANTS_FRESH_HOURS = 6        # an issue out in the last 60 days: re-asked this often on interaction
+VARIANTS_RECENT_DAYS = 60
+_RATIO_RE = re.compile(r"\b1\s*(?::|in|/)\s*(\d{1,3})\b|\bincentive\b|\bratio\b|\b(\d{1,3})\s*copy\b", re.I)
+_TYPE_RULES = (
+    ("virgin", re.compile(r"\bvirgin\b", re.I)),
+    ("store exclusive", re.compile(r"\b(?:store|shop|retailer|exclusive|excl\.?)\b", re.I)),
+    ("convention", re.compile(r"\b(?:convention|con\b|nycc|sdcc|eccc|c2e2|wondercon|thought bubble|mcm)\b", re.I)),
+    ("sketch", re.compile(r"\b(?:sketch|b&w|black (?:and|&) white|line art|inks? only)\b", re.I)),
+    ("reprint", re.compile(r"\b(?:\d+(?:st|nd|rd|th)\s+print(?:ing)?|reprint|second print|facsimile)\b", re.I)),
+    ("foil", re.compile(r"\b(?:foil|metal|glow|lenticular|holo(?:graphic|foil)?)\b", re.I)),
+)
+
+
+def variant_type(name: str | None) -> str:
+    """A conservative read of a variant's name: 'ratio' for 1:25 / incentive,
+    then virgin, store exclusive, convention, sketch, reprint, foil; else 'cover'.
+    No catalogue gives a typed enum (2026-10-10 research), so the name is all we have."""
+    n = (name or "").strip()
+    if not n:
+        return "cover"
+    if _RATIO_RE.search(n):
+        return "ratio"
+    for label, rx in _TYPE_RULES:
+        if rx.search(n):
+            return label
+    return "cover"
+
+
+def _typed(covers: list[dict], source: str) -> list[dict]:
+    out, seen = [], set()
+    for c in covers or []:
+        cid = str(c.get("id") or "")
+        key = cid or (c.get("name") or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({"id": cid or key, "name": c.get("name") or "Cover", "thumb": c.get("thumb"), "large": c.get("large") or c.get("thumb"),
+                    "type": variant_type(c.get("name")), "source": c.get("source") or source, "local": None})
+    return out
+
+
+def _variants_fresh(row: dict | None) -> bool:
+    if not row or not row.get("variants_at"):
+        return False
+    age_days = _age_days(row["variants_at"])
+    sd = row.get("store_date") or ""
+    recent = bool(sd) and _age_days(sd + " 00:00:00") < VARIANTS_RECENT_DAYS
+    return age_days < (VARIANTS_FRESH_HOURS / 24 if recent else VARIANTS_TTL_DAYS)
+
+
+def fill_variants(series_id: int, number: float, path=None, force: bool = False, issue: dict | None = None,
+                  metron=None, locg=None, locg_open=None) -> list[dict] | None:
+    """The issue's cover list into the record: Metron's variants first (its
+    issue detail carries them), LOCG's list merged in by name while LOCG is open
+    — queued for the top-up when it isn't. Returns the typed list, or None when
+    nothing could be asked. Raises MetronUnavailable for a trickle to stop."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    row = get_issue(series_id, number, path)
+    if row and not force and _variants_fresh(row):
+        return row.get("covers") or []
+    if issue is None:
+        issue = next((i for i in db.get_issues_for_series(series_id, path) if i["number"] == number), None)
+        if issue is None:
+            return None
+    from kometa import issue_meta, locg_client, metron_client
+    covers: list[dict] = []
+    asked = False
+    if issue.get("metron_issue_id"):
+        found = (metron or issue_meta._metron)(issue, path)
+        if found is None:
+            raise metron_client.MetronUnavailable("Metron didn't answer")
+        covers = _typed(found.get("covers") or [], "metron")
+        asked = True
+    if issue.get("locg_issue_id"):
+        is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
+        if not is_open:
+            from kometa import topup
+            topup.enqueue("variants", f"{series_id}:{number:g}", path)
+        else:
+            try:
+                extra = (locg or (lambda lid: locg_client.fetch_variants(lid)["covers"]))(issue["locg_issue_id"])
+                seen = {(c.get("name") or "").lower() for c in covers}
+                main_id = str(issue["locg_issue_id"])
+                for c in _typed(extra, "locg"):
+                    if c["id"] == main_id and covers:
+                        continue                                 # LOCG's 'Cover A (Main)' is Metron's main
+                    if (c.get("name") or "").lower() in seen:
+                        continue
+                    covers.append(c)
+                asked = True
+            except Exception as e:
+                logger.info(f"Variants: LOCG skipped for {series_id}#{number:g}: {e}")
+    if not asked:
+        return None
+    with db._connect(path) as conn:
+        if row:
+            conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(covers), _now(), series_id, number))
+        else:
+            conn.execute("""INSERT INTO issue_record (tracked_series_id, number, desc, credits_json, arcs_json, covers_json,
+                store_date, metron_issue_id, locg_issue_id, source, fetched_at, fill_state, variants_at)
+                VALUES (?, ?, '', '[]', '[]', ?, ?, ?, ?, ?, ?, 'partial', ?)""",
+                         (series_id, number, json.dumps(covers), issue.get("store_date"), issue.get("metron_issue_id"),
+                          issue.get("locg_issue_id"), "metron" if issue.get("metron_issue_id") else "locg", _now(), _now()))
+    return covers
+
+
+def variants(issue: dict, path=None) -> dict:
+    """The Variants tab: the record now, a refresh behind when it's old or the
+    issue is new; today's live resolver only when the record holds nothing."""
+    path = path or DB_PATH
+    sid, number = issue["tracked_series_id"], issue["number"]
+    row = get_issue(sid, number, path)
+    if row and row.get("variants_at") and row.get("covers"):
+        if not _variants_fresh(row):
+            threading.Thread(target=lambda: _safe_variants(sid, number, path), daemon=True).start()
+        return {"covers": row["covers"], "source": row.get("source"), "record": True}
+    covers = None
+    try:
+        covers = fill_variants(sid, number, path, force=True, issue=issue)
+    except Exception as e:
+        logger.info(f"Variants: fill for {sid}#{number:g} failed: {e}")
+    if covers is None:
+        from kometa import issue_meta
+        d = issue_meta.details_for(issue, path, want_covers=True)
+        return {"covers": _typed(d.get("covers") or [], d.get("source") or "catalogue"), "source": d.get("source"), "record": False}
+    return {"covers": covers, "source": "metron" if issue.get("metron_issue_id") else "locg", "record": False}
+
+
+def _safe_variants(sid: int, number: float, path):
+    try:
+        fill_variants(sid, number, path, force=True)
+    except Exception as e:
+        logger.info(f"Variants refresh for {sid}#{number:g} skipped: {e}")
+
+
 # --- trades: collected editions, Metron first, LOCG second --------------------------
 # Metron files a run's collected editions as SIBLING series ('East of West TPB
 # (2013)', type Trade Paperback) whose issues are the volumes. LOCG lists them
@@ -409,6 +555,9 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
     locg_id = series.get("locg_series_id")
     if locg_id:
         is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
+        if not is_open:
+            from kometa import topup
+            topup.enqueue("trades", str(series["id"]), path)
         if is_open:
             try:
                 # through sync's names, not locg_client's: that's the seam the LOCG
