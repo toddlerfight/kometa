@@ -467,7 +467,47 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
             t["owned"] = bool(key) and key in owned_names
             t["file"] = owned_names.get(key) if t["owned"] else None
             t["komga_book_id"] = kbook_by_name.get(key)
+    # Second pass, loose: the catalogue says 'Batman Year 100 Deluxe Edition HC',
+    # the file says 'Batman - Year 100 and Other Tales Deluxe Edition (2015)'. Same
+    # book, different words around it. A no-volume trade still unowned claims an
+    # unclaimed collected file whose significant words contain (or are contained
+    # by) its own, with the edition words agreeing — after every exact match has
+    # taken its file, so loose never steals from exact.
+    claimed = {t["file"] for t in trades if t.get("file")}
+    for t in trades:
+        if t.get("owned") or t.get("vol") is not None or t.get("vol_range"):
+            continue
+        f = _loose_edition_file(t.get("title", ""), _edition_keywords(t.get("title", "")), owned_names, claimed,
+                                series.get("title") or "")
+        if f:
+            t["owned"], t["file"] = True, f
+            claimed.add(f)
+            t["komga_book_id"] = t.get("komga_book_id") or kbook_by_name.get(
+                _norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", os.path.splitext(f)[0])))
     return trades
+
+
+_FORMAT_WORDS = frozenset({"tp", "tpb", "hc", "gn", "ogn", "sc", "edition", "collected", "collection", "hardcover",
+                           "paperback", "the", "a", "an", "and", "of", "vol", "volume", "book"})
+
+
+def _sig_words(name: str) -> set[str]:
+    return {w for w in _norm_name(name).split() if w not in _FORMAT_WORDS and not re.fullmatch(r"(19|20)\d\d", w)}
+
+
+def _loose_edition_file(title: str, kws: frozenset, owned_names: dict[str, str], claimed: set, series_title: str) -> str | None:
+    cw = _sig_words(title)
+    if len(cw) < 2:
+        return None
+    for key, fname in owned_names.items():
+        if fname in claimed or _parse_issue_number(fname, series_title) is not None:
+            continue                                      # a single issue is never a trade
+        if _edition_keywords(fname) != kws:
+            continue                                      # a Deluxe file isn't the plain TP
+        fw = _sig_words(key)
+        if len(fw) >= 2 and (cw <= fw or fw <= cw):
+            return fname
+    return None
 
 
 def refresh_trades_owned(series_id: int) -> None:

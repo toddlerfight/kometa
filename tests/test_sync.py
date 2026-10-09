@@ -419,3 +419,21 @@ def test_a_no_volume_edition_on_disk_matches_its_trade_whatever_year_the_file_ca
     trades = [{"title": "DIE HC", "vol": None}, {"title": "DIE Vol. 1: Fantasy Heartbreaker TP", "vol": 1}]
     enrich_trades({"folder_path": str(tmp_path), "title": "Die"}, trades, books=[])
     assert [t["owned"] for t in trades] == [True, False]
+
+
+def test_a_no_volume_edition_matches_loosely_when_the_words_agree_and_never_steals(tmp_path):
+    """LOCG: 'Batman Year 100 Deluxe Edition HC'. Disk: 'Batman - Year 100 and Other
+    Tales Deluxe Edition (2015).cbz'. Same book. The plain TP must not claim it
+    (Deluxe ≠ plain), a single issue is never a trade, and a file goes to one trade."""
+    from kometa.sync import enrich_trades
+    for f in ("Batman - Year 100 and Other Tales Deluxe Edition (2015).cbz", "Batman - Year 100 #001 (2006).cbz"):
+        (tmp_path / f).write_bytes(b"PK\x03\x04")
+    trades = [{"title": "Batman: Year 100 TP", "vol": None}, {"title": "Batman: Year 100 TP2013 Edition", "vol": None},
+              {"title": "Batman Year 100 Deluxe Edition HC", "vol": None}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Year 100"}, trades, books=[])
+    assert [t["owned"] for t in trades] == [False, False, True]
+    assert trades[2]["file"].startswith("Batman - Year 100 and Other Tales")
+    (tmp_path / "Heavy Liquid - Collected Edition (2019).cbz").write_bytes(b"PK\x03\x04")
+    hl = [{"title": "Heavy Liquid TP", "vol": None}, {"title": "Heavy Liquid HC", "vol": None}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Heavy Liquid"}, hl, books=[])
+    assert [t["owned"] for t in hl] == [True, False]                       # one file, one trade
