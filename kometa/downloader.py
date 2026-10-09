@@ -557,6 +557,42 @@ def _comicinfo_series(xml: str | None) -> str | None:
     return m.group(1).strip() if m and m.group(1).strip() else None
 
 
+_PAGE_SERIES_RE = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9'.&:! -]*?)\s*[-_ ]\s*0*\d{1,3}(?:\s*\(\d{4}\))?(?:[-_ ].*)?$")
+_PAGE_GENERIC = {"page", "pages", "scan", "scans", "image", "img", "pg", "p", "untitled", "comic", "cover", "file", "pic", "picture"}
+
+
+def _series_from_page_names(names: list[str] | None) -> str | None:
+    """The series the PAGES say they belong to. Rippers name pages after the
+    comic ('Silver Soldiers 01 (2017)-038.webp'); when most of them agree on a
+    name, that's the archive's own word for what it is — and it outranks the
+    release title that sold it to us. None when the pages don't say (bare
+    '001.jpg', 'page 12')."""
+    from collections import Counter
+    if not names:
+        return None
+    votes: Counter = Counter()
+    total = 0
+    for n in names:
+        base = os.path.splitext(os.path.basename(n))[0]
+        if os.path.splitext(n)[1].lower() not in _IMG_EXTS:
+            continue
+        total += 1
+        m = _PAGE_SERIES_RE.match(base)
+        if not m:
+            continue
+        name = m.group("name").strip(" -_")
+        if len(re.sub(r"[^A-Za-z]", "", name)) < 3 or name.lower() in _PAGE_GENERIC:
+            continue
+        votes[norm_key(name)] = votes.get(norm_key(name), 0) + 1
+        votes.setdefault("__raw__" + norm_key(name), name)
+    if not total or not votes:
+        return None
+    top, n = max(((k, v) for k, v in votes.items() if not k.startswith("__raw__")), key=lambda kv: kv[1], default=(None, 0))
+    if not top or n < max(3, int(total * 0.6)):
+        return None
+    return votes["__raw__" + top]
+
+
 def _series_disagrees(want: str | None, got: str | None) -> bool:
     """Does the archive's own ComicInfo name a DIFFERENT series than the one we
     asked for? Tolerant on purpose: publishers pad the field with volume years
@@ -572,7 +608,9 @@ def _series_disagrees(want: str | None, got: str | None) -> bool:
     w, g = norm_key(want), norm_key(got)
     if not w or not g:
         return False
-    return w not in g and g not in w
+    # whole words only: 'die' is a substring of 'silver soldiers', which is
+    # how 53 pages of Silver Soldiers agreed they were Die #1
+    return not (re.search(rf"\b{re.escape(w)}\b", g) or re.search(rf"\b{re.escape(g)}\b", w))
 
 
 def _comicinfo_xml_from_dir(d: str) -> str | None:
@@ -855,6 +893,12 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
         raise WrongIssueError(
             f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
     names = _page_names(path, extracted_dir)
+    # The pages' own name for the comic. 'Silver Soldiers 01 (2017)-038.webp'
+    # ×53 landed as Die #1: no ComicInfo, the number matched, the title that
+    # sold it said 'Die'. The pages never lied.
+    pseries = _series_from_page_names(names)
+    if _series_disagrees(series_title, pseries):
+        raise WrongIssueError(f"the pages are named {pseries!r}, expected {series_title!r}")
     problem = _page_sequence_problem(names) if names else None
     if problem:
         raise IncompleteIssueError(f"#{format_issue_number(issue_number)} is incomplete: {problem}")

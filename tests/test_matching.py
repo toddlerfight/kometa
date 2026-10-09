@@ -449,3 +449,4 @@ def test_a_short_series_name_needs_comic_evidence():
     assert _nzb_score("Die 014 (2020) (Digital) (Zone-Empire).cbr", "Die", 14.0) == 15
     assert _nzb_score("Die #14 (2020) Digital", "Die", 14.0) == 15
     assert _nzb_score("Saga 014 (2013)", "Saga", 14.0) == 15        # a real name needs no extra proof
+    assert _nzb_score("Silver Soldiers 001 (2017) (One Shot) (Antarctic Press) cbr", "Die", 1.0) == 0   # 'die' inside 'soldiers'

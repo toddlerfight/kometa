@@ -591,3 +591,17 @@ class TestComicInfoSeriesGuard:
         assert _series_disagrees("Avengers", "New Avengers") is False   # containment: tolerate
         assert _series_disagrees(None, "Whatever") is False
         assert _series_disagrees("Whatever", None) is False
+
+
+def test_the_pages_own_name_outranks_the_release_title():
+    """53 pages named 'Silver Soldiers 01 (2017)-NNN.webp' are not Die #1,
+    whatever the NZB was called. Bare page numbers say nothing."""
+    from kometa.downloader import _series_from_page_names, _series_disagrees
+    silver = [f"Silver Soldiers 01 (2017)-{i:03d}.webp" for i in range(1, 54)]
+    assert _series_from_page_names(silver) == "Silver Soldiers"
+    assert _series_disagrees("Die", _series_from_page_names(silver))
+    assert not _series_disagrees("Die", _series_from_page_names([f"Die 001-{i:03d}.jpg" for i in range(1, 30)]))
+    assert not _series_disagrees("Batman: The Adventures Continue", _series_from_page_names([f"Batman - The Adventures Continue 001-{i:03d}.jpg" for i in range(30)]))
+    assert _series_from_page_names([f"{i:03d}.jpg" for i in range(30)]) is None
+    assert _series_from_page_names([f"page {i:03d}.jpg" for i in range(30)]) is None
+    assert _series_from_page_names(["ComicInfo.xml"] + [f"Die 001-{i:03d}.jpg" for i in range(5)]) == "Die"

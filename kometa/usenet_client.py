@@ -167,12 +167,18 @@ def _issue_num_present(t: str, s: str, num_int) -> bool:
 _GENERIC_NAMES = {"die", "red", "hulk", "thor", "zombie", "ronin", "revolver", "predator", "alien", "aliens", "war", "fear"}
 
 
+def _fold(s: str) -> str:
+    """'Sécret' reads as 'Secret': diacritics are spelling, not a different name."""
+    import unicodedata
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     """Score an NZB title for relevance. Higher is better; 0 disqualifies."""
     if _looks_non_comic(nzb_title):
         return 0
-    t = _norm(nzb_title)
-    s = _norm(series)
+    t = _norm(_fold(nzb_title))
+    s = _norm(_fold(series))
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
     # A short, ordinary word is not a series name on its own. 'Die' bought a
     # 2GB German audiobook ('Die Henkerstochter…') and a 466MB mystery for #9:
@@ -181,9 +187,9 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     # position — same rule the pack scorer learned from the Beethoven box set.
     if (len(s) <= 3 or s in _GENERIC_NAMES) and not (_COMIC_EVIDENCE_RE.search(nzb_title) and _issue_num_present(t, s, num_int)):
         return 0
-    score = 0
-    if s in t:
-        score += 10
+    if not re.search(rf"\b{re.escape(s)}\b", t):      # whole words: 'die' is inside 'soldiers'
+        return 0                                       # no series name, no candidate — a bare '001' is not evidence
+    score = 10
     if _issue_num_present(t, s, num_int):
         score += 5
     return score
