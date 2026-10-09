@@ -402,7 +402,18 @@ def _cached_works(creator_id: int, path) -> list[dict] | None:
         conn.execute("""CREATE TABLE IF NOT EXISTS creator_works (
             creator_id INTEGER PRIMARY KEY, works_json TEXT, fetched_at TEXT DEFAULT (datetime('now')))""")
         r = conn.execute("SELECT works_json, fetched_at FROM creator_works WHERE creator_id = ?", (creator_id,)).fetchone()
-    return json.loads(r["works_json"] or "[]") if r and not _stale(r["fetched_at"]) else None
+    if not r or _stale(r["fetched_at"]):
+        return None
+    works = json.loads(r["works_json"] or "[]")
+    if works and works[0].get("partial"):
+        # a fill Metron cut short: good for ten minutes, then ask again
+        try:
+            age = (datetime.utcnow() - datetime.strptime(r["fetched_at"][:19], "%Y-%m-%d %H:%M:%S")).total_seconds()
+        except Exception:
+            age = 1e9
+        if age > 600:
+            return None
+    return works
 
 
 _filling: set = set()
@@ -476,18 +487,25 @@ def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[d
             w["_issue"] = i["id"]
     works = sorted(by.values(), key=lambda w: -w["count"])[:60]
     detail = detail or metron_client.issue_detail
-    looked = 0
+    looked, partial = 0, False
     for w in works:
         iid = w.pop("_issue", None)
         w["roles"], w["cover_only"] = [], False
-        if not iid or w["count"] < 2 or looked >= ROLE_LOOKUPS:
+        if not iid or w["count"] < 2 or looked >= ROLE_LOOKUPS or partial:
             continue
         looked += 1
         try:
             w["roles"] = _roles_of(detail(iid), creator_id)
             w["cover_only"] = bool(w["roles"]) and set(w["roles"]) <= {"cover"}
         except Exception as e:
-            logger.info(f"Creator {creator_id}: role lookup for {w['title']!r} skipped: {e}")
+            # Metron said no (rate limit, outage): keep what we have, but as a
+            # PARTIAL fill that goes stale in minutes, not a month — otherwise a
+            # bad moment freezes 'Credit: Name' on every card for 30 days.
+            partial = True
+            logger.info(f"Creator {creator_id}: role lookups paused at {w['title']!r}: {e}")
+    if partial:
+        for w in works:
+            w["partial"] = True
     with db._connect(path) as conn:
         conn.execute("INSERT OR REPLACE INTO creator_works (creator_id, works_json, fetched_at) VALUES (?, ?, datetime('now'))",
                      (creator_id, json.dumps(works)))
@@ -558,7 +576,8 @@ def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict
     return out
 
 
-def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_only: bool = True, fetch=None, name: str | None = None) -> tuple[list[dict], bool]:
+def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_only: bool = True, fetch=None, name: str | None = None,
+                       include_cover_only: bool = False) -> tuple[list[dict], bool]:
     """Catalogue works by this creator not on the shelf, as catalogue cards. → (rows, pending)."""
     have_ids = {s.get("metron_series_id") for s in series.values() if s.get("metron_series_id")}
     have_titles = {norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"])) for s in series.values()}
@@ -573,7 +592,7 @@ def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_on
             "cover": w["cover"], "score": float(w["count"]), "why": [work_label(w, name)] if name else [], "owned": 0, "total": w["count"]}
            for w in works
            if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2
-           and not w.get("cover_only")]
+           and (include_cover_only or not w.get("cover_only"))]
     return out, False
 
 
@@ -617,7 +636,8 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     if not name:
         name = next((c["name"] for s_ in sig.values() for c in s_["creators"] if c.get("id") == creator_id), None)
     shelf = _creator_shelf(creator_id, sig, series)
-    cat, pending = _creator_catalogue(creator_id, path, series, cached_only, name=name)
+    # everything by this person, covers included — labelled 'Cover: Name' like the modal's credits
+    cat, pending = _creator_catalogue(creator_id, path, series, cached_only, name=name, include_cover_only=True)
     return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}
 
 

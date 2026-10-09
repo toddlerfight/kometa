@@ -175,3 +175,16 @@ def test_creator_works_learn_the_role_per_work_and_drop_cover_only_credits(db_pa
     assert rel.work_label(by["Batman: Year 100"], "Paul Pope") == "Writer: Paul Pope"
     cat, _ = rel._creator_catalogue(77, db_path, {}, cached_only=False, name="Paul Pope")
     assert [c["title"] for c in cat] == ["Batman: Year 100"] and cat[0]["why"] == ["Writer: Paul Pope"]
+
+
+def test_a_fill_metron_cut_short_is_partial_and_retried_soon(db_path):
+    rel.ensure_tables(db_path)
+    fetch = lambda cid: [{"id": 1, "series": {"id": 5, "name": "A (2020)", "year_began": 2020}, "image": None}] * 2
+    def detail(iid):
+        raise RuntimeError("429")
+    works = rel.creator_works(9, db_path, fetch=fetch, detail=detail)
+    assert works[0]["partial"] and works[0]["roles"] == []
+    assert rel._cached_works(9, db_path) is not None                       # fresh partial: served for now
+    with db._connect(db_path) as c:
+        c.execute("UPDATE creator_works SET fetched_at = datetime('now', '-11 minutes') WHERE creator_id = 9")
+    assert rel._cached_works(9, db_path) is None                           # eleven minutes on: ask again
