@@ -1223,6 +1223,12 @@ def set_series_locg(series_id: int, req: MatchRequest):
         db.set_match_status(series_id, "manual", DB_PATH)
         db.set_metron_link(series_id, "none", DB_PATH)
         db.set_locg_link(series_id, "none", DB_PATH)
+        # a person said there is no run: neither the re-match job nor the
+        # re-check queue ever asks about it again
+        from kometa.rematch import NEVER, ensure_columns
+        ensure_columns(DB_PATH)
+        with db._connect(DB_PATH) as conn:
+            conn.execute("UPDATE tracked_series SET metron_checked_at = ? WHERE id = ?", (NEVER, series_id))
         return db.get_series_by_id(series_id, DB_PATH)
     if not (req.locg_id or req.metron_id):
         raise HTTPException(400, "Pick a run")

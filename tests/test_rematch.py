@@ -54,3 +54,49 @@ def test_a_linked_series_with_no_issues_is_resynced(db_path, monkeypatch):
     synced = []
     out = rm.rematch_tick(path=db_path, find=lambda s: None, sync=lambda s: synced.append(s["title"]), signals=lambda sid: None)
     assert synced == ["The Amazing Spider-Man"] and out.get("resynced") == 1
+
+
+def test_recheck_asks_metron_then_locg_and_hands_the_rest_to_a_person(db_path):
+    import kometa.rematch as rm
+    from kometa.shelf_import import NEEDS_MATCH
+    ids = {}
+    for t in ("Batman- Hush", "The Golden Child", "Aliens Technical Manual", "Chosen None"):
+        sid = db.add_series(title=t, publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+        db.set_metron_link(sid, "none", db_path); db.set_match_status(sid, "manual", db_path)
+        ids[t] = sid
+    rm.ensure_columns(db_path)
+    with db._connect(db_path) as c:            # a person's 'no run' is never queued
+        c.execute("UPDATE tracked_series SET metron_checked_at = ? WHERE id = ?", (rm.NEVER, ids["Chosen None"]))
+    assert rm.recheck_seed(db_path) == 3
+    assert rm.recheck_seed(db_path) == 3      # seeded once
+    import kometa.metron_client as mc
+    real = mc.configured; mc.configured = lambda: True
+    try:
+        locg_asked, slept = [], []
+        out = rm.recheck_tick(path=db_path, find_metron=lambda s: 501 if "Hush" in s["title"] else None,
+                              find_locg=lambda s: locg_asked.append(s["title"]) or (144336 if "Golden" in s["title"] else None),
+                              locg_open=lambda: True, sync=lambda s: None, signals=lambda sid: None, sleep=slept.append)
+    finally:
+        mc.configured = real
+    assert out["metron"] == 1 and out["locg"] == 1 and out["needs_match"] == 1 and out["left"] == 0
+    assert db.get_series_by_id(ids["Batman- Hush"], db_path)["metron_series_id"] == 501
+    assert db.get_series_by_id(ids["The Golden Child"], db_path)["locg_series_id"] == 144336
+    assert db.get_series_by_id(ids["Aliens Technical Manual"], db_path)["match_status"] == NEEDS_MATCH
+    assert "Batman- Hush" not in locg_asked                       # LOCG only for Metron's misses
+    assert slept and all(s >= rm.LOCG_GAP_S for s in slept)
+
+
+def test_recheck_stops_at_metron_refusal_and_keeps_the_queue(db_path):
+    import kometa.rematch as rm
+    import kometa.metron_client as mc
+    sid = db.add_series(title="Deadpool- Samurai", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    db.set_metron_link(sid, "none", db_path); db.set_match_status(sid, "manual", db_path)
+    rm.recheck_seed(db_path)
+    real = mc.configured; mc.configured = lambda: True
+    try:
+        def refuse(s): raise mc.MetronUnavailable("banned")
+        out = rm.recheck_tick(path=db_path, find_metron=refuse, find_locg=lambda s: 1 / 0, locg_open=lambda: True,
+                              sync=lambda s: None, signals=lambda sid: None, sleep=lambda s: None)
+    finally:
+        mc.configured = real
+    assert out["stopped"] and out["left"] == 1                     # Metron first, always: LOCG never jumped the queue

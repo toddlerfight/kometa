@@ -184,6 +184,16 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
         logger.warning(f"Re-match job not scheduled: {e}")
+    # The one-time re-check of the 125 'no run' series (kometa/rematch.py):
+    # Metron first, LOCG for Metron's misses, a few per tick. Seeded once.
+    try:
+        from kometa.rematch import recheck_seed, recheck_tick
+        recheck_seed()
+        scheduler.add_job(recheck_tick, IntervalTrigger(minutes=10), id="norun_recheck",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=3))
+    except Exception as e:
+        logger.warning(f"Re-check job not scheduled: {e}")
     # The LOCG top-up queue drains in small bursts while a pass is live.
     try:
         from kometa.topup import scheduled_drain
