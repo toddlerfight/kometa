@@ -33,8 +33,10 @@ def _sync_in_progress() -> bool:
 
 
 def candidates(path=None, limit: int = BUDGET) -> list[dict]:
-    """Owned issues with a LOCG id and no variant list in the record: pull
-    list first, newest store date first."""
+    """Owned issues LOCG alone can answer for — a LOCG id and NO Metron id — with
+    no variant list yet: pull list first, newest store date first. An issue
+    Metron knows is the Metron trickle's (it merges LOCG when open): this sweep
+    must never be the thing that makes a Metron call."""
     path = path or DB_PATH
     from kometa.record import ensure_tables
     ensure_tables(path)
@@ -44,6 +46,7 @@ def candidates(path=None, limit: int = BUDGET) -> list[dict]:
             JOIN tracked_series s ON s.id = i.tracked_series_id
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE i.owned = 1 AND i.locg_issue_id IS NOT NULL AND i.locg_issue_id != ''
+              AND i.metron_issue_id IS NULL
               AND (s.kind IS NULL OR s.kind != 'arc') AND r.variants_at IS NULL
             ORDER BY s.on_pull_list DESC, i.store_date DESC, i.tracked_series_id, i.number
             LIMIT ?""", (limit,))]
@@ -59,6 +62,7 @@ def pending(path=None) -> int:
             JOIN tracked_series s ON s.id = i.tracked_series_id
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE i.owned = 1 AND i.locg_issue_id IS NOT NULL AND i.locg_issue_id != ''
+              AND i.metron_issue_id IS NULL
               AND (s.kind IS NULL OR s.kind != 'arc') AND r.variants_at IS NULL""").fetchone()[0]
 
 

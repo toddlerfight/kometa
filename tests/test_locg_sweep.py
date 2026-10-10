@@ -14,6 +14,7 @@ def test_tick_picks_owned_locg_unfilled_pull_list_first_and_queues_images(db_pat
     db.upsert_issue_status(a, 1.0, "2026-01-01", 1, locg_issue_id="11", path=db_path)
     db.upsert_issue_status(a, 2.0, "2026-02-01", 0, locg_issue_id="12", path=db_path)     # not owned: skipped
     db.upsert_issue_status(a, 3.0, "2026-03-01", 1, path=db_path)                         # no locg id: skipped
+    db.upsert_issue_status(a, 4.0, "2026-04-01", 1, locg_issue_id="14", metron_issue_id=99, path=db_path)   # Metron's job, never the sweep's
     db.upsert_issue_status(b, 1.0, "2025-01-01", 1, locg_issue_id="21", path=db_path)
     asked, slept = [], []
     def fv(sid, n, issue):
