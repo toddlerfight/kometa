@@ -514,9 +514,11 @@ function _renderBrowseResults() {
 
   const q = search.toLowerCase();
   const anyToggleOn = toggles.upcoming || toggles.missing;
+  const ppl = browseState.people && browseState.people.q === search ? browseState.people : null;
+  const why = ppl ? ppl.why : {};
   let filtered = all.filter(s => {
     if (stack && s.franchise?.key !== stack) return false;               // a stack's page: its members only
-    if (q && !s.title.toLowerCase().includes(q)) return false;
+    if (q && !s.title.toLowerCase().includes(q) && !(s.kind !== 'shelf' && why[s.id])) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
@@ -566,6 +568,12 @@ function _renderBrowseResults() {
     return dir * String(va).localeCompare(String(vb));
   });
 
+  const peopleRow = ppl && ppl.people.length ? `<div class="people-row">${ppl.people.map(p => `
+      <button class="person-chip" onclick="_personPick(${JSON.stringify({ id: p.id, name: p.name }).replace(/"/g, '&quot;')})"
+        title="${p.count} series on your shelf">
+        <span class="person-name">${esc(p.name)}</span>
+        <span class="person-roles">${esc(p.roles.slice(0, 3).join(', '))} · ${p.count}</span></button>`).join('')}</div>` : '';
+
   if (!items.length) {
     const needsFolder = _appConfig && !_appConfig.comics_root_ok;
     const empty = all.length === 0
@@ -578,7 +586,7 @@ function _renderBrowseResults() {
            </div>
          </div>`
       : `<div class="state-msg">No series match.</div>`;
-    document.getElementById('browse-results').innerHTML = empty;
+    document.getElementById('browse-results').innerHTML = peopleRow + empty;
     _paintLetterRail([]);
     return;
   }
@@ -625,11 +633,12 @@ function _renderBrowseResults() {
           <div class="series-card-count" style="color:${color}">${s.owned}/${total}${s.family_children?.length ? ` <span class="series-card-specials" title="${s.family_children.length} special${s.family_children.length > 1 ? 's' : ''} folded under this run">+${s.family_children.length}</span>` : ''}</div>
         </div>
         ${pub}
+        ${q && why[s.id] && !s.title.toLowerCase().includes(q) ? `<div class="series-card-publisher u-truncate rel-why">${esc(why[s.id])}</div>` : ''}
       </div>
     `;
   }).join('');
 
-  document.getElementById('browse-results').innerHTML = `<div class="series-grid${letters ? ' with-letters' : ''}">${cards}</div>`;
+  document.getElementById('browse-results').innerHTML = peopleRow + `<div class="series-grid${letters ? ' with-letters' : ''}">${cards}</div>`;
   _paintLetterRail(letters ? seen : []);
 }
 
@@ -1537,10 +1546,26 @@ function showToastAction(msg, label, fn) {
 
 function browseSearch(val) {
   clearTimeout(browseState.searchTimer);
-  browseState.searchTimer = setTimeout(() => {
+  browseState.searchTimer = setTimeout(async () => {
     browseState.search = val;
+    _renderBrowseResults();                       // titles answer at once
+    if (val.trim().length < 3) { browseState.people = null; return; }
+    // then the people behind the books (kometa/people.py): writers, artists, covers
+    let d = null;
+    try { d = await api.get(`/api/search/people?q=${encodeURIComponent(val)}`); } catch {}
+    if (browseState.search !== val) return;       // typed on: a newer search owns the page
+    browseState.people = d ? { q: val, people: d.people || [], why: d.series || {} } : null;
     _renderBrowseResults();
   }, 300);
+}
+
+// A person found by the search. With a catalogue id they have a page of their
+// own; a name off a file's ComicInfo doesn't, so it narrows the Library to them.
+function _personPick(p) {
+  if (p.id) return showCreatorModal(p.id, p.name);
+  const box = document.querySelector('.browse-search input, #browse-search');
+  if (box) box.value = p.name;
+  browseSearch(p.name);
 }
 
 // --- Series Detail ---

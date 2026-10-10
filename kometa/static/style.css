@@ -2336,3 +2336,12 @@ body.touch .od-menu { opacity: .85; }
   .letter-rail-btn { font-size: 10px; line-height: 13px; width: 18px; }
   .letter-head { font-size: 18px; }
 }
+
+/* People found by a Library search: who made it, above what they made */
+.people-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 var(--sp-lg, 20px); }
+.person-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 12px;
+  background: var(--su2); border: 1px solid var(--bd); border-radius: 6px; color: var(--tp); font-family: inherit;
+  cursor: pointer; text-align: left; transition: border-color var(--t-fast) var(--ease-out); }
+.person-chip:hover, .person-chip:focus-visible { border-color: var(--pri); }
+.person-name { font-size: 13px; font-weight: 700; }
+.person-roles { font-size: var(--fs-label); color: var(--tq); letter-spacing: var(--track); }
