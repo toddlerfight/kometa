@@ -547,14 +547,15 @@ def next_book(list_id: int, after: int, path=None) -> int | None:
 
 # --- covers for the gaps -------------------------------------------------------------
 def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_issues=None, limit_metron: int = 40) -> dict:
-    """Give every not-on-shelf entry a catalogue cover, once. ComicVine first —
+    """Give every not-on-shelf entry (and every trade owned as its run) a catalogue cover, once. ComicVine first —
     a CBL names the issue id, so it's one batched lookup for the whole list —
     then Metron by title for the rest (slow, throttled, capped per call). A
     miss is remembered as '' so a list isn't re-asked every open."""
     path = path or DB_PATH
     ensure_tables(path)
     res = resolve(list_id, path)
-    todo = [e for e in res["entries"] if e["status"] != "owned" and e["cover_pending"]]
+    # gaps, and trades held as their run (the tile would otherwise wear issue #1's cover)
+    todo = [e for e in res["entries"] if (e["status"] != "owned" or e.get("via_run")) and e["cover_pending"]]
     if not todo:
         return {"filled": 0, "missed": 0, "left": 0}
     items = {it["id"]: it for it in get_items(list_id, path)}

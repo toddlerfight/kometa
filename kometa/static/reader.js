@@ -1072,7 +1072,7 @@ async function renderReadList(id) {
   // Gaps without a cover yet: ask the catalogue (ComicVine in one go, Metron a
   // few at a time) and repaint when something landed. Each answer is cached on
   // the list, so this runs down to nothing after the first few opens.
-  if (l.entries.some(e => e.status !== 'owned' && e.cover_pending)) _rlFillCovers(id);
+  if (l.entries.some(e => (e.status !== 'owned' || e.via_run) && e.cover_pending)) _rlFillCovers(id);
 }
 
 async function _rlFillCovers(id) {
