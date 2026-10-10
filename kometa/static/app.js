@@ -352,6 +352,7 @@ const BROWSE_TOGGLES = [
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
   { key: 'favourites', label: '♥ Favourites' },
+  { key: 'rated',      label: '★ Rated' },      // anything you've starred, its own rating or its issues'
   { key: 'runs',       label: 'Runs' },         // hide the one-shots and single-issue series
   { key: 'specials',   label: 'Specials' },     // unfold annuals / one-shots from under their runs
   { key: 'stacks',     label: 'Stacks' },       // franchises as one card (Aliens · 45 series); off = flat
@@ -518,6 +519,7 @@ function _renderBrowseResults() {
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.favourites && !s.favourite) return false;
+    if (toggles.rated && !s.rating) return false;
     if (s.family_parent && !toggles.specials && !search) return false;   // folded under its run (a search still finds it)
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the

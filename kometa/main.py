@@ -546,12 +546,13 @@ def list_series():
     summaries = db.get_all_series_summaries(DB_PATH)
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
              "calendar_date": None, "out_today": 0, "card_image": None}
-    from kometa.marks import marks_for
+    from kometa.marks import marks_for, rated_series
     from kometa.family import attach_families, attach_franchises
     fav = marks_for("series", DB_PATH)
+    rated = rated_series(DB_PATH)          # the series' own stars, else the mean of its rated issues
     newest = _newest_file_at()
     rows = [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
-                 rating=fav.get(s["id"], {}).get("rating"), newest_file_at=newest.get(s["id"])) for s in series]
+                 rating=rated.get(s["id"]), newest_file_at=newest.get(s["id"])) for s in series]
     return attach_franchises(attach_families(rows))
 
 
