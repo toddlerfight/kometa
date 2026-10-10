@@ -547,11 +547,23 @@ def list_series():
     empty = {"owned": 0, "missing": 0, "upcoming": 0, "next_release": None,
              "calendar_date": None, "out_today": 0, "card_image": None}
     from kometa.marks import marks_for
-    from kometa.family import attach_families
+    from kometa.family import attach_families, attach_franchises
     fav = marks_for("series", DB_PATH)
+    newest = _newest_file_at()
     rows = [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
-                 rating=fav.get(s["id"], {}).get("rating")) for s in series]
-    return attach_families(rows)
+                 rating=fav.get(s["id"], {}).get("rating"), newest_file_at=newest.get(s["id"])) for s in series]
+    return attach_franchises(attach_families(rows))
+
+
+def _newest_file_at() -> dict[int, str]:
+    """series id → ISO time of its newest file (the Library's 'Added' sort). One query."""
+    from datetime import datetime, timezone
+    try:
+        with db._connect(DB_PATH) as conn:
+            return {r[0]: datetime.fromtimestamp(r[1], tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    for r in conn.execute("SELECT tracked_series_id, MAX(mtime) FROM books WHERE tracked_series_id IS NOT NULL AND mtime IS NOT NULL GROUP BY tracked_series_id")}
+    except Exception:
+        return {}
 
 
 def _family_for(series_id: int) -> dict:

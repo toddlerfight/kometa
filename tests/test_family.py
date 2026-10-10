@@ -1,5 +1,5 @@
 """Families (kometa/family.py): a run's specials fold under it for display."""
-from kometa.family import attach_families
+from kometa.family import attach_families, attach_franchises
 
 
 def _s(i, title, mtype=None, owned=0, missing=0):
@@ -27,3 +27,30 @@ def test_specials_fold_under_the_run_and_ongoings_do_not():
     assert by[6]["family_parent"] is None and by[7]["family_parent"] == 5
     assert by[9]["family_parent"] == 8                                   # leading '- ' ignored, ' - ' subtitle counts
     assert by[11]["family_parent"] is None and by[12]["family_parent"] == 10   # an older run is not a special of a newer one
+
+
+def test_franchises_stack_five_or_more_leading_names():
+    """Aliens stacks, Star Wars keys on two words, a four-member group doesn't
+    stack, year prefixes and suffixes are ignored, a special stays under its run
+    inside the stack."""
+    i = iter(range(1, 200))
+    rows = []
+    aliens = ["Aliens", "[1992] Aliens - Platinum Edition", "Aliens - Alchemy", "Aliens - Berserker",
+              "Aliens - Book One", "Aliens vs. Predator (1990)", "Aliens - Harvest"]
+    rows += [_s(next(i), t, "Limited Series", owned=4) for t in aliens]
+    rows += [_s(next(i), t, "Limited Series", owned=3) for t in
+             ("Star Wars - Visions (2022)", "Star Wars: Legacy of Vader", "Star Wars - Rogue One", "Star Wars - The Mandalorian",
+              "Star Wars - Darth Vader", "Star Trek - Picard")]
+    rows += [_s(next(i), t, "Limited Series", owned=3) for t in ("Rumble (2014)", "Rumble (2017)", "Rumble - Special", "Rumble Deluxe")]
+    bat = _s(next(i), "Batman (2025)", "Single Issue", owned=24); ark = _s(next(i), "Batman Annual 2025", "Annual", owned=1)
+    rows += [bat, ark] + [_s(next(i), t, "Single Issue", owned=10) for t in ("Batman - Rebirth (2016)", "Batman Beyond (2012)", "Batman- Three Jokers (2020)", "Batman: Hush (2003)")]
+    attach_franchises(attach_families(rows))
+    by = {r["title"]: r for r in rows}
+    assert by["Aliens - Alchemy"]["franchise"] == {"key": "aliens", "name": "Aliens", "count": 7}
+    assert by["[1992] Aliens - Platinum Edition"]["franchise"]["key"] == "aliens"
+    assert by["Aliens vs. Predator (1990)"]["franchise"]["key"] == "aliens"
+    assert by["Star Wars - Visions (2022)"]["franchise"]["name"] == "Star Wars" and by["Star Wars - Visions (2022)"]["franchise"]["count"] == 5
+    assert by["Star Trek - Picard"]["franchise"] is None                         # 'star trek' alone is one
+    assert by["Rumble (2014)"]["franchise"] is None                              # four members: no stack
+    assert by["Batman (2025)"]["franchise"]["name"] == "Batman" and by["Batman (2025)"]["franchise"]["count"] == 5
+    assert by["Batman Annual 2025"]["family_parent"] == bat["id"] and by["Batman Annual 2025"]["franchise"]["key"] == "batman"   # a special rides inside

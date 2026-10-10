@@ -84,3 +84,87 @@ def attach_families(series: list[dict]) -> list[dict]:
             child["family_parent"] = best["id"]
             best["family_children"].append(child["id"])
     return series
+
+
+# --- franchises: one level above families ---------------------------------------
+# Nine leading names cover 220 of the Library's 718 top-level cards (Batman 56,
+# Aliens 45, Hellboy 31 …). A to Z was a scroll through dozens of Aliens. A
+# franchise is a leading name shared by five or more top-level series; the
+# Library draws one stack card for it and the members live on the stack's page.
+# Specials keep their family inside the stack. Everything is additive — the
+# member rows gain a `franchise` stamp, nothing else changes.
+FRANCHISE_MIN = 5
+_LEAD_YEAR = re.compile(r"^\s*[\[(](?:19|20)\d{2}[\])]\s*")
+_SEP = re.compile(r"\s+[-–—]\s+|:\s+|(?<=\w)-\s+")
+# first words that say nothing on their own: key on two words when the second varies
+_STOP = {"star", "tank", "dark", "black", "marvel", "new", "the", "i", "war", "sin", "spider", "dead"}
+
+
+def _franchise_base(title: str) -> str:
+    t = _LEAD_YEAR.sub("", (title or "").strip().lstrip("-–— ").strip())
+    t = _YEAR.sub("", t).strip()
+    return re.sub(r"^(the)\s+", "", t, flags=re.I)
+
+
+def _lead_words(title: str) -> list[str]:
+    lead = _SEP.split(_franchise_base(title), 1)[0]
+    return norm_key(lead).split()
+
+
+def _clean_prefix(p: str, titles: list[str] | None = None) -> str:
+    """The shared prefix as a NAME: no half words ('Aliens - A' when the next
+    titles continue 'Alchemy' / 'Apocalypse'), no trailing separators."""
+    if titles and p and p[-1].isalnum() and any(len(t) > len(p) and t[len(p)].isalnum() for t in titles):
+        p = p[:p.rfind(" ")] if " " in p else ""
+    return p.strip(" -–—:(")
+
+
+def _common_prefix(titles: list[str]) -> str:
+    if not titles:
+        return ""
+    a, b = min(titles), max(titles)
+    i = 0
+    while i < min(len(a), len(b)) and a[i].lower() == b[i].lower():
+        i += 1
+    return a[:i]
+
+
+def attach_franchises(series: list[dict], minimum: int = FRANCHISE_MIN) -> list[dict]:
+    """Stamp franchise {key, name, count} on every member of a leading-name group
+    of `minimum` or more top-level series (and on their folded specials)."""
+    rows = [s for s in series if s.get("kind") != "arc"]
+    for s in rows:
+        s["franchise"] = None
+    top = [s for s in rows if not s.get("family_parent")]
+    words = {s["id"]: _lead_words(s["title"]) for s in top}
+    # a stop word leads with two words when its second word varies across the shelf
+    seconds: dict[str, set] = {}
+    for w in words.values():
+        if len(w) >= 2:
+            seconds.setdefault(w[0], set()).add(w[1])
+    def key_of(w: list[str]) -> str | None:
+        if not w:
+            return None
+        if w[0] in _STOP and len(seconds.get(w[0], ())) >= 2:
+            return " ".join(w[:2]) if len(w) >= 2 else None
+        return w[0]
+    groups: dict[str, list[dict]] = {}
+    for s in top:
+        k = key_of(words[s["id"]])
+        if k:
+            groups.setdefault(k, []).append(s)
+    by_id = {s["id"]: s for s in rows}
+    for k, members in groups.items():
+        if len(members) < minimum:
+            continue
+        bases = [_franchise_base(m["title"]) for m in members]
+        name = _clean_prefix(_common_prefix(bases), bases)
+        if len(name) < 3:
+            name = " ".join(w.capitalize() for w in k.split())
+        stamp = {"key": k, "name": name, "count": len(members)}
+        for m in members:
+            m["franchise"] = dict(stamp)
+            for cid in m.get("family_children") or []:
+                if cid in by_id:
+                    by_id[cid]["franchise"] = dict(stamp)
+    return series
