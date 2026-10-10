@@ -54,3 +54,14 @@ def test_franchises_stack_five_or_more_leading_names():
     assert by["Rumble (2014)"]["franchise"] is None                              # four members: no stack
     assert by["Batman (2025)"]["franchise"]["name"] == "Batman" and by["Batman (2025)"]["franchise"]["count"] == 5
     assert by["Batman Annual 2025"]["family_parent"] == bat["id"] and by["Batman Annual 2025"]["franchise"]["key"] == "batman"   # a special rides inside
+
+
+def test_zombies_stacks_on_zombies_vs_and_names_from_the_shared_words():
+    """'Zombies vs Robots' is the run; 'Zombies Christmas Carol' is not part of it."""
+    from kometa.family import attach_franchises
+    titles = ["Zombies Christmas Carol", "Zombies Vs. Robots - Undercity", "Zombies Vs. Robots Aventure",
+              "Zombies vs Robots", "Zombies vs Robots Classic", "Zombies vs Robots Complete", "Zombies vs Robots vs Amazons"]
+    rows = attach_franchises([_s(i + 1, t) for i, t in enumerate(titles)])
+    by = {r["title"]: r["franchise"] for r in rows}
+    assert by["Zombies Christmas Carol"] is None
+    assert {f["name"] for t, f in by.items() if f} == {"Zombies vs Robots"}

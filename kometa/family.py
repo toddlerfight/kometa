@@ -97,7 +97,8 @@ FRANCHISE_MIN = 5
 _LEAD_YEAR = re.compile(r"^\s*[\[(](?:19|20)\d{2}[\])]\s*")
 _SEP = re.compile(r"\s+[-–—]\s+|:\s+|(?<=\w)-\s+")
 # first words that say nothing on their own: key on two words when the second varies
-_STOP = {"star", "tank", "dark", "black", "marvel", "new", "the", "i", "war", "sin", "spider", "dead"}
+_STOP = {"star", "tank", "dark", "black", "marvel", "new", "the", "i", "war", "sin", "spider", "dead",
+         "zombies"}          # Zombies vs Robots is the run; Zombies Christmas Carol is not (2026-10-10)
 
 
 def _franchise_base(title: str) -> str:
@@ -127,6 +128,25 @@ def _common_prefix(titles: list[str]) -> str:
     while i < min(len(a), len(b)) and a[i].lower() == b[i].lower():
         i += 1
     return a[:i]
+
+
+def _shared_words(titles: list[str]) -> str:
+    """The leading words every title shares, compared without case or
+    punctuation ('Zombies Vs. Robots' = 'Zombies vs Robots'), spelt the way
+    most members spell them."""
+    import re
+    from collections import Counter
+    split = [t.split() for t in titles if t]
+    norm = lambda w: re.sub(r"[^a-z0-9]", "", w.lower())
+    n = 0
+    while split and all(len(w) > n for w in split) and len({norm(w[n]) for w in split}) == 1:
+        n += 1
+    if not n:
+        return ""
+    words = [Counter(w[i].rstrip(".:") for w in split).most_common(1)[0][0] for i in range(n)]
+    while words and not re.search(r"[A-Za-z0-9]", words[-1]):      # 'Sin City -': a dash is no part of a name
+        words.pop()
+    return " ".join(words)
 
 
 def attach_franchises(series: list[dict], minimum: int = FRANCHISE_MIN) -> list[dict]:
@@ -159,8 +179,9 @@ def attach_franchises(series: list[dict], minimum: int = FRANCHISE_MIN) -> list[
             continue
         bases = [_franchise_base(m["title"]) for m in members]
         name = _clean_prefix(_common_prefix(bases), bases)
-        if len(name) < 3:
-            name = " ".join(w.capitalize() for w in k.split())
+        shared = _shared_words(bases)
+        if len(name) < 3 or len(shared.split()) > len(name.split()):
+            name = shared or " ".join(w.capitalize() for w in k.split())
         stamp = {"key": k, "name": name, "count": len(members)}
         for m in members:
             m["franchise"] = dict(stamp)
