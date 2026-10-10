@@ -512,6 +512,11 @@ def resolve(list_id: int, path=None) -> dict:
     per_series: dict[str, int] = {}
     for it in items:
         per_series[norm_key(it["series"])] = per_series.get(norm_key(it["series"]), 0) + 1
+    # A trade order names each run once ('Hellboy: Seed of Destruction'); an
+    # issue order names issues ('Secret Wars: Battleworld #1-4'). Only a trade
+    # order may read a subtitled entry as 'a trade of a run held whole' — in an
+    # issue order that turned every 'Secret Wars: …' tie-in into Secret Wars #0-9.
+    trade_order = bool(items) and sum(1 for v in per_series.values() if v == 1) >= 0.6 * len(per_series)
     out, books_cache = [], {}
     owned = read = 0
     by_file = _by_file(path, [it["file"] for it in items if it.get("file")])
@@ -550,7 +555,7 @@ def resolve(list_id: int, path=None) -> dict:
             # the file name.
             sh, book = _subtitle_book(series_name, idx, path, books_cache)
             entry.update(status="owned", shelf_id=sh["id"], series_id=sh.get("tracked_series_id"), books=[book])
-        elif not hit and (cr := _complete_run(series_name, idx, path, books_cache)) is not None:
+        elif not hit and trade_order and (cr := _complete_run(series_name, idx, path, books_cache)) is not None:
             # a trade of a run held whole: the pages are on the shelf, in the run
             sh, books = cr
             entry.update(status="owned", shelf_id=sh["id"], series_id=sh.get("tracked_series_id"),

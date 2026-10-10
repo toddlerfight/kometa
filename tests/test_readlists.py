@@ -279,3 +279,16 @@ def test_issue_by_issue_lists_need_the_run_year_to_fit(db_path, tmp_path):
     lid = rl.save_list("SW", [{"series": "Marvel Zombies", "number": "1", "volume": "2015"},
                               {"series": "Marvel Zombies", "number": "2", "volume": "2015"}], "cbl", None, db_path)
     assert [e["status"] for e in rl.resolve(lid, db_path)["entries"]] == ["not_on_shelf", "not_on_shelf"]
+
+
+def test_an_issue_order_never_reads_a_subtitled_tie_in_as_its_base_run(db_path, tmp_path):
+    """Secret Wars: Battleworld #1 is not 'a trade of Secret Wars held whole'."""
+    root = tmp_path / "comics" / "Marvel Comics"
+    sw = db.add_series(title="Secret Wars", publisher="Marvel", year_began=2015, folder_path=str(root / "Secret Wars"), on_pull_list=False, path=db_path)
+    _shelf(db_path, root, "Secret Wars", [f"Secret Wars #00{n}.cbz" for n in (1, 2)], tracked=sw)
+    for n in (1, 2):
+        db.upsert_issue_status(sw, float(n), "2015-05-06", 1, path=db_path)
+    items = [{"series": "Secret Wars", "number": str(n), "volume": "2015"} for n in (1, 2)]
+    items += [{"series": "Secret Wars: Battleworld", "number": str(n), "volume": "2015"} for n in (1, 2)]
+    lid = rl.save_list("SW", items, "cbl", None, db_path)
+    assert [e["status"] for e in rl.resolve(lid, db_path)["entries"]] == ["owned", "owned", "not_on_shelf", "not_on_shelf"]
