@@ -17,14 +17,14 @@ def test_read_button_opens_reader_turns_pages_and_saves_progress(app, app_server
     reader = app.locator("#reader")
     expect(reader).to_be_visible()
     expect(app).to_have_url(re.compile(r"#read\?book=\d+"))
-    page = reader.locator(".rd-page")
+    page = reader.locator("#rd-stage .rd-page")
     expect(page).to_have_count(1)
     expect(page).to_have_attribute("alt", "Page 1")
-    app.wait_for_function("document.querySelector('#reader .rd-page').naturalWidth > 0")
+    app.wait_for_function("document.querySelector('#reader #rd-stage .rd-page').naturalWidth > 0")
 
     app.keyboard.press("ArrowRight")
     app.keyboard.press("ArrowRight")
-    expect(reader.locator(".rd-page")).to_have_attribute("alt", "Page 3")
+    expect(reader.locator("#rd-stage .rd-page")).to_have_attribute("alt", "Page 3")
 
     book_id = int(app.url.split("book=")[1])
     app.wait_for_function(
@@ -49,10 +49,10 @@ def test_landscape_pairs_pages_but_cover_and_spread_stand_alone(app):
     _open_alpha_issue_1(app)
     app.locator("#modal").get_by_role("button", name="Read").click()
     reader = app.locator("#reader")
-    expect(reader.locator(".rd-page")).to_have_count(1)            # cover alone
+    expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)            # cover alone
     app.keyboard.press("ArrowRight")
-    expect(reader.locator(".rd-page")).to_have_count(2)            # 2–3 paired
+    expect(reader.locator("#rd-stage .rd-page")).to_have_count(2)            # 2–3 paired
     app.keyboard.press("ArrowRight")
-    expect(reader.locator(".rd-page")).to_have_count(1)            # 4 is a wide spread: alone
-    expect(reader.locator(".rd-page")).to_have_attribute("alt", "Page 4")
+    expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)            # 4 is a wide spread: alone
+    expect(reader.locator("#rd-stage .rd-page")).to_have_attribute("alt", "Page 4")
     app.keyboard.press("Escape")

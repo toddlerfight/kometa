@@ -101,6 +101,7 @@ function _rdRender() {
     <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"
       src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false">`).join('');
   const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
+  const outgoing = document.getElementById('rd-stage');     // the spread you're leaving
   const thumbs = b.pages.map((_, i) => {
     const p = i + 1, on = spread.includes(p);
     return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdGo(${p})">
@@ -142,8 +143,28 @@ function _rdRender() {
       </div>
     </div>`;
   if (_rd.chrome) _rdCenterStrip();
+  _rdTurnMotion(outgoing);
   _rdPreload();
   _rdQueueSave(last);
+}
+
+// Same language as YondeB: a tap or key crossfades, a swipe pushes the new
+// spread in from the side you swiped from while the old one slides out ahead
+// of it. The outgoing stage is the SAME element the last render built — it is
+// re-attached underneath so its pages are still decoded and nothing refetches.
+// Reduced motion kills both in CSS; the classes are harmless then.
+function _rdTurnMotion(outgoing) {
+  const turn = _rd.turn; _rd.turn = null;
+  const stage = document.getElementById('rd-stage');
+  if (!turn || !stage || !outgoing || !outgoing.querySelector('img')) return;
+  const swipe = turn.by === 'swipe';
+  stage.classList.add(swipe ? (turn.dir > 0 ? 'rd-in-r' : 'rd-in-l') : 'rd-in-fade');
+  outgoing.id = '';
+  outgoing.className = 'rd-stage rd-out ' + (swipe ? (turn.dir > 0 ? 'rd-out-l' : 'rd-out-r') : 'rd-out-fade');
+  stage.parentNode.insertBefore(outgoing, stage);
+  const done = () => outgoing.remove();
+  outgoing.addEventListener('animationend', done, { once: true });
+  setTimeout(done, 400);                                 // reduced motion never fires animationend
 }
 
 function _rdRenderEnd() {
@@ -151,11 +172,11 @@ function _rdRenderEnd() {
   const b = _rd.book;
   el.innerHTML = `
     <div class="rd-end">
-      <div class="rd-end-done">✓ FINISHED</div>
-      <div class="rd-end-title">${esc(_rdTitle())}</div>
-      <div class="rd-end-marks">${_markRowHtml(b)}</div>
+      <div class="rd-end-done card-cascade">✓ FINISHED</div>
+      <div class="rd-end-title card-cascade" style="animation-delay:${STAGGER_MS}ms">${esc(_rdTitle())}</div>
+      <div class="rd-end-marks card-cascade" style="animation-delay:${2 * STAGGER_MS}ms">${_markRowHtml(b)}</div>
       <div class="rd-end-next" id="rd-end-next"></div>
-      <div class="rd-end-actions">
+      <div class="rd-end-actions card-cascade" style="animation-delay:${3 * STAGGER_MS}ms">
         <button class="btn btn-ghost" onclick="_rdEnded(false)">‹ Last page</button>
         <button class="btn btn-primary" onclick="_rdExit()">Done</button>
       </div>
@@ -269,16 +290,19 @@ function _rdCenterStrip() {
 
 function _rdGo(page) {
   _rd.ended = false;
-  _rd.at = _rdSpreadOf(Math.max(1, Math.min(page, _rd.book.page_count)));
+  const to = _rdSpreadOf(Math.max(1, Math.min(page, _rd.book.page_count)));
+  if (to !== _rd.at) _rd.turn = { dir: to > _rd.at ? 1 : -1, by: 'tap' };
+  _rd.at = to;
   _rdRender();
 }
 
-function _rdStep(dir) {
+function _rdStep(dir, by = 'tap') {
   if (_rd.ended) { if (dir < 0) _rdEnded(false); return; }
   const next = _rd.at + dir;
   if (next >= _rd.spreads.length) return _rdEnded(true);
   if (next < 0) return;
   _rd.at = next;
+  _rd.turn = { dir, by };
   _rdRender();
 }
 
@@ -394,7 +418,7 @@ function _rdBindInput() {
     const dx = e.changedTouches[0].clientX - t.x, dy = e.changedTouches[0].clientY - t.y;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - t.t < 600) {
       e.preventDefault();               // a swipe, not a tap — don't let click fire
-      _rdStep(dx < 0 ? 1 : -1);
+      _rdStep(dx < 0 ? 1 : -1, 'swipe');
     }
   });
   document.addEventListener('keydown', e => {

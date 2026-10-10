@@ -2006,8 +2006,31 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   font-size: 9px; letter-spacing: var(--track); color: var(--td); pointer-events: none; }
 
 .rd-chrome { position: absolute; inset: 0; pointer-events: none; opacity: 0;
-  transition: opacity .18s ease; }
+  transition: opacity var(--t-mid) var(--ease-out); }
 .rd-chrome.on { opacity: 1; }
+/* the bars slide in a touch with the fade, like the native reader's */
+.rd-top, .rd-bottom { transition: transform var(--t-mid) var(--ease-out); }
+.rd-top { transform: translateY(-8px); }
+.rd-bottom { transform: translateY(8px); }
+.rd-chrome.on .rd-top, .rd-chrome.on .rd-bottom { transform: none; }
+
+/* Page turns. A tap/key crossfades (--t-mid); a swipe slides the new spread in
+   from the side you pulled from while the old one slides out ahead (--t-slow).
+   The outgoing stage sits UNDER the incoming one and fades, so pages of
+   different widths never show a seam. */
+.rd-stage.rd-out { pointer-events: none; }
+.rd-stage.rd-in-fade { animation: rd-fade-in var(--t-mid) var(--ease-out) both; }
+.rd-stage.rd-out-fade { animation: rd-fade-out var(--t-mid) var(--ease-out) both; }
+.rd-stage.rd-in-r { animation: rd-in-r var(--t-slow) var(--ease-out) both; }
+.rd-stage.rd-in-l { animation: rd-in-l var(--t-slow) var(--ease-out) both; }
+.rd-stage.rd-out-l { animation: rd-out-l var(--t-slow) var(--ease-out) both; }
+.rd-stage.rd-out-r { animation: rd-out-r var(--t-slow) var(--ease-out) both; }
+@keyframes rd-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rd-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes rd-in-r  { from { transform: translateX(48px);  opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes rd-in-l  { from { transform: translateX(-48px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes rd-out-l { from { transform: none; opacity: 1; } to { transform: translateX(-48px); opacity: 0; } }
+@keyframes rd-out-r { from { transform: none; opacity: 1; } to { transform: translateX(48px);  opacity: 0; } }
 .rd-chrome.on .rd-top, .rd-chrome.on .rd-bottom { pointer-events: auto; }
 .rd-top, .rd-bottom { position: absolute; left: 0; right: 0; background: rgba(0,0,0,.9); }
 .rd-top { top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -2050,7 +2073,10 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .rd-end-note { color: var(--td); font-size: var(--fs-label); letter-spacing: var(--track); margin-top: 18px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .rd-chrome, .rd-progress { transition: none; }
+  .rd-chrome, .rd-progress, .rd-top, .rd-bottom { transition: none; }
+  .rd-top, .rd-bottom { transform: none; }
+  .rd-stage { animation: none !important; }
+  .rd-stage.rd-out { display: none; }
 }
 #reader img.loaded { animation: none; }   /* the app-wide cover fade would flicker every page turn */
 #reader:has(.rd-chrome.on) .rd-count { opacity: 0; }   /* the scrubber already says where you are */
