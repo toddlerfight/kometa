@@ -184,6 +184,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
         logger.warning(f"Re-match job not scheduled: {e}")
+    # Trades fill what singles can't: collects for a few trades, the coverage
+    # stamps, then a few stuck issues looked up — proposals wait in Activity.
+    try:
+        from kometa.tradefill import trickle as _tradefill_trickle
+        scheduler.add_job(_tradefill_trickle, IntervalTrigger(minutes=10), id="trade_fill",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=4))
+    except Exception as e:
+        logger.warning(f"Trade fill not scheduled: {e}")
     # A Get missing a restart cut off (a deploy mid-run) starts again, once the
     # app has settled. Repeat-safe: owned entries skip, queued issues dedupe.
     try:

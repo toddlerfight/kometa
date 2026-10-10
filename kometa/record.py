@@ -555,7 +555,10 @@ def _metron_trades(series: dict, search=None, issues=None, detail=None, budget: 
                     t["isbn"] = d.get("isbn") or None
                     t["price"] = d.get("price")
                     t["desc"] = d.get("desc") or None
-                    t["collects"] = [x for x in (d.get("name") or []) if isinstance(x, str)]
+                    # what the edition reprints ('Fantastic Four (1998) #67'), not its story titles
+                    from kometa.tradefill import parse_reprint
+                    t["collects"] = [dict(p, metron_issue_id=rp.get("id")) for rp in (d.get("reprints") or [])
+                                     if isinstance(rp, dict) and (p := parse_reprint(rp.get("issue")))]
                 except metron_client.MetronUnavailable:
                     raise
                 except Exception as e:
@@ -670,7 +673,9 @@ def trade_details(key: str, path=None) -> dict | None:
     collects = json.loads(r["collects_json"] or "[]")
     desc = r["desc"] or ""
     if collects:
-        desc = (desc + "\n\n" if desc else "") + "Collects: " + "; ".join(collects)
+        # reprinted issues ({series, number}) since 2026-10-11; story titles before that
+        names = [f"{c['series']} #{c['number']:g}" if isinstance(c, dict) and c.get("series") else str(c) for c in collects]
+        desc = (desc + "\n\n" if desc else "") + "Collects: " + "; ".join(names)
     bits = [b for b in (f"{r['page_count']} pages" if r["page_count"] else None, f"ISBN {r['isbn']}" if r["isbn"] else None,
                         f"Released {r['store_date']}" if r["store_date"] else None) if b]
     if bits:

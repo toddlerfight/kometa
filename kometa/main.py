@@ -168,6 +168,8 @@ from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for
 app.include_router(_opds_router)
 from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series
 app.include_router(_marks_router)
+from kometa.tradefill import router as _tradefill_router    # trades fill issues no one shares as singles
+app.include_router(_tradefill_router)
 from kometa.people import router as _people_router          # search by writer / artist
 app.include_router(_people_router)
 from kometa.search import router as _search_router          # universal search: series, people, lists, issue jumps

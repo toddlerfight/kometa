@@ -3151,6 +3151,8 @@ async function _renderPullListContent() {
 // two drifting copies of this mapping before.
 const QUEUE_STATE = {
   proposed:        ['chip chip-upcoming', 'Confirm?'],
+  suggested:       ['chip chip-upcoming', 'Suggested'],     // a trade that collects issues nobody shares as singles
+  via_trade:       ['chip chip-muted',   'In a trade'],
   queued:          ['chip chip-muted',  'Queued'],
   searching:       ['chip chip-active', 'Searching'],
   found:           ['chip chip-muted',  'Found'],
@@ -3219,7 +3221,7 @@ let _activitySig = null;
 let _activityRemoving = false;   // true while a row/card is animating out
 
 // States that live in the "In Progress" section; everything else is history.
-const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing','proposed'];
+const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing','proposed','suggested'];
 
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
@@ -3377,6 +3379,10 @@ function _actSubHtml(q) {
           <div class="act-progress-text" id="acttext-${q.id}">${pct}%${esc(_actProgressDetail(q))}</div>
         </div>`;
   }
+  if (q.state === 'suggested') {
+    let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
+    return `<div class="act-row-reason" style="color:var(--amb)">Fills ${esc(m.fills_label || '')} — they're in <strong>${esc(m.edition_title || 'this trade')}</strong>${m.format ? ' (' + esc(m.format) + (m.collects ? `, ${m.collects} issues` : '') + ')' : ''}. Nothing downloads until you say.</div>`;
+  }
   if (q.state === 'proposed') {
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
     const f = (m.proposal && m.proposal.files) || [];
@@ -3391,6 +3397,12 @@ function _actSubHtml(q) {
 // Chip + buttons cluster for a row's current state.
 function _actActionsHtml(q) {
   let btns = '';
+  if (q.state === 'suggested') {
+    btns = `
+            <button class="btn btn-ghost btn-sm" onclick="tradeDecide(${q.id}, 'not-this-trade', this)" title="Not this edition — offer the next best, or nothing">Not this one</button>
+            <button class="btn btn-primary btn-sm" onclick="tradeDecide(${q.id}, 'get-trade', this)" title="Download this trade">Get this trade</button>`;
+    return `${_actChip(q.state)}${btns}`;
+  }
   if (q.state === 'proposed') {
     btns = `
             <button class="btn btn-ghost btn-sm" onclick="proposalDecide(${q.id}, 'reject', this)" title="Not it — bin it and remember the release">Reject</button>
@@ -3431,6 +3443,16 @@ async function tryGetComics(id, btn) {
   _activityPumpUntil = Date.now() + 30000;
   _activitySig = null;
   _refreshActivity();
+}
+
+async function tradeDecide(qid, action, btn) {
+  btn.disabled = true;
+  try {
+    await api.post(`/api/queue/${qid}/${action}`, {});
+    showToast(action === 'get-trade' ? 'Getting the trade' : 'Dropped — the next pass offers the next best, if there is one');
+    _activityPumpUntil = Date.now() + 30000;
+    renderActivity();
+  } catch (e) { btn.disabled = false; showToast('Couldn’t do that', 'error'); }
 }
 
 async function proposalDecide(qid, action, btn) {

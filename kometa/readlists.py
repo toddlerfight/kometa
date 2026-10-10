@@ -502,6 +502,19 @@ def _cover_pending(it: dict) -> bool:
     return False
 
 
+def _covering_book(series_id: int, number: float, path) -> dict | None:
+    """The owned trade that collects this issue, as a book view — or None."""
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT covered_by FROM issue_status WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        if not r or not r["covered_by"]:
+            return None
+        b = conn.execute("""SELECT b.*, p.page AS progress_page, p.completed, p.updated_at FROM books b
+            LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ? WHERE b.path = ?""",
+                         (READER_ID, r["covered_by"])).fetchone()
+    return _book_view(dict(b)) if b else None
+
+
 def _book_view(b: dict) -> dict:
     import os
     n = b.get("number")
@@ -611,6 +624,13 @@ def resolve(list_id: int, path=None) -> dict:
             n = _num(it["number"])
             if per_series[norm_key(it["series"])] > 1 and n is not None:
                 picked = [b for b in books if b["number"] == n]
+                if not picked and entry["series_id"]:
+                    # not a single, but inside a trade you own (kometa/tradefill.py):
+                    # the list opens the trade
+                    tb = _covering_book(entry["series_id"], n, path)
+                    if tb:
+                        picked = [tb]
+                        entry["via_trade"] = True
                 entry["status"] = "owned" if picked else "missing"
             else:
                 # the whole run — and when the folder holds singles AND the trade

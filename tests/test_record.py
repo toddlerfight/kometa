@@ -116,7 +116,8 @@ ISSUES = {7131: [{"number": 1.0, "store_date": "2013-09-11", "image": "https://m
                  {"number": 2.0, "store_date": "2014-03-01", "image": "https://m/v2.jpg", "metron_issue_id": 502}],
           9000: [{"number": 1.0, "store_date": "2015-01-01", "image": "https://m/hc1.jpg", "metron_issue_id": 601}]}
 DETAIL = {501: {"title": "The Promise", "page": 156, "isbn": "9781607067702", "price": "9.99", "desc": "Year one.",
-                "name": ["One: Out of the Wasteland", "Two: Above All"]},
+                "name": ["One: Out of the Wasteland", "Two: Above All"],
+                "reprints": [{"id": 71, "issue": "East of West (2013) #1"}, {"id": 72, "issue": "East of West (2013) #2"}]},
           502: {"title": "We Are All One", "page": 128, "isbn": "9781607068556", "price": "14.99", "desc": "", "name": []},
           601: {"title": "Year One", "page": 300, "isbn": "9781632150004", "price": "49.99", "desc": "", "name": []}}
 
@@ -154,7 +155,7 @@ def test_fill_trades_from_metron_writes_the_record_and_the_cache_the_tab_reads(d
         keys = sorted(r[0] for r in c.execute("SELECT key FROM trade_record WHERE tracked_series_id = ?", (s["id"],)))
     assert keys == ["m501", "m502", "m601"]
     d = rec.trade_details("m501", db_path)
-    assert "Collects: One: Out of the Wasteland" in d["desc"] and "156 pages" in d["desc"] and rec.trade_details("12345", db_path) is None
+    assert "Collects: East of West #1; East of West #2" in d["desc"] and "156 pages" in d["desc"] and rec.trade_details("12345", db_path) is None
 
 
 def test_locg_merges_by_volume_and_format_only_while_open(db_path, tmp_path, monkeypatch):

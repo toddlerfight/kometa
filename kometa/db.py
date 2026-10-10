@@ -312,6 +312,11 @@ def _migrate(path=DB_PATH):
         # counts all skip it. Sync's upserts don't name this column, so it survives them.
         if "ignored" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0")
+        is_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
+        if "covered_by" not in is_cols2:
+            # the file of an owned TRADE that collects this issue (kometa/tradefill.py):
+            # not owned as a single, but not missing either — it's in the trade
+            conn.execute("ALTER TABLE issue_status ADD COLUMN covered_by TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS variant_prefs (
                 tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),
@@ -706,7 +711,7 @@ def get_all_series_summaries(path=DB_PATH):
                 tracked_series_id,
                 MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND covered_by IS NULL AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
                 MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
@@ -1494,6 +1499,7 @@ def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
               AND i.ignored = 0
+              AND i.covered_by IS NULL
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.monitor_status = 'monitored'
               AND s.on_pull_list = 1
@@ -1538,6 +1544,7 @@ def get_missing_for_monitored(path=DB_PATH):
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
               AND i.ignored = 0
+              AND i.covered_by IS NULL
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.on_pull_list = 1
               AND NOT EXISTS (
