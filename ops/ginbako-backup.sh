@@ -1,7 +1,7 @@
 #!/bin/bash
 # Nightly backup of everything Kometa needs, onto the Voot II drive plugged into
-# ginbako. Run by launchd (ops/dev.kometa.backup.plist) at 04:00 — after Kometa's
-# own 03:30 copy to the NAS, so the two never share the disks.
+# ginbako. Run by launchd (ops/dev.kometa.backup.plist) at 02:00 — before Kometa's
+# own 03:30 copy to the NAS (the first full comics copy may run into it; later nights take minutes).
 #
 #   Voot II/Kometa-Backup/
 #     db/kometa-YYYYmmdd-HHMM.db   a consistent copy of the live DB (sqlite .backup), 14 kept

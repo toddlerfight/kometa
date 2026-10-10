@@ -312,7 +312,7 @@ Example: the reader — `docs/reader-research.md`, `docs/reader-spec.md`.
 Three copies of everything Kometa needs:
 
 1. **Kometa's own nightly** (03:30, `kometa/backup.py`): the database and a cover mirror into `_kometa-backup/` inside the comics folder on the NAS. Keeps 7 nights.
-2. **Voot II** (04:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
+2. **Voot II** (02:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
    - `db/` — a sqlite `.backup` of the live DB, integrity-checked, 14 kept
    - `covers/`, `docker/` (all of `~/docker` except the page cache), `comics/` (mirror of `/Volumes/🧳/Comics`)
    - `deleted/YYYY-mm-dd/` — whatever the mirrors removed or replaced, kept 30 days (a bad delete in the library can't wipe the backup)
