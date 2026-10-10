@@ -1752,7 +1752,12 @@ async function renderSeriesDetail(id) {
   // Still clear the topbar (drops stale actions from whatever view was active
   // before — Activity's Sweep/Start Queue buttons, etc.).
   setTopbar();
-  setApp('<div class="state-msg">Loading...</div>');
+  // Re-rendering the series you're already on (a toggle, a tab, a rating) must
+  // not blank the page: keep what's there until the new paint lands, and put
+  // the scroll back where it was. Only a NEW series shows the loading state.
+  const sameSeries = _detailSeries?.id === id && currentView === 'series-detail';
+  const keepScroll = sameSeries ? window.scrollY : 0;
+  if (!sameSeries) setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
   _detailSeries = s;
@@ -1911,6 +1916,7 @@ async function renderSeriesDetail(id) {
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
+  if (keepScroll) requestAnimationFrame(() => window.scrollTo(0, keepScroll));
   if (detailTab === 'arcs') _loadArcsPanel(id);
   if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
