@@ -29,7 +29,9 @@ def test_card_image_is_versioned(db_path, series):
     db.upsert_issue_status(series, 1.0, "2012-03-14", owned=True, komga_book_id="BOOK1", path=db_path)
     db.set_komga_book_versions({"BOOK1": "2026-09-19T11:22:03Z:63436041"}, db_path)
     card = db.get_all_series_summaries(db_path)[series]["card_image"]
-    assert card == "/api/book/BOOK1/thumbnail?v=2026-09-19T11%3A22%3A03Z%3A63436041"
+    # Komga retirement (2026-10-10): the card asks Kometa's own issue route, which
+    # serves page 1 of the file from the store — no Komga book id in the URL.
+    assert card == f"/api/series/{series}/issues/1/thumbnail"
 
 
 def test_cache_key_changes_with_the_file():

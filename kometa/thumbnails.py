@@ -6,6 +6,10 @@ imports from here. The design rule this module enforces: an external cover is
 fetched from Komga/LOCG/S3 AT MOST ONCE, then lives on disk next to the DB and
 in the browser cache (30d max-age) — a grid render must never turn into a
 per-tile network expedition.
+
+Komga retirement, step 1 (2026-10-10): the record's own store (kometa/images.py,
+kometa/covers.py) comes first — page 1 of the file you own, made by Kometa —
+then the catalogue; Komga is a last resort behind the `komga_covers` flag.
 """
 import os
 import time
@@ -171,62 +175,53 @@ def _half_grey(data: bytes) -> bool:
         return False
 
 
-# numberSort -> book_id maps, cached per Komga series with a short TTL. WITHOUT this,
-# issue_thumbnail fired a FULL get_books() against Komga for every issue that lacked a
-# komga_book_id — so a 20-cover grid where covers haven't been linked yet meant 20 full
-# book-list fetches, and issues with no Komga match re-fetched on every single render
-# forever. One fetch per series per TTL window now, shared across the whole grid.
-_BOOK_MAP_CACHE: "dict[str, tuple[float, dict]]" = {}
-_BOOK_MAP_TTL = 300  # seconds
-
-
-def _komga_book_map(komga, komga_series_id: str, title: str = "") -> dict:
-    now = time.time()
-    hit = _BOOK_MAP_CACHE.get(komga_series_id)
-    if hit and now - hit[0] < _BOOK_MAP_TTL:
-        return hit[1]
+def _komga_covers_on() -> bool:
+    """Komga is a last-resort cover source now, and only when asked for."""
     try:
-        # Filename is truth; Komga's numberSort lies (e.g. a lone "Noir #003" gets
-        # numberSort 1.0, which would mis-map issue #1 onto it). Mirror sync.py's map:
-        # parse the filename first, numberSort only as fallback, filename wins clashes.
-        m, src = {}, {}
-        for b in komga.get_books(komga_series_id):
-            if b.get("media", {}).get("status") == "ERROR":
-                continue
-            fn = _parse_issue_number(b.get("name", ""), title)
-            if fn is not None:
-                key, s = fn, "name"
-            else:
-                n = b.get("metadata", {}).get("numberSort")
-                if n is None:
-                    continue
-                key, s = float(n), "sort"
-            if key in m and not (src[key] == "sort" and s == "name"):
-                continue
-            m[key], src[key] = b["id"], s
-        _BOOK_MAP_CACHE[komga_series_id] = (now, m)
-        return m
+        return db.get_config(DB_PATH).get("komga_covers", "0") == "1"
     except Exception:
-        return hit[1] if hit else {}
+        return False
+
+
+def _store_response(key: str, source: str, max_age: int = 2592000) -> Response | None:
+    """Bytes the record's store holds for a key — file covers, Komga posters —
+    with the source named in the headers so a tile can say where it came from."""
+    from kometa import images
+    p = images.local_path(key, DB_PATH)
+    if not p:
+        return None
+    try:
+        data = open(p, "rb").read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    return Response(content=data, media_type=_img_ct(data),
+                    headers={"Cache-Control": f"public, max-age={max_age}", "X-Kometa-Image": "disk", "X-Kometa-Source": source})
+
+
+def _tag(resp, source: str):
+    if resp is not None and hasattr(resp, "headers") and "X-Kometa-Source" not in resp.headers:
+        resp.headers["X-Kometa-Source"] = source
+    return resp
 
 
 @router.get("/api/series/{series_id}/thumbnail")
 def series_thumbnail(series_id: int):
+    """The run's card. Order (Komga retirement, 2026-10-10): a poster you set in
+    Komga → page 1 of the lowest owned issue, from the store → the catalogue's
+    cover from the store → the catalogue live → a trade's cover → page 1 made
+    on the spot → Komga's thumbnail, only if komga_covers is on."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    komga = _komga()
-    if s.get("komga_series_id") and komga:
-        try:
-            resp = _komga_thumb(
-                komga,
-                f"{komga.base_url}/api/v1/series/{s['komga_series_id']}/thumbnail",
-                f"komga:series:{s['komga_series_id']}",
-            )
-            if resp:
-                return resp
-        except Exception:
-            pass
+    from kometa import covers, images
+    resp = _store_response(covers.series_komga_key(series_id), "komga-poster")
+    if resp:
+        return resp
+    resp = _store_response(covers.series_file_key(series_id), "file")
+    if resp:
+        return resp
     # Use cached issue image URLs from DB — avoids live source API calls under concurrent grid load
     issues = db.get_issues_for_series(series_id, DB_PATH)
     img_url = next(
@@ -236,11 +231,10 @@ def series_thumbnail(series_id: int):
     )
     if img_url:
         # the record's own store (kometa/images.py): on disk by key, kept for good
-        from kometa import images
         resp = images.serve(images.series_key(series_id), img_url, "metron", path=DB_PATH)
         if resp:
-            return resp
-        return _cached_image_response(img_url)
+            return _tag(resp, "catalogue")
+        return _tag(_cached_image_response(img_url), "catalogue")
     # No issues with art at all — a collections-only LOCG entry ('Batman: Bad
     # Seeds' is just its TPB + HC) painted a black void on the card. Its trades
     # have covers; use the first real edition's.
@@ -248,12 +242,24 @@ def series_thumbnail(series_id: int):
     trade_cover = next((t["cover"] for t in (cached or {}).get("trades", [])
                         if t.get("cover") and not t.get("is_variant")), None)
     if trade_cover:
-        return _cached_image_response(trade_cover)
-    # Nothing from Komga, LOCG or trades — a shelf-imported series waiting to be
-    # matched. Page 1 of its first file, made by Kometa.
+        return _tag(_cached_image_response(trade_cover), "catalogue")
+    # Nothing from the store or the catalogues — a shelf-imported series waiting
+    # to be matched. Page 1 of its first file, made by Kometa, kept in the store.
     resp = _shelf_cover_response(series_id)
     if resp:
-        return resp
+        return _tag(resp, "file")
+    komga = _komga() if _komga_covers_on() else None
+    if s.get("komga_series_id") and komga:
+        try:
+            resp = _komga_thumb(
+                komga,
+                f"{komga.base_url}/api/v1/series/{s['komga_series_id']}/thumbnail",
+                f"komga:series:{s['komga_series_id']}",
+            )
+            if resp:
+                return _tag(resp, "komga")
+        except Exception:
+            pass
     raise HTTPException(404)
 
 
@@ -262,92 +268,61 @@ def _jpeg(data: bytes) -> Response:
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
-def _file_cover_response(series_id: int, number: float, request: Request | None = None) -> Response | None:
-    """The cover of the file you own. Validated, not cached blind: the ETag is
-    the file's size+mtime, the browser checks back each time and gets a 304
-    when nothing changed — so a re-downloaded file shows its new cover at once
-    (2026-10-08: Batgirls #2/#11 replaced, grid kept the old page for 30 days)."""
-    from kometa.naming import find_issue_file
-    from kometa import reader
-    s = db.get_series_by_id(series_id, DB_PATH)
-    path = s and find_issue_file(s.get("folder_path"), s["title"], number)
-    if not path:
-        return None
-    try:
-        st = os.stat(path)
-        etag = f'"{st.st_size}-{int(st.st_mtime)}"'
-        if request is not None and request.headers.get("if-none-match") == etag:
-            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
-        return Response(content=reader.get_cover_bytes(path), media_type="image/jpeg",
-                        headers={"ETag": etag, "Cache-Control": "no-cache"})
-    except Exception as e:
-        logger.warning(f"file cover failed for series {series_id} #{number}: {e}")
-        return None
-
-
 def _shelf_cover_response(series_id: int) -> Response | None:
-    from kometa import reader, shelf
+    """Page 1 of the series' first file, made now and kept in the store."""
+    from kometa import covers, shelf
     shelf_id = db.shelf_id_for_series(series_id, DB_PATH)
     first = shelf_id and shelf._first_book(shelf_id)
     if not first:
         return None
+    key = covers.series_file_key(series_id)
     try:
-        return _jpeg(reader.get_cover_bytes(first["path"]))
+        data = covers.cover_bytes_for_file(key, first["path"], DB_PATH, note="shelf")
+        if data:
+            return _store_response(key, "file") or _tag(_jpeg(data), "file")
     except Exception as e:
         logger.warning(f"shelf cover failed for series {series_id}: {e}")
-        return None
+    return None
 
 
 @router.get("/api/series/{series_id}/issues/{number}/thumbnail")
 def issue_thumbnail(series_id: int, number: float, request: Request = None):
+    """The issue's tile. Order (Komga retirement, 2026-10-10): your chosen
+    variant → page 1 of the file you own, from the store (made on the spot the
+    first time) → the catalogue's cover from the store → the catalogue live →
+    LOCG's variant art → Komga's thumbnail, only if komga_covers is on."""
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
+    from kometa import covers, images
 
-    # Your chosen variant wins — an explicit pick beats Komga's file cover, the
-    # same precedence the issue tile and library card use. (Also dodges a stale
-    # Komga book lingering after a file's been deleted/replaced.)
+    # Your chosen variant wins — an explicit pick beats the file's own cover, the
+    # same precedence the issue tile and library card use.
     vc = issue.get("variant_cover") if issue else None
     if vc and vc.startswith("http"):
         resp = _image_or_none(vc)
         if resp:
-            return resp
+            return _tag(resp, "variant")
 
-    # Owned: the cover of the FILE, read by Kometa itself — ahead of Komga, whose
-    # thumbnail lags a re-download until its own rescan. Validated per request.
+    # Owned: page 1 of the file, from the store; made now if the trickle hasn't
+    # reached it. A page 1 that stops halfway is remembered as failed and the
+    # catalogue's cover takes over below.
     if issue and issue.get("owned"):
-        resp = _file_cover_response(series_id, number, request)
+        key = covers.file_key(series_id, number)
+        resp = _store_response(key, "file")
         if resp:
             return resp
-
-    book_id = issue.get("komga_book_id") if issue else None
-    komga = _komga()
-
-    # Stale cache — live-lookup from Komga (via the TTL'd book map, so a grid of
-    # un-linked covers shares ONE get_books instead of one per cover) and write back
-    # so future calls hit the DB directly.
-    if not book_id and komga:
-        series = db.get_series_by_id(series_id, DB_PATH)
-        komga_series_id = series.get("komga_series_id") if series else None
-        if komga_series_id:
-            title = series.get("title", "") if series else ""
-            book_id = _komga_book_map(komga, komga_series_id, title).get(number)
-            if book_id:
-                # Stamp ONLY the book id. Finding a Komga book does NOT mean the issue
-                # is owned on disk — ownership is folder-truth. (The old code set
-                # owned=True here, which falsely marked un-downloaded issues as owned.)
-                db.set_komga_book_id(series_id, number, book_id, DB_PATH)
-
-    if book_id and komga:
-        try:
-            resp = _komga_thumb(
-                komga,
-                f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-                _book_cache_key(book_id, issue.get("komga_book_v") if issue else None),
-            )
-            if resp:
-                return resp
-        except Exception:
-            pass
+        row = images.get(key, DB_PATH)
+        if not (row and row.get("failed_at")):
+            from kometa.naming import find_issue_file
+            s = db.get_series_by_id(series_id, DB_PATH)
+            fp = s and find_issue_file(s.get("folder_path"), s["title"], number)
+            data = fp and covers.cover_bytes_for_file(key, fp, DB_PATH)
+            if data:
+                try:
+                    covers._series_file_cover(series_id, float(number), DB_PATH)
+                except Exception:
+                    pass
+                return _store_response(key, "file") or _tag(_jpeg(data), "file")
 
     # Known-artless issue: 404 immediately (with browser caching) instead of
     # re-running the whole LOCG chain on every grid render. Without this,
@@ -356,19 +331,17 @@ def issue_thumbnail(series_id: int, number: float, request: Request = None):
     if _thumb_misses.get(miss_key, 0) > time.time():
         return Response(status_code=404, headers={"Cache-Control": "public, max-age=3600"})
 
-    # LOCG list art (legacy-named metron_image column) — skip the 'no cover' placeholders some rows carry
-    # (relative paths that can never load; older syncs stored them as-is)
+    # The catalogue's cover (legacy-named metron_image column) — skip the 'no cover'
+    # placeholders some rows carry (relative paths that can never load)
     mi = issue.get("metron_image") if issue else None
     if mi and mi.startswith("http") and "no-cover" not in mi:
-        from kometa import images
         resp = images.serve(images.issue_key(series_id, number), mi, "metron", path=DB_PATH) or _image_or_none(mi)
         if resp:
-            return resp
+            return _tag(resp, "catalogue")
 
-    # Last resort: artless issues often have variant art on LOCG before the main
-    # cover is posted (looking at you, upcoming issues). covers[0] is the main, so
-    # it gets first shot; otherwise the first variant with real art wins. The
-    # variant fetch is cached (6h) and each found image is disk-cached by URL.
+    # Artless issues often have variant art on LOCG before the main cover is
+    # posted (upcoming issues). covers[0] is the main, so it gets first shot;
+    # otherwise the first variant with real art wins. Cached by URL.
     locg_iid = issue.get("locg_issue_id") if issue else None
     if locg_iid:
         try:
@@ -377,14 +350,29 @@ def issue_thumbnail(series_id: int, number: float, request: Request = None):
             for c in data.get("covers", [])[:6]:
                 resp = _image_or_none(c.get("thumb"))
                 if resp:
-                    return resp
+                    return _tag(resp, "catalogue")
         except Exception as e:
             # Transient failure (LOCG hiccup, CF challenge, timeout) is NOT a
             # verdict on whether art exists — return a plain uncached 404 so the
-            # next render gets a fresh attempt. Caching an exception as "no art"
-            # is how a one-off blip becomes a 6-hour blank tile.
+            # next render gets a fresh attempt.
             logger.warning(f"thumbnail fallback failed for series {series_id} #{number}: {e}")
             return Response(status_code=404)
+
+    # Komga, last and only when asked: its thumbnail is the same page 1 we read
+    # ourselves, from a server that is on its way out.
+    book_id = issue.get("komga_book_id") if issue else None
+    komga = _komga() if _komga_covers_on() else None
+    if book_id and komga:
+        try:
+            resp = _komga_thumb(
+                komga,
+                f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
+                _book_cache_key(book_id, issue.get("komga_book_v") if issue else None),
+            )
+            if resp:
+                return _tag(resp, "komga")
+        except Exception:
+            pass
 
     # Clean determination: every source genuinely has no art right now. Remember
     # that so the next render doesn't pay for the same expedition; new art gets

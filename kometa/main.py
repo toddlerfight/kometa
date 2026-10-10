@@ -426,6 +426,9 @@ def get_config():
         "comicvine_configured": bool(cfg.get("cv_api_key", "")),
         # Integration/search toggles — absent = enabled (existing installs unchanged).
         "komga_enabled":       cfg.get("komga_enabled", "1") != "0",
+        # Komga retirement, step 1 (2026-10-10): its thumbnails are a last resort
+        # behind this flag; covers come from the record's own store.
+        "komga_covers":        cfg.get("komga_covers", "0") == "1",
         # Prowlarr is the master search switch; usenet/torrent are its children.
         "prowlarr_enabled":    cfg.get("prowlarr_enabled", "1") != "0",
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
@@ -462,6 +465,7 @@ class ConfigRequest(BaseModel):
     prowlarr_apikey:    str | None = None
     cv_api_key:         str | None = None
     komga_enabled:      str | None = None   # "1"/"0" — integration toggle
+    komga_covers:       str | None = None   # "1"/"0" — Komga thumbnails as a last-resort cover source
     prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None

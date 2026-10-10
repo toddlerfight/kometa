@@ -166,6 +166,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
         logger.warning(f"Images trickle not scheduled: {e}")
+    # Page 1 and ComicInfo of every owned file into the record's store — disk
+    # and CPU only, so a bigger bite per tick (kometa/covers.py).
+    try:
+        from kometa.covers import covers_trickle
+        scheduler.add_job(covers_trickle, IntervalTrigger(minutes=5), id="covers_trickle",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=1))
+    except Exception as e:
+        logger.warning(f"Covers trickle not scheduled: {e}")
     # Series the first matcher left without a Metron run: asked again, a few a
     # tick, on the one throttle (kometa/rematch.py). Never a second process.
     try:

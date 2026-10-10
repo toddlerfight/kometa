@@ -223,6 +223,14 @@ def _resync_worker(series_id: int, placed_path: str | None, *,
 def _resync_after_placement(series_id: int, placed_path: str | None = None) -> None:
     """Fire-and-forget: the finalize thread has done its job the moment the
     file is on the shelf. The link-stamping wait happens off to the side."""
+    # The cover now, from the file itself, before any scan or tick gets to it
+    # (kometa/covers.py) — the tile flips the moment the row goes done.
+    if placed_path:
+        try:
+            from kometa import covers
+            covers.generate_for_path(placed_path, series_id, DB_PATH)
+        except Exception as e:
+            logger.info(f"Cover from placed file skipped: {e}")
     threading.Thread(
         target=_resync_worker, args=(series_id, placed_path),
         name=f"resync-{series_id}", daemon=True,

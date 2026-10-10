@@ -692,8 +692,8 @@ def get_all_series_summaries(path=DB_PATH):
     the two never disagree. The card issue is the soonest upcoming release (within
     30d) or, if none, the most recently RELEASED issue. Its cover resolves:
       1. your picked variant (variant_prefs), then
-      2. the Komga book thumbnail — the real cover of the file you own (a variant
-         edition shows here even if you never used the picker), then
+      2. the real cover of the file you own, page 1 via Kometa's own issue
+         route (a variant edition shows here even if you never used the picker), then
       3. the Metron solicit art.
     Upcoming issues aren't owned, so they have no Komga book — variant → Metron.
     The up_/recent_ columns are scratch and aren't returned."""
@@ -722,16 +722,12 @@ def get_all_series_summaries(path=DB_PATH):
                 (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.store_date IS NOT NULL AND i2.store_date <= ?
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_image,
-                (SELECT komga_book_id FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                (SELECT owned FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga,
-                (SELECT kv.v FROM issue_status i2 JOIN komga_book_version kv ON kv.book_id = i2.komga_book_id
-                   WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_komga_v
+                   ORDER BY i2.store_date DESC LIMIT 1) as recent_owned
             FROM issue_status
             GROUP BY tracked_series_id
-        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today, today))
+        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -753,11 +749,12 @@ def get_all_series_summaries(path=DB_PATH):
             # Upcoming (not owned): your variant for it, else its solicit art.
             card_image = variant_map.get((sid, r["up_number"])) or r["up_image"]
         else:
-            # Most recent released: variant → the real file cover (Komga) → solicit.
+            # Most recent released: variant → the real file cover (Kometa's own
+            # issue route, which serves page 1 from the store) → solicit.
             cn = r["recent_number"]
             card_image = variant_map.get((sid, cn)) if cn is not None else None
-            if not card_image and r["recent_komga"]:
-                card_image = book_thumb_url(r["recent_komga"], r["recent_komga_v"])
+            if not card_image and cn is not None and r["recent_owned"]:
+                card_image = f"/api/series/{sid}/issues/{cn:g}/thumbnail"
             if not card_image:
                 card_image = r["recent_image"]
         out[sid] = {
