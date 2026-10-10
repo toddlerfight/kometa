@@ -418,6 +418,8 @@ def book_detail(book_id: int):
 
 @router.get("/api/books/{book_id}/pages/{page}")
 def book_page(book_id: int, page: int, w: int | None = None):
+    from kometa.activity import note_reading
+    note_reading()
     """Page `page` (1-based), resized to the bucket covering `w`. The client
     appends ?v=<version> so a re-downloaded file busts the browser cache —
     which is why the response can be cached as immutable."""

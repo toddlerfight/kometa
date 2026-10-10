@@ -23,7 +23,7 @@ from kometa import images
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
-TRICKLE_LIMIT = 150
+TRICKLE_LIMIT = 40
 FAIL_RETRY_DAYS = 7
 _ROLES = (("Writer", "writer"), ("Penciller", "penciller"), ("Inker", "inker"), ("Colorist", "colorist"),
           ("Letterer", "letterer"), ("CoverArtist", "cover"), ("Editor", "editor"))
@@ -292,7 +292,9 @@ def covers_trickle(limit: int = TRICKLE_LIMIT, path=None, root: str | None = Non
     path = path or DB_PATH
     done, failed, facts = 0, 0, 0
     issues_cache: dict[int, dict[float, dict]] = {}
+    from kometa.activity import yield_to_reader
     for b in pending_books(path, limit):
+        yield_to_reader()
         if not os.path.exists(b["path"]):
             continue
         key = generate_for_book(b, path, root)

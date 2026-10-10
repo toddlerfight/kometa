@@ -414,6 +414,8 @@ def api_file(book_id: int):
 
 @router.get("/opds/books/{book_id}/pages/{page}")
 def api_page(book_id: int, page: int, maxWidth: int | None = None):
+    from kometa.activity import note_reading
+    note_reading()
     """PSE page: 0-based, optional maxWidth → the reader's own buckets."""
     from kometa import reader
     book = reader._book_or_404(book_id)

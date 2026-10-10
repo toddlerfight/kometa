@@ -90,7 +90,9 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
         out["stopped"] = "sync in progress"; return out
     fv = fill_variants or (lambda sid, n, issue: record.fill_variants(sid, n, path, issue=issue))
     fi = fill_issue or (lambda sid, n, issue: record.fill_issue(sid, n, path, issue=issue))
+    from kometa.activity import yield_to_reader
     for issue in candidates(path, limit=budget):
+        yield_to_reader(sleep)
         sid, n = issue["tracked_series_id"], issue["number"]
         if out["requests"] >= budget:
             break

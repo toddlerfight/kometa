@@ -66,7 +66,9 @@ def _mirror(src_root: str, dest_root: str) -> tuple[int, int]:
     copied, bytes_ = 0, 0
     if not os.path.isdir(src_root):
         return 0, 0
+    from kometa.activity import yield_to_reader
     for dirpath, _, files in os.walk(src_root):
+        yield_to_reader()
         rel = os.path.relpath(dirpath, src_root)
         out_dir = os.path.join(dest_root, rel) if rel != "." else dest_root
         os.makedirs(out_dir, exist_ok=True)

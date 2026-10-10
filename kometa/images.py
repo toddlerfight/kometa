@@ -280,7 +280,9 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
     except Exception as e:
         logger.info(f"Image trickle: prune skipped: {e}")
     done, fails = 0, 0
+    from kometa.activity import yield_to_reader
     for key, url, source in pending(path, limit=limit):
+        yield_to_reader(sleep)
         row = fetch_image(key, url, source, path, http=http)
         if row:
             done += 1
