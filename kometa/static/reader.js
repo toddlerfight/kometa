@@ -1060,6 +1060,7 @@ async function renderReadList(id) {
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${_rlStarted(l) ? 'Continue' : 'Start'}</button>`
       : (done && books.length ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${books[0].id}, list: ${id}})">Read again</button>` : '')}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
+  api.get(`/api/readlists/${id}/get-missing`).then(st => { if (st && st.running) _rlPollGetMissing(id); }).catch(() => {});
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
       aria-selected="${_rlTab === t}" onclick="setRlTab('${t}', ${id})" onkeydown="if(event.key==='Enter'||event.key===' ')setRlTab('${t}', ${id})">${t}</div>`).join('');
   const tiles = [];
@@ -1162,7 +1163,11 @@ async function _rlPollGetMissing(listId) {
   const btn = document.getElementById('rl-getmissing');
   let st;
   try { st = await api.get(`/api/readlists/${listId}/get-missing`); } catch { return; }
-  if (btn) { btn.disabled = st.running; btn.textContent = st.running ? `Getting ${st.done}/${st.total}…` : `Get missing (${Math.max(0, st.total - st.done)})`; }
+  if (btn) {
+    btn.disabled = st.running;
+    btn.textContent = !st.running ? `Get missing (${Math.max(0, st.total - st.done)})`
+      : (st.phase === 'packs' || st.phase === 'starting') ? 'Looking for packs…' : `Getting ${st.done}/${st.total}…`;
+  }
   if (st.running) { setTimeout(() => _rlPollGetMissing(listId), 2500); return; }
   const unknown = (st.unknown || []).length;
   showToast(`${st.queued} issues queued across ${st.created} new runs${unknown ? ` · ${unknown} unknown to every catalogue` : ''}`);

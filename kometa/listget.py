@@ -291,9 +291,13 @@ def get_missing(list_id: int, path=None, packs: bool = True, **kw) -> dict:
 def _get_missing(list_id: int, path, packs: bool, **kw) -> dict:
     res = readlists.resolve(list_id, path)
     gaps = [e for e in res["entries"] if e["status"] != "owned"]
-    out = {"total": len(gaps), "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True}
+    out = {"total": len(gaps), "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True,
+           "name": res.get("name"), "phase": "packs" if packs and gaps else "entries"}
     _jobs[list_id] = out
+    # the pack hunt reads file lists and can take minutes with nothing queued yet:
+    # 'phase' is what Activity and the list's button show meanwhile
     covered = _packs_first(list_id, path, res, out) if packs and gaps else set()
+    out["phase"] = "entries"
     if covered:
         out["in_packs"] = len(covered)
         out["done"] += len([e for e in gaps if e["item_id"] in covered])
@@ -329,7 +333,8 @@ def start_get_missing(list_id: int) -> dict:
             return job
         res = readlists.resolve(list_id)
         n = sum(1 for e in res["entries"] if e["status"] != "owned")
-        _jobs[list_id] = {"total": n, "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True}
+        _jobs[list_id] = {"total": n, "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True,
+                          "name": res.get("name"), "phase": "starting"}
         _mark_running(list_id, True)
     threading.Thread(target=get_missing, args=(list_id,), daemon=True).start()
     return _jobs[list_id]
@@ -356,6 +361,14 @@ def api_list_packs(list_id: int):
         return listpacks.find_packs(list_id)
     except KeyError:
         raise HTTPException(404, "No such list")
+
+
+@router.get("/api/listget/jobs")
+def api_jobs():
+    """Get missing runs still going — Activity shows them, so a click is never silent."""
+    return [{"list_id": lid, "name": j.get("name"), "phase": j.get("phase"), "done": j.get("done", 0),
+             "total": j.get("total", 0), "queued": j.get("queued", 0)}
+            for lid, j in list(_jobs.items()) if j.get("running")]
 
 
 @router.post("/api/readlists/{list_id}/get-missing")

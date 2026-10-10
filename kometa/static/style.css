@@ -2357,3 +2357,13 @@ body.touch .od-menu { opacity: .85; }
   transition: transform var(--t-slow) var(--ease-out); }
 @media (prefers-reduced-motion: reduce) { .rl-progress-fill { transition: none; } }
 
+
+/* Activity: a reading list's Get missing still running, under the page title */
+.act-job { display: flex; align-items: center; gap: 10px; padding: 6px 0; cursor: pointer; font-size: var(--fs-label);
+  letter-spacing: var(--track); color: var(--tq); }
+.act-job:hover .act-job-name { color: var(--pri); }
+.act-job-name { color: var(--tp); font-weight: 700; transition: color var(--t-fast) var(--ease-out); }
+.act-job-spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--su3); border-top-color: var(--pri);
+  animation: act-spin .9s linear infinite; flex-shrink: 0; }
+@keyframes act-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .act-job-spin { animation: none; border-color: var(--pri); } }

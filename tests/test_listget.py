@@ -145,3 +145,11 @@ def test_pack_hunt_skips_releases_filed_only_as_media():
     assert not _media_not_comics([7030])                # comics
     assert not _media_not_comics([])                    # untagged: let the name rules decide
     assert not _media_not_comics([2000, 7020])          # anything book-ish keeps it in
+
+
+def test_running_jobs_say_what_they_are_doing(listdb):
+    lg._jobs.clear()
+    lg._jobs[listdb["lid"]] = {"running": True, "name": "Hellboy TPB order", "phase": "packs", "done": 0, "total": 4, "queued": 0}
+    lg._jobs[999] = {"running": False, "name": "done one", "phase": "entries", "done": 3, "total": 3}
+    assert lg.api_jobs() == [{"list_id": listdb["lid"], "name": "Hellboy TPB order", "phase": "packs", "done": 0, "total": 4, "queued": 0}]
+    lg._jobs.clear()

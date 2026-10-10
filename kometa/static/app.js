@@ -3251,7 +3251,8 @@ async function _refreshActivity() {
   // (a full rebuild here is the flash we're trying to kill). The remover re-polls
   // when it's finished collapsing.
   if (_activityRemoving) return;
-  const all = await api.get('/api/queue');
+  const [all, jobs] = await Promise.all([api.get('/api/queue'), api.get('/api/listget/jobs').catch(() => [])]);
+  _paintListJobs(jobs);
   _ackActivity(all);   // you're looking at it — acknowledge + clear the badge
   // A done row you've already seen on an EARLIER visit is history: it shows
   // once, on the visit after it landed, then gets out of the way. Failed and
@@ -3286,7 +3287,22 @@ async function _refreshActivity() {
   // Within the post-retry window, keep polling while anything's still queued so
   // we don't freeze on the stale `queued` card and miss the real outcome.
   const pumping = Date.now() < _activityPumpUntil && queue.some(q => q.state === 'queued');
-  if (hasActive || pumping) _activityPollTimer = setTimeout(_refreshActivity, 2000);
+  if (hasActive || pumping || jobs.length) _activityPollTimer = setTimeout(_refreshActivity, 2000);
+}
+
+// A reading list's Get missing, still going: it says so here, under the title —
+// the pack hunt can run for minutes before a single issue is queued, and a
+// click with nothing to show for it reads as a click that did nothing.
+function _paintListJobs(jobs) {
+  const sub = document.getElementById('topbar-sub');
+  if (!sub) return;
+  if (!jobs.length) { sub.innerHTML = ''; return; }
+  sub.innerHTML = jobs.map(j => {
+    const what = j.phase === 'packs' || j.phase === 'starting' ? 'Looking for packs…'
+      : `Searching entries · ${j.done} of ${j.total}${j.queued ? ` · ${j.queued} queued` : ''}`;
+    return `<a class="act-job" onclick="navigate('readlist', {id: ${j.list_id}})"><span class="act-job-spin" aria-hidden="true"></span>
+      <span class="act-job-name">${esc(j.name || 'Reading list')}</span><span class="act-job-what">Get missing · ${what}</span></a>`;
+  }).join('');
 }
 
 function _actChip(state) {
