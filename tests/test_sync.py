@@ -454,3 +454,18 @@ def test_trade_refresh_also_reconciles_single_issues_from_a_pack(tmp_path, db_pa
     db.set_trades(sid, [{"title": "Faithless TP", "vol": None, "owned": False, "file": None}], db_path)
     sync.refresh_trades_owned(sid)
     assert [i["owned"] for i in db.get_issues_for_series(sid, db_path)] == [1, 1]
+
+
+def test_a_scene_tagged_one_word_trade_file_matches_its_run(tmp_path):
+    """'100% TPB (2020) (Digital) (Mephisto-Empire).cbz' on a shelf called 100%:
+    the tags are packaging and the one word IS the series, so the TP claims it."""
+    from kometa.sync import enrich_trades
+    (tmp_path / "100% TPB (2020) (Digital) (Mephisto-Empire).cbz").write_bytes(b"PK\x03\x04")
+    trades = [{"title": "100% TP", "vol": None}, {"title": "100% HC", "vol": None}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "100%"}, trades, books=[])
+    assert [t["owned"] for t in trades] == [True, False]
+    # but one word that is NOT the series name still can't claim anything
+    (tmp_path / "Batman Lost (2018).cbz").write_bytes(b"PK\x03\x04")
+    other = [{"title": "Batman TP", "vol": None}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Lost"}, other, books=[])
+    assert other[0]["owned"] is False

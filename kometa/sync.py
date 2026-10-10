@@ -501,20 +501,26 @@ _FORMAT_WORDS = frozenset({"tp", "tpb", "hc", "gn", "ogn", "sc", "edition", "col
 
 
 def _sig_words(name: str) -> set[str]:
+    # scene tags — '(Digital) (Mephisto-Empire)', '(2020)' — are packaging, not title
+    name = re.sub(r"\([^)]*\)", " ", name)
     return {w for w in _norm_name(name).split() if w not in _FORMAT_WORDS and not re.fullmatch(r"(19|20)\d\d", w)}
 
 
 def _loose_edition_file(title: str, kws: frozenset, owned_names: dict[str, str], claimed: set, series_title: str) -> str | None:
     cw = _sig_words(title)
-    if len(cw) < 2:
+    sw = _sig_words(series_title)
+    # one significant word is enough ONLY when it is the whole series name
+    # ('100% TP' on a shelf called 100%) — otherwise two, so 'Batman' can't claim
+    # every Batman-something in the folder
+    if not cw or (len(cw) < 2 and cw != sw):
         return None
     for key, fname in owned_names.items():
         if fname in claimed or _parse_issue_number(fname, series_title) is not None:
             continue                                      # a single issue is never a trade
         if _edition_keywords(fname) != kws:
             continue                                      # a Deluxe file isn't the plain TP
-        fw = _sig_words(key)
-        if len(fw) >= 2 and (cw <= fw or fw <= cw):
+        fw = _sig_words(os.path.splitext(fname)[0])
+        if fw and (cw <= fw or fw <= cw) and (len(fw) >= 2 or fw == sw):
             return fname
     return None
 
