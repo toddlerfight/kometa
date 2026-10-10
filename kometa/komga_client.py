@@ -45,6 +45,16 @@ class KomgaClient:
     def get_series(self, series_id):
         return self._get(f"/api/v1/series/{series_id}")
 
+    def get_series_thumbnails(self, series_id):
+        """Every poster Komga holds for a series — type GENERATED (page 1),
+        SIDECAR (a cover.jpg beside the files) or USER_UPLOADED, one `selected`."""
+        return self._get(f"/api/v1/series/{series_id}/thumbnails")
+
+    def get_series_thumbnail_bytes(self, series_id, thumbnail_id) -> bytes:
+        r = self.session.get(f"{self.base_url}/api/v1/series/{series_id}/thumbnails/{thumbnail_id}", timeout=self.TIMEOUT)
+        r.raise_for_status()
+        return r.content
+
     def get_books(self, series_id):
         books, page = [], 0
         while True:

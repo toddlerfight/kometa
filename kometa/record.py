@@ -46,6 +46,11 @@ def ensure_tables(path=None):
             # when the cover list was last asked for — separate from the details'
             # clock, since variants keep landing for weeks after release
             conn.execute("ALTER TABLE issue_record ADD COLUMN variants_at TEXT")
+        scols = [r[1] for r in conn.execute("PRAGMA table_info(series_record)")]
+        for col in ("genres_json", "tags_json"):
+            if col not in scols:
+                # Komga's harvest — the catalogues don't say these; Komga's ComicInfo read did
+                conn.execute(f"ALTER TABLE series_record ADD COLUMN {col} TEXT")
         conn.execute("""CREATE TABLE IF NOT EXISTS trade_record (
             tracked_series_id INTEGER NOT NULL, key TEXT NOT NULL,
             title TEXT, vol INTEGER, vol_range_json TEXT, format TEXT, edition_title TEXT, subtitle TEXT,

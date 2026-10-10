@@ -228,6 +228,20 @@ def test_komga(req: TestKomgaRequest):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/api/komga/harvest")
+def komga_harvest():
+    """Pull what Komga knows (series/book metadata, custom posters) into the local
+    record, in a thread. Read-only against Komga; never overwrites a catalogue row."""
+    from kometa import harvest_komga
+    return harvest_komga.harvest_in_background()
+
+
+@app.get("/api/komga/harvest")
+def komga_harvest_status():
+    from kometa import harvest_komga
+    return harvest_komga.status()
+
+
 class TestSabRequest(BaseModel):
     url: str | None = None
     apikey: str | None = None
