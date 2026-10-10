@@ -1018,6 +1018,17 @@ function setRlTab(tab, id) { _rlTab = tab; renderReadList(id); }
 // The series page's layout: a cover for the backdrop, a count chip, a sub line,
 // tabs, and one grid of tiles in reading order. A gap in the order is a tile
 // too — amber frame, no cover — so the list reads as the list, holes and all.
+// 'Continue' only when you've read something AT or BEFORE the book the button
+// opens — a half-read Infinity #2 from before the list existed is not you
+// being under way with Books of Doom #1.
+function _rlStarted(l) {
+  for (const e of l.entries) for (const b of e.books) {
+    if (b.progress) return true;
+    if (b.id === l.continue) return false;
+  }
+  return false;
+}
+
 async function renderReadList(id) {
   setTopbar();
   setApp('<div class="state-msg">Loading...</div>');
@@ -1045,7 +1056,7 @@ async function renderReadList(id) {
     ${l.source === 'komga' ? 'FROM KOMGA' : 'CBL'} · ${l.total} ENTR${l.total === 1 ? 'Y' : 'IES'} · ${books.length} BOOK${books.length === 1 ? '' : 'S'} ON THE SHELF</span>`;
   document.getElementById('topbar-actions').innerHTML = `
     ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
-    ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${l.books_read || l.books_reading ? 'Continue' : 'Start'}</button>`
+    ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${_rlStarted(l) ? 'Continue' : 'Start'}</button>`
       : (done && books.length ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${books[0].id}, list: ${id}})">Read again</button>` : '')}
     <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
