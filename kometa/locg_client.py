@@ -1,4 +1,5 @@
 import re
+import random
 import time
 import logging
 import threading
@@ -189,13 +190,41 @@ def _check_paused():
         raise LocgPaused(f"LOCG is pausing us until {pause_label(until)} — it refused our requests")
 
 
+# One speed for ALL of LOCG. Each job (sweep, top-up, re-check, trade fill,
+# syncs) kept its own polite budget — and on a fresh pass they all woke at once:
+# 2026-10-11 05:31 a burst drew a 429 two minutes after the user pasted a
+# cookie. Every request now goes through here: >= 3 s apart, and no more than
+# 20 in any 5 minutes, whoever is asking.
+PACE_GAP_S = 3.0
+PACE_WINDOW_S = 300
+PACE_MAX = 20
+_recent: list[float] = []
+
+
+def _pace(sleep=time.sleep, now=time.time):
+    global _recent
+    t = now()
+    _recent = [x for x in _recent if t - x < PACE_WINDOW_S]
+    if len(_recent) >= PACE_MAX:
+        sleep(PACE_WINDOW_S - (t - _recent[0]) + 0.5)
+        t = now()
+        _recent = [x for x in _recent if t - x < PACE_WINDOW_S]
+    if _recent and t - _recent[-1] < PACE_GAP_S:
+        sleep(PACE_GAP_S - (t - _recent[-1]) + random.uniform(0, 0.7))
+        t = now()
+    _recent.append(t)
+
+
 def _note_refusal(r):
     refused = r.status_code == 429 or (
         r.status_code == 403 and (r.headers.get("cf-mitigated") == "challenge"
                                   or "cloudflare" in (r.headers.get("server") or "").lower()))
     if not refused:
         return
-    if _access()[0]:
+    # A 429 is 'slow down', not 'your pass is dead': keep it, just pause. Only a
+    # Cloudflare challenge (403) means the pass expired. (05:31 a 429 threw away
+    # a pass that was two minutes old.)
+    if _access()[0] and r.status_code != 429:
         logger.info("LOCG refused a request carrying your browser's pass — it has expired; forgetting it")
         _forget_access()
     # A refusal while ALREADY paused (a 'Test LOCG now' knock) doesn't push the
@@ -306,6 +335,8 @@ def _anon_get_fn():
                 kw.setdefault("timeout", 25)
                 _check_paused()
                 with _anon_lock:
+                    _pace()                      # ONE pace for every caller, under the same lock
+                    _check_paused()              # the wait may have outlasted a pause someone else hit
                     r = _anon_session["session"].get(url, **kw)
                 _note_refusal(r)
                 return r
