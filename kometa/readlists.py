@@ -18,6 +18,7 @@ How an entry finds its books:
     gap is visible; getting it is the acquisition side's job, later.
 """
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -293,6 +294,68 @@ def _shelf_index(path) -> dict[str, dict]:
     return idx
 
 
+def _shelf_runs(path) -> dict[str, list[dict]]:
+    """key → EVERY shelf series under that name, each with the year its run
+    began (tracked year, else the '(YYYY)' in its title/folder, else its first
+    catalogue issue's store date). Same-named runs need the year to tell apart:
+    a list's 'Fantastic Four (1998) #500' is not the shelf's Fantastic Four (2018)."""
+    out: dict[str, list[dict]] = {}
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, title, tracked_series_id, folder_path, book_count FROM shelf_series ORDER BY title")]
+        tracked = {r["id"]: dict(r) for r in conn.execute("SELECT id, title, year_began FROM tracked_series")}
+        first = {r[0]: r[1] for r in conn.execute(
+            "SELECT tracked_series_id, MIN(store_date) FROM issue_status WHERE store_date IS NOT NULL GROUP BY tracked_series_id")}
+    for s in rows:
+        t = tracked.get(s.get("tracked_series_id")) or {}
+        year = t.get("year_began")
+        if not year:
+            m = re.search(r"\(((?:19|20)\d{2})", f"{t.get('title') or ''} {s['title']} {os.path.basename(s.get('folder_path') or '')}")
+            year = int(m.group(1)) if m else None
+        if not year and first.get(s.get("tracked_series_id")):
+            year = int(first[s["tracked_series_id"]][:4])
+        names = {s["title"]} | ({t["title"]} if t.get("title") else set())
+        for n in names:
+            for k in _keys(n):
+                lst = out.setdefault(k, [])
+                if all(x["id"] != s["id"] for x in lst):
+                    lst.append(dict(s, run_year=year))
+    return out
+
+
+def _pick_run(runs: dict, keys: set, volume, number=None, path=None) -> dict | None | bool:
+    """The shelf series for a list entry that names its run's start year.
+    False = no opinion (no year given: use the plain name match); None = the
+    name is on the shelf but only as OTHER runs (not on the shelf).
+
+    A run from another year still counts when it HAS the issue asked for: a
+    TPB-order list dates 'Hellboy in Mexico' by the story, the shelf by the
+    edition. Fantastic Four (2018) has no #500, so it can't be 1998's."""
+    if not (volume and re.match(r"^(19|20)\d{2}$", str(volume))):
+        return False
+    want = int(volume)
+    cands = [c for k in keys for c in runs.get(k, [])]
+    if not cands:
+        return False
+    fits = [c for c in cands if c["run_year"] and abs(c["run_year"] - want) <= 1]
+    if fits:
+        return fits[0]
+    unknown = [c for c in cands if not c["run_year"]]
+    if unknown:
+        return unknown[0]
+    if number is None:
+        return cands[0]
+    with db._connect(path or DB_PATH) as conn:
+        for c in cands:
+            if c.get("tracked_series_id") and conn.execute(
+                    "SELECT 1 FROM issue_status WHERE tracked_series_id = ? AND number = ?",
+                    (c["tracked_series_id"], number)).fetchone():
+                return c
+            if not c.get("tracked_series_id"):
+                return c                                    # a shelf-only folder: no catalogue to say otherwise
+    return None
+
+
 def _books(shelf_id: int, path) -> list[dict]:
     rows = db.shelf_books(shelf_id, READER_ID, path)
     # one book per number: the CBZ beats the CBR, else the newest file. The
@@ -439,6 +502,7 @@ def resolve(list_id: int, path=None) -> dict:
         raise KeyError(list_id)
     items = get_items(list_id, path)
     idx = _shelf_index(path)
+    runs = _shelf_runs(path) if any(re.match(r"^(19|20)\d{2}$", str(it.get("volume") or "")) for it in items) else None
     per_series: dict[str, int] = {}
     for it in items:
         per_series[norm_key(it["series"])] = per_series.get(norm_key(it["series"]), 0) + 1
@@ -454,7 +518,8 @@ def resolve(list_id: int, path=None) -> dict:
         nb = _numbered(series_name)
         if nb and not any(k in idx for k in _keys(series_name)):
             series_name, want_n = nb[0], float(nb[1])
-        hit = next((idx[k] for k in _keys(series_name) if k in idx), None)
+        picked = _pick_run(runs, _keys(series_name), it.get("volume"), want_n, path) if runs is not None else False
+        hit = picked if picked is not False else next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": [],
                  "item_id": it["id"], "cover": f"/api/readlists/{list_id}/items/{it['id']}/cover" if it.get("cover_url") else None,

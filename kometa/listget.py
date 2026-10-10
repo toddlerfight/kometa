@@ -42,11 +42,13 @@ def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None) -> 
     if _YEAR4.match(vol) and not re.search(r"\(\d{4}\)\s*$", title):
         title = f"{title} ({vol})"                   # the CBL's volume year disambiguates same-named runs
     fake = {"title": title, "publisher": None, "folder_path": None}
+    unanswered = 0
     try:
         mid = find_metron_match(fake, search=search_metron) if (search_metron or _metron_on()) else None
     except Exception as e:
         logger.info(f"List get: Metron didn't answer for {title!r}: {e}")
         mid = None
+        unanswered += 1
     if mid:
         m = fake["_matched"]
         return {"source": "metron", "id": mid, "title": m.get("title") or entry["series"],
@@ -56,10 +58,15 @@ def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None) -> 
     except Exception as e:
         logger.info(f"List get: LOCG didn't answer for {title!r}: {e}")
         lid = None
+        unanswered += 1
     if lid:
         m = fake["_matched"]
         return {"source": "locg", "id": lid, "title": m.get("title") or entry["series"],
                 "publisher": m.get("publisher"), "year": m.get("year")}
+    if unanswered == 2 or (unanswered and not _metron_on()):
+        # nobody ANSWERED: that's 'ask later', not 'no catalogue knows it' — a
+        # name-only series and a blind search made here would be junk
+        return {"retry": True}
     return None
 
 
@@ -115,6 +122,9 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
     created = False
     if not series:
         run = _find_run(entry, item, search_metron, search_locg)
+        if run and run.get("retry"):
+            return {"entry": entry["series"], "result": "try_later", "queued": 0, "created": False,
+                    "detail": "Neither catalogue answered (Metron blocked or LOCG paused) — try again later"}
         if not run:
             return _propose_trade(list_id, entry, item, res, path, root)
         series = _existing_for(run, path)
@@ -212,6 +222,8 @@ def get_missing(list_id: int, path=None, **kw) -> dict:
                     out["proposals"] = out.get("proposals", 0) + 1
             elif r["result"] in ("unknown", "no_issues"):
                 out["unknown"].append(e["series"])
+            elif r["result"] == "try_later":
+                out["try_later"] = out.get("try_later", 0) + 1
         except Exception as ex:
             out["errors"].append({"entry": e["series"], "error": str(ex)})
         out["done"] += 1

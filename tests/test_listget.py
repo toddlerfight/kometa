@@ -79,3 +79,17 @@ def test_unknown_run_and_owned_entry(listdb):
     assert q["kind"] == "trade" and json.loads(q["meta_json"])["confirm"] is True and json.loads(q["meta_json"])["year"] == "1998"
     r = lg.get_entry(listdb["lid"], e["Hellboy: Seed of Destruction"]["item_id"], listdb["db"], root=listdb["root"])
     assert r["result"] == "owned"
+
+
+def test_nobody_answering_is_try_later_not_a_blind_search(listdb, monkeypatch):
+    """Metron blocked AND LOCG paused: no shelf-only series, no name-only search."""
+    import kometa.metron_client as mc
+    monkeypatch.setattr(lg, "_metron_on", lambda: True)
+    def down(q): raise mc.MetronUnavailable("blocked")
+    def paused(q): raise RuntimeError("LOCG is pausing us")
+    res = rl.resolve(listdb["lid"], listdb["db"])
+    gap = next(e for e in res["entries"] if e["status"] == "not_on_shelf")
+    before = len(db.get_all_series(listdb["db"]))
+    r = lg.get_entry(listdb["lid"], gap["item_id"], listdb["db"], search_metron=down, search_locg=paused, root=listdb["root"])
+    assert r["result"] == "try_later" and r["queued"] == 0
+    assert len(db.get_all_series(listdb["db"])) == before

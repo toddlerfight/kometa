@@ -251,3 +251,18 @@ def test_arc_reading_order_becomes_a_kometa_reading_list(shelf, monkeypatch):
     assert out["entries"] == 3 and out["owned"] == 2
     again = arcs.build_arc_readlist(aid)
     assert again["list_id"] == out["list_id"]              # same name = rebuilt in place
+
+
+def test_a_named_run_year_never_matches_a_different_run_of_the_same_name(db_path, tmp_path):
+    """'Fantastic Four' volume 1998 must not resolve to the shelf's Fantastic Four (2018)."""
+    root = tmp_path / "comics" / "Marvel Comics"
+    t2018 = db.add_series(title="Fantastic Four", publisher="Marvel", year_began=2018, folder_path=str(root / "Fantastic Four"), on_pull_list=False, path=db_path)
+    _shelf(db_path, root, "Fantastic Four", ["Fantastic Four #010 (2019).cbz"], tracked=t2018)
+    db.upsert_issue_status(t2018, 10.0, "2019-05-01", 1, path=db_path)
+    lid = rl.save_list("Doom", [{"series": "Fantastic Four", "number": "500", "volume": "1998"},
+                                {"series": "Fantastic Four", "number": "10", "volume": "2018"},
+                                {"series": "Fantastic Four", "number": "10"}], "cbl", None, db_path)
+    e = rl.resolve(lid, db_path)["entries"]
+    assert e[0]["status"] == "not_on_shelf" and e[0]["series_id"] is None     # the 1998 run isn't here: 2018 has no #500
+    assert e[1]["status"] == "owned"                                          # the 2018 run is
+    assert e[2]["status"] == "owned"                                          # no year: the name decides, as before
