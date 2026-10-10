@@ -298,7 +298,8 @@ def lookup(series_id: int, number: float, path=None, budget: int = DETAIL_BUDGET
 
 
 # --- 2b. LOCG's 'Collecting …' line, for what Metron doesn't hold ---------------------
-LOCG_PER_PASS = 5             # LOCG trade pages read per pass, only while LOCG is open
+LOCG_PER_PASS = 5             # LOCG requests per pass (detail pages, a search, trade lists), only while LOCG is open
+LOCG_RELATED = 2              # related LOCG series ('Fear Itself: Secret Avengers') whose trade lists are read
 _COLLECT_AT = re.compile(r"\b(?:collect(?:s|ing|ed)?|reprint(?:s|ing)?)\b\s*:?\s*", re.I)
 _GROUP = re.compile(r"(?P<name>[A-Za-z][A-Za-z0-9:'’&!.\- ]*?)\s*(?:\((?P<year>\d{4})\))?\s*#?\s*"
                     r"(?P<nums>\d+(?:\.\d+)?(?:\s*(?:[-–]|,|&|\band\b)\s*#?\s*\d+(?:\.\d+)?)*)", re.I)
@@ -331,44 +332,113 @@ def parse_collects(desc: str) -> list[dict]:
     return out
 
 
-def locg_editions(series_id: int, target: dict, path=None, budget: int = LOCG_PER_PASS, details=None) -> dict:
-    """The run's own LOCG trades whose 'Collecting' line names target.
-    → {candidates, complete} — complete=False while LOCG is shut or the budget ran out."""
+def locg_editions(series_id: int, target: dict, path=None, budget: int = LOCG_PER_PASS, details=None,
+                  search=None, trades_of=None) -> dict:
+    """LOCG editions whose 'Collecting' line names target: the run's own trades
+    first (its list fetched if never fetched), then — across series — the trades
+    of related LOCG series a search for the run's name turns up ('Fear Itself:
+    Secret Avengers' for Secret Avengers #12.1). → {candidates, complete};
+    complete=False while LOCG is shut or the budget ran out."""
     path = path or DB_PATH
     from kometa import locg_client
+    shut = details is None and locg_client.locg_paused()
+    spent = [0]
+
+    def spend() -> bool:
+        if shut or spent[0] >= budget:
+            return False
+        spent[0] += 1
+        return True
+
+    def list_of(lid: int) -> list[dict] | None:
+        key = f"locg_trades:{lid}"
+        with db._connect(path) as conn:
+            r = conn.execute("SELECT rows_json FROM collection_search WHERE q = ?", (key,)).fetchone()
+        if r:
+            return json.loads(r["rows_json"])
+        if not spend():
+            return None
+        from kometa import sync as _sync
+        rows = (trades_of or (lambda x: _sync.select_editions(_sync.get_trades_anon(x))))(lid)
+        rows = [{"title": t.get("title"), "locg_id": str(t.get("locg_id") or ""), "format": t.get("format"),
+                 "vol": t.get("vol"), "store_date": t.get("store_date"), "cover": t.get("cover")} for t in rows]
+        with db._connect(path) as conn:
+            conn.execute("INSERT OR REPLACE INTO collection_search (q, rows_json, fetched_at) VALUES (?, ?, ?)",
+                         (key, json.dumps(rows), _now()))
+        return rows
+
+    def check(trades: list[dict], found: list[dict]) -> bool:
+        """Read trades' Collecting lines; False when LOCG ran out before the end."""
+        yr = int(target.get("year") or 0)
+        trades = [t for t in trades if str(t.get("locg_id") or "").isdigit()]
+        trades.sort(key=lambda t: (abs(int((t.get("store_date") or "9999")[:4]) - yr) if yr else 0,
+                                   FORMAT_RANK.get(t.get("format"), 9)))
+        for t in trades:
+            lid = str(t["locg_id"])
+            d = db.get_issue_details_cache(lid, path)
+            if d is None:
+                if not spend():
+                    return False
+                try:
+                    d = (details or locg_client.get_issue_details_anon)(lid)
+                except Exception as e:
+                    logger.info(f"Trade fill: LOCG details for {lid} skipped: {e}")
+                    return False
+                db.set_issue_details_cache(lid, d, path)
+            e = {"metron_issue_id": None, "locg_id": lid, "series_name": t.get("title"), "title": None,
+                 "number": str(t.get("vol") or ""), "format": t.get("format") or "TPB", "store_date": t.get("store_date"),
+                 "cover": t.get("cover"), "reprints": parse_collects((d or {}).get("desc") or ""), "display": t.get("title")}
+            if reprints_issue(e, target) and all(ekey(x) != ekey(e) for x in found):
+                found.append(e)
+        return True
+
+    found: list[dict] = []
+    # 1. the run's own trades
     cached = db.get_trades(series_id, path)
-    trades = [t for t in (cached["trades"] if cached else []) if str(t.get("locg_id") or "").isdigit()]
-    if not trades:
-        return {"candidates": [], "complete": True}
-    yr = int(target.get("year") or 0)
-    trades.sort(key=lambda t: (abs(int((t.get("store_date") or "9999")[:4]) - yr) if yr else 0,
-                               FORMAT_RANK.get(t.get("format"), 9)))
-    found, spent, complete = [], 0, True
-    for t in trades:
-        lid = str(t["locg_id"])
-        d = db.get_issue_details_cache(lid, path)
-        if d is None:
-            if details is None and locg_client.locg_paused():
-                complete = False
-                break
-            if spent >= budget:
-                complete = False
-                break
-            spent += 1
-            try:
-                d = (details or locg_client.get_issue_details_anon)(lid)
-            except Exception as e:
-                logger.info(f"Trade fill: LOCG details for {lid} skipped: {e}")
-                complete = False
-                break
-            db.set_issue_details_cache(lid, d, path)
-        rps = parse_collects((d or {}).get("desc") or "")
-        e = {"metron_issue_id": None, "locg_id": lid, "series_name": t.get("title"), "title": None,
-             "number": str(t.get("vol") or ""), "format": t.get("format") or "TPB", "store_date": t.get("store_date"),
-             "cover": t.get("cover"), "reprints": rps, "display": t.get("title")}
-        if reprints_issue(e, target):
-            found.append(e)
-    return {"candidates": found, "complete": complete}
+    own = list(cached["trades"]) if cached else []
+    with db._connect(path) as conn:
+        row = conn.execute("SELECT locg_series_id FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
+    run_lid = row["locg_series_id"] if row else None
+    if not own and run_lid:
+        got = list_of(int(run_lid))
+        if got is None:
+            return {"candidates": found, "complete": False}
+        own = got
+    if not check(own, found):
+        return {"candidates": found, "complete": False}
+    if found:
+        return {"candidates": found, "complete": True}
+    # 2. across series: what LOCG calls related to the run's name
+    base = _base(target["title"])
+    key = f"locg_search:{norm_key(base)}"
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT rows_json FROM collection_search WHERE q = ?", (key,)).fetchone()
+    if r:
+        hits = json.loads(r["rows_json"])
+    else:
+        if not spend():
+            return {"candidates": found, "complete": False}
+        try:
+            hits = (search or locg_client.search_series_strict)(base)
+        except Exception as e:
+            logger.info(f"Trade fill: LOCG search for {base!r} skipped: {e}")
+            return {"candidates": found, "complete": False}
+        hits = [{"id": h.get("id"), "title": h.get("title"), "comic": bool(h.get("comic")), "year": h.get("year")} for h in hits]
+        with db._connect(path) as conn:
+            conn.execute("INSERT OR REPLACE INTO collection_search (q, rows_json, fetched_at) VALUES (?, ?, ?)",
+                         (key, json.dumps(hits), _now()))
+    want = norm_key(base)
+    related = [h for h in hits if want in norm_key(h.get("title") or "") and norm_key(h.get("title") or "") != want
+               and h.get("id") != run_lid]
+    # an edition LOCG hands back as a comic is a trade candidate itself
+    comics = [{"title": h["title"], "locg_id": str(h["id"]), "format": "TPB"} for h in related if h.get("comic")]
+    if not check(comics, found):
+        return {"candidates": found, "complete": False}
+    for h in [h for h in related if not h.get("comic")][:LOCG_RELATED]:
+        got = list_of(int(h["id"]))
+        if got is None or not check(got, found):
+            return {"candidates": found, "complete": False}
+    return {"candidates": found, "complete": True}
 
 
 # --- 3. the proposal -------------------------------------------------------------------
@@ -461,7 +531,8 @@ def _target(series_id: int, number: float, path) -> dict:
             "store_date": i["store_date"] if i else None, "metron_issue_id": i["metron_issue_id"] if i else None}
 
 
-def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET, locg_details=None, **kw) -> dict:
+def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET, locg_details=None,
+             locg_search=None, locg_trades=None, **kw) -> dict:
     """Scheduler: look up a few stuck issues, propose a trade where one exists.
     Rows of the same series are taken together so one edition can fill them all."""
     path = path or DB_PATH
@@ -489,7 +560,8 @@ def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET,
                 if not got:
                     # Metron doesn't hold the edition (its 2003 FF trades, say): the run's
                     # own LOCG trades and their 'Collecting' lines, while LOCG is open
-                    lres = locg_editions(sid, _target(sid, r["issue_number"], path), path, details=locg_details)
+                    lres = locg_editions(sid, _target(sid, r["issue_number"], path), path, details=locg_details,
+                                         search=locg_search, trades_of=locg_trades)
                     got = lres["candidates"]
                     if not lres["complete"] and not got:
                         _mark(r["id"], "looking", path)    # LOCG shut or out of budget: ask again next pass

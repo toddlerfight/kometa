@@ -159,3 +159,18 @@ def test_when_metron_lacks_the_edition_the_runs_locg_trades_answer(db_path):
     assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fantastic Four by Waid & Wieringo: Unthinkable TP", "#67–68, #500")]
     with db._connect(db_path) as c:
         assert tuple(c.execute("SELECT locg_id, state FROM download_queue WHERE kind = 'trade'").fetchone()) == ("4834365", "suggested")
+
+
+def test_a_point_one_finds_its_event_trade_on_locg_across_series(db_path):
+    nothing = dict(search=lambda q: [], issues=lambda sid: [], get=lambda iid: {})
+    sa = db.add_series(title="Secret Avengers", publisher="Marvel", year_began=2010, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, sa, [12.1], date="2011-04-06")
+    hits = [{"id": 55, "title": "Secret Avengers"}, {"id": 77, "title": "Fear Itself: Secret Avengers"},
+            {"id": 88, "title": "Uncanny X-Men"}]
+    lists = {77: [{"title": "Fear Itself: Secret Avengers TP", "locg_id": "9977", "format": "TPB", "store_date": "2012-01-11"}]}
+    desc = {"9977": "Collecting Secret Avengers #12.1, 13-15 and Fear Itself: Black Widow #1."}
+    asked = []
+    out = tf.run_pass(db_path, locg_details=lambda lid: asked.append(lid) or {"desc": desc[lid]},
+                      locg_search=lambda q: hits, locg_trades=lambda lid: lists.get(lid, []), **nothing)
+    assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fear Itself: Secret Avengers TP", "#12.1")]
+    assert asked == ["9977"]                       # only the related series' trade was read
