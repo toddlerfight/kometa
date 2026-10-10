@@ -119,7 +119,7 @@ _UNPROBEABLE_EXTS = frozenset({'.pdf', '.cb7', '.cbt'})
 # Extensions that CLAIM to be a zip or a rar. For these, the magic bytes are a
 # promise the file can be held to — anything else is not a comic, whatever the
 # name says.
-_ZIP_OR_RAR_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
+_ZIP_OR_RAR_EXTS = PIPELINE_EXTS          # the same four: what claims to be zip/rar is what the pipeline opens
 
 
 def _archive_entry_names(path: str) -> list[str] | None:

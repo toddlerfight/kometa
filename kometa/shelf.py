@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Response
 
 import kometa.db as db
+from kometa.naming import PIPELINE_EXTS
 from kometa import sources
 from kometa.naming import parse_issue_number
 from kometa import reader as rd
@@ -26,9 +27,11 @@ router = APIRouter()
 
 DB_PATH = db.DB_PATH
 
-# What the reader can open. PDF / CB7 / CBT count as owned elsewhere but aren't
-# readable here yet, so they'd only be dead tiles.
-READABLE_EXTS = frozenset({".cbz", ".cbr", ".zip", ".rar"})
+# What the reader can open = what the pipeline can open (naming.PIPELINE_EXTS):
+# one definition, not a third copy. PDF / CB7 / CBT count as OWNED (naming.
+# OWNED_EXTS) but the reader can't page them, so they'd only be dead tiles.
+# 2026-10-10: zero such files on the shelf; if one lands, convert it to CBZ.
+READABLE_EXTS = PIPELINE_EXTS
 
 _scan_lock = threading.Lock()
 _last_scan: dict = {}
