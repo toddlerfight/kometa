@@ -260,3 +260,11 @@ class TestLocgProbe:
         self._fake(monkeypatch, 403, {"cf-mitigated": "challenge"})
         r = lc.probe()
         assert not r["ok"] and r["status"] == 403 and lc.locg_paused()
+
+
+def test_a_leading_the_doesnt_stop_a_confident_match():
+    from kometa.shelf_import import _confident_row
+    rows = [{"id": 8922, "title": "The Infinity War", "publisher": "Marvel", "year": 1992}]
+    assert _confident_row(rows, {"title": "Infinity War (1992)", "publisher": None, "folder_path": None})["id"] == 8922
+    rows = [{"id": 1, "title": "Saga", "publisher": "Image", "year": 2012}]
+    assert _confident_row(rows, {"title": "The Saga (2012)", "publisher": None, "folder_path": None})["id"] == 1

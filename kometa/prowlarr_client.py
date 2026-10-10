@@ -117,6 +117,39 @@ class ProwlarrClient:
         return out
 
 
+# Not a comic, whatever the title says. 2026-10-11: 'The Amazing Spider-Man 2'
+# (an R.G. Mechanics game repack, 7.5 GB) was taken for ASM #2, and a 20 GB
+# Five Nights at Freddy's game for an issue #4 — scored on the name alone.
+_NOT_A_COMIC = re.compile(
+    r"\b(r\.?g\.?\s*mechanics|fitgirl|dodi|elamigos|codex|skidrow|repack|"
+    r"ps[2345]|xbox|nsp|iso|v\d+\.\d{2,}(?:\.\d+)?|"
+    r"2160p|1080p|720p|480p|x26[45]|hevc|xvid|bluray|blu-ray|web-?dl|webrip|hdtv|dvd\d?|"
+    r"film collection|trilogy collection|s\d{2}e\d{2}|season \d+|"
+    r"mp3|flac|m4b|audiobook|soundtrack|discography|album|lossless|24 ?bit|tr24)\b", re.I)
+SINGLE_ISSUE_MAX_BYTES = 1_500_000_000      # a fat one-shot is a few hundred MB
+
+
+def _media_only(cats) -> bool:
+    ids = [int(c) for c in (cats or []) if str(c).isdigit()]
+    return bool(ids) and all(1000 <= i < 7000 for i in ids)
+
+
+def drop_not_comics(results: list[dict], single_issue: bool = True) -> list[dict]:
+    """Results that could be a comic at all: not filed only as film/audio/TV/
+    games, not named like one, and (for a single issue) not gigabytes."""
+    out = []
+    for r in results:
+        t = re.sub(r"[._]+", " ", r.get("title") or "")
+        if _media_only(r.get("categories")) or _NOT_A_COMIC.search(t):
+            continue
+        if single_issue and (r.get("size") or 0) > SINGLE_ISSUE_MAX_BYTES:
+            continue
+        out.append(r)
+    if len(out) != len(results):
+        logger.info(f"Prowlarr: dropped {len(results) - len(out)} result(s) that aren't comics")
+    return out
+
+
 def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 10,
                                store_date: str | None = None) -> dict | None:
     """Pick the highest-scoring torrent we can act on — has a download handle
@@ -267,7 +300,7 @@ def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, se
         return base + _seed_bonus(r["seeders"])
 
     for query in _issue_queries(title, issue_number):
-        results = prowlarr.search(query, protocol="torrent")
+        results = drop_not_comics(prowlarr.search(query, protocol="torrent"))
         results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
         results = _drop_season_mismatches(results, title)
         results = _drop_failed_sources(results, exclude_urls)
@@ -322,7 +355,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
         return base if base >= 15 else 0     # name+number or nothing
 
     for query in _issue_queries(title, issue_number):
-        results = prowlarr.search(query, protocol="usenet")
+        results = drop_not_comics(prowlarr.search(query, protocol="usenet"))
         results = _drop_year_mismatches(results, title, series_year, store_date=store_date)
         results = _drop_season_mismatches(results, title)
         results = _drop_failed_sources(results, exclude_urls)

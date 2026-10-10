@@ -106,7 +106,11 @@ def _confident_row(rows, series: dict) -> dict | None:
     year evidence) year — that row, else None. Shared by Metron and LOCG matching."""
     title, folder_year = _title_and_year(series["title"])
     from kometa.metron_client import title_variants
-    wants = {norm_key(t) for t in title_variants(title)}
+    # a leading 'The' is noise on either side: Metron files 'The Infinity War',
+    # a list or a folder says 'Infinity War' (2026-10-11: three Infinity runs
+    # came back 'unknown' for want of it)
+    the = lambda k: k[4:] if k.startswith("the ") else k
+    wants = {the(norm_key(t)) for t in title_variants(title)}
     pub = _pub_key(series.get("publisher") or "")
     years = _file_years(series.get("folder_path") or "")
     first_year = folder_year or (years[0] if years else None)
@@ -115,7 +119,7 @@ def _confident_row(rows, series: dict) -> dict | None:
         if r.get("comic"):
             continue
         cand_title, cand_year_in_title = _title_and_year(r.get("title") or "")
-        if norm_key(cand_title) not in wants:
+        if the(norm_key(cand_title)) not in wants:
             continue
         if pub and r.get("publisher") and _pub_key(r["publisher"]) != pub:
             continue

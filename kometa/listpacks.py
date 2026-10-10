@@ -36,7 +36,8 @@ _COMIC_HINT = re.compile(r"\b(marvel|dc comics|image comics|story arc|event|tie-
 _COLLECTED = re.compile(r"\b(omnibus|tpb|trade paperback|hc|hardcover|deluxe|compendium|vol(?:ume)?\.?\s*\d+|"
                         r"hybrid\.?comic|ebook|collection|complete collection)\b", re.I)
 _NOT_COMIC = re.compile(r"\b(2160p|1080p|720p|480p|x26[45]|xvid|divx|hevc|bluray|web-?dl|webrip|dvd\d?|hdtv|"
-                        r"s\d{2}e\d{2}|episodes?|season|m4b|mp3|flac|audiobook|mobi|epub|azw3?|repack|dodi|fitgirl)\b", re.I)
+                        r"s\d{2}e\d{2}|episodes?|season|m4b|mp3|flac|audiobook|mobi|epub|azw3?|repack|dodi|fitgirl|"
+                        r"discography|album|lossless|24 ?bit|tr24|soundtrack|r\.?g\.?\s*mechanics|film collection)\b", re.I)
 COMIC_EXTS = (".cbz", ".cbr", ".zip", ".rar", ".cb7", ".pdf")
 
 
