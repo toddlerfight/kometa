@@ -666,6 +666,12 @@ async function renderOnDeck() {
   _loadTrending();
 }
 
+// A catalogue card's cover (a series not on the shelf) goes through Kometa,
+// which keeps it a day on disk — nine cards no longer load cover by cover.
+function _ext(url) {
+  return url && /^https?:\/\//.test(url) ? '/api/img?u=' + encodeURIComponent(url) : (url || '');
+}
+
 // A row that re-polls while the catalogue is still filling must not tear itself
 // down and rebuild with the same content — that read as a flash, three times a
 // page. Paint only when the payload actually changed.
@@ -688,7 +694,7 @@ function _trendCard(e) {
       ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
       : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
   return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" title="${esc(e.title)} · ${esc(e.publisher || '')}">
-    <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+    <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(_ext(e.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <div class="series-card-next-release trend-rank">#${e.rank}</div>${action}</div>
     <div class="series-card-footer"><div class="series-card-title">${esc(e.series)}</div>
       <div class="series-card-count" style="color:${owned ? (e.have_issue ? 'var(--pri)' : 'var(--amb)') : 'var(--tq)'}">${owned ? (e.have_issue ? 'have it' : label || 'on shelf') : label}</div></div>
@@ -742,7 +748,7 @@ function _gapCard(r) {
   const go = `navigate('readlist', {id: ${r.list_id}})`;
   const why = (r.why || []).join(' · ');
   return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
-    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(r.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(_ext(r.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <button class="od-menu rel-get" title="Get this" aria-label="Get" onclick="event.stopPropagation(); _rlGet(${r.list_id}, ${r.item_id}, this)">GET</button></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
       <div class="series-card-count" style="color:var(--amb)">not here</div></div>
@@ -757,7 +763,7 @@ function _catalogueCard(r) {
   const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
   const open = `showCatalogueModal(${JSON.stringify(r).replace(/"/g, '&quot;')})`;
   return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}" onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' ')${open}">
-    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(r.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
+    <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(_ext(r.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <button class="od-menu rel-get" title="Track this series (pull list off)" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
       <div class="series-card-count" style="color:var(--tq)">${r.year || ''}</div></div>
@@ -921,7 +927,7 @@ function showCatalogueModal(r) {
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
-      ${_modalCoverHtml(r.cover || '', r.title)}
+      ${_modalCoverHtml(_ext(r.cover || ''), r.title)}
       <div class="issue-modal-info">
         <div class="issue-modal-num">${esc(r.title)}</div>
         <div class="issue-modal-series">${esc([r.publisher, r.year].filter(Boolean).join(' · '))}</div>

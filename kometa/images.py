@@ -25,6 +25,10 @@ FAIL_TTL_HOURS = 24
 TRICKLE_LIMIT = 60
 TRICKLE_GAP_S = 0.5
 TRICKLE_MAX_FAILS = 5
+EXT_TTL_HOURS = 24
+# Hosts whose images the catalogue cards carry; anything else is refused, this
+# is a cover proxy, not an open one.
+EXT_HOSTS = ("static.metron.cloud", "metron.cloud", "s3.amazonaws.com", "comicvine.gamespot.com")
 _KEY_RE = re.compile(r"^[A-Za-z0-9_.:\-]+(?:/[A-Za-z0-9_.:\-]+)*$")
 
 
@@ -84,15 +88,16 @@ def _download(url: str) -> bytes | None:
     return None
 
 
-def fetch_image(key: str, url: str | None, source: str, path=None, root: str | None = None, http=None) -> dict | None:
+def fetch_image(key: str, url: str | None, source: str, path=None, root: str | None = None, http=None,
+                force: bool = False) -> dict | None:
     """Download once, keep forever; re-fetch only when the URL for the key
-    changes. A failure is remembered for a day so a dead URL isn't hammered.
-    Returns the row, or None when there's nothing on disk for the key."""
+    changes (or `force`). A failure is remembered for a day so a dead URL isn't
+    hammered. Returns the row, or None when there's nothing on disk for the key."""
     path = path or DB_PATH
     if not url or not url.startswith("http"):
         return None
     row = get(key, path)
-    if row and row.get("url") == url and row.get("path") and os.path.exists(row["path"]):
+    if row and not force and row.get("url") == url and row.get("path") and os.path.exists(row["path"]):
         return row
     if row and row.get("failed_at") and row.get("url") == url:
         try:
@@ -145,6 +150,72 @@ def serve(key: str, url: str | None, source: str, path=None, max_age: int = 2592
         return None
     return Response(content=data, media_type=_ct(data),
                     headers={"Cache-Control": f"public, max-age={max_age}", "X-Kometa-Image": "disk" if hit else "fetched"})
+
+
+# --- catalogue covers: a day on disk, then gone ----------------------------------------
+def ext_allowed(url: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url)
+    except Exception:
+        return False
+    return u.scheme in ("http", "https") and (u.hostname or "") in EXT_HOSTS
+
+
+def ext_key(url: str) -> str:
+    import hashlib
+    return "ext/" + hashlib.sha1(url.encode()).hexdigest()
+
+
+def _fresh(row: dict | None, hours: int) -> bool:
+    if not row or not row.get("fetched_at") or not row.get("path") or not os.path.exists(row["path"]):
+        return False
+    try:
+        return datetime.utcnow() - datetime.strptime(row["fetched_at"], "%Y-%m-%d %H:%M:%S") < timedelta(hours=hours)
+    except ValueError:
+        return False
+
+
+def serve_external(url: str, path=None, http=None) -> Response | None:
+    """A catalogue card's cover (a series NOT on the shelf): cached on disk for
+    EXT_TTL_HOURS so a row of nine stops loading cover by cover, then dropped —
+    never the forever rule the record's own covers get. None when the fetch
+    fails; the caller 404s."""
+    path = path or DB_PATH
+    key = ext_key(url)
+    row = get(key, path)
+    hit = _fresh(row, EXT_TTL_HOURS)
+    if not hit:
+        row = fetch_image(key, url, "ext", path, http=http, force=True)
+        if not row:
+            return None
+    try:
+        data = open(row["path"], "rb").read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    return Response(content=data, media_type=_ct(data),
+                    headers={"Cache-Control": f"public, max-age={EXT_TTL_HOURS * 3600}", "X-Kometa-Image": "disk" if hit else "fetched"})
+
+
+def prune_external(path=None, hours: int = EXT_TTL_HOURS) -> int:
+    """Drop ext/ entries older than the TTL — file and row. Returns how many."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    n = 0
+    with db._connect(path) as conn:
+        rows = conn.execute("SELECT key, path FROM image_record WHERE key LIKE 'ext/%' AND "
+                            "(fetched_at IS NULL OR fetched_at < datetime('now', ?))", (f"-{int(hours)} hours",)).fetchall()
+        for r in rows:
+            if r["path"]:
+                try:
+                    os.remove(r["path"])
+                except OSError:
+                    pass
+            conn.execute("DELETE FROM image_record WHERE key = ?", (r["key"],))
+            n += 1
+    return n
 
 
 # --- the trickle: everything tracked, owned or listed, ahead of time ------------------
@@ -202,6 +273,12 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
     """Scheduler tick: fetch up to `limit` covers, a short gap between, stopping
     after a run of failures (the CDN is down, not the one URL)."""
     path = path or DB_PATH
+    try:
+        pruned = prune_external(path)
+        if pruned:
+            logger.info(f"Image trickle: dropped {pruned} day-old catalogue cover(s)")
+    except Exception as e:
+        logger.info(f"Image trickle: prune skipped: {e}")
     done, fails = 0, 0
     for key, url, source in pending(path, limit=limit):
         row = fetch_image(key, url, source, path, http=http)

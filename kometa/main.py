@@ -1586,6 +1586,19 @@ def clear_queue_history():
     db.clear_queue_history(DB_PATH)
 
 
+@app.get("/api/img")
+def external_image(u: str):
+    """A catalogue card's cover, through Kometa: cached a day on disk (kometa/images.py),
+    allow-listed hosts only."""
+    from kometa import images
+    if not u or not images.ext_allowed(u):
+        raise HTTPException(400, "Not an allowed image host")
+    resp = images.serve_external(u, DB_PATH)
+    if resp is None:
+        raise HTTPException(404)
+    return resp
+
+
 @app.get("/api/series/{series_id}/issues/{number}/locg-details")
 def get_issue_locg_details(series_id: int, number: float):
     """Description + credits — Metron first, LOCG for issues Metron lacks
