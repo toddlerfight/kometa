@@ -164,6 +164,9 @@ def search(q: str, limit: int = 8, path=None) -> dict:
     by_id = {s["id"]: s for s in rows}
 
     titled = _match_series(qk, rows)
+    m = _ISSUE_Q.match(q_raw)
+    if not titled and m:                      # 'batman 13': the runs the words name, under the issue jump
+        titled = [(r + 1, s) for r, s in _match_series(_key(m.group("series")), rows)]
     seen = set()
     for _, s in titled:
         if len(out["series"]) >= limit:

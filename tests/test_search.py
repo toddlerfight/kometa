@@ -51,6 +51,7 @@ def test_batman_13_jumps_to_the_run_you_own_it_in(lib):
     assert out["issues"][0]["series_id"] == lib["new"] and out["issues"][0]["book_id"]
     assert out["issues"][0]["label"] == "#13"
     assert out["top"]["kind"] == "issue" and out["top"]["series_id"] == lib["new"]
+    assert {s["id"] for s in out["series"]} >= {lib["old"], lib["new"]}       # the runs the words name, too
 
 
 def test_pope_tops_with_the_person_and_lists_their_series_with_why(lib):
