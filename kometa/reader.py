@@ -272,10 +272,36 @@ def get_page_bytes(book: dict, index: int, width: int) -> bytes:
     return data
 
 
+def _grey_bottom_fraction(im) -> float:
+    """How much of the image, from the bottom up, is the flat JPEG-grey a
+    truncated decode leaves behind (every sample within 2 of 128)."""
+    g = im.convert("L")
+    w, h = g.size
+    if not w or not h:
+        return 0.0
+    px = g.load()
+    xs = range(0, w, max(1, w // 32))
+    rows = 0
+    for y in range(h - 1, -1, -1):
+        if all(abs(px[x, y] - 128) <= 2 for x in xs):
+            rows += 1
+        else:
+            break
+    return rows / h
+
+
+class TruncatedCover(ValueError):
+    """Page 1 is a cut-short JPEG. The reader shows such a page anyway (grey
+    below the break — LOAD_TRUNCATED_IMAGES), but as a COVER it must not be
+    cached and served: the catalogue has the real thing. Batman: City of
+    Madness #001's scan ends halfway down, and the half-grey tile stuck."""
+
+
 def get_cover_bytes(path: str) -> bytes:
     """Page 1 at cover size, WITHOUT registering the book. The full open reads
     every page's header (282 for a Knightfall omnibus — 17 s cold); a library
-    grid of 800 covers needs page 1 and nothing else."""
+    grid of 800 covers needs page 1 and nothing else. Raises TruncatedCover
+    when page 1 is cut short, so callers fall through to the catalogue."""
     st = os.stat(path)
     ver = _version(st.st_size, st.st_mtime)
     key = re.sub(r"[^A-Za-z0-9]", "_", path)[-120:]
@@ -291,7 +317,21 @@ def get_cover_bytes(path: str) -> bytes:
         if not names:
             raise ValueError("no pages")
         with bk.open(names[0]) as fh, Image.open(fh) as im:
-            im.load()
+            # Strict decode first. A JPEG short by a few bytes is still a cover;
+            # one that stops halfway is not — the lenient decode fills what's
+            # missing with JPEG grey, so measure how much grey sits at the bottom.
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
+            try:
+                im.load()
+            except OSError as e:
+                if "truncated" not in str(e).lower():
+                    raise
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
+                im.load()
+                if _grey_bottom_fraction(im) > 0.2:
+                    raise TruncatedCover(path) from e
+            finally:
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
             if im.mode not in ("RGB", "L"):
                 im = im.convert("RGB")
             if im.width > COVER_WIDTH:

@@ -134,3 +134,22 @@ def test_a_truncated_cover_still_renders(tmp_path, monkeypatch):
         z.writestr("Short 001-000.jpg", data); z.writestr("Short 001-001.jpg", buf.getvalue())
     out = reader.get_cover_bytes(str(p))
     assert out[:2] == b"\xff\xd8" and len(out) > 500
+
+
+def test_a_cut_short_first_page_is_not_served_as_the_cover(tmp_path, db_path, monkeypatch):
+    """City of Madness #001: the scan's page 1 ends halfway. The reader can show it
+    (grey below the break), but the cover routes must fall through to the catalogue."""
+    import pytest
+    monkeypatch.setattr(rd, "DB_PATH", db_path)
+    monkeypatch.setattr(rd, "PAGE_CACHE_DIR", str(tmp_path / "page-cache"))
+    whole = _img(600, 900)
+    cut = whole[: len(whole) // 2]
+    with zipfile.ZipFile(tmp_path / "bad.cbz", "w") as zf:
+        zf.writestr("p1.jpg", cut); zf.writestr("p2.jpg", whole)
+    with pytest.raises(rd.TruncatedCover):
+        rd.get_cover_bytes(str(tmp_path / "bad.cbz"))
+    with zipfile.ZipFile(tmp_path / "good.cbz", "w") as zf:
+        zf.writestr("p1.jpg", whole)
+    assert len(rd.get_cover_bytes(str(tmp_path / "good.cbz"))) > 100
+    from PIL import ImageFile
+    assert ImageFile.LOAD_TRUNCATED_IMAGES is True                       # the reader's leniency restored

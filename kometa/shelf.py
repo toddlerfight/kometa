@@ -226,7 +226,14 @@ def book_cover(book_id: int):
             resp = _image_or_none(url)
             if resp:
                 return resp
-    return _cover_response(b["path"])
+    try:
+        return _cover_response(b["path"])
+    except rd.TruncatedCover:
+        # page 1 is cut short: the catalogue's cover for this issue instead
+        if b.get("tracked_series_id") and b.get("number") is not None:
+            from kometa.thumbnails import issue_thumbnail
+            return issue_thumbnail(b["tracked_series_id"], b["number"])
+        raise HTTPException(422, "Cover can't be rendered")
 
 
 def _cover_response(path: str):
@@ -234,6 +241,8 @@ def _cover_response(path: str):
         data = rd.get_cover_bytes(path)
     except FileNotFoundError:
         raise HTTPException(404, "File is gone from the shelf")
+    except rd.TruncatedCover:
+        raise
     except Exception:
         raise HTTPException(422, "Cover can't be rendered")
     return Response(content=data, media_type="image/jpeg",
