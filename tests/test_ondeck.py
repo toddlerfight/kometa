@@ -104,3 +104,62 @@ def test_not_now_hides_keeps_the_place_and_clears_on_the_next_read(lib):
     db.set_progress("me", b[("saga", 1)], 6, False, "2026-10-08T11:00:00Z", lib["db"])   # read on → back
     assert [r["progress"]["page"] for r in od.continue_reading(path=lib["db"])] == [6]
     assert db.set_dismissed("me", 99999, True, lib["db"]) is False
+
+
+# --- discovery rows -------------------------------------------------------------
+NOW = __import__("datetime").datetime(2026, 10, 10, tzinfo=__import__("datetime").timezone.utc)
+
+
+def test_rediscover_is_series_left_for_half_a_year_with_unread_books(lib, monkeypatch):
+    monkeypatch.setattr(od, "DISCOVERY_MIN", 1)
+    b = lib["b"]
+    db.set_progress("me", b[("saga", 1)], 24, True, "2026-01-02T10:00:00Z", lib["db"])   # finished #1, then nothing
+    db.set_progress("me", b[("low", 1)], 7, False, "2026-09-30T10:00:00Z", lib["db"])    # Low is current
+    rows = od.rediscover(now=NOW, path=lib["db"])
+    assert [(r["series"], r["label"]) for r in rows] == [("Saga", "#2")]
+    # stalled mid-book: the stalled book is the card, with its page
+    db.set_progress("me", b[("saga", 2)], 11, False, "2026-01-03T10:00:00Z", lib["db"])
+    rows = od.rediscover(now=NOW, path=lib["db"])
+    assert [(r["label"], r["progress"]["page"]) for r in rows] == [("#2", 11)]
+    # a series already claimed by an earlier row stays out
+    assert od.rediscover(now=NOW, path=lib["db"], seen={("t", lib["saga"])}) == []
+
+
+def test_rediscover_needs_four_cards_to_be_a_row(lib):
+    db.set_progress("me", lib["b"][("saga", 1)], 24, True, "2026-01-02T10:00:00Z", lib["db"])
+    assert od.rediscover(now=NOW, path=lib["db"]) == []
+
+
+def test_quick_reads_are_complete_short_runs_never_opened(lib, monkeypatch, db_path, tmp_path):
+    monkeypatch.setattr(od, "DISCOVERY_MIN", 1)
+    root = tmp_path / "comics" / "Image"
+    mini = db.add_series(title="Mini", publisher="Image", folder_path=str(root / "Mini"), on_pull_list=False, path=db_path)
+    sh = db.upsert_shelf_series(str(root / "Mini"), "Mini", "Image", mini, 3, "2026-10-08T00:00:00.000000Z", db_path)
+    ids = [_book(str(root / "Mini" / f"Mini #00{n}.cbz"), float(n), mini, sh, db_path) for n in (1, 2, 3)]
+    db.upsert_issue_status_many([(mini, float(n), "2025-01-01", True, None, None, None) for n in (1, 2, 3)], path=db_path)
+    rows = od.quick_reads(path=db_path)
+    # Saga has #4 still to come and Low is missing #3: neither is complete
+    assert [(r["series"], r["label"], r["issues"]) for r in rows] == [("Mini", "#1", 3)]
+    db.set_progress("me", ids[0], 2, False, "2026-10-01T10:00:00Z", db_path)           # opened = not a quick read
+    assert od.quick_reads(path=db_path) == []
+
+
+def test_next_on_list_starts_at_the_continue_point_and_keeps_gaps(lib, monkeypatch):
+    import kometa.related as related
+    b = lib["b"]
+    db.set_progress("me", b[("saga", 1)], 24, True, "2026-10-05T10:00:00Z", lib["db"])
+    prog = lambda done: {"page": 24, "completed": done, "updated_at": "2026-10-05T10:00:00Z"}
+    lst = {"id": 7, "name": "Image picks", "total": 4, "continue": b[("saga", 2)], "entries": [
+        {"position": 1, "series": "Saga", "number": "1", "books": [{"id": b[("saga", 1)], "progress": prog(True)}]},
+        {"position": 2, "series": "Saga", "number": "2", "books": [{"id": b[("saga", 2)], "progress": None}]},
+        {"position": 3, "series": "Nowhere", "number": "1", "books": [], "cover": None},
+        {"position": 4, "series": "Low", "number": "1", "books": [{"id": b[("low", 1)], "progress": None}]},
+    ]}
+    monkeypatch.setattr(related, "_resolved_lists", lambda path: [lst])
+    monkeypatch.setattr(od, "DISCOVERY_MIN", 1)
+    rows = od.list_rows(now=NOW, path=lib["db"])
+    assert [r["name"] for r in rows] == ["Image picks"]
+    assert [(c["kind"], c["label"], c["position"]) for c in rows[0]["cards"]] == [
+        ("book", "Saga #2", 2), ("gap", "Nowhere #1", 3), ("book", "Low #1", 4)]
+    # a list nobody has read from in two months isn't 'being read'
+    assert od.list_rows(now=NOW.replace(month=12, day=30), path=lib["db"]) == []

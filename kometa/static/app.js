@@ -744,8 +744,20 @@ async function renderOnDeck() {
       <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">♥</span></div>
       <div class="issue-tile-num">${esc(c.series)}</div>
     </div>` : bookCard(c, '♥');
-  const row = (title, help, cards, empty) => `
-    <div class="od-row">
+  // reading-list card: the books from where you are on, gaps as gaps — a gap
+  // opens the list, which is where you deal with what's missing
+  const listCard = (c, l) => c.kind === 'gap' ? `
+    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.label)} — not on the shelf" onclick="navigate('readlist', {id: ${l.list_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('readlist', {id: ${l.list_id}})">
+      <div class="issue-tile-img">${c.cover ? `<img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="rl-nocover"></div>'}
+        <span class="od-tag amber">${c.position}/${l.total} · not here</span></div>
+      <div class="issue-tile-num">${esc(c.label)}</div>
+    </div>` : bookCard(c, `${c.position}/${l.total}`);
+  const lastRead = iso => {
+    const d = new Date(iso);
+    return 'Last read ' + d.toLocaleDateString(undefined, d.getFullYear() === new Date().getFullYear() ? { month: 'short' } : { month: 'short', year: 'numeric' });
+  };
+  const row = (title, help, cards, empty, cls = '') => `
+    <div class="od-row${cls ? ' ' + cls : ''}">
       <div class="od-head"><span class="series-card-title">${title}</span></div>
       ${cards.length ? `<div class="issue-grid od-grid">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
     </div>`;
@@ -760,10 +772,19 @@ async function renderOnDeck() {
         'Nothing with a release date yet.') +
     row('Recently added', 'newest files on the shelf, one card per series', (d.added || []).map(c => bookCard(c)),
         'Nothing new on the shelf.') +
-    ((d.favourites || []).length ? row('Favourites', 'what you starred', d.favourites.map(favCard), '') : '')
+    ((d.favourites || []).length ? row('Favourites', 'what you starred', d.favourites.map(favCard), '') : '') +
+    (d.lists || []).map(l => row(`Next on ${esc(l.name)}`, '', l.cards.map(c => listCard(c, l)), '')).join('') +
+    `<div class="od-slot" id="od-because"></div>` +
+    // rows 7–10 sit behind More on a phone: the task rows and Because are the page
+    ((d.rediscover || []).length ? row('Rediscover', '', d.rediscover.map(c => bookCard(c, lastRead(c.last_read_at))), '', 'od-extra') : '') +
+    ((d.quick || []).length ? row('Quick reads', '', d.quick.map(c => bookCard(c, `${c.issues} issue${c.issues === 1 ? '' : 's'}`)), '', 'od-extra') : '') +
+    `<div class="od-slot od-extra" id="od-trend"></div>` +
+    `<button class="btn btn-ghost od-more" onclick="this.closest('#app').classList.add('od-all'); this.remove()">More</button>`
   );
+  document.getElementById('app').classList.remove('od-all');
   // what the task rows already show never repeats in a discovery row
-  const onPage = [...new Set([...d.continue, ...d.next, ...d.soon, ...(d.released || []), ...(d.added || [])].map(c => c.series_id).filter(Boolean))];
+  const onPage = [...new Set([...d.continue, ...d.next, ...d.soon, ...(d.released || []), ...(d.added || []),
+    ...(d.lists || []).flatMap(l => l.cards), ...(d.rediscover || []), ...(d.quick || [])].map(c => c.series_id).filter(Boolean))];
   _loadBecause(onPage);
   _loadTrending();
 }
@@ -815,7 +836,7 @@ async function _loadTrending(attempt = 0) {
   if (_rowUnchanged('.trend-row', sig)) return;
   app.querySelector('.trend-row')?.remove();
   const month = d.month ? ` · ${esc(d.month)}` : '';
-  app.insertAdjacentHTML('beforeend', `<div class="od-row trend-row">
+  (document.getElementById('od-trend') || app).insertAdjacentHTML('beforeend', `<div class="od-row trend-row">
     <div class="od-head"><span class="series-card-title">Trending</span>
       <span class="u-label" style="color:var(--tq);margin-left:10px">${month ? esc(d.month) + ' · ' : ''}ICv2</span></div>
     <div class="series-grid">${d.comics.slice(0, 24).map(_trendCard).join('')}</div>
@@ -962,13 +983,15 @@ async function _loadBecause(exclude, attempt = 0) {
   const sig = d.rows.map(r => [r.anchor_id, r.items.map(i => i.series_id || i.metron_series_id || i.title)]);
   if (_rowUnchanged('.sug-row', sig)) return;
   app.querySelectorAll('.sug-row').forEach(e => e.remove());
+  const slot = document.getElementById('od-because');
   const anchor = app.querySelector('.trend-row');
   for (const r of d.rows) {
     const html = `<div class="od-row sug-row">
       <div class="od-head"><span class="series-card-title">Because you read ${esc(r.anchor)}</span></div>
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>
     </div>`;
-    if (anchor) anchor.insertAdjacentHTML('beforebegin', html); else app.insertAdjacentHTML('beforeend', html);
+    if (slot) slot.insertAdjacentHTML('beforeend', html);
+    else if (anchor) anchor.insertAdjacentHTML('beforebegin', html); else app.insertAdjacentHTML('beforeend', html);
   }
   _rowSig(app.querySelector('.sug-row'), sig);
 }
@@ -1744,7 +1767,7 @@ function renderArcDetail(s) {
   const collBanner = (s.collected && s.collection) ? `
     <div class="arc-collected-note" tabindex="0" role="button" onclick="navigate('series-detail',{id:${s.collection.series_id}})"
       onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.collection.series_id}})">
-      ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. The readlist builds from its volumes.
+      ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. Read it from the collected edition.
     </div>` : '';
   const body = total
     ? `<div class="issue-grid">${tiles}</div>`
@@ -1753,7 +1776,7 @@ function renderArcDetail(s) {
   document.getElementById('topbar-chips').innerHTML = chips;
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-primary btn-sm" id="arc-fulfill-btn" onclick="confirmFulfillArc(${s.id})">Get this storyline</button>
-    <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Build Komga readlist</button>
+    <button class="btn btn-ghost btn-sm" onclick="buildArcReadlist(${s.id}, this)">Make reading list</button>
     <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
   `;
   document.getElementById('topbar-sub').innerHTML =
@@ -1817,11 +1840,11 @@ async function buildArcReadlist(id, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
   try {
     const r = await api.post(`/api/series/${id}/readlist`, {});
-    showToast(`Readlist "${r.name}" → Komga · ${r.books} book${r.books === 1 ? '' : 's'}${r.updated ? ' (updated)' : ''}`);
-    if (btn) { btn.disabled = false; btn.textContent = 'Rebuild Komga Readlist'; }
+    showToast(`Reading list "${r.name}" · ${r.owned} of ${r.entries} on the shelf`);
+    navigate('readlist', { id: r.list_id });
   } catch (e) {
-    showToast('Readlist failed — ' + (e?.message || e), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Build Komga readlist'; }
+    showToast('Reading list failed — ' + (e?.message || e), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Make reading list'; }
   }
 }
 

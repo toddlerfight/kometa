@@ -66,30 +66,6 @@ class KomgaClient:
             page += 1
         return books
 
-    def create_or_update_readlist(self, name, book_ids, summary=""):
-        """Create an ordered readlist, or replace an existing one with the same
-        name (so 'Rebuild' re-syncs instead of erroring on the duplicate name).
-        Komga's ?search on readlists is unreliable, so page through them all and
-        match the name ourselves — otherwise a rebuild POSTs a dupe and 400s."""
-        match, page = None, 0
-        while not match:
-            data = self._get("/api/v1/readlists", params={"page": page, "size": 500})
-            match = next((r for r in data["content"] if r["name"] == name), None)
-            if data.get("last", True):
-                break
-            page += 1
-        if match:
-            r = self.session.patch(f"{self.base_url}/api/v1/readlists/{match['id']}",
-                                   json={"bookIds": book_ids}, timeout=self.TIMEOUT)
-            r.raise_for_status()
-            return {"id": match["id"], "updated": True}
-        r = self.session.post(f"{self.base_url}/api/v1/readlists",
-                             json={"name": name, "summary": summary,
-                                   "ordered": True, "bookIds": book_ids},
-                             timeout=self.TIMEOUT)
-        r.raise_for_status()
-        return {"id": r.json().get("id"), "updated": False}
-
     def scan_library(self, deep=False):
         # deep=True makes Komga re-read every series folder instead of skipping
         # the ones whose directory mtime hasn't moved. Over SMB a new file does
@@ -97,27 +73,4 @@ class KomgaClient:
         r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan",
                               params={"deep": "true"} if deep else None,
                               timeout=self.TIMEOUT)
-        r.raise_for_status()
-
-    def analyze_book(self, book_id):
-        """Re-analyze a single book so Komga re-extracts its cover/pages from the file
-        on disk — needed after we rewrite a CBZ (variant cover inject), or Komga keeps
-        serving the thumbnail it cached on its last scan."""
-        r = self.session.post(f"{self.base_url}/api/v1/books/{book_id}/analyze",
-                              timeout=self.TIMEOUT)
-        r.raise_for_status()
-
-    def set_book_number(self, book_id, number, number_sort):
-        """Correct a book's issue number IN Komga (and lock it, so a rescan can't revert).
-        Komga's own filename/metadata number parsing is unreliable; Kometa derives the true
-        number from the filename and pushes it here so Komga's labels AND ordering (which
-        sorts by numberSort) are right."""
-        r = self.session.patch(
-            f"{self.base_url}/api/v1/books/{book_id}/metadata",
-            json={
-                "number": str(number), "numberLock": True,
-                "numberSort": float(number_sort), "numberSortLock": True,
-            },
-            timeout=self.TIMEOUT,
-        )
         r.raise_for_status()

@@ -236,7 +236,7 @@ def related(series_id: int, limit: int = 12, path=None, signals=None, neighbours
     for sid, w in nb.get(series_id, {}).items():
         scores[sid] += w
         why[sid].append("on a reading list together")
-    series = {s["id"]: s for s in db.get_all_series(path)}
+    series = _series_with_counts(path)
     out = []
     for sid, sc in sorted(scores.items(), key=lambda kv: -kv[1])[:limit]:
         s = series.get(sid)
@@ -298,6 +298,16 @@ def suggestions(limit: int = 16, path=None) -> list[dict]:
 
 _lists_cache = {"at": 0.0, "path": None, "value": None}
 LISTS_TTL_S = 120
+
+
+def _series_with_counts(path) -> dict[int, dict]:
+    """tracked_series rows WITH owned/missing: the bare row has no counts, so
+    every shelf card in a related row read 0/0 (and hid it)."""
+    series = {s["id"]: s for s in db.get_all_series(path)}
+    for sid, c in db.get_all_series_summaries(path).items():
+        if sid in series:
+            series[sid].update(owned=c.get("owned") or 0, missing=c.get("missing") or 0)
+    return series
 
 
 def _resolved_lists(path) -> list[dict]:
@@ -637,7 +647,7 @@ def creator_rows(series_id: int, max_rows: int = 2, min_items: int = 4, path=Non
     cards carry none. Rows under min_items don't exist. → (rows, pending)."""
     path = path or DB_PATH
     sig = _signals(path)
-    series = {s["id"]: s for s in db.get_all_series(path)}
+    series = _series_with_counts(path)
     rows, pending = [], False
     for cid, name, verb in _top_creators(series_id, sig, max_creators=max_rows + 2):
         # same rule both sides of the row: a cover alone isn't 'more from' anyone
@@ -658,7 +668,7 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     """The creator modal: everything by one person, shelf then catalogue."""
     path = path or DB_PATH
     sig = _signals(path)
-    series = {s["id"]: s for s in db.get_all_series(path)}
+    series = _series_with_counts(path)
     if not name:
         name = next((c["name"] for s_ in sig.values() for c in s_["creators"] if c.get("id") == creator_id), None)
     shelf = _creator_shelf(creator_id, sig, series, name=name)

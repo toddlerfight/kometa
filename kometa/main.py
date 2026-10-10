@@ -1733,20 +1733,16 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
             # inject_covers returns the FINAL path too — a .cbr input comes back
             # as .cbz and the old path is gone from disk.
             added, file_path = inject_covers(file_path, req.selected, req.primary_id)
-            # Persist the pick as a display override too. The CBZ now has the cover,
-            # but Komga's thumbnail (what we display) is frozen until it re-scans — so
-            # stamp variant_cover so Kometa shows YOUR pick immediately regardless.
+            # Persist the pick as a display override too, so the card shows YOUR
+            # pick at once whatever the cover store holds.
             db.set_variant_prefs(series_id, number, req.selected, req.primary_id, DB_PATH)
-            # Nudge Komga to re-extract the cover from the rewritten file so ITS
-            # thumbnail + reader catch up to the new page 1 too. Best-effort — the file
-            # and our own display are already correct whether or not this succeeds.
-            book_id = issue.get("komga_book_id")
-            komga = _komga()
-            if book_id and komga:
-                try:
-                    komga.analyze_book(book_id)
-                except Exception as e:
-                    logger.warning(f"Komga re-analyze failed for book {book_id}: {e}")
+            # The file's page 1 just changed: re-cut Kometa's own file cover from it.
+            # (Used to poke Komga to re-analyze — Komga is read-only to us now.)
+            try:
+                from kometa import covers
+                covers.generate_for_path(file_path, series_id, DB_PATH)
+            except Exception as e:
+                logger.warning(f"File cover refresh failed for {file_path}: {e}")
             return {"ok": True, "added": added}
         except Exception as e:
             raise HTTPException(500, detail=str(e)) from e

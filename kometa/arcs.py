@@ -157,33 +157,28 @@ def resolve_arc(series_id: int):
 
 @router.post("/api/series/{series_id}/readlist")
 def build_arc_readlist(series_id: int):
-    """Build (or rebuild) a Komga readlist from a story arc's reading order. The arc
-    spans titles, so it gathers the matched book across EVERY participating Komga
-    series, in reading order — re-resolving ownership first so it's fresh."""
+    """The arc's reading order as a KOMETA reading list — the last write into
+    Komga died here. Same name again = rebuilt in place (save_list keeps the id),
+    so the button is safe to mash. Entries resolve live against the shelf like
+    any imported CBL; what isn't owned shows as a gap with a catalogue cover."""
+    import re
+    from kometa import readlists
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s or s.get("kind") != "arc":
         raise HTTPException(404, "Not a story arc")
-    komga = _komga()
-    if not komga:
-        raise HTTPException(400, "Komga not configured")
-    _resolve_arc_ownership(series_id)
     rows = db.get_arc_reading_order(series_id, DB_PATH)
-    coll = _arc_collection(s["title"], komga)
-    # Prefer issue-exact order when EVERY issue resolved to a single; otherwise fall
-    # back to the collected edition's volumes (the common vintage case); else whatever
-    # singles we did match.
-    if rows and all(r.get("komga_book_id") for r in rows):
-        book_ids, mode = [r["komga_book_id"] for r in rows], "singles"
-    elif coll:
-        book_ids, mode = [b["id"] for b in komga.get_books(coll["id"])], "collection"
-    else:
-        book_ids, mode = [r["komga_book_id"] for r in rows if r.get("komga_book_id")], "partial"
-    if not book_ids:
-        raise HTTPException(404, "None of this arc's issues are in Komga yet — grab them first")
-    result = komga.create_or_update_readlist(
-        s["title"], book_ids, summary=f"Reading order for {s['title']} — built by Kometa.")
-    return {"name": s["title"], "books": len(book_ids), "total": len(rows),
-            "mode": mode, "updated": result.get("updated", False)}
+    if not rows:
+        raise HTTPException(404, "This arc has no reading order yet")
+    items = []
+    for r in rows:
+        title = r.get("source_title") or ""
+        m = re.search(r"\s*\((\d{4})\)\s*$", title)          # 'Detective Comics (1937)' → name + year
+        items.append({"series": title[:m.start()] if m else title, "number": r.get("number"),
+                      "year": m.group(1) if m else None, "cv_issue": r.get("cv_issue_id"),
+                      "cv_series": r.get("cv_volume_id")})
+    lid = readlists.save_list(s["title"], items, "arc", str(series_id))
+    res = readlists.resolve(lid)
+    return {"list_id": lid, "name": s["title"], "entries": len(items), "owned": res.get("owned", 0)}
 
 
 def _series_cv_volume(series: dict):

@@ -2203,6 +2203,17 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 
 /* On Deck: the series page's tiles — same grid, same size, same hover */
 .od-grid { padding-top: var(--sp-sm); }
+/* async rows land in slots so the order holds; a slot is no box of its own */
+.od-slot { display: contents; }
+.od-slot .od-row, .od-slot + .od-row, .od-row + .od-slot > .od-row:first-child {
+  border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); margin-top: var(--sp-lg, 20px); }
+.od-gap .issue-tile-img img, .od-gap .rl-nocover { opacity: .55; }
+.od-gap .rl-nocover { width: 100%; height: 100%; }
+.od-more { display: none; margin: var(--sp-lg, 20px) auto 0; }
+@media (max-width: 760px) {
+  #app:not(.od-all) .od-extra { display: none; }
+  #app:not(.od-all) .od-more { display: block; }
+}
 .od-card .issue-tile-img img { transition: transform var(--t-slow) ease; }
 .od-card:hover .issue-tile-img img, .od-card:focus-visible .issue-tile-img img { transform: scale(var(--zoom)); }
 .od-bar { height: 2px; }

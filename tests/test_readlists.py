@@ -229,3 +229,25 @@ def test_get_lists_reuses_the_warm_resolution(shelf, monkeypatch):
     assert n >= 1 and first[0]["id"] == lid and first[0]["owned"] >= 1
     second = rl.get_lists(shelf)
     assert len(calls) == n and second == first                               # served warm
+
+
+def test_arc_reading_order_becomes_a_kometa_reading_list(shelf, monkeypatch):
+    """The arc page's list button writes a Kometa list (not a Komga readlist):
+    entries in reading order, year split off the title, rebuilt in place."""
+    import kometa.arcs as arcs
+    monkeypatch.setattr(arcs, "DB_PATH", shelf)
+    monkeypatch.setattr(rl, "DB_PATH", shelf)
+    aid = db.add_series(title="Witchfinder Saga", kind="arc", path=shelf)
+    db.replace_arc_reading_order(aid, [
+        {"reading_order": 1, "source_title": "Sir Edward Grey, Witchfinder (2012)", "number": "2"},
+        {"reading_order": 2, "source_title": "Hellboy - Seed of Destruction", "number": "1"},
+        {"reading_order": 3, "source_title": "Nowhere Comics (1999)", "number": "4"},
+    ], shelf)
+    out = arcs.build_arc_readlist(aid)
+    items = rl.get_items(out["list_id"], shelf)
+    assert [(i["series"], i["number"], i["year"]) for i in items] == [
+        ("Sir Edward Grey, Witchfinder", "2", "2012"), ("Hellboy - Seed of Destruction", "1", None),
+        ("Nowhere Comics", "4", "1999")]
+    assert out["entries"] == 3 and out["owned"] == 2
+    again = arcs.build_arc_readlist(aid)
+    assert again["list_id"] == out["list_id"]              # same name = rebuilt in place
