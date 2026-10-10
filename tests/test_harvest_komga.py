@@ -62,7 +62,7 @@ def test_harvest_fills_open_rows_and_skips_catalogue_rows(world):
     r1 = record.get_issue(sid, 1, path)
     assert r1["source"] == "komga" and r1["fill_state"] == "partial" and r1["desc"] == "Komga says"
     assert r1["credits"] == [{"role": "writer", "name": "A. Writer", "metron_creator_id": None}]
-    assert r1["store_date"] == "2024-02-01" and r1["page_count"] == 24
+    assert r1["store_date"] == "2024-02-07" and r1["page_count"] == 24      # the pull list's date, not Komga's
     assert record.get_issue(sid, 2, path)["desc"] == "Metron says"          # never overwritten
     s = record.get_series(sid, path)
     assert s["source"] == "komga" and s["desc"] == "A run." and json.loads(s["genres_json"]) == ["crime"]
@@ -88,3 +88,20 @@ def test_komga_row_gives_way_to_a_catalogue_but_not_to_comicinfo(world):
     assert record.get_issue(sid, 1, path)["source"] == "comicinfo"          # equal rank: first in stays
     assert hk._open_for({"source": "komga", "fill_state": "partial"}, "metron")
     assert not hk._open_for({"source": "locg", "fill_state": "full"}, "komga")
+
+
+def test_stopgap_rows_stay_open_to_the_catalogue(world):
+    """A Komga/ComicInfo row is shown, but it never counts as fresh: an issue with a
+    catalogue id is asked at once, one without is kept (not turned into a miss) and
+    looked at again in a week."""
+    path, sid = world
+    with db._connect(path) as conn:
+        conn.execute("UPDATE issue_status SET metron_issue_id = 777 WHERE tracked_series_id = ? AND number = 1", (sid,))
+    hk.harvest(path=path, komga=_Komga())
+    assert not record._fresh(record.get_issue(sid, 1, path))
+    pend = {(p["tracked_series_id"], p["number"]) for p in record.pending_issues(path)}
+    assert (sid, 1.0) in pend and (sid, 2.0) not in pend
+    row = record.fill_issue(sid, 1, path, metron=lambda i, p: {"desc": "Metron says", "credits": []})
+    assert row["source"] == "metron" and row["fill_state"] == "full"
+    row = record.fill_issue(sid, 2, path)                        # nothing to ask → the stopgap stays
+    assert row["source"] == "komga" and row["desc"] == "Second"

@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 RECORD_TTL_DAYS = 90          # a full row is refreshed on interaction once this old
 RECORD_MISS_TTL_DAYS = 7      # a row with nothing to ask is asked again after this
+# what the file's own tags or Komga said: a stopgap, shown until a catalogue answers,
+# never a reason not to ask one — and never thrown away for a miss
+STOPGAP_SOURCES = ("comicinfo", "komga")
 TRICKLE_LIMIT = 25            # per tick, under Metron's 30/min with the other jobs
 TRICKLE_MINUTES = 10
 
@@ -136,6 +139,8 @@ def _fresh(row: dict | None) -> bool:
     if not row:
         return False
     age = _age_days(row.get("fetched_at"))
+    if row.get("source") in STOPGAP_SOURCES:
+        return False                                            # shown, but a catalogue is still owed an ask
     if row.get("fill_state") == "miss":
         return age < RECORD_MISS_TTL_DAYS
     return age < RECORD_TTL_DAYS
@@ -177,7 +182,16 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
         if found is None:
             return None
         return write_issue(series_id, number, found, "locg", "partial", issue, path)
+    if existing and existing.get("source") in STOPGAP_SOURCES:
+        _touch(series_id, number, path)                        # nothing to ask: keep the stopgap, ask again in a week
+        return existing
     return write_issue(series_id, number, {}, None, "miss", issue, path)
+
+
+def _touch(series_id: int, number: float, path):
+    with db._connect(path) as conn:
+        conn.execute("UPDATE issue_record SET fetched_at = ? WHERE tracked_series_id = ? AND number = ?",
+                     (_now(), series_id, number))
 
 
 def fill_series(series_id: int, path=None, force: bool = False, detail=None) -> dict | None:
@@ -222,9 +236,14 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
             FROM issue_status i JOIN tracked_series s ON s.id = i.tracked_series_id
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE (s.kind IS NULL OR s.kind != 'arc')
-              AND (r.tracked_series_id IS NULL OR (r.fill_state = 'miss' AND r.fetched_at < ?))
-            ORDER BY s.on_pull_list DESC, i.owned DESC, i.tracked_series_id, i.number
-            LIMIT ?""", (cutoff, limit))]
+              AND (r.tracked_series_id IS NULL
+                   OR (r.fill_state = 'miss' AND r.fetched_at < ?)
+                   -- a stopgap row (file tags / Komga): ask now when there's a catalogue id to ask,
+                   -- else look again in a week in case one has been matched since
+                   OR (r.source IN ('comicinfo', 'komga')
+                       AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?)))
+            ORDER BY s.on_pull_list DESC, (r.tracked_series_id IS NOT NULL), i.owned DESC, i.tracked_series_id, i.number
+            LIMIT ?""", (cutoff, cutoff, limit))]
 
 
 def trickle(limit: int = TRICKLE_LIMIT, path=None) -> int:
@@ -279,7 +298,7 @@ def details(issue: dict, path=None) -> dict:
     sid, number = issue["tracked_series_id"], issue["number"]
     row = get_issue(sid, number, path)
     if row and row.get("fill_state") in ("full", "partial"):
-        if _age_days(row.get("fetched_at")) >= RECORD_TTL_DAYS:
+        if not _fresh(row):                                     # old, or a stopgap: answer now, ask behind
             threading.Thread(target=lambda: _safe_refresh(sid, number, path), daemon=True).start()
         return {"desc": row.get("desc") or "", "credits": row.get("credits") or [], "source": row.get("source"),
                 "arcs": row.get("arcs") or [], "store_date": row.get("store_date"), "record": True}

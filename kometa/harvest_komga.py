@@ -29,8 +29,8 @@ def _now() -> str:
 
 def _open_for(row: dict | None, source: str) -> bool:
     """A row written by a lesser source (or a miss, or nothing) may be replaced."""
-    if row is None or row.get("fill_state") == "miss":
-        return True
+    if row is None or row.get("fill_state") == "miss" or row.get("source") == source:
+        return True                                              # a source may refresh its own row
     return _PRIORITY.get(row.get("source"), 2) < _PRIORITY.get(source, 1)
 
 
@@ -110,8 +110,9 @@ def harvest_series(series: dict, komga, path=None) -> dict:
             continue
         credits = [{"role": (a.get("role") or "").lower(), "name": a.get("name"), "metron_creator_id": None}
                    for a in (m.get("authors") or []) if a.get("name")]
+        # Komga's releaseDate is often a bare year made into Jan 1 — the pull list's date wins when it has one
         record.write_issue(series["id"], n, {"desc": m.get("summary") or "", "credits": credits, "arcs": [], "covers": [],
-                                              "store_date": m.get("releaseDate") or issues[n].get("store_date"),
+                                              "store_date": issues[n].get("store_date") or m.get("releaseDate"),
                                               "page_count": (b.get("media") or {}).get("pagesCount"),
                                               "isbn": m.get("isbn") or None},
                            "komga", "partial", issues[n], path)
