@@ -192,6 +192,16 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
         logger.warning(f"LOCG top-up drain not scheduled: {e}")
+    # Variants (and details) for owned issues while a LOCG pass is live, one
+    # request every three seconds, twenty a tick, never during a sync, and the
+    # tick stops at the first refusal (kometa/locg_sweep.py).
+    try:
+        from kometa.locg_sweep import scheduled_tick as locg_sweep_tick
+        scheduler.add_job(locg_sweep_tick, IntervalTrigger(minutes=10), id="locg_sweep",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=8))
+    except Exception as e:
+        logger.warning(f"LOCG sweep not scheduled: {e}")
     # The record and the cover store copied to the NAS every night (kometa/backup.py).
     try:
         from kometa.backup import nightly as nightly_backup

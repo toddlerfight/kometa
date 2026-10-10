@@ -2277,3 +2277,24 @@ body.touch .od-menu { opacity: .85; }
 .creator-modal .series-card-title { font-size: 12px; }
 .series-card-specials { color: var(--tq); font-weight: 400; margin-left: 4px; }
 .specials-row { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); margin-top: var(--sp-xl); }
+
+/* --- Library: stacks, letters, rail --- */
+.stack-fan { background: var(--su2); }
+.stack-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 110%; box-shadow: -6px 0 14px rgba(0,0,0,.55); }
+.stack-cover-0 { z-index: 3; }
+.stack-cover-1 { z-index: 2; transform: rotate(-5deg) translateX(-7%) scale(.96); filter: brightness(.8); }
+.stack-cover-2 { z-index: 1; transform: rotate(-10deg) translateX(-14%) scale(.92); filter: brightness(.6); }
+.stack-card:hover .stack-cover-0 { transform: scale(var(--zoom)); }
+.stack-card:hover .stack-cover-1 { transform: rotate(-7deg) translateX(-9%) scale(.96); }
+.stack-card:hover .stack-cover-2 { transform: rotate(-14deg) translateX(-18%) scale(.92); }
+.stack-badge { position: absolute; top: 6px; right: 6px; z-index: 4; background: rgba(0,0,0,.8); color: var(--tp); font-size: var(--fs-label); font-weight: 700; padding: 2px 7px; border-radius: var(--r-sm); letter-spacing: var(--track-tight); }
+.series-grid.with-letters { position: relative; }
+.letter-head { grid-column: 1 / -1; position: sticky; top: 0; z-index: 5; background: linear-gradient(var(--bg) 70%, transparent); padding: 6px 0 10px; font-size: 22px; font-weight: 700; color: var(--pri); letter-spacing: var(--track-tight); }
+.letter-rail { position: fixed; right: 6px; top: 50%; transform: translateY(-50%); z-index: 20; display: flex; flex-direction: column; gap: 1px; padding: 6px 2px; background: rgba(0,0,0,.55); border: 1px solid var(--bd); border-radius: 10px; backdrop-filter: blur(6px); }
+.letter-rail-btn { background: none; border: 0; color: var(--tq); font-size: 11px; line-height: 15px; width: 22px; cursor: pointer; padding: 0; font-family: inherit; }
+.letter-rail-btn:hover { color: var(--pri); }
+@media (max-width: 760px) {
+  .letter-rail { right: 2px; padding: 4px 1px; gap: 0; }
+  .letter-rail-btn { font-size: 10px; line-height: 13px; width: 18px; }
+  .letter-head { font-size: 18px; }
+}

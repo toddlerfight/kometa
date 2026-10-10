@@ -188,6 +188,13 @@ def status(path=None) -> dict:
     path = path or DB_PATH
     paused = locg_client.locg_paused()
     w = waiting(path)
-    return {"locg_pass_live": bool(locg_client._access()[0]) and paused is None,
-            "locg_paused_until": locg_client.pause_label(paused) if paused else None,
-            "locg_topup_waiting": w["total"], "locg_topup_by_kind": w["by_kind"], "locg_topup_draining": _draining["on"]}
+    out = {"locg_pass_live": bool(locg_client._access()[0]) and paused is None,
+           "locg_paused_until": locg_client.pause_label(paused) if paused else None,
+           "locg_topup_waiting": w["total"], "locg_topup_by_kind": w["by_kind"], "locg_topup_draining": _draining["on"]}
+    try:
+        from kometa import locg_sweep
+        out["locg_sweep_pending"] = locg_sweep.pending(path)
+        out["locg_sweep_done_today"] = locg_sweep.done_today()
+    except Exception:
+        pass
+    return out

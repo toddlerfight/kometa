@@ -99,7 +99,7 @@ window.addEventListener('popstate', () => {
 });
 
 function updateNav() {
-  const navView = (currentView === 'series-detail' || currentView === 'shelf') ? 'library'
+  const navView = (currentView === 'series-detail' || currentView === 'shelf' || currentView === 'stack') ? 'library'
     : currentView === 'readlist' ? 'readlists' : currentView;
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.view === navView);
@@ -126,6 +126,7 @@ function renderView() {
   const paint = (() => {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
+      case 'stack':         return renderStackPage(currentParams.key);
       case 'ondeck':        return renderOnDeck();
       case 'readlists':     return renderReadLists();
       case 'readlist':      return renderReadList(currentParams.id);
@@ -315,7 +316,7 @@ async function syncSeries(id, btn, pre = null, force = false) {
 
 // --- Library Browse ---
 
-let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' } };
+let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, stacks: true }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' }, stack: null };
 
 async function renderLibraryBrowse() {
   setTopbar();
@@ -327,8 +328,9 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
-  browseState.toggles = { upcoming: false, missing: false, pulling: false };
+  browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
   browseState._cache  = null;
+  browseState.stack   = null;
   // The sort you chose last time sticks (per browser); nearest release first by default.
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('kometa.librarySort') || 'null'); } catch {}
@@ -350,14 +352,16 @@ const BROWSE_TOGGLES = [
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
   { key: 'favourites', label: '♥ Favourites' },
+  { key: 'runs',       label: 'Runs' },         // hide the one-shots and single-issue series
   { key: 'specials',   label: 'Specials' },     // unfold annuals / one-shots from under their runs
+  { key: 'stacks',     label: 'Stacks' },       // franchises as one card (Aliens · 45 series); off = flat
 ];
 
 const _isReading = s => (s.in_progress ?? 0) > 0 || (s.read_count ?? 0) > 0;
 
 function _browseFilterTabs() {
   return `<div class="browse-filters">
-    ${BROWSE_TOGGLES.map(f => `
+    ${BROWSE_TOGGLES.filter(f => !(browseState.stack && f.key === 'stacks')).map(f => `
       <button class="browse-filter-tab u-label${browseState.toggles[f.key] ? ' active' : ''}"
         data-key="${f.key}" onclick="browseFilter('${f.key}')">${f.label}</button>
     `).join('')}
@@ -393,6 +397,22 @@ function _browseSortControls() {
           </svg>
         </span>
       </button>
+      <button class="sort-btn${browseState.sortKey === 'read' ? ' active' : ''}" id="sort-read"
+        onclick="browseSort('read')" title="Sort by last read">
+        <span class="sort-btn-icon">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="7" r="5.5"/><polyline points="7,3.5 7,7 9.5,8.5"/>
+          </svg>
+        </span>
+      </button>
+      <button class="sort-btn${browseState.sortKey === 'added' ? ' active' : ''}" id="sort-added"
+        onclick="browseSort('added')" title="Sort by newest file added">
+        <span class="sort-btn-icon">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 10.5V3.5a1 1 0 0 1 1-1h3l1.5 1.5H11a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><line x1="7" y1="6" x2="7" y2="10"/><line x1="5" y1="8" x2="9" y2="8"/>
+          </svg>
+        </span>
+      </button>
       <div class="sort-arrow-box${_isDefaultSort() ? '' : ' non-default'}" id="sort-arrow">
         ${(browseState.sortDir[browseState.sortKey] ?? 'desc') === 'asc' ? '↑' : '↓'}
       </div>
@@ -408,7 +428,8 @@ function browseSort(key) {
     browseState.sortDir[key] = browseState.sortDir[key] === 'asc' ? 'desc' : 'asc';
   } else {
     browseState.sortKey = key;
-    browseState.sortDir[key] = browseState.sortDir[key] || 'asc';
+    // newest first is the useful default for the two recency sorts
+    browseState.sortDir[key] = browseState.sortDir[key] || ((key === 'read' || key === 'added') ? 'desc' : 'asc');
   }
   try { localStorage.setItem('kometa.librarySort', JSON.stringify({ key: browseState.sortKey, dir: browseState.sortDir })); } catch {}
   const arrowBox = document.getElementById('sort-arrow');
@@ -416,9 +437,26 @@ function browseSort(key) {
     arrowBox.textContent = browseState.sortDir[browseState.sortKey] === 'asc' ? '↑' : '↓';
     arrowBox.classList.toggle('non-default', !_isDefaultSort());
   }
-  document.getElementById('sort-alpha')?.classList.toggle('active', browseState.sortKey === 'alpha');
-  document.getElementById('sort-date')?.classList.toggle('active', browseState.sortKey === 'date');
+  for (const k of ['alpha', 'date', 'read', 'added']) document.getElementById(`sort-${k}`)?.classList.toggle('active', browseState.sortKey === k);
   _renderBrowseResults();
+}
+
+// A stack's page: the same Library, narrowed to one franchise's members.
+async function renderStackPage(key) {
+  setTopbar();
+  document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="navigate('library')">‹ Library</button>`;
+  browseState.search  = '';
+  browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
+  browseState._cache  = null;
+  browseState.stack   = key;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('kometa.librarySort') || 'null'); } catch {}
+  browseState.sortKey = saved?.key || 'alpha';
+  browseState.sortDir = saved?.dir || { alpha: 'asc' };
+  setApp('<div class="state-msg">Loading...</div>');
+  await _loadBrowsePage();
+  const any = (browseState._cache || []).find(s => s.franchise?.key === key);
+  document.getElementById('topbar-title').textContent = any ? any.franchise.name : 'Stack';
 }
 
 async function _loadBrowsePage() {
@@ -470,12 +508,13 @@ async function _loadBrowsePage() {
 let _autoWizardTimer = null;
 
 function _renderBrowseResults() {
-  const { toggles, search, sortKey, sortDir, _cache: all } = browseState;
+  const { toggles, search, sortKey, sortDir, _cache: all, stack } = browseState;
   if (!all) return;
 
   const q = search.toLowerCase();
   const anyToggleOn = toggles.upcoming || toggles.missing;
   let filtered = all.filter(s => {
+    if (stack && s.franchise?.key !== stack) return false;               // a stack's page: its members only
     if (q && !s.title.toLowerCase().includes(q)) return false;
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.favourites && !s.favourite) return false;
@@ -490,23 +529,42 @@ function _renderBrowseResults() {
         || (toggles.missing && s.on_pull_list && (s.missing ?? 0) > 0);
   });
 
-  if (sortKey === 'alpha') {
-    const dir = sortDir.alpha === 'asc' ? 1 : -1;
-    filtered = filtered.slice().sort((a, b) => dir * a.title.localeCompare(b.title));
-  } else if (sortKey === 'date') {
-    const dir = (sortDir.date ?? 'asc') === 'asc' ? 1 : -1;
-    // calendar_date, not next_release: this week's release holds its slot even
-    // once it's downloaded (next_release skips owned issues — a fresh #1 used to
-    // sink to the bottom the moment it landed).
-    filtered = filtered.slice().sort((a, b) => {
-      if (!a.calendar_date && !b.calendar_date) return 0;
-      if (!a.calendar_date) return 1;
-      if (!b.calendar_date) return -1;
-      return dir * a.calendar_date.localeCompare(b.calendar_date);
-    });
+  // Stacks: a franchise (five or more top-level series sharing a leading name,
+  // stamped by kometa/family.py) is ONE card here and a page of its own. A
+  // search looks inside stacks and shows the member, not the stack.
+  let items = filtered;
+  if (toggles.stacks && !search && !stack) {
+    const groups = new Map();
+    items = [];
+    for (const s of filtered) {
+      const f = s.franchise;
+      if (!f) { items.push(s); continue; }
+      let g = groups.get(f.key);
+      if (!g) { g = { kind: 'stack', key: f.key, title: f.name, count: f.count, members: [] }; groups.set(f.key, g); items.push(g); }
+      g.members.push(s);
+    }
   }
+  // Runs: hide the one-shots and single-issue series; a stack keeps its members
+  if (toggles.runs) items = items.filter(s => s.kind === 'stack' || !_isSingle(s));
 
-  if (!filtered.length) {
+  const latest = (list, f) => list.reduce((m, x) => { const v = f(x); return v && (!m || v > m) ? v : m; }, null);
+  const soonest = list => list.reduce((m, x) => x.calendar_date && (!m || x.calendar_date < m) ? x.calendar_date : m, null);
+  const val = {
+    alpha: s => _sortTitle(s.title),
+    date:  s => s.kind === 'stack' ? soonest(s.members) : s.calendar_date,
+    read:  s => s.kind === 'stack' ? latest(s.members, m => m.last_read) : s.last_read,
+    added: s => s.kind === 'stack' ? latest(s.members, m => m.newest_file_at) : s.newest_file_at,
+  }[sortKey] || (() => null);
+  const dir = (sortDir[sortKey] ?? 'asc') === 'asc' ? 1 : -1;
+  items = items.slice().sort((a, b) => {
+    const va = val(a), vb = val(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;                               // nothing to sort on sinks, whatever the direction
+    if (vb == null) return -1;
+    return dir * String(va).localeCompare(String(vb));
+  });
+
+  if (!items.length) {
     const needsFolder = _appConfig && !_appConfig.comics_root_ok;
     const empty = all.length === 0
       ? `<div class="empty-state">
@@ -519,12 +577,22 @@ function _renderBrowseResults() {
          </div>`
       : `<div class="state-msg">No series match.</div>`;
     document.getElementById('browse-results').innerHTML = empty;
+    _paintLetterRail([]);
     return;
   }
 
-  const cards = filtered.map((s, i) => {
+  const letters = sortKey === 'alpha';
+  let lastLetter = null;
+  const seen = [];
+  const cards = items.map((s, i) => {
+    let head = '';
+    if (letters) {
+      const L = _letterOf(s.title);
+      if (L !== lastLetter) { lastLetter = L; seen.push(L); head = `<div class="letter-head" id="letter-${L === '#' ? 'num' : L}">${L}</div>`; }
+    }
+    if (s.kind === 'stack') return head + _stackCardHtml(s, i);
     const pub   = s.publisher ? `<div class="series-card-publisher u-truncate">${esc(s.publisher.toUpperCase())}</div>` : '';
-    if (s.kind === 'shelf') return _shelfCardHtml(s, i, pub);
+    if (s.kind === 'shelf') return head + _shelfCardHtml(s, i, pub);
     // Release-day issues not yet down count toward the total and turn it amber —
     // 145/146, not a '145/145 complete' while #146 is out today.
     const gap   = (s.missing ?? 0) + (s.out_today ?? 0);
@@ -538,7 +606,7 @@ function _renderBrowseResults() {
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
     const thumbFall = s.card_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
-    return `
+    return head + `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
@@ -559,7 +627,60 @@ function _renderBrowseResults() {
     `;
   }).join('');
 
-  document.getElementById('browse-results').innerHTML = `<div class="series-grid">${cards}</div>`;
+  document.getElementById('browse-results').innerHTML = `<div class="series-grid${letters ? ' with-letters' : ''}">${cards}</div>`;
+  _paintLetterRail(letters ? seen : []);
+}
+
+// A single issue filed as a series: a one-shot, an annual, an OGN, or a run the
+// catalogue only knows one issue of. The Runs chip hides these.
+function _isSingle(s) {
+  if (s.kind === 'shelf') return (s.book_count ?? 0) <= 1;
+  const n = (s.owned ?? 0) + (s.missing ?? 0) + (s.upcoming ?? 0);
+  const t = (s.metron_type || '').toLowerCase();
+  return n <= 1 && (!t || ['one-shot', 'one shot', 'annual', 'graphic novel'].includes(t));
+}
+
+// The title as it sorts and files: no leading 'The', no leading year or
+// bracket, no leading dash — so 'The Walking Dead' sits under W.
+function _sortTitle(t) {
+  return (t || '').replace(/^\s*[-–—]+\s*/, '').replace(/^\s*[\[(](?:19|20)\d{2}[\])]\s*/, '').replace(/^(the|a|an)\s+/i, '').trim();
+}
+function _letterOf(t) {
+  const c = _sortTitle(t).charAt(0).toUpperCase();
+  return /[A-Z]/.test(c) ? c : '#';
+}
+
+// A franchise as one card: the first three members' covers, fanned.
+function _stackCardHtml(g, i) {
+  const covers = g.members.slice(0, 3).map(m => m.kind === 'shelf' ? `/api/shelf/${m.id}/cover` : (m.card_image || `/api/series/${m.id}/thumbnail`));
+  const go = `navigate('stack', {key: ${JSON.stringify(g.key)}})`;
+  const owned = g.members.reduce((n, m) => n + (m.owned ?? m.book_count ?? 0), 0);
+  return `
+      <div class="series-card stack-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
+        data-stack="${esc(g.key)}" onclick="${go.replace(/"/g, '&quot;')}" onkeydown="if(event.key==='Enter'||event.key===' ')${go.replace(/"/g, '&quot;')}">
+        <div class="series-card-img-wrap stack-fan">
+          ${covers.map((u, k) => `<img class="series-card-cover stack-cover stack-cover-${k}" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`).reverse().join('')}
+          <div class="stack-badge">${g.count}</div>
+        </div>
+        <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:100%;background:var(--su3)"></div></div>
+        <div class="series-card-footer">
+          <div class="series-card-title">${esc(g.title)}</div>
+          <div class="series-card-count" style="color:var(--tq)">${g.count} series</div>
+        </div>
+        <div class="series-card-publisher u-truncate">${owned} issues on the shelf</div>
+      </div>`;
+}
+
+// The A–Z jump rail: a fixed strip of the letters present; tap one, the grid
+// scrolls to that letter's header. Painted only for an alphabetical sort.
+function _paintLetterRail(letters) {
+  document.getElementById('letter-rail')?.remove();
+  if (!letters || letters.length < 2) return;
+  const rail = document.createElement('div');
+  rail.id = 'letter-rail';
+  rail.className = 'letter-rail';
+  rail.innerHTML = letters.map(L => `<button class="letter-rail-btn" onclick="document.getElementById('letter-${L === '#' ? 'num' : L}')?.scrollIntoView({block:'start', behavior:'smooth'})">${L}</button>`).join('');
+  document.getElementById('browse-results')?.appendChild(rail);
 }
 
 // An untracked series: on the shelf, readable, nothing to fetch — so no release
@@ -3701,7 +3822,9 @@ function _locgTopupLine(cfg) {
   const state = cfg.locg_paused_until ? `paused until ${esc(cfg.locg_paused_until)}`
     : cfg.locg_pass_live ? 'live' : 'no pass';
   const btn = n && cfg.locg_pass_live ? ` <button class="btn-link" onclick="_locgTopupNow(this)">${cfg.locg_topup_draining ? 'topping up…' : 'top up now'}</button>` : '';
-  return `LOCG pass: ${state} · ${waiting}${btn}`;
+  const sweep = cfg.locg_sweep_pending != null
+    ? ` · variant sweep: ${cfg.locg_sweep_pending} to go${cfg.locg_sweep_done_today ? `, ${cfg.locg_sweep_done_today} requests today` : ''}` : '';
+  return `LOCG pass: ${state} · ${waiting}${btn}${sweep}`;
 }
 
 async function _locgTopupNow(btn) {
@@ -4533,7 +4656,7 @@ function _parseHash() {
 
 // --- pull-to-refresh (touch only) ---
 // Re-fetches the current view's DATA without resetting filters/search state.
-const _PTR_VIEWS = new Set(['library', 'ondeck', 'needs-match', 'series-detail', 'pull-list', 'activity']);
+const _PTR_VIEWS = new Set(['library', 'stack', 'ondeck', 'needs-match', 'series-detail', 'pull-list', 'activity']);
 let _ptrStartY = 0, _ptrPulling = false;
 
 function _ptrRefresh() {
