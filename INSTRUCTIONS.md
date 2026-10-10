@@ -305,3 +305,19 @@ Example: the reader — `docs/reader-research.md`, `docs/reader-spec.md`.
 - Motion convention: hover = one step lighter; `--t-fast` hovers, `--t-slow`
   entrances, `--t-mid` exits (snappier than entrances), `--t-scrim` backdrop.
 - Don't change existing styles/tokens without asking first.
+
+
+## Backups (2026-10-11)
+
+Three copies of everything Kometa needs:
+
+1. **Kometa's own nightly** (03:30, `kometa/backup.py`): the database and a cover mirror into `_kometa-backup/` inside the comics folder on the NAS. Keeps 7 nights.
+2. **Voot II** (04:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
+   - `db/` — a sqlite `.backup` of the live DB, integrity-checked, 14 kept
+   - `covers/`, `docker/` (all of `~/docker` except the page cache), `comics/` (mirror of `/Volumes/🧳/Comics`)
+   - `deleted/YYYY-mm-dd/` — whatever the mirrors removed or replaced, kept 30 days (a bad delete in the library can't wipe the backup)
+   - `status.json` (last run) and `backup.log` (every run)
+   - It refuses to run if Voot II isn't mounted. `COMICS=0` skips the comics mirror for a quick test.
+   - Install / update: copy `ops/ginbako-backup.sh` to `~/bin/kometa-backup.sh`; the plist is a template — `sed "s#__HOME__#$HOME#g" ops/dev.kometa.backup.plist > ~/Library/LaunchAgents/dev.kometa.backup.plist`; then `launchctl bootout gui/$(id -u)/dev.kometa.backup; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.kometa.backup.plist`. Run now: `launchctl kickstart gui/$(id -u)/dev.kometa.backup`.
+   - **macOS privacy:** a launchd job can't write to an external drive until `/bin/bash` has Full Disk Access (System Settings › Privacy & Security › Full Disk Access › +, Cmd-Shift-G `/bin/bash`). Without it the run fails with "No such file or directory" on the drive.
+3. **Code**: both repos pushed to GitHub (off ginbako) as well as Gitea.

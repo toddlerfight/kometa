@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly Kometa backup onto Voot II (ops/ginbako-backup.sh), 04:00 ginbako time.
+     A template: install with  sed "s#__HOME__#$HOME#g" ops/dev.kometa.backup.plist > ~/Library/LaunchAgents/dev.kometa.backup.plist -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.kometa.backup</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/bash</string><string>__HOME__/bin/kometa-backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/kometa-backup.out</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/kometa-backup.err</string>
+</dict></plist>
