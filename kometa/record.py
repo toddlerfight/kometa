@@ -550,8 +550,16 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
         return []
     from kometa import locg_client
     trades: list[dict] = []
+    metron_out: Exception | None = None
     if series.get("metron_series_id"):
-        trades = _metron_trades(series, search=search, issues=issues, detail=detail)
+        try:
+            trades = _metron_trades(series, search=search, issues=issues, detail=detail)
+        except Exception as e:
+            # Metron away is not the end of it: LOCG still gets its turn below.
+            # The refusal is re-raised afterwards (so a trickle stops) only when
+            # LOCG couldn't stand in — otherwise the list is LOCG's and Metron's
+            # half comes on the next fill, since a partial fill is never cached as full.
+            metron_out = e
     locg_id = series.get("locg_series_id")
     if locg_id:
         is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
@@ -567,6 +575,9 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
                 trades = _merge_locg(trades, fetch(locg_id))
             except Exception as e:
                 logger.info(f"Trades: LOCG skipped for {series.get('title')!r}: {e}")
+    if metron_out is not None and not trades:
+        raise metron_out
+    stand_in = metron_out is not None          # LOCG's list only: Metron's half is still owed
     if not trades and not force:
         cached = db.get_trades(series["id"], path)
         if cached and cached["trades"]:
@@ -587,7 +598,18 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
                           str(t.get("locg_trade_id") or (t.get("locg_id") if t.get("source") == "locg" else "") or "") or None,
                           t.get("source") or "locg", _now()))
     db.set_trades(series["id"], trades, path)
+    if stand_in:
+        # not a full fill: pre-age the cache so _trades_due comes round tomorrow
+        # instead of in TRADES_REFRESH_DAYS, and Metron's editions join the list
+        with db._connect(path) as conn:
+            conn.execute("UPDATE trades_cache SET fetched_at = datetime('now', ?) WHERE tracked_series_id = ?",
+                         (f"-{max(_sync_refresh_days() - 1, 0)} days", series["id"]))
     return trades
+
+
+def _sync_refresh_days() -> int:
+    from kometa import sync as _sync
+    return int(getattr(_sync, "TRADES_REFRESH_DAYS", 7))
 
 
 def trade_details(key: str, path=None) -> dict | None:

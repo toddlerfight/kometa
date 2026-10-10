@@ -194,3 +194,24 @@ def test_trades_trickle_fills_pull_list_first_and_stops_at_metrons_refusal(db_pa
     monkeypatch.setattr(rec, "fill_trades", fake_fill)
     assert rec.trades_trickle(limit=5, path=db_path) == 1
     assert calls == ["B", "A"]                                                            # pull list first; refusal ends the tick
+
+
+def test_locg_stands_in_for_trades_when_metron_is_out(db_path, tmp_path, monkeypatch):
+    """Metron refuses, LOCG is open: the list is LOCG's, nothing raised, and the
+    cache is pre-aged so Metron's editions are asked for tomorrow. Both out: raised."""
+    import kometa.record as rec
+    from kometa.metron_client import MetronUnavailable
+    sid = db.add_series(title="The Amazing Spider-Man", publisher="Marvel", folder_path=str(tmp_path), on_pull_list=False,
+                        locg_series_id=183512, path=db_path)
+    db.set_metron_series_id(sid, 10958, db_path)
+    monkeypatch.setattr(rec, "_metron_trades", lambda *a, **k: (_ for _ in ()).throw(MetronUnavailable("asked us to wait")))
+    trades = rec.fill_trades(sid, path=db_path, locg_open=lambda: True,
+                             locg_fetch=lambda lid: [{"title": "Amazing Spider-Man Vol. 1 TP", "vol": 1, "format": "TP", "is_variant": False}],
+                             enrich=lambda s, t, books=None: t)
+    assert [t["title"] for t in trades] == ["Amazing Spider-Man Vol. 1 TP"]
+    with db._connect(db_path) as c:
+        age = c.execute("SELECT (julianday('now') - julianday(fetched_at)) FROM trades_cache WHERE tracked_series_id = ?", (sid,)).fetchone()[0]
+    assert age > 5                                                     # pre-aged: due again tomorrow, not next week
+    import pytest
+    with pytest.raises(MetronUnavailable):
+        rec.fill_trades(sid, path=db_path, force=True, locg_open=lambda: False, enrich=lambda s, t, books=None: t)
