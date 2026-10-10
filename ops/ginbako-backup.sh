@@ -43,6 +43,7 @@ if /usr/bin/sqlite3 "$DB" ".backup '$DEST/db/kometa-$STAMP.db'"; then
   chk=$(/usr/bin/sqlite3 "$DEST/db/kometa-$STAMP.db" "PRAGMA integrity_check;" 2>&1 | head -1)
   books=$(/usr/bin/sqlite3 "$DEST/db/kometa-$STAMP.db" "SELECT COUNT(*) FROM books;" 2>&1)
   if [ "$chk" = "ok" ]; then say "db ok ($books books)"; else ok=0; notes+=("db integrity: $chk"); say "db FAILED integrity: $chk"; fi
+  rm -f "$DEST/db/kometa-$STAMP.db-wal" "$DEST/db/kometa-$STAMP.db-shm"   # the check opens it: leave the copy, not its scratch files
   ls -1t "$DEST"/db/kometa-*.db 2>/dev/null | tail -n +$((KEEP_DB + 1)) | while read -r f; do rm -f "$f"; done
 else
   ok=0; notes+=("db copy failed"); say "db copy FAILED"
