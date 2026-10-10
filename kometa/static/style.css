@@ -1281,7 +1281,10 @@ select.settings-input {
 .btn-link:hover { color: var(--tp); }
 
 .settings-help { font-size: var(--fs-body); color: var(--tq); margin-top: 8px; }
-.settings-help:empty { display: none; }   /* no warning = no space (keeps the card-to-card gap tight) */
+.settings-help:empty { display: none; }
+/* a flag with no section to fold: label left, switch right, one line */
+.settings-row-toggle { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-md);
+  margin-top: 12px; font-size: var(--fs-body); color: var(--tq); }   /* no warning = no space (keeps the card-to-card gap tight) */
 .settings-help.ok  { color: var(--pri); }
 .settings-help.bad { color: var(--pink); }
 .settings-input.input-bad { border-color: var(--pink); }

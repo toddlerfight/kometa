@@ -198,61 +198,12 @@ def sync_one(series: dict, force: bool = False):
         except Exception:
             pass
 
-    # Komga book map — issue number -> book id, for stamping komga_book_id (thumbnails
-    # + reader links). The FILENAME is the source of truth: Komga's numberSort is an
-    # unreliable running counter that TPBs/specials/dupes shift out of alignment (e.g.
-    # "Monstress #062" gets numberSort 83), so a numberSort-keyed map silently drops
-    # real issues. Parse the filename first; fall back to numberSort only when the name
-    # has no parseable issue number. On a clash, a filename-derived key always wins.
-    book_map: dict[float, str] = {}
-    book_src: dict[float, str] = {}  # 'name' (authoritative) vs 'sort' (fallback)
-    komga_books: list[dict] | None = None  # raw list, reused by enrich_trades below
-    if series.get("komga_series_id") and komga:
-        try:
-            komga_books = komga.get_books(series["komga_series_id"])
-            db.set_komga_book_versions(
-                {b["id"]: v for b in komga_books if (v := komga_book_version(b))}, DB_PATH)
-            for b in komga_books:
-                if b.get("media", {}).get("status") == "ERROR":
-                    continue
-                # Trashed twin trap: a re-grabbed issue leaves the old book
-                # soft-deleted in Komga (empty-trash is off-limits), it sorts
-                # first, and first-seen wins — the ghost keeps the book id.
-                if b.get("deleted"):
-                    continue
-                fn_num = _parse_issue_number(b.get("name", ""), series.get("title", ""))
-                if fn_num is not None:
-                    key, src = fn_num, "name"
-                    # Komga's own number for this book is unreliable — push our
-                    # filename-derived number back (locked) so Komga's labels AND
-                    # ordering (it sorts by numberSort) match reality. Only when it
-                    # disagrees, so we're not re-writing on every sync. Best-effort.
-                    if komga and b["metadata"].get("numberSort") != fn_num:
-                        num_str = str(int(fn_num)) if fn_num == int(fn_num) else str(fn_num)
-                        try:
-                            komga.set_book_number(b["id"], num_str, fn_num)
-                        except Exception as e:
-                            logger.warning(f"Komga renumber failed for book {b['id']}: {e}")
-                else:
-                    n = b["metadata"].get("numberSort")
-                    if n is None:
-                        continue
-                    key, src = float(n), "sort"
-                # A filename-derived ('name') key always wins. So only overwrite an
-                # existing entry when the incumbent is a 'sort' fallback AND the new one
-                # is authoritative; otherwise keep what's already there (authoritative
-                # incumbent stays, fallback-vs-fallback keeps the first seen).
-                if key in book_map and not (book_src[key] == "sort" and src == "name"):
-                    continue
-                book_map[key] = b["id"]
-                book_src[key] = src
-        except Exception:
-            pass
-
-    # Ownership = what's on disk, FULL STOP. book_map exists only to stamp
-    # komga_book_id for thumbnails — it is NOT an ownership source. No folder, or
-    # a folder that isn't there yet? Then nothing is owned until a real file lands
-    # (rescan_owned, below, is the sole authority and re-derives purely from disk).
+    # No Komga book map any more (2026-10-10): the cover comes from the file, the
+    # reader is Kometa's own, so an issue needs no Komga book id. The column stays;
+    # nothing writes it. Komga itself is read-only to us — no renumber push either.
+    # Ownership = what's on disk, FULL STOP. No folder, or a folder that isn't
+    # there yet? Then nothing is owned until a real file lands (rescan_owned,
+    # below, is the sole authority and re-derives purely from disk).
     # Komga's book list does NOT get a vote here — that's the rule.
     folder = series.get("folder_path")
     owned_numbers = (
@@ -331,7 +282,7 @@ def sync_one(series: dict, force: bool = False):
     if (locg_id or series.get("metron_series_id")) and (force or _trades_due(series)):
         try:
             from kometa.record import fill_trades
-            fill_trades(series, force=force, books=komga_books, path=DB_PATH)
+            fill_trades(series, force=force, path=DB_PATH)
         except Exception as e:
             logger.warning(f"Trades cache failed for '{series['title']}': {e}")
 
@@ -343,7 +294,7 @@ def sync_one(series: dict, force: bool = False):
     # --- Upsert merged issue list (one transaction — not a connection per issue) ---
     db.upsert_issue_status_many(
         [(series["id"], num, data["store_date"], num in owned_numbers,
-          book_map.get(num), data.get("image"), data.get("locg_issue_id"), data.get("metron_issue_id"))
+          None, data.get("image"), data.get("locg_issue_id"), data.get("metron_issue_id"))
          for num, data in issue_map.items()],
         path=DB_PATH,
     )
@@ -353,14 +304,6 @@ def sync_one(series: dict, force: bool = False):
     # is unavailable), so ownership never depends on the network. The folder was
     # already listed above — hand the numbers over instead of scanning it twice.
     rescan_owned(series, owned_numbers=owned_numbers if folder and os.path.isdir(folder) else None)
-
-    # Stamp Komga book ids onto the (now reconciled) issues. The upsert above only
-    # reached issues that came from a metadata source; a folder-only series (no
-    # CV/LOCG — e.g. a Noir Edition) builds its issue list purely from disk via
-    # rescan_owned, which knows nothing of book_map. Without this its owned issues get
-    # no komga_book_id → no thumbnail, no read link. UPDATE is a no-op for any book
-    # number that has no matching issue row.
-    db.set_komga_book_ids_bulk(series["id"], book_map, DB_PATH)
 
     db.mark_synced(series["id"], DB_PATH)
 
@@ -439,14 +382,9 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
         low = next((name for v, name in vol_entries if v == vol and _edition_keywords(name) == kws), None)
         return real_names.get(low, low) if low else None
 
+    # `books`: a Komga book list, only when a caller hands one over (nothing does
+    # since 2026-10-10 — the reader opens the file by name; komga_book_id is legacy)
     kbook_by_volkey, kbook_by_name = {}, {}
-    if books is None:
-        komga = _komga()
-        if komga and series.get("komga_series_id"):
-            try:
-                books = komga.get_books(series["komga_series_id"])
-            except Exception as e:
-                logger.warning(f"Komga trade-book map failed for '{series.get('title')}': {e}")
     for b in books or []:
         name = b.get("name", "")
         v = _parse_volume_number(name)

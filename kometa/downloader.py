@@ -1114,7 +1114,7 @@ def download_issue(
                 if already and counts_as_owned(already, title):
                     logger.info(f"Pack: #{format_issue_number(issue_number)} already on the shelf: {already}")
                     force_readable_tree(dest_dir)
-                    if extracted:
+                    if extracted and komga_scan_fn:
                         try:
                             komga_scan_fn()
                         except Exception as e:
@@ -1198,10 +1198,11 @@ def download_issue(
     # file/dir from the move or a cover-inject repackage stays invisible.
     force_readable_tree(dest_dir)
 
-    try:
-        komga_scan_fn()
-    except Exception as e:
-        logger.warning(f"Komga scan trigger failed: {e}")
+    if komga_scan_fn:
+        try:
+            komga_scan_fn()
+        except Exception as e:
+            logger.warning(f"Komga scan trigger failed: {e}")
 
     return dest_path
 

@@ -7,22 +7,6 @@ let _issueModalPollTimer = null;
 // feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
 const STAGGER_MS = 40;
 
-// "Open in Komga" links get handed to the BROWSER, not the server. _appConfig.komga_url
-// is the SERVER's view of Komga — a LAN IP frozen in settings. Hand that to a browser
-// sitting in New Zealand and it dies screaming into the void. So: keep Komga's scheme +
-// port from config, but swap the host for whatever host actually loaded THIS page. The
-// browser already proved it can reach that host (it's reading this from it), so Komga on
-// the same host answers too. LAN, Tailscale, localhost — the link follows you home.
-function komgaBase() {
-  try {
-    const u = new URL(_appConfig.komga_url);
-    u.hostname = location.hostname;
-    return u.origin;
-  } catch {
-    return `${location.protocol}//${location.hostname}:8585`;
-  }
-}
-
 const api = {
   get(url) {
     return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
@@ -179,12 +163,9 @@ function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// Komga cover URL for an issue. The ?v= is the file's version (mtime:size) — Komga
-// keeps a book id when the file behind it is swapped, so the bare URL kept a dead
-// coverless #015 alive in every browser for the 30 days we told them to cache it.
-// Kometa's own cover route for an owned issue — the file's cover first (validated
-// per request), Komga only as a fallback. Asking Komga's thumbnail directly kept
-// the OLD file's picture after a re-download until Komga's next scan (2026-10-08).
+// Kometa's own cover route for an issue: your chosen variant, else the file's own
+// first page (kept in the image store), else the catalogue's. Komga is out of the
+// chain unless Settings turns it on as a last resort (2026-10-10).
 function bookThumb(issue) {
   return `/api/series/${issue.tracked_series_id}/issues/${issue.number}/thumbnail`;
 }
@@ -1435,14 +1416,9 @@ function showArcIssueModal(readingOrder) {
     : covered ? '<span class="chip chip-collected">◆ Covered by a trade</span>'
     : '<span class="chip chip-missing">Missing</span>';
   const num = `#${esc(String(i.number ?? '?'))}`;
-  const canReadInKomga = owned && i.komga_book_id && _appConfig.komga_url;
-  const detailText = canReadInKomga
-    ? `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>.`
-    : `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
-       details, variants and to get it.`;
-  const footerAction = canReadInKomga
-    ? `<a class="btn btn-primary" href="${komgaBase()}/book/${esc(i.komga_book_id)}/read" target="_blank" rel="noopener">Open in Komga</a>`
-    : `<button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>`;
+  const detailText = `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
+       details, variants${owned ? ' and to read it' : ' and to get it'}.`;
+  const footerAction = `<button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>`;
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
@@ -1499,13 +1475,8 @@ function _issueTileHtml(s, issue) {
           : '');
     let inner = '';
     if (st === 'owned') {
-      // variant_cover (your chosen cover) wins — Komga's thumbnail is frozen until
-      // it re-scans the modified CBZ, so show the pick directly.
-      const thumbSrc = issue.variant_cover
-        ? issue.variant_cover
-        : issue.komga_book_id
-          ? bookThumb(issue)
-          : `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
+      // variant_cover (your chosen cover) wins; else the issue route serves the file's own
+      const thumbSrc = issue.variant_cover ? issue.variant_cover : bookThumb(issue);
       inner = `<div class="issue-tile-img">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
       </div>`;
@@ -1563,7 +1534,7 @@ let _detailPollId = null;        // the ONE live auto-populate poller (see rende
 // explicit refresh earns a new one (see the pull-to-refresh handler).
 const _autoPollDone = new Set();
 
-// Arc ownership is a resolved SNAPSHOT (matched against Komga's book list), not a
+// Arc ownership is a resolved SNAPSHOT (matched against the shelf), not a
 // live join against issue_status — so "Get this storyline" queues downloads but the
 // arc page's X/N counter sits frozen until something re-resolves it. Auto-fire once
 // per arc per session on page view (mirrors _autoSynced) so revisiting the page after
@@ -1844,12 +1815,12 @@ async function renderSeriesDetail(id) {
   const seriesBg = document.getElementById('series-bg');
   const seriesBgImg = document.getElementById('series-bg-img');
   // Random issue cover as the backdrop — different each visit, not always the same one.
-  // Build candidates off the SAME cover chain the grid tiles use (komga → LOCG art →
-  // per-issue thumbnail route), not the raw metron_image column. LOCG-only series (e.g.
-  // one-shots) never stamp metron_image, so keying off it alone left them with a dead
-  // /series/{id}/thumbnail fallback and a blank backdrop. The per-issue route self-heals.
+  // Build candidates off the SAME cover chain the grid tiles use (the file's own cover
+  // for an owned issue → catalogue art → per-issue thumbnail route), not the raw
+  // metron_image column. LOCG-only series (e.g. one-shots) never stamp metron_image, so
+  // keying off it alone left them with a blank backdrop. The per-issue route self-heals.
   const _covers = (s.issues || []).map(i =>
-    i.komga_book_id ? bookThumb(i)
+    i.owned ? bookThumb(i)
       : _metronArt(i) || `/api/series/${s.id}/issues/${i.number}/thumbnail`);
   const _bg = _covers.length
     ? _covers[Math.floor(Math.random() * _covers.length)]
@@ -2099,12 +2070,11 @@ function _tradeTileHtml(t) {
 
 function _tradeFooterAction(t, locgId) {
   if (t.owned) {
-    // Two separate facts: owned (on disk) and whether Komga can read it.
-    if (t.komga_book_id && _appConfig.komga_url) {
-      const url = `${komgaBase()}/book/${esc(t.komga_book_id)}/read`;
-      return `<a class="btn btn-primary" href="${url}" target="_blank" rel="noopener">Open in Komga</a>`;
+    // On disk, and the shelf knows the file → Kometa's own reader; else just the fact.
+    if (t.book_id) {
+      return `<button class="btn btn-primary" onclick="closeModal();navigate('read', {book: ${t.book_id}})">Read</button>`;
     }
-    return `<span class="trade-owned-note">On disk${_appConfig.komga_url ? ' · not yet in Komga' : ''}</span>`;
+    return `<span class="trade-owned-note">On disk</span>`;
   }
   return `<button class="btn btn-primary" id="trade-dl-btn" onclick="tradeDownload('${esc(locgId)}')">Download</button>`;
 }
@@ -2855,7 +2825,7 @@ function confirmDelete(id) {
     <div class="confirm-body">
       Remove <strong style="color:var(--tp)">${esc(title)}</strong>${hasFolder ? ` and its folder${files ? ` (${files} file${files === 1 ? '' : 's'})` : ''}` : ''}?
       <div class="confirm-note">${hasFolder
-        ? 'The folder moves to the bin and is deleted for good after 7 days — Undo on the toast until then. Komga will lose these books on its next scan. To stop fetching a series but keep what you have, turn its pull list off instead.'
+        ? 'The folder moves to the bin and is deleted for good after 7 days — Undo on the toast until then. To stop fetching a series but keep what you have, turn its pull list off instead.'
         : 'Nothing on disk belongs to it; it’s simply forgotten.'}</div>
     </div>
     <div class="modal-footer">
@@ -3605,13 +3575,19 @@ async function renderSettings() {
       </div>
       <div>
         <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga">
-          ${_settingsSectionHead('Komga', 'reader', 't-komga', cfg.komga_enabled)}
+          ${_settingsSectionHead('Komga', 'optional · legacy', 't-komga', cfg.komga_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
               ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url, { test: { cardId: 'komga', configured: komgaCfg } })}
               ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
               ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
               ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
+              <div class="settings-help" id="komga-harvest-status">${_komgaHarvestLine(cfg)}</div>
+              <div class="settings-row settings-row-toggle">
+                <span>Komga thumbnails as a last-resort cover</span>
+                ${_settingsToggle('t-komga-covers', cfg.komga_covers, 'Komga covers as a last resort')}
+              </div>
+              <div class="settings-help">Kometa reads, covers and tracks on its own now. Komga is only read from: a harvest copies its summaries, credits, release dates, genres and posters into Kometa’s record where no catalogue has answered yet. Nothing is written to Komga.</div>
             </div>
           </div></div>
         </div>
@@ -3668,6 +3644,29 @@ const _SETTINGS_FIELDS = {
 };
 
 const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', locg: 'locg' };
+
+// Komga harvest: one tap pulls what Komga knows into the record (kometa/harvest_komga.py).
+function _komgaHarvestLine(cfg) {
+  if (!(cfg.komga_url && cfg.komga_user)) return 'Not connected.';
+  return `Harvest what Komga knows <button class="btn-link" onclick="_komgaHarvestNow(this)">harvest now</button>`;
+}
+async function _komgaHarvestNow(btn) {
+  btn.disabled = true; btn.textContent = 'harvesting…';
+  try {
+    await api.post('/api/komga/harvest', {});
+    const poll = setInterval(async () => {
+      try {
+        const st = await api.get('/api/komga/harvest');
+        if (st.running) return;
+        clearInterval(poll);
+        const l = st.last || {};
+        btn.disabled = false; btn.textContent = 'harvest now';
+        showToast(l.error ? `Komga harvest failed: ${l.error}`
+          : `Komga harvest: ${l.series_seen || 0} series read · ${l.series || 0} series facts · ${l.issues || 0} issues · ${l.posters || 0} posters`, l.error ? 'error' : undefined);
+      } catch { clearInterval(poll); btn.disabled = false; btn.textContent = 'harvest now'; }
+    }, 2000);
+  } catch (e) { btn.disabled = false; btn.textContent = 'harvest now'; _whisper('komga', 'couldn’t start', true); }
+}
 
 // LOCG is a filler: what it owes us waits in a queue (kometa/topup.py) and
 // drains while a pass is live. The card says which state we're in and what's waiting.
@@ -3766,6 +3765,7 @@ function _settingsSectionHead(title, tag, toggleId, on) {
 // (gates the search cascade for usenet/torrent, sources.komga() for komga).
 const _SOURCE_TOGGLES = {
   't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
+  't-komga-covers': { key: 'komga_covers',   section: null,            label: 'Komga covers as a last resort' },
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
@@ -4070,10 +4070,10 @@ async function showIssueModal(seriesId, number, opts = {}) {
 
   // variant_cover = your saved variant pick (only present on not-yet-downloaded
   // issues); show it so an upcoming issue reflects the cover you chose. Owned issues
-  // carry no pref (it's baked into the CBZ already) and fall through to Komga.
+  // carry no pref (it's baked into the CBZ already): the file's own cover, via the route.
   const imgSrc = issue.variant_cover
     ? issue.variant_cover
-    : issue.komga_book_id
+    : st === 'owned'
       ? esc(bookThumb(issue))
       : (_metronArt(issue)
           // same server-side fallback chain the grid tiles use — never show the
@@ -4107,11 +4107,8 @@ async function showIssueModal(seriesId, number, opts = {}) {
 
   let footerAction = '';
   if (st === 'owned') {
-    // Kometa's own reader first; Komga stays as the fallback until it's retired.
-    const komga = issue.komga_book_id && _appConfig.komga_url
-      ? `<a class="btn btn-ghost komga-read-link" href="${komgaBase()}/book/${esc(issue.komga_book_id)}/read" target="_blank" rel="noopener">Komga</a>`
-      : '';
-    footerAction = `${komga}<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
+    // Kometa's own reader. (The Komga link went 2026-10-10.)
+    footerAction = `<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
     // Opened from a book card (On Deck): the same modal, with the card's
     // actions in the footer — the series behind it, Not now, read state.
     if (opts.book) {
@@ -4182,29 +4179,6 @@ async function showIssueModal(seriesId, number, opts = {}) {
     }).catch(() => {});
   }
 
-  // Owned but no Komga book id? The id is stamped lazily server-side (the
-  // thumbnail route's self-heal, or Komga just finished scanning a fresh
-  // download) — often AFTER this page's issue list was fetched, so the cached
-  // copy is one render behind. Refetch once and patch the reader link in
-  // place instead of making the user reload to get what they already own.
-  if (st === 'owned' && !issue.komga_book_id && _appConfig.komga_url) {
-    api.get(`/api/series/${seriesId}`).then(fresh => {
-      const fi = fresh.issues?.find(i => i.number === number);
-      if (!fi?.komga_book_id) return;
-      issue.komga_book_id = fi.komga_book_id;   // heal the cached copy too
-      if (_issueVariantSeriesId !== seriesId || _issueVariantNumber !== number) return;
-      const footer = document.getElementById('issue-modal-footer');
-      if (footer && !footer.querySelector('.komga-read-link')) {
-        const a = document.createElement('a');
-        a.className = 'btn btn-ghost komga-read-link';
-        a.href = `${komgaBase()}/book/${fi.komga_book_id}/read`;
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.textContent = 'Komga';
-        footer.insertBefore(a, footer.querySelector('.btn-primary'));
-      }
-    }).catch(() => {});
-  }
 
   // Fetch issue details async from LOCG (keyless). Credits arrive as flat
   // [{role, name}] ready for _renderIssueDetails.

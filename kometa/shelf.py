@@ -123,6 +123,28 @@ def scan_shelf(root: str | None = None) -> dict:
         _scan_lock.release()
 
 
+def index_series_folder(series_id: int, path=None) -> int:
+    """One series' folder into the shelf, the moment a file lands in it — the
+    whole-shelf walk is for the clock. Adds and refreshes; never prunes (that
+    needs the full walk's stamp). Returns how many files the folder holds."""
+    path = path or DB_PATH
+    s = db.get_series_by_id(series_id, path)
+    folder = (s or {}).get("folder_path")
+    if not folder or not os.path.isdir(folder):
+        return 0
+    files = _comic_files(folder)
+    shelf_id = db.shelf_id_for_series(series_id, path)
+    if shelf_id is None:
+        if not files:
+            return 0
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        shelf_id = db.upsert_shelf_series(folder, s["title"], os.path.basename(os.path.dirname(folder)), series_id,
+                                          len(files), stamp, path)
+    db.index_books([(fp, size, mtime, parse_issue_number(name, s["title"]), shelf_id, series_id)
+                    for fp, size, mtime, name in files], path)
+    return len(files)
+
+
 def scan_shelf_safe():
     try:
         scan_shelf()

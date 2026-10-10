@@ -81,3 +81,58 @@ def test_generate_for_path_keys_by_the_file_name(store, tmp_path):
     sid, books = _owned(store, tmp_path, numbers=(7,))
     assert cv.generate_for_path(books[0]["path"], sid, store) == cv.file_key(sid, 7)
     assert cv.generate_for_path(str(tmp_path / "Saga" / "nothing.cbz"), sid, store) is None
+
+
+# --- the issue route's order: variant → file → catalogue → … → Komga only when asked ------
+@pytest.fixture
+def chain(store, monkeypatch):
+    import kometa.thumbnails as th
+    monkeypatch.setattr(th, "DB_PATH", store)
+    asked = {"komga": 0, "catalogue": []}
+
+    class _K:
+        base_url = "http://komga"
+
+    monkeypatch.setattr(th, "_komga", lambda: (asked.__setitem__("komga", asked["komga"] + 1) or _K()))
+    monkeypatch.setattr(th, "_komga_thumb", lambda k, url, key: th._jpeg(_jpeg(100, 150)))
+    monkeypatch.setattr(th, "_image_or_none", lambda url, *a, **k: asked["catalogue"].append(url) or th._jpeg(_jpeg(300, 450)))
+    monkeypatch.setattr(im, "serve", lambda *a, **k: None)
+    return th, asked
+
+
+def _with_catalogue(db_path, sid, n, komga_book="B1"):
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE issue_status SET metron_image = 'https://cat/cover.jpg', komga_book_id = ? "
+                     "WHERE tracked_series_id = ? AND number = ?", (komga_book, sid, n))
+
+
+def test_the_file_cover_beats_the_catalogue_for_an_owned_issue(chain, store, tmp_path):
+    th, asked = chain
+    sid, _ = _owned(store, tmp_path, numbers=(1,))
+    _with_catalogue(store, sid, 1)
+    r = th.issue_thumbnail(sid, 1.0)
+    assert r.headers["X-Kometa-Source"] == "file" and asked["catalogue"] == [] and asked["komga"] == 0
+    assert im.local_path(cv.file_key(sid, 1), store)                           # kept for next time
+
+
+def test_a_cut_short_file_cover_falls_through_to_the_catalogue(chain, store, tmp_path):
+    th, asked = chain
+    sid, _ = _owned(store, tmp_path, numbers=(1,), truncated=(1,))
+    _with_catalogue(store, sid, 1)
+    r = th.issue_thumbnail(sid, 1.0)
+    assert r.headers["X-Kometa-Source"] == "catalogue" and asked["catalogue"] == ["https://cat/cover.jpg"]
+    assert im.get(cv.file_key(sid, 1), store)["failed_at"]                     # remembered, not retried per render
+    assert asked["komga"] == 0
+
+
+def test_komga_is_not_asked_unless_the_flag_is_on(chain, store, tmp_path, monkeypatch):
+    th, asked = chain
+    sid, _ = _owned(store, tmp_path, numbers=(1,), truncated=(1,))
+    _with_catalogue(store, sid, 1)
+    with db._connect(store) as conn:                                            # no catalogue art either
+        conn.execute("UPDATE issue_status SET metron_image = NULL WHERE tracked_series_id = ?", (sid,))
+    assert th.issue_thumbnail(sid, 1.0).status_code == 404 and asked["komga"] == 0
+    th._thumb_misses.clear()
+    db.set_config({"komga_covers": "1"}, store)
+    r = th.issue_thumbnail(sid, 1.0)
+    assert r.status_code == 200 and r.headers["X-Kometa-Source"] == "komga" and asked["komga"] == 1

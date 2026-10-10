@@ -367,7 +367,6 @@ class TestStaleKomgaLink:
 
         assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
         issues = db.get_issues_for_series(sid, dbp)
-        assert [i["komga_book_id"] for i in issues] == ["B1"]
 
     def test_dead_id_with_no_match_is_cleared_not_kept(self, tmp_path, monkeypatch):
         komga = _FakeKomga([{"id": "OTHER", "name": "Saga", "url": "/comics/Image Comics/Saga"}])
@@ -399,7 +398,6 @@ class TestStaleKomgaLink:
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
         assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
-        assert [i["komga_book_id"] for i in db.get_issues_for_series(sid, dbp)] == ["B1"]
 
     def test_live_id_is_left_alone(self, tmp_path, monkeypatch):
         folder = str(tmp_path / "Marvel Comics" / "Black Cat")
