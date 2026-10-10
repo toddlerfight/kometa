@@ -307,3 +307,20 @@ def test_an_annual_sharing_a_number_never_stands_in_for_the_issue(db_path, tmp_p
     with db._connect(db_path) as c:
         first = c.execute("SELECT path FROM books WHERE id = ?", (books[0]["id"],)).fetchone()[0]
     assert "Annual" not in first
+
+
+def test_a_list_with_nothing_owned_wears_its_first_catalogue_cover(db_path, monkeypatch):
+    lid = rl.save_list("Infinity", [{"series": "Infinity Gauntlet", "number": "1", "volume": "1991"},
+                                    {"series": "Infinity Gauntlet", "number": "2", "volume": "1991"}], "cbl", None, db_path)
+    asked = []
+    monkeypatch.setattr(rl, "fill_covers", lambda list_id, path=None, **kw: asked.append(list_id))
+    rl._cover_asked.discard(lid)
+    card = next(c for c in rl.get_lists(db_path) if c["id"] == lid)
+    assert card["cover_book_id"] is None and card["cover"] is None
+    import time; time.sleep(0.2)
+    assert asked == [lid]                                   # no cover yet: the catalogue is asked once, behind
+    items = rl.get_items(lid, db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE reading_list_items SET cover_url = 'https://x/ig2.jpg' WHERE id = ?", (items[1]["id"],))
+    card = next(c for c in rl.get_lists(db_path) if c["id"] == lid)
+    assert card["cover"] == f"/api/readlists/{lid}/items/{items[1]['id']}/cover"

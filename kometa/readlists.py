@@ -231,8 +231,35 @@ def get_lists(path=None) -> list[dict]:
             continue
         first = next((b for e in res["entries"] for b in e["books"]), None)
         r.update(total=res["total"], owned=res["owned"], read=res["read"], books=res["books"],
-                 books_read=res["books_read"], books_reading=res["books_reading"], cover_book_id=first["id"] if first else None)
+                 books_read=res["books_read"], books_reading=res["books_reading"], cover_book_id=first["id"] if first else None,
+                 cover=None)
+        if not first:
+            # nothing of it on the shelf yet (a list built to Get): the first
+            # entry's catalogue cover, else ask the catalogue once, behind
+            r["cover"] = _first_catalogue_cover(r["id"], path)
     return rows
+
+
+_cover_asked: set = set()
+
+
+def _first_catalogue_cover(list_id: int, path) -> str | None:
+    with db._connect(path) as conn:
+        hit = conn.execute("""SELECT id FROM reading_list_items WHERE list_id = ? AND cover_url IS NOT NULL AND cover_url != ''
+            ORDER BY position LIMIT 1""", (list_id,)).fetchone()
+    if hit:
+        return f"/api/readlists/{list_id}/items/{hit[0]}/cover"
+    if list_id not in _cover_asked:
+        _cover_asked.add(list_id)                     # once per process; misses are cached per item anyway
+        import threading
+
+        def run():
+            try:
+                fill_covers(list_id, path)
+            except Exception as e:
+                logger.info(f"Reading list {list_id}: card cover fill skipped: {e}")
+        threading.Thread(target=run, daemon=True).start()
+    return None
 
 
 def get_items(list_id: int, path=None) -> list[dict]:

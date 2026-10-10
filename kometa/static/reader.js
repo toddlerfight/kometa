@@ -928,7 +928,8 @@ async function renderReadLists() {
     const pct = books ? Math.round(read / books * 100) : 0;
     const color = gaps ? 'var(--amb)' : (total ? 'var(--pri)' : 'var(--tq)');
     const go = `navigate('readlist', {id: ${l.id}})`;
-    const cover = l.cover_book_id ? `<img class="series-card-cover" src="/api/books/${l.cover_book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
+    const coverSrc = l.cover_book_id ? `/api/books/${l.cover_book_id}/cover` : (l.cover ? _ext(l.cover) : '');
+    const cover = coverSrc ? `<img class="series-card-cover" src="${esc(coverSrc)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
       : `<div class="series-card-cover rl-nocover"></div>`;
     const sub = [books ? `${pct}% READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : ''].filter(Boolean).join(' · ');
     return `
