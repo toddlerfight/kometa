@@ -82,7 +82,6 @@ def test_the_hunt_judges_each_pack_on_its_file_list_and_skips_editions_and_films
         return NZB.encode(), ""
     pr = _Prowlarr(rows)
     hunt = lp.find_packs(swlist, db_path, prowlarr=pr, fetch=fetch)
-    assert all(c == lp.COMICS_CATEGORIES for _, c in pr.asked)
     assert set(fetched) == {"http://prowlarr/t1", "http://prowlarr/n1"}          # the omnibus and the film never read
     by = {c["title"]: c["covered"] for c in hunt["candidates"]}
     assert by == {"Secret Wars (Story Arc) (2015-2016)": 14, "Old Man Logan (2015) 01-05": 2}

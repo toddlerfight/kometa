@@ -24,7 +24,7 @@ from kometa.naming import norm_key, parse_issue_number
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
-COMICS_CATEGORIES = (7030,)                 # Newznab 'Books/Comics'; Prowlarr maps every indexer onto it
+COMICS_CATEGORIES = (7030,)                 # Newznab 'Books/Comics' — NOT used to filter: indexers don't tag consistently
 MIN_COVER = 5                               # a pack must fill this many gaps…
 MIN_SHARE = 0.30                            # …or this share of them
 MAX_INSPECT = 8                             # file lists fetched per hunt (each is one indexer grab of metadata)
@@ -245,7 +245,9 @@ def find_packs(list_id: int, path=None, prowlarr=None, fetch=None, magnet_files=
         return 2 if base and base in k else (1 if any(rk in k for rk in run_keys) else 0)
     seen, cands = set(), []
     for q in qs:
-        for c in pr.search(q, categories=COMICS_CATEGORIES):
+        # no category filter: indexers file event packs anywhere ('Secret Wars
+        # (Story Arc)' isn't tagged Comics on TPB) — the name rules below screen
+        for c in pr.search(q):
             c = dict(c, title=html.unescape(c.get("title") or ""))
             t = c["title"]
             key = (c.get("protocol"), norm_key(t))
