@@ -211,25 +211,29 @@ def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None)
     for lst in _resolved_lists(path):
         last = max((b["progress"]["updated_at"] for e in lst["entries"] for b in e["books"]
                     if b["progress"] and b["progress"].get("updated_at")), default=None)
-        if last and last >= since and lst.get("continue"):
+        if last and last >= since:
             scored.append((last, lst))
     scored.sort(key=lambda x: x[0], reverse=True)
-    rows = []
+    rows, shown = [], set()
     with db._connect(path) as conn:
-        for _, lst in scored[:LIST_ROWS]:
-            cards, started = [], False
-            for e in lst["entries"]:
-                for b in (e["books"] or [None]):
-                    if b is None:
-                        if started:
-                            cards.append({"kind": "gap", "series": e["series"], "number": e["number"],
-                                          "label": f"{e['series']} #{e['number']}" if e.get("number") else e["series"],
-                                          "cover": e.get("cover"), "position": e["position"], "list_id": lst["id"]})
-                        continue
-                    if b["id"] == lst["continue"]:
-                        started = True
-                    if not started or (b["progress"] and b["progress"]["completed"]):
-                        continue
+        for _, lst in scored:
+            if len(rows) >= LIST_ROWS:
+                break
+            # where you ARE in the list: the book you touched last. Unfinished →
+            # start on it; finished → start after it. (The first unfinished
+            # entry is wrong for a 100-entry list you dipped into at #60.)
+            flat = [(e, b) for e in lst["entries"] for b in (e["books"] or [None])]
+            touched = [(i, b) for i, (e, b) in enumerate(flat)
+                       if b and b["progress"] and b["progress"].get("updated_at")]
+            i_last, b_last = max(touched, key=lambda t: t[1]["progress"]["updated_at"])
+            start = i_last if not b_last["progress"]["completed"] else i_last + 1
+            cards = []
+            for e, b in flat[start:]:
+                if b is None:
+                    cards.append({"kind": "gap", "series": e["series"], "number": e["number"],
+                                  "label": f"{e['series']} #{e['number']}" if e.get("number") else e["series"],
+                                  "cover": e.get("cover"), "position": e["position"], "list_id": lst["id"]})
+                elif not (b["progress"] and b["progress"]["completed"]) and b["id"] not in shown:
                     row = conn.execute("SELECT * FROM books WHERE id = ?", (b["id"],)).fetchone()
                     if row and os.path.exists(row["path"]):
                         c = _card(conn, row, {"page": b["progress"]["page"]} if b["progress"] else None,
@@ -238,8 +242,9 @@ def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None)
                         cards.append(c)
                 if len(cards) >= ROW_LIMIT:
                     break
-            if len(cards) >= DISCOVERY_MIN:
-                rows.append({"list_id": lst["id"], "name": lst["name"], "total": lst["total"], "cards": cards[:ROW_LIMIT]})
+            if len([c for c in cards if c["kind"] == "book"]) and len(cards) >= DISCOVERY_MIN:
+                rows.append({"list_id": lst["id"], "name": lst["name"], "total": lst["total"], "cards": cards})
+                shown.update(c["book_id"] for c in cards if c["kind"] == "book")
                 seen.update(_skey(c.get("series_id"), c.get("shelf_id")) for c in cards if c["kind"] == "book")
     return rows
 
