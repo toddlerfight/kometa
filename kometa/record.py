@@ -29,6 +29,9 @@ TRICKLE_LIMIT = 25            # per tick, under Metron's 30/min with the other j
 TRICKLE_MINUTES = 10
 
 
+_relabelled: dict = {}
+
+
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS issue_record (
@@ -49,6 +52,13 @@ def ensure_tables(path=None):
             # when the cover list was last asked for — separate from the details'
             # clock, since variants keep landing for weeks after release
             conn.execute("ALTER TABLE issue_record ADD COLUMN variants_at TEXT")
+        if not _relabelled.get(path or DB_PATH):
+            # once per process: covers-only placeholders written as 'partial' before
+            # 2026-10-10 read as finished details and were never asked again
+            conn.execute("""UPDATE issue_record SET fill_state = 'variants'
+                WHERE fill_state = 'partial' AND variants_at IS NOT NULL AND COALESCE(desc, '') = ''
+                  AND COALESCE(credits_json, '[]') IN ('', '[]')""")
+            _relabelled[path or DB_PATH] = True
         scols = [r[1] for r in conn.execute("PRAGMA table_info(series_record)")]
         for col in ("genres_json", "tags_json"):
             if col not in scols:
@@ -121,6 +131,10 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
     ensure_tables(path)
     issue = issue or {}
     with db._connect(path) as conn:
+        # a variant list already fetched outlives a details write: REPLACE used to
+        # wipe it and its stamp, and the LOCG sweep then fetched it all over again
+        kept = conn.execute("SELECT covers_json, variants_at FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                            (series_id, number)).fetchone()
         conn.execute("""INSERT OR REPLACE INTO issue_record
             (tracked_series_id, number, desc, credits_json, arcs_json, covers_json, store_date, cover_date, page_count,
              price, isbn, metron_issue_id, locg_issue_id, cv_issue_id, source, fetched_at, fill_state)
@@ -130,6 +144,9 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
                       data.get("store_date") or issue.get("store_date"), data.get("cover_date"), data.get("page_count"),
                       data.get("price"), data.get("isbn"), issue.get("metron_issue_id"), issue.get("locg_issue_id"),
                       issue.get("cv_issue_id"), source, _now(), state))
+        if kept and kept["variants_at"]:
+            conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
+                         (kept["covers_json"], kept["variants_at"], series_id, number))
     return get_issue(series_id, number, path)
 
 
@@ -143,6 +160,8 @@ def _fresh(row: dict | None) -> bool:
         return False                                            # shown, but a catalogue is still owed an ask
     if row.get("fill_state") == "miss":
         return age < RECORD_MISS_TTL_DAYS
+    if row.get("fill_state") == "variants":
+        return False                                            # covers only: the details are still owed
     return age < RECORD_TTL_DAYS
 
 
@@ -237,6 +256,7 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE (s.kind IS NULL OR s.kind != 'arc')
               AND (r.tracked_series_id IS NULL
+                   OR r.fill_state = 'variants'
                    OR (r.fill_state = 'miss' AND r.fetched_at < ?)
                    -- a stopgap row (file tags / Komga): ask now when there's a catalogue id to ask,
                    -- else look again in a week in case one has been matched since
@@ -422,7 +442,7 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
         else:
             conn.execute("""INSERT INTO issue_record (tracked_series_id, number, desc, credits_json, arcs_json, covers_json,
                 store_date, metron_issue_id, locg_issue_id, source, fetched_at, fill_state, variants_at)
-                VALUES (?, ?, '', '[]', '[]', ?, ?, ?, ?, ?, ?, 'partial', ?)""",
+                VALUES (?, ?, '', '[]', '[]', ?, ?, ?, ?, ?, ?, 'variants', ?)""",
                          (series_id, number, json.dumps(covers), issue.get("store_date"), issue.get("metron_issue_id"),
                           issue.get("locg_issue_id"), "metron" if issue.get("metron_issue_id") else "locg", _now(), _now()))
     return covers

@@ -61,7 +61,8 @@ def _add(idx: dict, name: str, role: str, sid: int, pid):
     p["names"][name] = p["names"].get(name, 0) + 1
     if pid and not p["id"]:
         p["id"] = int(pid)
-    p["series"].setdefault(sid, set()).add(_role(role))
+    roles = {_role(r) for r in re.split(r"\s*[,/&]\s*", role or "") if r.strip()} or {""}   # LOCG: 'Story, Writer'
+    p["series"].setdefault(sid, set()).update(r for r in roles if r)
 
 
 def build(path=None) -> dict:

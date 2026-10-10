@@ -42,7 +42,7 @@ def test_metron_first_then_locg_merged_by_name_only_when_open(db_path):
     assert [c["name"] for c in covers] == ["Cover A (Main)", "1:25 Variant", "Forbidden Planet Exclusive"]
     assert covers[2]["source"] == "locg" and covers[2]["type"] == "store exclusive" and covers[2]["large"] == "https://s3/78l.jpg"
     row = rec.get_issue(sid, 1.0, db_path)
-    assert row["variants_at"] and row["fill_state"] == "partial" and len(row["covers"]) == 3
+    assert row["variants_at"] and row["fill_state"] == "variants"   # covers only: details still owed and len(row["covers"]) == 3
     # fresh: not asked again; a settled issue (2017) is good for 30 days
     assert rec.fill_variants(sid, 1.0, db_path, metron=m, locg=l, locg_open=lambda: True) == covers and asked == ["metron", "metron", "locg"]
 

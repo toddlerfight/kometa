@@ -47,7 +47,7 @@ def candidates(path=None, limit: int = BUDGET) -> list[dict]:
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE i.owned = 1 AND i.locg_issue_id IS NOT NULL AND i.locg_issue_id != ''
               AND i.metron_issue_id IS NULL
-              AND (s.kind IS NULL OR s.kind != 'arc') AND r.variants_at IS NULL
+              AND (s.kind IS NULL OR s.kind != 'arc') AND (r.variants_at IS NULL OR r.fill_state = 'variants')
             ORDER BY s.on_pull_list DESC, i.store_date DESC, i.tracked_series_id, i.number
             LIMIT ?""", (limit,))]
 
@@ -63,7 +63,7 @@ def pending(path=None) -> int:
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE i.owned = 1 AND i.locg_issue_id IS NOT NULL AND i.locg_issue_id != ''
               AND i.metron_issue_id IS NULL
-              AND (s.kind IS NULL OR s.kind != 'arc') AND r.variants_at IS NULL""").fetchone()[0]
+              AND (s.kind IS NULL OR s.kind != 'arc') AND (r.variants_at IS NULL OR r.fill_state = 'variants')""").fetchone()[0]
 
 
 def done_today() -> int:
@@ -98,26 +98,36 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
             break
         if out["requests"]:
             sleep(REQUEST_GAP_S + random.uniform(0, 0.5))
-        out["requests"] += 1
-        try:
-            got = fv(sid, n, issue)
-        except Exception as e:
-            out["stopped"] = f"refused: {e}"; break
-        if not is_open() or got is None:            # the client paused itself, or nothing could be asked
-            out["stopped"] = "refused"; break
-        out["variants"] += 1
+        known = record.get_issue(sid, n, path)
+        if known and known.get("variants_at"):
+            got = known.get("covers") or []                 # covers already here: details only this time
+        else:
+            out["requests"] += 1
+            try:
+                got = fv(sid, n, issue)
+            except Exception as e:
+                out["stopped"] = f"refused: {e}"; break
+            if not is_open() or got is None:        # the client paused itself, or nothing could be asked
+                out["stopped"] = "refused"; break
+            out["variants"] += 1
         # details too, when LOCG is the only catalogue for this issue and the record is thin
         if not issue.get("metron_issue_id") and out["requests"] < budget:
             row = record.get_issue(sid, n, path)
-            if not row or row.get("fill_state") != "full":
+            # the variant fetch just above may have made a covers-only row: that is
+            # not the details, so ask (it used to look done and the ask was skipped)
+            if not row or row.get("fill_state") in ("variants", None) or (not row.get("desc") and not row.get("credits")):
                 sleep(REQUEST_GAP_S + random.uniform(0, 0.5))
                 out["requests"] += 1
                 try:
                     r = fi(sid, n, issue)
                 except Exception as e:
                     out["stopped"] = f"refused: {e}"; break
-                if not is_open() or r is None:
+                if not is_open():
                     out["stopped"] = "refused"; break
+                if r is None:
+                    # LOCG answered but had nothing: say so on the row, or this
+                    # issue heads the queue and stalls the sweep every tick
+                    record.write_issue(sid, n, {}, "locg", "partial", issue, path)
                 out["details"] += 1
     _count(out["requests"])
     logger.info(f"LOCG sweep: {out['requests']} requests, {out['variants']} variant lists, {out['details']} details"
