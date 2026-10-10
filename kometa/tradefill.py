@@ -124,8 +124,16 @@ def edition(metron_issue_id: int, path=None, get=None) -> dict:
     return out
 
 
+def ekey(e: dict) -> str:
+    """One key for an edition from either catalogue: Metron issue id, or 'l<LOCG id>'."""
+    return str(e["metron_issue_id"]) if e.get("metron_issue_id") else f"l{e.get('locg_id')}"
+
+
 def edition_title(e: dict) -> str:
-    """'Fantastic Four Vol. 2: Unthinkable' — Metron numbers a TPB series by volume."""
+    """'Fantastic Four Vol. 2: Unthinkable' — Metron numbers a TPB series by volume;
+    an LOCG edition carries its own full title."""
+    if e.get("display"):
+        return e["display"]
     vol = str(e.get("number") or "")
     vol = vol[:-2] if vol.endswith(".0") else vol
     base = e.get("series_name") or "Trade"
@@ -289,6 +297,80 @@ def lookup(series_id: int, number: float, path=None, budget: int = DETAIL_BUDGET
     return res
 
 
+# --- 2b. LOCG's 'Collecting …' line, for what Metron doesn't hold ---------------------
+LOCG_PER_PASS = 5             # LOCG trade pages read per pass, only while LOCG is open
+_COLLECT_AT = re.compile(r"\b(?:collect(?:s|ing|ed)?|reprint(?:s|ing)?)\b\s*:?\s*", re.I)
+_GROUP = re.compile(r"(?P<name>[A-Za-z][A-Za-z0-9:'’&!.\- ]*?)\s*(?:\((?P<year>\d{4})\))?\s*#?\s*"
+                    r"(?P<nums>\d+(?:\.\d+)?(?:\s*(?:[-–]|,|&|\band\b)\s*#?\s*\d+(?:\.\d+)?)*)", re.I)
+
+
+def parse_collects(desc: str) -> list[dict]:
+    """'Collects Fantastic Four (1998) #60-70, 500-502.' →
+    [{series: 'Fantastic Four', year: 1998, number: 60.0}, …]."""
+    m = _COLLECT_AT.search(desc or "")
+    if not m:
+        return []
+    seg = re.split(r"(?<!\d)\.(?!\d)|\n", desc[m.end():], maxsplit=1)[0]
+    out = []
+    for g in _GROUP.finditer(seg):
+        name = re.sub(r"^(?:and|&|,)\s+", "", g.group("name").strip(" ,;&"), flags=re.I).strip()
+        if not name or len(name) < 2:
+            continue
+        nums = []
+        for part in re.split(r"\s*(?:,|&|\band\b)\s*", g.group("nums"), flags=re.I):
+            part = part.replace("#", "").strip()
+            rng = re.match(r"^(\d+)\s*[-–]\s*(\d+)$", part)
+            if rng:
+                a, b = int(rng.group(1)), int(rng.group(2))
+                if 0 <= b - a <= 200:
+                    nums.extend(float(n) for n in range(a, b + 1))
+            elif re.match(r"^\d+(?:\.\d+)?$", part):
+                nums.append(float(part))
+        year = int(g.group("year")) if g.group("year") else None
+        out.extend({"series": name.title() if name.isupper() else name, "year": year, "number": n} for n in nums)
+    return out
+
+
+def locg_editions(series_id: int, target: dict, path=None, budget: int = LOCG_PER_PASS, details=None) -> dict:
+    """The run's own LOCG trades whose 'Collecting' line names target.
+    → {candidates, complete} — complete=False while LOCG is shut or the budget ran out."""
+    path = path or DB_PATH
+    from kometa import locg_client
+    cached = db.get_trades(series_id, path)
+    trades = [t for t in (cached["trades"] if cached else []) if str(t.get("locg_id") or "").isdigit()]
+    if not trades:
+        return {"candidates": [], "complete": True}
+    yr = int(target.get("year") or 0)
+    trades.sort(key=lambda t: (abs(int((t.get("store_date") or "9999")[:4]) - yr) if yr else 0,
+                               FORMAT_RANK.get(t.get("format"), 9)))
+    found, spent, complete = [], 0, True
+    for t in trades:
+        lid = str(t["locg_id"])
+        d = db.get_issue_details_cache(lid, path)
+        if d is None:
+            if details is None and locg_client.locg_paused():
+                complete = False
+                break
+            if spent >= budget:
+                complete = False
+                break
+            spent += 1
+            try:
+                d = (details or locg_client.get_issue_details_anon)(lid)
+            except Exception as e:
+                logger.info(f"Trade fill: LOCG details for {lid} skipped: {e}")
+                complete = False
+                break
+            db.set_issue_details_cache(lid, d, path)
+        rps = parse_collects((d or {}).get("desc") or "")
+        e = {"metron_issue_id": None, "locg_id": lid, "series_name": t.get("title"), "title": None,
+             "number": str(t.get("vol") or ""), "format": t.get("format") or "TPB", "store_date": t.get("store_date"),
+             "cover": t.get("cover"), "reprints": rps, "display": t.get("title")}
+        if reprints_issue(e, target):
+            found.append(e)
+    return {"candidates": found, "complete": complete}
+
+
 # --- 3. the proposal -------------------------------------------------------------------
 def _span(numbers: list[float]) -> str:
     """[67, 68, 69, 70, 500] → '#67–70, #500'."""
@@ -304,22 +386,25 @@ def _span(numbers: list[float]) -> str:
     return ", ".join(out)
 
 
-def choose(rows: list[dict], cands_by_row: dict[int, list[dict]], rejected: set[int] = frozenset()) -> tuple[dict, list[dict]] | None:
+def choose(rows: list[dict], cands_by_row: dict[int, list[dict]], rejected: set = frozenset()) -> tuple[dict, list[dict]] | None:
     """The edition covering the most of these stuck rows; then the slimmest
     (fewest reprints); a TPB before an HC before an omnibus."""
-    pool: dict[int, dict] = {}
-    covers: dict[int, list[dict]] = {}
+    pool: dict[str, dict] = {}
+    covers: dict[str, list[dict]] = {}
+    rej = {str(x) for x in rejected}
     for r in rows:
         for e in cands_by_row.get(r["id"], []):
-            if e["metron_issue_id"] in rejected:
+            k = ekey(e)
+            if k in rej:
                 continue
-            pool[e["metron_issue_id"]] = e
-            covers.setdefault(e["metron_issue_id"], []).append(r)
+            pool[k] = e
+            if r not in covers.setdefault(k, []):
+                covers[k].append(r)
     if not pool:
         return None
-    best = min(pool.values(), key=lambda e: (-len(covers[e["metron_issue_id"]]), len(e.get("reprints") or []) or 999,
+    best = min(pool.values(), key=lambda e: (-len(covers[ekey(e)]), len(e.get("reprints") or []) or 999,
                                              FORMAT_RANK.get(e.get("format"), 9), e.get("store_date") or "9999"))
-    return best, covers[best["metron_issue_id"]]
+    return best, covers[ekey(best)]
 
 
 def propose(owner_series_id: int, e: dict, rows: list[dict], path=None) -> int | None:
@@ -337,9 +422,10 @@ def propose(owner_series_id: int, e: dict, rows: list[dict], path=None) -> int |
     except ValueError:
         pass
     with db._connect(path) as conn:
+        key = metron_key(e["metron_issue_id"]) if e.get("metron_issue_id") else str(e["locg_id"])
         cur = conn.execute("""INSERT INTO download_queue (tracked_series_id, kind, locg_id, meta_json, state)
             VALUES (?, 'trade', ?, ?, 'suggested') ON CONFLICT(tracked_series_id, locg_id) DO NOTHING""",
-                           (owner_series_id, metron_key(e["metron_issue_id"]), json.dumps(meta)))
+                           (owner_series_id, key, json.dumps(meta)))
         if not cur.rowcount:
             return None
         qid = cur.lastrowid
@@ -365,7 +451,17 @@ def stuck_rows(path=None, limit: int = ROWS_PER_TICK) -> list[dict]:
                                                      ((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d"), limit))]
 
 
-def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET, **kw) -> dict:
+def _target(series_id: int, number: float, path) -> dict:
+    with db._connect(path) as conn:
+        s = conn.execute("SELECT title, year_began FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
+        i = conn.execute("SELECT store_date, metron_issue_id FROM issue_status WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+    year = (s["year_began"] if s else None) or (int(i["store_date"][:4]) if i and i["store_date"] else None)
+    return {"title": s["title"] if s else "", "year": year, "number": float(number),
+            "store_date": i["store_date"] if i else None, "metron_issue_id": i["metron_issue_id"] if i else None}
+
+
+def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET, locg_details=None, **kw) -> dict:
     """Scheduler: look up a few stuck issues, propose a trade where one exists.
     Rows of the same series are taken together so one edition can fill them all."""
     path = path or DB_PATH
@@ -389,7 +485,16 @@ def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET,
                 if not res["complete"]:
                     _mark(r["id"], "looking", path)        # budget ran out: carry on next pass
                     continue
-                cands[r["id"]] = res["candidates"]
+                got = list(res["candidates"])
+                if not got:
+                    # Metron doesn't hold the edition (its 2003 FF trades, say): the run's
+                    # own LOCG trades and their 'Collecting' lines, while LOCG is open
+                    lres = locg_editions(sid, _target(sid, r["issue_number"], path), path, details=locg_details)
+                    got = lres["candidates"]
+                    if not lres["complete"] and not got:
+                        _mark(r["id"], "looking", path)    # LOCG shut or out of budget: ask again next pass
+                        continue
+                cands[r["id"]] = got
         except metron_client.MetronUnavailable as e:
             out["stopped"] = str(e)
             break
@@ -508,13 +613,13 @@ def decline(qid: int, path=None) -> dict:
         if not r or r["state"] != "suggested":
             raise HTTPException(404, "Not a suggested trade")
         meta = json.loads(r["meta_json"] or "{}")
-        mid = int(str(r["locg_id"]).lstrip("m")) if str(r["locg_id"]).startswith("m") else None
+        lid = str(r["locg_id"])
+        mid = lid[1:] if lid.startswith("m") else f"l{lid}"
         conn.execute("DELETE FROM download_queue WHERE id = ?", (qid,))
         for fid in meta.get("fills") or []:
             x = conn.execute("SELECT rejected_json FROM trade_fallback WHERE queue_id = ?", (fid,)).fetchone()
-            rej = set(json.loads(x["rejected_json"] or "[]")) if x else set()
-            if mid:
-                rej.add(mid)
+            rej = {str(v) for v in json.loads(x["rejected_json"] or "[]")} if x else set()
+            rej.add(mid)
             conn.execute("INSERT INTO trade_fallback (queue_id, state, rejected_json, checked_at) VALUES (?, 'looking', ?, '2000-01-01') "
                          "ON CONFLICT(queue_id) DO UPDATE SET state = 'looking', rejected_json = excluded.rejected_json, "
                          "checked_at = '2000-01-01'", (fid, json.dumps(sorted(rej))))

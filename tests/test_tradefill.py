@@ -125,3 +125,37 @@ def test_an_owned_trade_covers_its_issues_for_counts_and_reading_lists(db_path, 
                               {"series": "Fantastic Four", "number": "503", "volume": "1998"}], "cbl", None, db_path)
     e = rl.resolve(lid, db_path)["entries"]
     assert e[0]["status"] == "owned" and e[0].get("via_trade") and e[1]["status"] == "missing"
+
+
+def test_parse_collects_reads_locg_lines():
+    rows = tf.parse_collects("Mark Waid's run continues! Collecting FANTASTIC FOUR #66-70 and #500-502.")
+    assert [r["number"] for r in rows] == [66, 67, 68, 69, 70, 500, 501, 502]
+    rows = tf.parse_collects("Collects Secret Avengers (2010) #12.1, 13-15 and Fear Itself: Black Widow #1.")
+    assert (rows[0]["series"], rows[0]["year"], rows[0]["number"]) == ("Secret Avengers", 2010, 12.1)
+    assert rows[-1]["series"] == "Fear Itself: Black Widow"
+    assert tf.parse_collects("A great story.") == []
+
+
+def test_when_metron_lacks_the_edition_the_runs_locg_trades_answer(db_path):
+    nothing = dict(search=lambda q: [], issues=lambda sid: [], get=lambda iid: {})
+    ff = db.add_series(title="Fantastic Four", publisher="Marvel", year_began=1997, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, ff, [67, 68, 500], date="2003-03-26")
+    db.set_trades(ff, [{"title": "Fantastic Four by Waid & Wieringo: Imaginauts TP", "locg_id": "111", "format": "TPB", "store_date": "2017-01-01"},
+                       {"title": "Fantastic Four by Waid & Wieringo: Unthinkable TP", "locg_id": "4834365", "format": "TPB", "store_date": "2017-06-01"}],
+                  db_path)
+    desc = {"111": "Collecting FANTASTIC FOUR #60-65.", "4834365": "Collecting FANTASTIC FOUR #66-70 and #500-502."}
+    # LOCG shut: the rows wait for the next pass, they don't give up
+    import kometa.locg_client as lc
+    real = lc.locg_paused
+    lc.locg_paused = lambda: 1e12
+    try:
+        out = tf.run_pass(db_path, **nothing)
+    finally:
+        lc.locg_paused = real
+    assert out["proposed"] == [] and {tf._state(r["id"], db_path) for r in tf.stuck_rows(db_path, 50)} <= {"looking", None}
+    with db._connect(db_path) as c:
+        c.execute("UPDATE trade_fallback SET checked_at = '2000-01-01'")
+    out = tf.run_pass(db_path, locg_details=lambda lid: {"desc": desc[lid]}, **nothing)
+    assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fantastic Four by Waid & Wieringo: Unthinkable TP", "#67–68, #500")]
+    with db._connect(db_path) as c:
+        assert tuple(c.execute("SELECT locg_id, state FROM download_queue WHERE kind = 'trade'").fetchone()) == ("4834365", "suggested")
