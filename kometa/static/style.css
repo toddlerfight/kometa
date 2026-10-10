@@ -2356,3 +2356,11 @@ body.touch .od-menu { opacity: .85; }
 .rl-progress-fill { height: 100%; background: var(--pri); transform-origin: left center;
   transition: transform var(--t-slow) var(--ease-out); }
 @media (prefers-reduced-motion: reduce) { .rl-progress-fill { transition: none; } }
+
+/* the header's search: every page but the Library (which has its own box) */
+.global-search { flex: 0 1 220px; min-width: 0; height: 30px; padding: 0 10px; background: var(--su2);
+  border: 1px solid var(--bd); border-radius: 6px; color: var(--tp); font-family: inherit; font-size: 12px;
+  transition: border-color var(--t-fast) var(--ease-out); }
+.global-search:focus { outline: none; border-color: var(--pri); }
+.global-search.hidden { display: none; }
+@media (max-width: 760px) { .global-search { flex-basis: 140px; } }

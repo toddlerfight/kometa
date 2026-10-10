@@ -107,6 +107,8 @@ function updateNav() {
 }
 
 function setTopbar() {
+  // the Library has its own search box; everywhere else the header carries one
+  document.getElementById('global-search')?.classList.toggle('hidden', currentView === 'library' || currentView === 'stack');
   document.getElementById('topbar-title').textContent = '';
   document.getElementById('topbar-chips').innerHTML = '';
   document.getElementById('topbar-actions').innerHTML = '';
@@ -327,7 +329,8 @@ async function renderLibraryBrowse() {
   document.getElementById('topbar-actions').innerHTML = `
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
-  browseState.search  = '';
+  browseState.search  = _globalSearchHandoff || '';
+  _globalSearchHandoff = '';
   browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
   browseState._cache  = null;
   browseState.stack   = null;
@@ -338,6 +341,12 @@ async function renderLibraryBrowse() {
   browseState.sortDir = saved?.dir || { date: 'asc' };
   setApp('<div class="state-msg">Loading...</div>');
   await _loadBrowsePage();
+  // arrived from the header's search: run it here, people and all
+  if (browseState.search) {
+    const lib = document.getElementById('browse-search');
+    if (lib) { lib.value = browseState.search; lib.focus(); }
+    browseSearch(browseState.search);
+  }
 }
 
 // Default view is everything — no tab to click. Upcoming/Missing are
@@ -1543,6 +1552,26 @@ function showToastAction(msg, label, fn) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, 8000);
 }
+
+// The header's search, from any page: hand the text to the Library, which
+// already searches titles and people. Debounced like the Library's own box.
+let _globalSearchHandoff = '';
+let _globalSearchTimer = null;
+function globalSearch(val) {
+  clearTimeout(_globalSearchTimer);
+  _globalSearchTimer = setTimeout(async () => {
+    if (!val.trim()) return;
+    _globalSearchHandoff = val;
+    const box = document.getElementById('global-search');
+    if (box) { box.value = ''; box.blur(); }
+    navigate('library');                          // renderLibraryBrowse picks the text up and runs it
+  }, 350);
+}
+document.addEventListener('keydown', e => {           // '/' jumps to search from anywhere that isn't a text field
+  if (e.key !== '/' || e.target.closest('input, textarea, [contenteditable]') || currentView === 'read') return;
+  e.preventDefault();
+  (document.getElementById(currentView === 'library' ? 'browse-search' : 'global-search'))?.focus();
+});
 
 function browseSearch(val) {
   clearTimeout(browseState.searchTimer);

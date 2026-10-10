@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=239">
+  <link rel="stylesheet" href="/style.css?v=240">
 </head>
 <body>
   <div id="layout">
@@ -46,6 +46,10 @@
             <div id="topbar-chips" class="chips-row"></div>
           </div>
           <div id="topbar-actions"></div>
+          <!-- search, top right on every page: typing lands in the Library with it -->
+          <input id="global-search" class="global-search" type="search" autocomplete="off" spellcheck="false"
+            placeholder="Search…" aria-label="Search titles, writers, artists" oninput="globalSearch(this.value)"
+            onkeydown="if(event.key==='Escape'){this.value='';this.blur()}">
         </div>
         <div id="topbar-sub"></div>
       </header>
@@ -74,6 +78,6 @@
   <div id="ptr">↓</div>
 
   <script src="/reader.js?v=43"></script>
-  <script src="/app.js?v=291"></script>
+  <script src="/app.js?v=292"></script>
 </body>
 </html>
