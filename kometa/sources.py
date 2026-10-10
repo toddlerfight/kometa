@@ -74,7 +74,12 @@ def sabnzbd() -> SABnzbdClient | None:
     key = cfg.get("sab_apikey", "")
     if not url or not key:
         return None
-    return _cached("sabnzbd", f"{url}|{key}", lambda: SABnzbdClient(url, key))
+    try:
+        prio = int(cfg.get("sab_priority") or 1)             # -1 low · 0 normal · 1 high · 2 force
+    except ValueError:
+        prio = 1
+    jump = (cfg.get("sab_jump_queue") or "1") not in ("0", "false", "off")
+    return _cached("sabnzbd", f"{url}|{key}|{prio}|{jump}", lambda: SABnzbdClient(url, key, prio, jump))
 
 
 def qbittorrent() -> QBittorrentClient | None:

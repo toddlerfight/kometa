@@ -8,9 +8,14 @@ logger = logging.getLogger(__name__)
 
 
 class SABnzbdClient:
-    def __init__(self, url: str, apikey: str):
+    # The SAB is shared with the movie stack, which submits at High. A 40 MB comic
+    # queued behind a 30 GB 4K remux waits an hour for nothing (DIE: Loaded,
+    # 2026-10-10). So a comic goes in at High AND to the top of the queue.
+    def __init__(self, url: str, apikey: str, priority: int = 1, jump_queue: bool = True):
         self.url = url.rstrip("/")
         self.apikey = apikey
+        self.priority = priority
+        self.jump_queue = jump_queue
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "kometa/1.0"
 
@@ -26,16 +31,31 @@ class SABnzbdClient:
     def add_nzb_url(self, nzb_url: str, nzb_name: str = "") -> str | None:
         """Submit NZB URL. Returns nzo_id or None."""
         try:
-            data = self._api(mode="addurl", name=nzb_url, nzbname=nzb_name or "")
+            data = self._api(mode="addurl", name=nzb_url, nzbname=nzb_name or "", priority=self.priority)
             ids = data.get("nzo_ids", [])
             if ids:
                 logger.info(f"SABnzbd: submitted {nzb_url[:80]} → nzo_id={ids[0]}")
+                if self.jump_queue:
+                    try:
+                        self._api(mode="switch", value=ids[0], value2=0)      # front of the line
+                    except Exception as e:
+                        logger.info(f"SABnzbd: couldn't move {ids[0]} to the top: {e}")
                 return ids[0]
             logger.warning(f"SABnzbd addurl returned no nzo_id: {data}")
             return None
         except Exception as e:
             logger.warning(f"SABnzbd addurl failed: {e}")
             return None
+
+    def delete_job(self, nzo_id: str) -> bool:
+        """Drop a job from the queue (or history) and its partial files."""
+        ok = False
+        for mode in ("queue", "history"):
+            try:
+                ok = bool(self._api(mode=mode, name="delete", value=nzo_id, del_files=1).get("status")) or ok
+            except Exception as e:
+                logger.info(f"SABnzbd delete ({mode}) {nzo_id}: {e}")
+        return ok
 
     def get_queue_slot(self, nzo_id: str) -> dict | None:
         """Check active queue for a job. Returns slot dict or None if not present."""
