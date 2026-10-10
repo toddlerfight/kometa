@@ -90,4 +90,34 @@ def rematch_tick(limit: int = PER_TICK, path=None, find=None, sync=None, signals
                 related.fill_signals(s["id"], path)
         except Exception as e:
             logger.info(f"Re-match: signals for {s['title']!r} failed: {e}")
+    # Linked but EMPTY: a series tracked while Metron was away synced to zero
+    # issues (The Amazing Spider-Man, tracked during the ban) and would have
+    # waited for its weekly turn. Force-sync a few of those each tick too.
+    if out["stopped"] is None:
+        for s in empty_linked(path, limit=limit):
+            try:
+                if sync is not None:
+                    sync(s)
+                else:
+                    from kometa.sync import sync_one, sync_one_guarded
+                    sync_one_guarded(s, lambda x: sync_one(x, force=True))
+                out["resynced"] = out.get("resynced", 0) + 1
+            except metron_client.MetronUnavailable as e:
+                out["stopped"] = str(e)
+                break
+            except Exception as e:
+                logger.info(f"Re-match: empty-series sync for {s['title']!r} failed: {e}")
     return out
+
+
+def empty_linked(path=None, limit: int = PER_TICK) -> list[dict]:
+    """Series with a catalogue id and no issues at all — a first sync that never
+    got an answer. Pull list first."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT t.* FROM tracked_series t
+            WHERE (t.metron_series_id IS NOT NULL OR t.locg_series_id IS NOT NULL)
+              AND (t.kind IS NULL OR t.kind != 'arc')
+              AND NOT EXISTS (SELECT 1 FROM issue_status i WHERE i.tracked_series_id = t.id)
+            ORDER BY t.on_pull_list DESC, t.added_at DESC LIMIT ?""", (limit,))]
