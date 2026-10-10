@@ -28,8 +28,11 @@ COMICS_CATEGORIES = (7030,)                 # Newznab 'Books/Comics' — NOT use
 MIN_COVER = 5                               # a pack must fill this many gaps…
 MIN_SHARE = 0.30                            # …or this share of them
 MAX_INSPECT = 8                             # file lists fetched per hunt (each is one indexer grab of metadata)
-MAX_MAGNETS = 2                             # magnet-only candidates resolved through qBit, paused, per hunt
-MAGNET_WAIT_S = 60
+MAX_MAGNETS = 3                             # magnet-only candidates resolved through qBit, paused, per hunt
+MAGNET_WAIT_S = 120                         # DHT metadata for a 5-seeder TPB magnet can take a minute and change
+MIN_PACK_BYTES = 150e6                      # under this it's a single issue, not a pack
+_COMIC_HINT = re.compile(r"\b(marvel|dc comics|image comics|story arc|event|tie-?ins?|crossover|comics?|"
+                         r"digital|empire|minutemen|zone|gcpd|(?:\d{1,3})\s*-\s*(?:\d{1,3}))\b", re.I)
 _COLLECTED = re.compile(r"\b(omnibus|tpb|trade paperback|hc|hardcover|deluxe|compendium|vol(?:ume)?\.?\s*\d+|"
                         r"hybrid\.?comic|ebook|collection|complete collection)\b", re.I)
 _NOT_COMIC = re.compile(r"\b(2160p|1080p|720p|480p|x26[45]|xvid|divx|hevc|bluray|web-?dl|webrip|dvd\d?|hdtv|"
@@ -261,12 +264,15 @@ def find_packs(list_id: int, path=None, prowlarr=None, fetch=None, magnet_files=
             c = dict(c, title=html.unescape(c.get("title") or ""))
             t = c["title"]
             key = (c.get("protocol"), norm_key(t))
-            if key in seen or _COLLECTED.search(t) or _NOT_COMIC.search(t) or not relevance(t):
+            spaced = re.sub(r"[._]+", " ", t)                 # 'The.Order_S02E03_Fear.Itself' hides from \b
+            if key in seen or _COLLECTED.search(spaced) or _NOT_COMIC.search(spaced) or not relevance(t):
                 continue
             seen.add(key)
-            c["_rel"] = relevance(t)
+            if (c.get("size") or 0) < MIN_PACK_BYTES:
+                continue
+            c["_rel"] = relevance(t) + (1 if _COMIC_HINT.search(spaced) else 0)
             cands.append(c)
-    # the event's own name first, then the best seeded, then the biggest
+    # the event's own name (and a comic's look) first, then the best seeded, then the biggest
     cands.sort(key=lambda c: (-c["_rel"], -(c.get("seeders") or 0), -(c.get("size") or 0)))
     magnets = 0
     for c in cands[:inspect]:
