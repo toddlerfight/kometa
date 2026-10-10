@@ -140,13 +140,35 @@ def _cached_bytes(cache_key: str, fetch, max_age: int = 2592000):
 
 
 def _komga_thumb(komga, url: str, cache_key: str):
-    """Fetch a Komga thumbnail through the disk cache. Returns a Response or None."""
+    """Fetch a Komga thumbnail through the disk cache. Returns a Response or None.
+    Komga builds its thumbnail from page 1 too, so a scan that stops halfway
+    gives a half-grey tile from Komga as surely as from us (City of Madness
+    #001). Refuse those — and forget a cached one — so the catalogue cover wins."""
     def fetch():
         r = komga.session.get(url, timeout=8)
-        if r.ok and r.content:
+        if r.ok and r.content and not _half_grey(r.content):
             return r.content, r.headers.get("content-type", "image/jpeg")
         return None
+    cached = _read_cached(_cache_path(cache_key))
+    if cached and _half_grey(cached):
+        try:
+            os.remove(_cache_path(cache_key))
+        except OSError:
+            pass
     return _cached_bytes(cache_key, fetch)
+
+
+def _half_grey(data: bytes) -> bool:
+    """A thumbnail whose bottom fifth or more is flat JPEG grey came from a
+    truncated page; it is not a cover."""
+    try:
+        from PIL import Image
+        import io
+        from kometa.reader import _grey_bottom_fraction
+        with Image.open(io.BytesIO(data)) as im:
+            return _grey_bottom_fraction(im) > 0.2
+    except Exception:
+        return False
 
 
 # numberSort -> book_id maps, cached per Komga series with a short TTL. WITHOUT this,
