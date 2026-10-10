@@ -292,3 +292,18 @@ def test_an_issue_order_never_reads_a_subtitled_tie_in_as_its_base_run(db_path, 
     items += [{"series": "Secret Wars: Battleworld", "number": str(n), "volume": "2015"} for n in (1, 2)]
     lid = rl.save_list("SW", items, "cbl", None, db_path)
     assert [e["status"] for e in rl.resolve(lid, db_path)["entries"]] == ["owned", "owned", "not_on_shelf", "not_on_shelf"]
+
+
+
+def test_an_annual_sharing_a_number_never_stands_in_for_the_issue(db_path, tmp_path):
+    root = tmp_path / "comics" / "Marvel Comics"
+    av = db.add_series(title="Avengers", publisher="Marvel", year_began=2012, folder_path=str(root / "Avengers"), on_pull_list=False, path=db_path)
+    sid = _shelf(db_path, root, "Avengers", ["Avengers 001 (2013).cbz", "Avengers Annual 001 (2014).cbz"], tracked=av)
+    with db._connect(db_path) as c:      # the annual is the newer file: it used to win
+        c.execute("UPDATE books SET mtime = 9e9 WHERE path LIKE '%Annual%'")
+    books = rl._books(sid, db_path)
+    assert [b["id"] for b in books][:1] and "Annual" not in [b for b in books][0].get("label", "")
+    assert len([b for b in books if b["number"] == 1]) == 1
+    with db._connect(db_path) as c:
+        first = c.execute("SELECT path FROM books WHERE id = ?", (books[0]["id"],)).fetchone()[0]
+    assert "Annual" not in first

@@ -366,7 +366,16 @@ def _books(shelf_id: int, path) -> list[dict]:
     rows = db.shelf_books(shelf_id, READER_ID, path)
     # one book per number: the CBZ beats the CBR, else the newest file. The
     # Midnight Circus folder holds '#001 (2013).cbz' AND '#001.cbz'.
-    rows.sort(key=lambda b: (b["number"] if b["number"] is not None else 1e9,
+    # an 'Annual 001' filed in the run's folder parses as #1 too: the plain
+    # issue wins it (Avengers #1, not Avengers Annual #1) unless the run IS one
+    title = ""
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT title FROM shelf_series WHERE id = ?", (shelf_id,)).fetchone()
+        title = (r["title"] if r else "") or ""
+    extra = re.compile(r"\b(annual|special|one[- ]shot|giant[- ]size|king[- ]size)\b", re.I)
+    def sidecar(b):
+        return 1 if extra.search(os.path.basename(b["path"])) and not extra.search(title) else 0
+    rows.sort(key=lambda b: (b["number"] if b["number"] is not None else 1e9, sidecar(b),
                              0 if b["path"].lower().endswith(".cbz") else 1, -(b.get("mtime") or 0)))
     seen, out = set(), []
     for b in rows:
