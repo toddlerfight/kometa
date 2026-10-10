@@ -266,3 +266,16 @@ def test_a_named_run_year_never_matches_a_different_run_of_the_same_name(db_path
     assert e[0]["status"] == "not_on_shelf" and e[0]["series_id"] is None     # the 1998 run isn't here: 2018 has no #500
     assert e[1]["status"] == "owned"                                          # the 2018 run is
     assert e[2]["status"] == "owned"                                          # no year: the name decides, as before
+
+
+
+def test_issue_by_issue_lists_need_the_run_year_to_fit(db_path, tmp_path):
+    """Marvel Zombies 2015 #1–2 must not resolve to the shelf's Marvel Zombies (2005)."""
+    root = tmp_path / "comics" / "Marvel Comics"
+    mz = db.add_series(title="Marvel Zombies", publisher="Marvel", year_began=2005, folder_path=str(root / "Marvel Zombies"), on_pull_list=False, path=db_path)
+    _shelf(db_path, root, "Marvel Zombies", ["Marvel Zombies #001.cbz", "Marvel Zombies #002.cbz"], tracked=mz)
+    db.upsert_issue_status(mz, 1.0, "2005-12-07", 1, path=db_path)
+    db.upsert_issue_status(mz, 2.0, "2006-01-04", 1, path=db_path)
+    lid = rl.save_list("SW", [{"series": "Marvel Zombies", "number": "1", "volume": "2015"},
+                              {"series": "Marvel Zombies", "number": "2", "volume": "2015"}], "cbl", None, db_path)
+    assert [e["status"] for e in rl.resolve(lid, db_path)["entries"]] == ["not_on_shelf", "not_on_shelf"]

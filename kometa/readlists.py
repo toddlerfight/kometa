@@ -304,8 +304,10 @@ def _shelf_runs(path) -> dict[str, list[dict]]:
         rows = [dict(r) for r in conn.execute(
             "SELECT id, title, tracked_series_id, folder_path, book_count FROM shelf_series ORDER BY title")]
         tracked = {r["id"]: dict(r) for r in conn.execute("SELECT id, title, year_began FROM tracked_series")}
+        # the run's start = its #0/#1's date; an earliest DATED issue of #406
+        # (Uncanny X-Men, 1963) says nothing about when the run began
         first = {r[0]: r[1] for r in conn.execute(
-            "SELECT tracked_series_id, MIN(store_date) FROM issue_status WHERE store_date IS NOT NULL GROUP BY tracked_series_id")}
+            "SELECT tracked_series_id, MIN(store_date) FROM issue_status WHERE store_date IS NOT NULL AND number <= 1 GROUP BY tracked_series_id")}
     for s in rows:
         t = tracked.get(s.get("tracked_series_id")) or {}
         year = t.get("year_began")
@@ -323,14 +325,16 @@ def _shelf_runs(path) -> dict[str, list[dict]]:
     return out
 
 
-def _pick_run(runs: dict, keys: set, volume, number=None, path=None) -> dict | None | bool:
+def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: bool = False) -> dict | None | bool:
     """The shelf series for a list entry that names its run's start year.
     False = no opinion (no year given: use the plain name match); None = the
     name is on the shelf but only as OTHER runs (not on the shelf).
 
     A run from another year still counts when it HAS the issue asked for: a
     TPB-order list dates 'Hellboy in Mexico' by the story, the shelf by the
-    edition. Fantastic Four (2018) has no #500, so it can't be 1998's."""
+    edition. Fantastic Four (2018) has no #500, so it can't be 1998's.
+    That allowance is for a list that names a run ONCE (a trade order). A list
+    naming issue by issue means that run: Marvel Zombies 2015 #1 is not 2005's."""
     if not (volume and re.match(r"^(19|20)\d{2}$", str(volume))):
         return False
     want = int(volume)
@@ -343,6 +347,8 @@ def _pick_run(runs: dict, keys: set, volume, number=None, path=None) -> dict | N
     unknown = [c for c in cands if not c["run_year"]]
     if unknown:
         return unknown[0]
+    if not whole_run:
+        return None
     if number is None:
         return cands[0]
     with db._connect(path or DB_PATH) as conn:
@@ -518,7 +524,9 @@ def resolve(list_id: int, path=None) -> dict:
         nb = _numbered(series_name)
         if nb and not any(k in idx for k in _keys(series_name)):
             series_name, want_n = nb[0], float(nb[1])
-        picked = _pick_run(runs, _keys(series_name), it.get("volume"), want_n, path) if runs is not None else False
+        picked = (_pick_run(runs, _keys(series_name), it.get("volume"), want_n, path,
+                            whole_run=per_series.get(norm_key(it["series"]), 0) == 1)
+                  if runs is not None else False)
         hit = picked if picked is not False else next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": [],
