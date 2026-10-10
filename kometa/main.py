@@ -355,6 +355,14 @@ def disconnect_integration(integration: str):
 _EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at", "locg_impersonate"]}
 
 
+def _backup_last() -> dict:
+    try:
+        from kometa import backup
+        return backup.last(DB_PATH)
+    except Exception:
+        return {}
+
+
 def _locg_status() -> dict:
     """Pass live / paused until / what the top-up queue holds (kometa/topup.py)."""
     try:
@@ -362,6 +370,19 @@ def _locg_status() -> dict:
         return topup.status(DB_PATH)
     except Exception:
         return {"locg_pass_live": False, "locg_paused_until": None, "locg_topup_waiting": 0, "locg_topup_by_kind": {}}
+
+
+@app.get("/api/backup")
+def backup_status():
+    from kometa import backup
+    return backup.status()
+
+
+@app.post("/api/backup")
+def backup_run():
+    """Run the nightly backup now, in a thread."""
+    from kometa import backup
+    return {"ok": True, "started": backup.run_in_background(), **backup.status()}
 
 
 @app.post("/api/locg/topup")
@@ -443,6 +464,7 @@ def get_config():
         # Komga retirement, step 1 (2026-10-10): its thumbnails are a last resort
         # behind this flag; covers come from the record's own store.
         "komga_covers":        cfg.get("komga_covers", "0") == "1",
+        "backup_last":         _backup_last(),
         # Prowlarr is the master search switch; usenet/torrent are its children.
         "prowlarr_enabled":    cfg.get("prowlarr_enabled", "1") != "0",
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",

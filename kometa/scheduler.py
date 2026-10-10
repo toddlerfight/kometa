@@ -192,6 +192,13 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
         logger.warning(f"LOCG top-up drain not scheduled: {e}")
+    # The record and the cover store copied to the NAS every night (kometa/backup.py).
+    try:
+        from kometa.backup import nightly as nightly_backup
+        scheduler.add_job(nightly_backup, CronTrigger(hour=3, minute=30, timezone=TZ), id="nightly_backup",
+                          replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=3600)
+    except Exception as e:
+        logger.warning(f"Nightly backup not scheduled: {e}")
     try:
         from kometa.related import warm_lists, LISTS_TTL_S
         scheduler.add_job(warm_lists, IntervalTrigger(seconds=LISTS_TTL_S - 10), id="related_lists_warm",

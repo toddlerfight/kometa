@@ -3537,6 +3537,7 @@ async function renderSettings() {
             })}
             <div class="settings-help" id="root-status"></div>
           </div>
+          <div class="settings-help" id="backup-status">${_backupLine(cfg)}</div>
         </div>
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
@@ -3666,6 +3667,30 @@ async function _komgaHarvestNow(btn) {
       } catch { clearInterval(poll); btn.disabled = false; btn.textContent = 'harvest now'; }
     }, 2000);
   } catch (e) { btn.disabled = false; btn.textContent = 'harvest now'; _whisper('komga', 'couldn’t start', true); }
+}
+
+// Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
+function _backupLine(cfg) {
+  const l = cfg.backup_last || {};
+  const when = l.started_at ? new Date(l.started_at).toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never';
+  const what = l.ok ? ` · ${(l.db_bytes / 1e6).toFixed(1)} MB database${l.covers_copied ? `, ${l.covers_copied} covers` : ''}` : (l.error ? ` · failed: ${esc(l.error)}` : '');
+  return `Backup to the NAS nightly at 3:30 · last ${esc(when)}${what} <button class="btn-link" onclick="_backupNow(this)">back up now</button>`;
+}
+
+async function _backupNow(btn) {
+  btn.disabled = true; btn.textContent = 'backing up…';
+  try {
+    await api.post('/api/backup', {});
+    const poll = setInterval(async () => {
+      try {
+        const st = await api.get('/api/backup');
+        if (st.running) return;
+        clearInterval(poll);
+        const cfg = await api.get('/api/config');
+        const el = document.getElementById('backup-status'); if (el) el.innerHTML = _backupLine(cfg);
+      } catch { clearInterval(poll); btn.disabled = false; btn.textContent = 'back up now'; }
+    }, 3000);
+  } catch { btn.disabled = false; btn.textContent = 'back up now'; }
 }
 
 // LOCG is a filler: what it owes us waits in a queue (kometa/topup.py) and
