@@ -845,6 +845,10 @@ def _usenet_stalls(sab, queued: list[tuple], now) -> list[tuple]:
 def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
     """The one road out of a dead usenet job: bench the release and the channel,
     try torrent, then GetComics, else failed."""
+    if item.get("kind") == "list_pack":
+        # a list pack has no other road: its gaps go back to the per-entry search
+        db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
+        return
     db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
     db.add_failed_channel(qid, "usenet", path=DB_PATH)
     if _try_torrent(item, qid):
@@ -866,7 +870,7 @@ def try_getcomics_now(qid: int, background: bool = True) -> dict:
     if not row:
         raise KeyError(qid)
     item = dict(row)
-    if item.get("kind") == "trade" or item.get("issue_number") in (None, -1):
+    if item.get("kind") in ("trade", "list_pack") or item.get("issue_number") is None or item["issue_number"] < 0:
         raise ValueError("GetComics-now is for single issues")
     if item.get("sab_nzo_id"):
         sab = _sabnzbd()
@@ -1019,6 +1023,15 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     comics = find_comics_in_dir(scan_dir)
     if not comics:
         db.update_queue_state(qid, "failed", error=f"{label}: no comic files in completed download", path=DB_PATH)
+        return
+
+    # A reading list's pack: every file that fills one of the list's gaps goes to
+    # its own run's folder (kometa/listpacks.py); the rest stays behind.
+    if item.get("kind") == "list_pack":
+        from kometa import listpacks
+        out = listpacks.place(item, qid, comics, _place, label)
+        for sid, landed in out["series"].items():
+            _resync_after_placement(sid, landed)
         return
 
     # Pack sentinel — place every comic in dest_dir, let next sync mark issues.

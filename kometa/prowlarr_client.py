@@ -76,14 +76,15 @@ class ProwlarrClient:
         except Exception as e:
             return False, str(e)
 
-    def search(self, query: str, protocol: str | None = None, limit: int = 100) -> list[dict]:
+    def search(self, query: str, protocol: str | None = None, limit: int = 100, categories=None) -> list[dict]:
         """Aggregate search. Returns normalized dicts:
         {title, protocol, magnet, url, seeders, grabs, size, age, indexer}.
         protocol filter: 'torrent' | 'usenet' | None (both)."""
         try:
             r = self.session.get(
                 f"{self.base_url}/api/v1/search",
-                params={"query": query, "type": "search", "limit": limit, "apikey": self.apikey},
+                params={"query": query, "type": "search", "limit": limit, "apikey": self.apikey,
+                        **({"categories": list(categories)} if categories else {})},
                 timeout=30,
             )
             r.raise_for_status()

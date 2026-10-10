@@ -1244,8 +1244,15 @@ def reset_stuck_queue_items(path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
             UPDATE download_queue
+            SET state = 'failed', error = 'Interrupted by a restart while placing — run Get missing again',
+                updated_at = datetime('now')
+            WHERE state = 'processing' AND kind = 'list_pack'
+        """)
+        # a list pack is never a search: it has no issue to look for
+        conn.execute("""
+            UPDATE download_queue
             SET state = 'queued', error = NULL, sab_nzo_id = NULL, updated_at = datetime('now')
-            WHERE state IN ('searching', 'downloading', 'processing')
+            WHERE state IN ('searching', 'downloading', 'processing') AND COALESCE(kind, 'issue') != 'list_pack'
         """)
 
 
@@ -1255,7 +1262,7 @@ def get_queued_items(path=DB_PATH):
             SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began, s.folder_path, s.page_max
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
-            WHERE q.state = 'queued'
+            WHERE q.state = 'queued' AND COALESCE(q.kind, 'issue') != 'list_pack'
               AND (q.retry_after IS NULL OR q.retry_after <= datetime('now'))
             ORDER BY q.created_at ASC
             LIMIT 10

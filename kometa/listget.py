@@ -211,12 +211,49 @@ _jobs: dict[int, dict] = {}
 _lock = threading.Lock()
 
 
-def get_missing(list_id: int, path=None, **kw) -> dict:
+def _packs_first(list_id: int, path, res: dict, out: dict, find=None, queue=None) -> set:
+    """Before entry-by-entry: a pack that holds many of the list's gaps, chosen on
+    its file list. Returns the item ids those packs will fill."""
+    from kometa import listpacks
+    covered: set = set()
+    try:
+        hunt = (find or listpacks.find_packs)(list_id, path)
+    except Exception as e:
+        logger.info(f"List get: pack hunt skipped for list {list_id}: {e}")
+        return covered
+    for pack in hunt.get("chosen") or []:
+        owner = None
+        for it in pack["fills"]:
+            e = next((x for x in res["entries"] if x["item_id"] == it), None)
+            if e and e.get("series_id"):
+                owner = e["series_id"]
+                break
+        if owner is None:
+            # the queue keys on a series: track the first run the pack fills
+            from kometa.listpacks import _ensure_run
+            s = _ensure_run(list_id, pack["fills"][0], path)
+            owner = s["id"] if s else None
+        if owner is None:
+            continue
+        qid = (queue or listpacks.queue_pack)(list_id, pack, owner, path)
+        if qid:
+            covered |= set(pack["fills"])
+            out["packs"] = out.get("packs", 0) + 1
+            out["queued"] += 1
+    return covered
+
+
+def get_missing(list_id: int, path=None, packs: bool = True, **kw) -> dict:
     path = path or DB_PATH
     res = readlists.resolve(list_id, path)
     gaps = [e for e in res["entries"] if e["status"] != "owned"]
     out = {"total": len(gaps), "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True}
     _jobs[list_id] = out
+    covered = _packs_first(list_id, path, res, out) if packs and gaps else set()
+    if covered:
+        out["in_packs"] = len(covered)
+        out["done"] += len([e for e in gaps if e["item_id"] in covered])
+        gaps = [e for e in gaps if e["item_id"] not in covered]
     for e in gaps:
         try:
             r = get_entry(list_id, e["item_id"], path, **kw)
@@ -264,6 +301,16 @@ def api_get_entry(list_id: int, item_id: int):
         from kometa.acquisition import _process_queue
         threading.Thread(target=_process_queue, daemon=True).start()
     return r
+
+
+@router.get("/api/readlists/{list_id}/packs")
+def api_list_packs(list_id: int):
+    """Dry run: which packs hold this list's gaps, judged on their file lists. Queues nothing."""
+    from kometa import listpacks
+    try:
+        return listpacks.find_packs(list_id)
+    except KeyError:
+        raise HTTPException(404, "No such list")
 
 
 @router.post("/api/readlists/{list_id}/get-missing")
