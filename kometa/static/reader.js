@@ -930,7 +930,7 @@ async function renderReadLists() {
     const go = `navigate('readlist', {id: ${l.id}})`;
     const cover = l.cover_book_id ? `<img class="series-card-cover" src="/api/books/${l.cover_book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
       : `<div class="series-card-cover rl-nocover"></div>`;
-    const sub = [read ? `${read} READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : ''].filter(Boolean).join(' · ');
+    const sub = [books ? `${pct}% READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : ''].filter(Boolean).join(' · ');
     return `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i, 14) * STAGGER_MS}ms" tabindex="0" role="button"
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
@@ -1078,12 +1078,30 @@ async function renderReadList(id) {
     }
   }
   setApp(`
+    ${_rlProgressHtml(l)}
     <div class="issue-tabs-row"><div class="issue-tabs">${tabs}</div></div>
     ${tiles.length ? `<div class="issue-grid rl-grid">${tiles.join('')}</div>` : '<div class="state-msg">Nothing here.</div>'}`);
   // Gaps without a cover yet: ask the catalogue (ComicVine in one go, Metron a
   // few at a time) and repaint when something landed. Each answer is cached on
   // the list, so this runs down to nothing after the first few opens.
   if (l.entries.some(e => (e.status !== 'owned' || e.via_run) && e.cover_pending)) _rlFillCovers(id);
+}
+
+// How far through the list you are: books read of the books you have, the
+// share of the whole list read, and what the Start/Continue button opens next.
+function _rlProgressHtml(l) {
+  const books = l.entries.flatMap(e => e.books.map(b => ({ ...b, series: e.series, position: e.position })));
+  if (!books.length) return '';
+  const read = books.filter(b => b.progress && b.progress.completed).length;
+  const pct = Math.round(read / books.length * 100);
+  const next = books.find(b => b.id === l.continue);
+  const label = read === books.length ? 'Finished' : next
+    ? `${_rlStarted(l) ? 'Next' : 'Starts with'}: ${esc(next.series)} ${esc(next.label || '')} · #${next.position} of ${l.total}` : '';
+  return `<div class="rl-progress">
+    <div class="rl-progress-text"><span class="rl-progress-pct">${pct}%</span>
+      <span>${read} of ${books.length} read</span>${label ? `<span class="rl-progress-next">${label}</span>` : ''}</div>
+    <div class="rl-progress-track"><div class="rl-progress-fill" style="transform:scaleX(${read / books.length})"></div></div>
+  </div>`;
 }
 
 async function _rlFillCovers(id) {

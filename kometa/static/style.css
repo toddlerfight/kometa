@@ -2345,3 +2345,14 @@ body.touch .od-menu { opacity: .85; }
 .person-chip:hover, .person-chip:focus-visible { border-color: var(--pri); }
 .person-name { font-size: 13px; font-weight: 700; }
 .person-roles { font-size: var(--fs-label); color: var(--tq); letter-spacing: var(--track); }
+
+/* Reading-list progress strip: read of what you have, and what's next */
+.rl-progress { margin: 0 0 var(--sp-lg, 20px); }
+.rl-progress-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: var(--fs-label);
+  letter-spacing: var(--track); color: var(--tq); margin-bottom: 8px; }
+.rl-progress-pct { color: var(--pri); font-size: 22px; font-weight: 700; letter-spacing: var(--track-tight); }
+.rl-progress-next { color: var(--tm); }
+.rl-progress-track { height: 4px; background: var(--su2); border-radius: 2px; overflow: hidden; }
+.rl-progress-fill { height: 100%; background: var(--pri); transform-origin: left center;
+  transition: transform var(--t-slow) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .rl-progress-fill { transition: none; } }
