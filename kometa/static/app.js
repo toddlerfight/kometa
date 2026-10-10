@@ -3380,7 +3380,28 @@ function _actActionsHtml(q) {
             ${retry}
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>`;
   }
+  // You know it's on GetComics and usenet/torrent are sulking: jump the cascade.
+  const single = q.kind !== 'trade' && q.issue_number != null && q.issue_number !== -1;
+  if (single && ['pending_usenet', 'pending_torrent', 'downloading', 'not_found', 'failed'].includes(q.state)) {
+    btns = `<button class="btn btn-ghost btn-sm" onclick="tryGetComics(${q.id}, this)" title="Cancel the usenet/torrent job and fetch it from GetComics now">GetComics</button>` + btns;
+  }
   return `${_actChip(q.state)}${btns}`;
+}
+
+async function tryGetComics(id, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Asking…';
+  try {
+    await api.post(`/api/queue/${id}/try-getcomics`, {});
+    showToast('Cancelled the download — trying GetComics');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'GetComics';
+    showToast('Couldn’t switch to GetComics — ' + (e?.message || e), 'error');
+    return;
+  }
+  _activityPumpUntil = Date.now() + 30000;
+  _activitySig = null;
+  _refreshActivity();
 }
 
 async function proposalDecide(qid, action, btn) {

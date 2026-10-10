@@ -1584,6 +1584,18 @@ def retry_queue_item(queue_id: int):
     return {"ok": True, "busy": busy}
 
 
+@app.post("/api/queue/{queue_id}/try-getcomics", status_code=200)
+def try_getcomics(queue_id: int):
+    """Cancel the row's usenet/torrent job and go to GetComics now."""
+    from kometa.acquisition import try_getcomics_now
+    try:
+        return try_getcomics_now(queue_id)
+    except KeyError:
+        raise HTTPException(404, "No such queue item")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/series/{series_id}/search-missing")
 def search_missing(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)

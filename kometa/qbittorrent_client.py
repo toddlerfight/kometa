@@ -81,6 +81,15 @@ class QBittorrentClient:
             return False, "Authenticated but /app/version did not respond"
         return True, r.text.strip()
 
+    def delete_torrent(self, infohash: str, delete_files: bool = True) -> bool:
+        try:
+            r = self._req("POST", "/api/v2/torrents/delete",
+                          data={"hashes": infohash, "deleteFiles": "true" if delete_files else "false"})
+            return bool(r is not None and getattr(r, "ok", True))
+        except Exception as e:
+            logger.info(f"qBittorrent delete {infohash}: {e}")
+            return False
+
     def _hashes_in_category(self, category: str) -> set[str]:
         r = self._req("GET", "/api/v2/torrents/info", params={"category": category})
         return {str(t.get("hash", "")).lower() for t in r.json()} if r is not None else set()

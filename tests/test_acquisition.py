@@ -1209,3 +1209,37 @@ class TestUsenetStall:
         monkeypatch.setattr(acq, "_utcnow", lambda: t0 + acq.timedelta(hours=3))
         acq._poll_usenet_jobs()
         assert deleted == []
+
+
+class TestTryGetComicsNow:
+    def test_cancels_the_sab_job_and_runs_getcomics(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 3.0, db_path)
+        qid = _qid_for(db_path, series, 3.0)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE download_queue SET state='pending_usenet', sab_nzo_id='nzoX' WHERE id=?", (qid,))
+        deleted, asked = [], []
+        class FakeSab:
+            def delete_job(self, nzo): deleted.append(nzo); return True
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: FakeSab())
+        monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: asked.append((item["issue_number"], q)) or True)
+        acq.try_getcomics_now(qid, background=False)
+        assert deleted == ["nzoX"] and asked == [(3.0, qid)]
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert q["sab_nzo_id"] is None
+
+    def test_no_match_says_not_found(self, wired, monkeypatch):
+        db_path, series = wired
+        db.queue_issue(series, 4.0, db_path)
+        qid = _qid_for(db_path, series, 4.0)
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: None)
+        monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: False)
+        acq.try_getcomics_now(qid, background=False)
+        assert next(x for x in db.get_queue(db_path) if x["id"] == qid)["state"] == "not_found"
+
+    def test_packs_and_trades_are_refused(self, wired):
+        db_path, series = wired
+        db.queue_pack(series, "nzo1", "http://nzb", db_path)
+        import pytest
+        with pytest.raises(ValueError):
+            acq.try_getcomics_now(_qid_for(db_path, series, -1.0), background=False)

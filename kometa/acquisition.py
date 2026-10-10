@@ -856,6 +856,51 @@ def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
     db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
 
 
+def try_getcomics_now(qid: int, background: bool = True) -> dict:
+    """Activity's 'Try GetComics': you know it's there, usenet/torrent are sulking.
+    Cancel whatever SAB/qBit job the row holds, then run the GetComics path for
+    the issue right now. Single issues only — a trade or pack has its own search."""
+    with db._connect(DB_PATH) as conn:
+        row = conn.execute("""SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path, s.page_max
+            FROM download_queue q JOIN tracked_series s ON s.id = q.tracked_series_id WHERE q.id = ?""", (qid,)).fetchone()
+    if not row:
+        raise KeyError(qid)
+    item = dict(row)
+    if item.get("kind") == "trade" or item.get("issue_number") in (None, -1):
+        raise ValueError("GetComics-now is for single issues")
+    if item.get("sab_nzo_id"):
+        sab = _sabnzbd()
+        deleter = getattr(sab, "delete_job", None) if sab else None
+        if deleter:
+            deleter(item["sab_nzo_id"])
+        _usenet_seen.pop(qid, None)
+    if item.get("torrent_hash"):
+        try:
+            from kometa import sources
+            qb = sources.qbittorrent()
+            if qb:
+                qb.delete_torrent(item["torrent_hash"])
+        except Exception as e:
+            logger.info(f"Try GetComics: qBit cancel for qid {qid}: {e}")
+    with db._connect(DB_PATH) as conn:
+        conn.execute("UPDATE download_queue SET sab_nzo_id = NULL, torrent_hash = NULL WHERE id = ?", (qid,))
+    clear_progress(qid)
+    db.update_queue_state(qid, "searching", error=None, path=DB_PATH)
+
+    def run():
+        try:
+            if not _gc_rescue(item, qid):
+                db.update_queue_state(qid, "not_found", error="GetComics: no match (or the gate is closed — try later)", path=DB_PATH)
+        except Exception as e:
+            logger.warning(f"Try GetComics for qid {qid} failed: {e}")
+            db.update_queue_state(qid, "failed", error=f"GetComics: {e}", path=DB_PATH)
+    if background:
+        threading.Thread(target=run, daemon=True).start()
+    else:
+        run()
+    return {"ok": True, "qid": qid}
+
+
 def _poll_usenet_jobs():
     """Check SABnzbd for completed pending_usenet queue items and finalize them."""
     from datetime import datetime, timedelta
