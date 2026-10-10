@@ -468,3 +468,12 @@ def test_ampersand_is_a_word_not_punctuation():
     post = _normalize("Batman and The Joker – The Deadly Duo #3 (2023)")
     assert ours == "batman and the joker the deadly duo"
     assert _series_matches(ours, post)
+
+
+def test_a_legacy_issue_number_past_1000_is_not_a_title_word():
+    """'The Amazing Spider-Man #1000 (2026)' is that series' #1000, not a spinoff
+    called 'Amazing Spider-Man 1000' — the old sub-1000 cap rejected it."""
+    from kometa.getcomics_client import _series_matches, _normalize
+    assert _series_matches(_normalize("The Amazing Spider-Man"), _normalize("The Amazing Spider-Man #1000 (2026)"))
+    assert _series_matches(_normalize("Detective Comics"), _normalize("Detective Comics #1113 (2026)"))
+    assert not _series_matches(_normalize("Secret Wars"), _normalize("Secret Wars 2099 #1 (2015)"))   # a far-future year is still a name

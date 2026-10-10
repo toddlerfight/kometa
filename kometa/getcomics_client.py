@@ -90,9 +90,9 @@ def _strip_incidental_numbers(text: str) -> str:
 
     def _repl(m: re.Match) -> str:
         n = int(m.group(0))
-        if n < 1000:                                    # issue number
-            return ''
-        if _PLAUSIBLE_YEAR_MIN <= n <= max_year:        # publication year
+        if n < _PLAUSIBLE_YEAR_MIN:                     # issue number — legacy counts run past 1000
+            return ''                                   # (Amazing Spider-Man #1000, Detective #1100)
+        if n <= max_year:                               # publication year
             return ''
         return m.group(0)                               # 2099, 3000 — part of the name
 
