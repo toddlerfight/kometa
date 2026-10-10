@@ -82,3 +82,25 @@ def test_enrich_refuses_a_contains_match(db_path):
     tr.enrich_catalogue(data, db_path, lookup=lambda s_, n: res)
     assert data["comics"][0].get("metron_series_id") is None and data["comics"][0]["catalogue_miss"]
     assert tr._same_name("The Doom Patrol (2026)", "Doom Patrol")
+
+
+def test_chart_names_match_the_shelf_without_the_or_apostrophe(db_path):
+    """ICv2 writes 'Amazing Spider-Man' and 'The Shadows Hand'; the shelf says
+    'The Amazing Spider-Man' and "The Shadow's Hand"."""
+    asm = db.add_series(title="The Amazing Spider-Man", publisher="Marvel Comics", year_began=2025, folder_path=None, on_pull_list=True, path=db_path)
+    db.upsert_issue_status(asm, 1000.0, "2026-09-10", 1, path=db_path)
+    cc = db.add_series(title="Absolute Cassandra Cain: The Shadow's Hand", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    rows = [dict(tr.parse_title("Amazing Spider-Man #1000"), rank=3),
+            dict(tr.parse_title("Absolute Cassandra Cain: The Shadows Hand #1"), rank=6)]
+    tr.match_shelf(rows, db_path)
+    assert rows[0]["series_id"] == asm and rows[0]["have_issue"]
+    assert rows[1]["series_id"] == cc and rows[1]["cover"].endswith(f"/api/series/{cc}/thumbnail")
+
+
+def test_a_catalogue_id_matches_when_the_names_dont(db_path):
+    sid = db.add_series(title="Spidey Weirdly Filed", publisher="Marvel Comics", folder_path=None, on_pull_list=True, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = 10958 WHERE id = ?", (sid,))
+    rows = [dict(tr.parse_title("Amazing Spider-Man #1000"), rank=3, metron_series_id=10958)]
+    tr.match_shelf(rows, db_path)
+    assert rows[0]["series_id"] == sid

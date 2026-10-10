@@ -124,13 +124,21 @@ def _save(data: dict, path):
 
 
 # --- matching the shelf and the catalogue ---------------------------------------------
+def _key(title: str) -> str:
+    """Chart name vs folder name: ICv2 drops the apostrophe ('Shadows Hand')
+    and the leading 'The' ('Amazing Spider-Man'); the shelf keeps both."""
+    t = re.sub(r"[\'’]", "", re.sub(r"\s*\(\d{4}\)\s*$", "", title or ""))
+    return re.sub(r"^the ", "", norm_key(t))
+
+
 def _shelf_index(path) -> dict[str, list[dict]]:
     idx: dict[str, list[dict]] = {}
     for s in db.get_all_series(path):
         if s.get("kind") == "arc":
             continue
-        for k in {norm_key(s["title"]), norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", s["title"]))}:
-            idx.setdefault(k, []).append(s)
+        idx.setdefault(_key(s["title"]), []).append(s)
+        if s.get("metron_series_id"):
+            idx.setdefault(f"m{s['metron_series_id']}", []).append(s)
     return idx
 
 
@@ -150,7 +158,8 @@ def _pick_run(cands: list[dict], number, path) -> tuple[dict | None, dict | None
 def match_shelf(entries: list[dict], path) -> None:
     idx = _shelf_index(path)
     for e in entries:
-        s, i = _pick_run(idx.get(norm_key(e["series"]), []), e.get("number"), path)
+        cands = idx.get(_key(e["series"])) or (idx.get(f"m{e['metron_series_id']}") if e.get("metron_series_id") else None) or []
+        s, i = _pick_run(cands, e.get("number"), path)
         e["series_id"] = s["id"] if s else None
         e["owned"] = bool(s)
         if s and e.get("number") is not None:
@@ -161,8 +170,7 @@ def match_shelf(entries: list[dict], path) -> None:
 
 
 def _same_name(catalogue: str, chart: str) -> bool:
-    a = norm_key(re.sub(r"\s*\(\d{4}\)\s*$", "", catalogue)); b = norm_key(chart)
-    return a == b or a == f"the {b}" or b == f"the {a}"
+    return _key(catalogue) == _key(chart)
 
 
 _enriching = {"on": False}
