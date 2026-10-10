@@ -1160,7 +1160,10 @@ function _rlGetMissing(listId, count) {
 }
 
 async function _rlPollGetMissing(listId) {
-  const btn = document.getElementById('rl-getmissing');
+  // only THIS list's page: the button has the same id on every list, and a poll
+  // left running while you browsed stamped 'Looking for packs…' on all of them
+  const here = currentView === 'readlist' && currentParams.id === listId;
+  const btn = here ? document.getElementById('rl-getmissing') : null;
   let st;
   try { st = await api.get(`/api/readlists/${listId}/get-missing`); } catch { return; }
   if (btn) {
