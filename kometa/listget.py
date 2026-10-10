@@ -43,12 +43,14 @@ def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None) -> 
         title = f"{title} ({vol})"                   # the CBL's volume year disambiguates same-named runs
     fake = {"title": title, "publisher": None, "folder_path": None}
     unanswered = 0
+    metron_silent = False
     try:
         mid = find_metron_match(fake, search=search_metron) if (search_metron or _metron_on()) else None
     except Exception as e:
         logger.info(f"List get: Metron didn't answer for {title!r}: {e}")
         mid = None
         unanswered += 1
+        metron_silent = True
     if mid:
         m = fake["_matched"]
         return {"source": "metron", "id": mid, "title": m.get("title") or entry["series"],
@@ -63,9 +65,11 @@ def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None) -> 
         m = fake["_matched"]
         return {"source": "locg", "id": lid, "title": m.get("title") or entry["series"],
                 "publisher": m.get("publisher"), "year": m.get("year")}
-    if unanswered == 2 or (unanswered and not _metron_on()):
-        # nobody ANSWERED: that's 'ask later', not 'no catalogue knows it' — a
-        # name-only series and a blind search made here would be junk
+    if unanswered == 2 or (unanswered and not _metron_on()) or metron_silent:
+        # Metron didn't ANSWER (blocked, rate-limited, breaker open): that's 'ask
+        # later', not 'no catalogue knows it' — even when LOCG said no. LOCG alone
+        # couldn't place plain 'FF' (2026-10-10) and a junk shelf-only series plus
+        # a name-only trade search was the result.
         return {"retry": True}
     return None
 
@@ -131,6 +135,11 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
             return {"entry": entry["series"], "result": "try_later", "queued": 0, "created": False,
                     "detail": "Neither catalogue answered (Metron blocked or LOCG paused) — try again later"}
         if not run:
+            if not whole_run:
+                # an issue-by-issue list names a run, not a trade: nobody knows
+                # the run, so say so — a name-only TRADE search here is wrong
+                return {"entry": entry["series"], "result": "unknown", "queued": 0, "created": False,
+                        "detail": "Neither catalogue knows this run"}
             return _propose_trade(list_id, entry, item, res, path, root)
         series = _existing_for(run, path)
         if not series:

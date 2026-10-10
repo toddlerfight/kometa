@@ -104,3 +104,25 @@ def test_a_new_run_never_shares_a_folder_with_a_same_named_one(listdb, tmp_path)
     s = lg._track({"source": "locg", "id": 102891, "title": "Fantastic Four", "publisher": "Marvel", "year": 1998},
                   listdb["lid"], listdb["db"], str(root))
     assert s["folder_path"].endswith("Fantastic Four (1998)")
+
+
+def test_metron_silent_is_try_later_even_when_locg_says_no(listdb, monkeypatch):
+    import kometa.metron_client as mc
+    monkeypatch.setattr(lg, "_metron_on", lambda: True)
+    def down(q): raise mc.MetronUnavailable("asked us to wait")
+    res = rl.resolve(listdb["lid"], listdb["db"])
+    gap = next(e for e in res["entries"] if e["status"] == "not_on_shelf")
+    before = len(db.get_all_series(listdb["db"]))
+    r = lg.get_entry(listdb["lid"], gap["item_id"], listdb["db"], search_metron=down, search_locg=lambda q: [], root=listdb["root"])
+    assert r["result"] == "try_later" and len(db.get_all_series(listdb["db"])) == before
+
+
+def test_an_issue_order_entry_nobody_knows_is_reported_not_trade_searched(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    monkeypatch.setattr(lg, "DB_PATH", db_path)
+    monkeypatch.setattr(lg, "_metron_on", lambda: True)
+    lid = rl.save_list("Doom", [{"series": "FF", "number": str(n), "volume": "2011"} for n in (1, 2)], "cbl", None, db_path)
+    gap = rl.resolve(lid, db_path)["entries"][0]
+    before = len(db.get_all_series(db_path))
+    r = lg.get_entry(lid, gap["item_id"], db_path, search_metron=lambda q: [], search_locg=lambda q: [], root=str(tmp_path / "comics"))
+    assert r["result"] == "unknown" and len(db.get_all_series(db_path)) == before

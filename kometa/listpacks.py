@@ -29,7 +29,7 @@ MIN_COVER = 5                               # a pack must fill this many gaps…
 MIN_SHARE = 0.30                            # …or this share of them
 MAX_INSPECT = 8                             # file lists fetched per hunt (each is one indexer grab of metadata)
 MAX_MAGNETS = 2                             # magnet-only candidates resolved through qBit, paused, per hunt
-MAGNET_WAIT_S = 30
+MAGNET_WAIT_S = 60
 _COLLECTED = re.compile(r"\b(omnibus|tpb|trade paperback|hc|hardcover|deluxe|compendium|vol(?:ume)?\.?\s*\d+|"
                         r"hybrid\.?comic|ebook|collection|complete collection)\b", re.I)
 _NOT_COMIC = re.compile(r"\b(2160p|1080p|720p|x26[45]|hevc|bluray|web-?dl|webrip|m4b|mp3|flac|repack|dodi|fitgirl)\b", re.I)
@@ -147,17 +147,23 @@ def _http_get(url: str) -> tuple[bytes, str]:
     return r.content, ""
 
 
-def _magnet_files(magnet: str, qbit=None) -> list[str]:
-    """A magnet-only pack: add it to qBit PAUSED, wait for the metadata, read the
-    file list, delete it (and anything it fetched) at once."""
+def _magnet_files(magnet: str, qbit=None) -> list[str] | None:
+    """A magnet-only pack: hand it to qBit with 'stop once the metadata arrives'
+    (a PAUSED torrent never fetches metadata — the first cut read 0 files off
+    every magnet), read the file list, delete it at once. No content is fetched.
+    None when the swarm didn't answer in time."""
     from kometa import sources
     from kometa.qbittorrent_client import infohash_from_magnet
     qb = qbit or sources.qbittorrent()
     if not qb:
-        return []
-    ih = qb.add_torrent(magnet, category="kometa-probe", paused=True)
+        return None
+    ih = infohash_from_magnet(magnet)
     if not ih:
-        return []
+        return None
+    r = qb._req("POST", "/api/v2/torrents/add",
+                data={"urls": magnet, "category": "kometa-probe", "stopCondition": "MetadataReceived"})
+    if r is None:
+        return None
     try:
         deadline = time.time() + MAGNET_WAIT_S
         while time.time() < deadline:
@@ -166,9 +172,9 @@ def _magnet_files(magnet: str, qbit=None) -> list[str]:
             if files:
                 return [f.get("name", "") for f in files]
             time.sleep(2)
-        return []
+        return None
     finally:
-        qb.delete_torrent(ih or infohash_from_magnet(magnet), delete_files=True)
+        qb.delete_torrent(ih, delete_files=True)
 
 
 def file_list(cand: dict, fetch=None, magnet_files=None) -> list[str] | None:
@@ -229,17 +235,27 @@ def find_packs(list_id: int, path=None, prowlarr=None, fetch=None, magnet_files=
         return out
     qs = queries(r["name"], gaps)
     out["queries"] = qs
+    import html
+    base = _key(re.sub(r"\s*[:(].*$", "", r["name"]))
+    run_keys = [k for k in gaps if len(k) >= 4]
+    def relevance(t: str) -> int:
+        # a pack's title must name the event or one of the list's runs — an
+        # 'X-Force (v1-v3 + extras)' torrent is big, seeded, and nothing to do with it
+        k = _key(t)
+        return 2 if base and base in k else (1 if any(rk in k for rk in run_keys) else 0)
     seen, cands = set(), []
     for q in qs:
         for c in pr.search(q, categories=COMICS_CATEGORIES):
-            t = c.get("title") or ""
+            c = dict(c, title=html.unescape(c.get("title") or ""))
+            t = c["title"]
             key = (c.get("protocol"), norm_key(t))
-            if key in seen or _COLLECTED.search(t) or _NOT_COMIC.search(t):
+            if key in seen or _COLLECTED.search(t) or _NOT_COMIC.search(t) or not relevance(t):
                 continue
             seen.add(key)
+            c["_rel"] = relevance(t)
             cands.append(c)
-    # biggest and best-seeded first: a single issue isn't a pack worth reading
-    cands.sort(key=lambda c: (-(c.get("size") or 0), -(c.get("seeders") or 0)))
+    # the event's own name first, then the best seeded, then the biggest
+    cands.sort(key=lambda c: (-c["_rel"], -(c.get("seeders") or 0), -(c.get("size") or 0)))
     magnets = 0
     for c in cands[:inspect]:
         magnet_only = c.get("protocol") == "torrent" and (not c.get("url") or c["url"].startswith("magnet:"))

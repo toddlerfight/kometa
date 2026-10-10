@@ -141,3 +141,16 @@ def test_get_missing_runs_packs_first_and_searches_only_what_they_dont_fill(swli
     out = lg.get_missing(swlist, db_path)
     assert queued == [("SW pack", sid)] and out["packs"] == 1 and out["in_packs"] == len(sw_items)
     assert not set(searched) & set(sw_items) and len(searched) == len(res["entries"]) - len(sw_items)
+
+
+def test_packs_that_name_neither_the_event_nor_a_run_are_never_read(swlist, db_path):
+    rows = [{"title": "X-Force (v1 - v3 + Related &amp; Extras)", "protocol": "torrent", "url": "http://prowlarr/xf", "size": 9e9, "seeders": 50}]
+    fetched = []
+    hunt = lp.find_packs(swlist, db_path, prowlarr=_Prowlarr(rows), fetch=lambda u: fetched.append(u) or (b"", ""))
+    assert fetched == [] and hunt["candidates"] == []
+
+
+def test_a_magnet_whose_swarm_never_answers_is_couldnt_look_not_zero_files(swlist, db_path):
+    rows = [{"title": "Secret Wars (Story Arc) (2015-2016)", "protocol": "torrent", "url": "", "magnet": "magnet:?xt=urn:btih:abc", "size": 1e10, "seeders": 8}]
+    hunt = lp.find_packs(swlist, db_path, prowlarr=_Prowlarr(rows), magnet_files=lambda m: None)
+    assert hunt["candidates"] == []
