@@ -213,9 +213,19 @@ def get_lists(path=None) -> list[dict]:
         rows = [dict(r) for r in conn.execute(
             "SELECT l.*, (SELECT COUNT(*) FROM reading_list_items i WHERE i.list_id = l.id) AS entries "
             "FROM reading_lists l ORDER BY name")]
+    # The Because rows keep every list resolved and warm for two minutes
+    # (related._resolved_lists, rebuilt by a scheduler job): reuse it instead of
+    # resolving nineteen lists live on every open (five seconds a page). A list
+    # read in the last two minutes can show a stale read count that long; an
+    # import or delete forgets the cache at once.
+    try:
+        from kometa import related
+        warm = {x["id"]: x for x in related._resolved_lists(path)}
+    except Exception:
+        warm = {}
     for r in rows:
         try:
-            res = resolve(r["id"], path)
+            res = warm.get(r["id"]) or resolve(r["id"], path)
         except KeyError:
             continue
         first = next((b for e in res["entries"] for b in e["books"]), None)

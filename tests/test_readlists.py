@@ -213,3 +213,19 @@ def test_a_cover_miss_is_retried_after_a_week(shelf):
         c.execute("UPDATE reading_list_items SET cover_checked_at = '2026-01-01T00:00:00Z'")
     rl.fill_covers(lid, path=shelf, cv=None, metron_search=search, metron_issues=lambda sid: [])
     assert len(calls) == 2 * n                                               # a week-old miss is asked again
+
+
+def test_get_lists_reuses_the_warm_resolution(shelf, monkeypatch):
+    """The list cards come from the two-minute cache the Because rows keep; a
+    second open resolves nothing."""
+    import kometa.related as rel
+    lid = rl.import_cbl(CBL, path=shelf)
+    rel._lists_cache["value"] = None
+    calls = []
+    real = rl.resolve
+    monkeypatch.setattr(rl, "resolve", lambda list_id, path=None: calls.append(list_id) or real(list_id, path))
+    first = rl.get_lists(shelf)
+    n = len(calls)
+    assert n >= 1 and first[0]["id"] == lid and first[0]["owned"] >= 1
+    second = rl.get_lists(shelf)
+    assert len(calls) == n and second == first                               # served warm
