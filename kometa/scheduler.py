@@ -184,6 +184,14 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
         logger.warning(f"Re-match job not scheduled: {e}")
+    # A Get missing a restart cut off (a deploy mid-run) starts again, once the
+    # app has settled. Repeat-safe: owned entries skip, queued issues dedupe.
+    try:
+        from kometa.listget import resume_get_missing
+        scheduler.add_job(resume_get_missing, "date", run_date=datetime.now(TZ) + timedelta(seconds=90),
+                          id="listget_resume", replace_existing=True)
+    except Exception as e:
+        logger.warning(f"Get missing resume not scheduled: {e}")
     # The one-time re-check of the 125 'no run' series (kometa/rematch.py):
     # Metron first, LOCG for Metron's misses, a few per tick. Seeded once.
     try:

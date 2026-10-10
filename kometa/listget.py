@@ -252,8 +252,43 @@ def _packs_first(list_id: int, path, res: dict, out: dict, find=None, queue=None
     return covered
 
 
+_RUNNING_KEY = "listget_running"     # config: list ids whose Get missing hasn't finished
+
+
+def _running(path=None) -> list[int]:
+    import json
+    try:
+        return [int(x) for x in json.loads(db.get_config(path or DB_PATH).get(_RUNNING_KEY) or "[]")]
+    except (ValueError, TypeError):
+        return []
+
+
+def _mark_running(list_id: int, on: bool, path=None):
+    import json
+    ids = [i for i in _running(path) if i != list_id] + ([list_id] if on else [])
+    db.set_config({_RUNNING_KEY: json.dumps(ids)}, path or DB_PATH)
+
+
+def resume_get_missing(path=None) -> list[int]:
+    """Startup: a run a restart cut off (a deploy, a crash) starts again. It's
+    safe to repeat — owned entries are skipped, queued issues aren't queued twice.
+    2026-10-10: three of the user's runs died to deploys and said nothing."""
+    ids = _running(path)
+    for lid in ids:
+        logger.info(f"List get: resuming list {lid} after a restart")
+        start_get_missing(lid)
+    return ids
+
+
 def get_missing(list_id: int, path=None, packs: bool = True, **kw) -> dict:
     path = path or DB_PATH
+    try:
+        return _get_missing(list_id, path, packs, **kw)
+    finally:
+        _mark_running(list_id, False, path)       # finished, or failed for real: either way not 'cut off'
+
+
+def _get_missing(list_id: int, path, packs: bool, **kw) -> dict:
     res = readlists.resolve(list_id, path)
     gaps = [e for e in res["entries"] if e["status"] != "owned"]
     out = {"total": len(gaps), "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True}
@@ -295,6 +330,7 @@ def start_get_missing(list_id: int) -> dict:
         res = readlists.resolve(list_id)
         n = sum(1 for e in res["entries"] if e["status"] != "owned")
         _jobs[list_id] = {"total": n, "done": 0, "queued": 0, "created": 0, "unknown": [], "errors": [], "running": True}
+        _mark_running(list_id, True)
     threading.Thread(target=get_missing, args=(list_id,), daemon=True).start()
     return _jobs[list_id]
 

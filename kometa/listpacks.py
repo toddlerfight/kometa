@@ -41,6 +41,19 @@ COMIC_EXTS = (".cbz", ".cbr", ".zip", ".rar", ".cb7", ".pdf")
 
 
 # --- matching file names to gaps ---------------------------------------------------
+def _media_not_comics(cats) -> bool:
+    """True when an indexer filed it ONLY as film, audio, TV, games or XXX.
+    No categories, or any books/other category, and it stays in — event packs
+    turn up untagged or misfiled (TPB's Secret Wars), so only a clear 'this is
+    an album' rules one out. Before this the hunt spent its look-inside budget,
+    and Prowlarr's rate limit, on doom-metal records."""
+    ids = [int(c) for c in (cats or []) if str(c).isdigit()]
+    if not ids:
+        return False
+    media = lambda i: 1000 <= i < 7000                  # consoles, films, audio, PC, TV, XXX — everything below books
+    return all(media(i) for i in ids)
+
+
 def _key(title: str) -> str:
     t = re.sub(r"\s*\((?:19|20)\d{2}[^)]*\)\s*$", "", title or "")
     t = re.sub(r"['’]", "", t)
@@ -267,6 +280,8 @@ def find_packs(list_id: int, path=None, prowlarr=None, fetch=None, magnet_files=
             spaced = re.sub(r"[._]+", " ", t)                 # 'The.Order_S02E03_Fear.Itself' hides from \b
             if key in seen or _COLLECTED.search(spaced) or _NOT_COMIC.search(spaced) or not relevance(t):
                 continue
+            if _media_not_comics(c.get("categories")):
+                continue                                  # 'Doom Metal' albums, a Russian 'Fear Itself' TV box set
             seen.add(key)
             if (c.get("size") or 0) < MIN_PACK_BYTES:
                 continue

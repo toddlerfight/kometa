@@ -110,6 +110,8 @@ class ProwlarrClient:
                 "size": it.get("size") or 0,
                 "age": it.get("age"),
                 "indexer": it.get("indexer", ""),
+                # Newznab ids: 7000s = books/comics; 2000s films, 3000s audio, 5000s TV
+                "categories": [c.get("id") for c in (it.get("categories") or []) if isinstance(c, dict) and c.get("id")],
             })
         logger.info(f"Prowlarr: {len(out)} {protocol or 'all'}-results for {query!r}")
         return out

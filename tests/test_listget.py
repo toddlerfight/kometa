@@ -126,3 +126,22 @@ def test_an_issue_order_entry_nobody_knows_is_reported_not_trade_searched(db_pat
     before = len(db.get_all_series(db_path))
     r = lg.get_entry(lid, gap["item_id"], db_path, search_metron=lambda q: [], search_locg=lambda q: [], root=str(tmp_path / "comics"))
     assert r["result"] == "unknown" and len(db.get_all_series(db_path)) == before
+
+
+def test_a_run_cut_off_by_a_restart_is_resumed(listdb, monkeypatch):
+    started = []
+    monkeypatch.setattr(lg, "start_get_missing", lambda lid: started.append(lid))
+    lg._mark_running(listdb["lid"], True, listdb["db"])
+    assert lg._running(listdb["db"]) == [listdb["lid"]]
+    assert lg.resume_get_missing(listdb["db"]) == [listdb["lid"]] and started == [listdb["lid"]]
+    lg._mark_running(listdb["lid"], False, listdb["db"])
+    assert lg._running(listdb["db"]) == []
+
+
+def test_pack_hunt_skips_releases_filed_only_as_media():
+    from kometa.listpacks import _media_not_comics
+    assert _media_not_comics([3040])                    # an album
+    assert _media_not_comics([5030, 5040])              # TV
+    assert not _media_not_comics([7030])                # comics
+    assert not _media_not_comics([])                    # untagged: let the name rules decide
+    assert not _media_not_comics([2000, 7020])          # anything book-ish keeps it in
