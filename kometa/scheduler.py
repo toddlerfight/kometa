@@ -166,6 +166,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
         logger.warning(f"Images trickle not scheduled: {e}")
+    # Series the first matcher left without a Metron run: asked again, a few a
+    # tick, on the one throttle (kometa/rematch.py). Never a second process.
+    try:
+        from kometa.rematch import rematch_tick
+        scheduler.add_job(rematch_tick, IntervalTrigger(minutes=10), id="metron_rematch",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=6))
+    except Exception as e:
+        logger.warning(f"Re-match job not scheduled: {e}")
     # The LOCG top-up queue drains in small bursts while a pass is live.
     try:
         from kometa.topup import scheduled_drain
