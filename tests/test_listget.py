@@ -93,3 +93,14 @@ def test_nobody_answering_is_try_later_not_a_blind_search(listdb, monkeypatch):
     r = lg.get_entry(listdb["lid"], gap["item_id"], listdb["db"], search_metron=down, search_locg=paused, root=listdb["root"])
     assert r["result"] == "try_later" and r["queued"] == 0
     assert len(db.get_all_series(listdb["db"])) == before
+
+
+def test_a_new_run_never_shares_a_folder_with_a_same_named_one(listdb, tmp_path):
+    root = tmp_path / "comics"
+    other = root / "Marvel" / "Fantastic Four"
+    other.mkdir(parents=True)
+    (other / "Fantastic Four #010 (2019).cbz").write_bytes(b"PK")
+    db.add_series(title="Fantastic Four", publisher="Marvel", year_began=2018, folder_path=str(other), on_pull_list=False, path=listdb["db"])
+    s = lg._track({"source": "locg", "id": 102891, "title": "Fantastic Four", "publisher": "Marvel", "year": 1998},
+                  listdb["lid"], listdb["db"], str(root))
+    assert s["folder_path"].endswith("Fantastic Four (1998)")

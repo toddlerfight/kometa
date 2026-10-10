@@ -87,6 +87,11 @@ def _track(run: dict, list_id: int, path, root: str) -> dict:
     """A new tracked series for the run, pull list OFF, tagged with the list."""
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", run["title"]).strip()
     folder = _resolve_dir(root, run.get("publisher") or "Unknown", title)
+    # another run already lives under this name (the shelf's Fantastic Four is
+    # 2018's; the list wants 1998's): this one gets its year, never a shared folder
+    taken = {os.path.normpath(s_["folder_path"]) for s_ in db.get_all_series(path) if s_.get("folder_path")}
+    if (os.path.normpath(folder) in taken or (os.path.isdir(folder) and os.listdir(folder))) and run.get("year"):
+        folder = _resolve_dir(root, run.get("publisher") or "Unknown", f"{title} ({run['year']})")
     sid = db.add_series(title=title, publisher=run.get("publisher"), year_began=run.get("year"),
                         folder_path=folder, on_pull_list=False,
                         locg_series_id=run["id"] if run["source"] == "locg" else None, path=path)
