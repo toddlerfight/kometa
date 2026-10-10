@@ -1140,3 +1140,72 @@ class TestUnreadableDeliveryIsNotAnAcquisition:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "done"
         assert (dest / "Saga #003.cbz").exists()
+
+
+class TestUsenetStall:
+    """A SAB job that moves nothing for STALL_MIN while no other comic moves
+    either is dropped from SAB and takes the failure cascade."""
+
+    def _pending(self, db_path, series, n=1.0, nzo="nzo1"):
+        db.queue_issue(series, n, db_path)
+        qid = _qid_for(db_path, series, n)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE download_queue SET state='pending_usenet', sab_nzo_id=?, source_url=? WHERE id=?",
+                      (nzo, "http://nzb/" + nzo, qid))
+        return qid
+
+    def _sab(self, left, paused=False, deleted=None):
+        class FakeSab:
+            def poll_job(self, nzo):
+                return {"status": "queued", "pct": 0.0, "mbleft": left[nzo], "sab_status": "Queued"}
+            def queue_paused(self):
+                return paused
+            def delete_job(self, nzo):
+                deleted.append(nzo)
+                return True
+        return FakeSab()
+
+    def test_still_for_twenty_minutes_cascades_and_drops_the_job(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._pending(db_path, series)
+        acq._usenet_seen.clear()
+        deleted, tried = [], []
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._sab({"nzo1": 40.0}, deleted=deleted))
+        monkeypatch.setattr(acq, "_try_torrent", lambda item, q: tried.append(("torrent", q)) or False)
+        monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: tried.append(("gc", q)) or True)
+        t0 = acq._utcnow()
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0)
+        acq._poll_usenet_jobs()
+        assert deleted == [] and tried == []                                   # first sight starts the clock
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0 + acq.timedelta(minutes=acq.STALL_MIN + 1))
+        acq._poll_usenet_jobs()
+        assert deleted == ["nzo1"] and tried == [("torrent", qid), ("gc", qid)]
+        q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+        assert "http://nzb/nzo1" in (q.get("failed_sources") or "")             # this NZB isn't re-picked
+
+    def test_waiting_behind_a_moving_comic_is_not_a_stall(self, wired, monkeypatch):
+        db_path, series = wired
+        self._pending(db_path, series, 1.0, "a"); self._pending(db_path, series, 2.0, "b")
+        acq._usenet_seen.clear()
+        left, deleted = {"a": 40.0, "b": 40.0}, []
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._sab(left, deleted=deleted))
+        t0 = acq._utcnow()
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0)
+        acq._poll_usenet_jobs()
+        left["a"] = 10.0                                                       # a is downloading; b waits its turn
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0 + acq.timedelta(minutes=acq.STALL_MIN + 1))
+        acq._poll_usenet_jobs()
+        assert deleted == []
+
+    def test_a_paused_queue_is_held_not_stalled(self, wired, monkeypatch):
+        db_path, series = wired
+        self._pending(db_path, series)
+        acq._usenet_seen.clear()
+        deleted = []
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._sab({"nzo1": 40.0}, paused=True, deleted=deleted))
+        t0 = acq._utcnow()
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0)
+        acq._poll_usenet_jobs()
+        monkeypatch.setattr(acq, "_utcnow", lambda: t0 + acq.timedelta(hours=3))
+        acq._poll_usenet_jobs()
+        assert deleted == []

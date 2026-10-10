@@ -807,6 +807,55 @@ def _gc_rescue(item, qid) -> bool:
     return handled
 
 
+# A usenet job that moves no bytes for this long, while no other comic job is
+# moving either, is stalled — not waiting its turn. It gets the failure cascade.
+STALL_MIN = 20
+_usenet_seen: dict[int, tuple] = {}     # qid -> (mbleft, since) — the stall clock, in memory
+
+
+def _usenet_stalls(sab, queued: list[tuple], now) -> list[tuple]:
+    """queued = [(item, result)] from this tick. Returns the (item, result) pairs
+    that have sat still for STALL_MIN with the whole comic pipeline still too.
+    A held queue (paused by a person) or a job paused on its own never counts."""
+    from datetime import timedelta
+    moved = False
+    for item, res in queued:
+        qid, left = item["id"], res.get("mbleft")
+        prev = _usenet_seen.get(qid)
+        if prev is None or left is None or prev[0] is None or left < prev[0]:
+            if prev is not None and left is not None and prev[0] is not None and left < prev[0]:
+                moved = True
+            _usenet_seen[qid] = (left, now)
+    for qid in [q for q in _usenet_seen if q not in {i["id"] for i, _ in queued}]:
+        _usenet_seen.pop(qid, None)                      # gone from SAB's queue: done, failed, removed
+    if moved:
+        # comics are flowing: everyone still at 0 is in line behind them. Restart
+        # their clocks so a long pack doesn't make the singles look dead.
+        for item, res in queued:
+            _usenet_seen[item["id"]] = (res.get("mbleft"), now)
+        return []
+    paused = getattr(sab, "queue_paused", None)
+    if paused and paused():
+        return []
+    return [(item, res) for item, res in queued
+            if (res.get("sab_status") or "").lower() != "paused"
+            and now - _usenet_seen[item["id"]][1] >= timedelta(minutes=STALL_MIN)]
+
+
+def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
+    """The one road out of a dead usenet job: bench the release and the channel,
+    try torrent, then GetComics, else failed."""
+    db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
+    db.add_failed_channel(qid, "usenet", path=DB_PATH)
+    if _try_torrent(item, qid):
+        logger.info(f"Usenet job {nzo_id} ({err}); fell back to torrent for qid {qid}")
+        return
+    if _gc_rescue(item, qid):
+        logger.info(f"Usenet job {nzo_id} ({err}); GetComics rescue landed qid {qid}")
+        return
+    db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
+
+
 def _poll_usenet_jobs():
     """Check SABnzbd for completed pending_usenet queue items and finalize them."""
     from datetime import datetime, timedelta
@@ -817,6 +866,7 @@ def _poll_usenet_jobs():
     if not items:
         return
 
+    queued = []
     for item in items:
         qid = item["id"]
         nzo_id = item["sab_nzo_id"]
@@ -831,6 +881,7 @@ def _poll_usenet_jobs():
                 # Surface SAB's % through the same progress map the UI polls, so a
                 # Kometa-initiated Usenet download is trackable like a GetComics one.
                 set_progress(qid, result.get("pct", 0), 100)
+                queued.append((item, result))
                 continue
 
             if status == "completed":
@@ -851,20 +902,33 @@ def _poll_usenet_jobs():
                 # blacklist it for this row, and bench the whole usenet channel:
                 # the next attempt starts at torrent/GetComics instead of buying
                 # yet another SAB cycle on a graveyard.
-                db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
-                db.add_failed_channel(qid, "usenet", path=DB_PATH)
                 # Usenet couldn't DELIVER (retention/repair) — fall to torrent before
                 # giving up. This is what makes vintage land: the old NZB repair-fails,
                 # the healthy torrent catches it.
-                if _try_torrent(item, qid):
-                    logger.info(f"Usenet job {nzo_id} failed; fell back to torrent for qid {qid}")
-                    continue
-                if _gc_rescue(item, qid):
-                    logger.info(f"Usenet job {nzo_id} failed; GetComics rescue landed qid {qid}")
-                    continue
-                db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
+                _usenet_cascade(item, qid, nzo_id, err)
         except Exception as e:
             logger.warning(f"Usenet poll: job {nzo_id} (qid {qid}) raised — skipping this tick: {e}")
+
+    # Stalled, not failed: SAB holds the job and moves nothing. Drop it from SAB
+    # (it's not a bad file — but this release isn't coming, so it's benched for
+    # the row) and take the same road a failure takes.
+    try:
+        stalls = _usenet_stalls(sab, queued, _utcnow())
+    except Exception as e:
+        logger.info(f"Usenet stall check skipped: {e}")
+        stalls = []
+    for item, _ in stalls:
+        qid, nzo_id = item["id"], item["sab_nzo_id"]
+        try:
+            logger.warning(f"Usenet job {nzo_id} (qid {qid}) moved nothing for {STALL_MIN} min — stalled, cascading")
+            deleter = getattr(sab, "delete_job", None)
+            if deleter:
+                deleter(nzo_id)
+            _usenet_seen.pop(qid, None)
+            clear_progress(qid)
+            _usenet_cascade(item, qid, nzo_id, f"stalled {STALL_MIN} min in SABnzbd")
+        except Exception as e:
+            logger.warning(f"Usenet stall: qid {qid} raised: {e}")
 
 
 def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, keep_source: bool):

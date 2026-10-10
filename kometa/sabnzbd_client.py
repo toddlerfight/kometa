@@ -47,6 +47,13 @@ class SABnzbdClient:
             logger.warning(f"SABnzbd addurl failed: {e}")
             return None
 
+    def queue_paused(self) -> bool:
+        """The whole queue paused by a person — nothing is stalled then, it's held."""
+        try:
+            return bool(self._api(mode="queue", limit=0).get("queue", {}).get("paused"))
+        except Exception:
+            return False
+
     def delete_job(self, nzo_id: str) -> bool:
         """Drop a job from the queue (or history) and its partial files."""
         ok = False
@@ -95,7 +102,11 @@ class SABnzbdClient:
                 pct = float(slot.get("percentage", 0))
             except (ValueError, TypeError):
                 pct = 0.0
-            return {"status": "queued", "pct": pct}
+            try:
+                mbleft = float(slot.get("mbleft", 0) or 0)
+            except (ValueError, TypeError):
+                mbleft = None
+            return {"status": "queued", "pct": pct, "mbleft": mbleft, "sab_status": slot.get("status") or ""}
 
         slot = self.get_history_slot(nzo_id)
         if slot:
