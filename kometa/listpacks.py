@@ -32,7 +32,8 @@ MAX_MAGNETS = 2                             # magnet-only candidates resolved th
 MAGNET_WAIT_S = 60
 _COLLECTED = re.compile(r"\b(omnibus|tpb|trade paperback|hc|hardcover|deluxe|compendium|vol(?:ume)?\.?\s*\d+|"
                         r"hybrid\.?comic|ebook|collection|complete collection)\b", re.I)
-_NOT_COMIC = re.compile(r"\b(2160p|1080p|720p|x26[45]|hevc|bluray|web-?dl|webrip|m4b|mp3|flac|repack|dodi|fitgirl)\b", re.I)
+_NOT_COMIC = re.compile(r"\b(2160p|1080p|720p|480p|x26[45]|xvid|divx|hevc|bluray|web-?dl|webrip|dvd\d?|hdtv|"
+                        r"s\d{2}e\d{2}|episodes?|season|m4b|mp3|flac|audiobook|mobi|epub|azw3?|repack|dodi|fitgirl)\b", re.I)
 COMIC_EXTS = (".cbz", ".cbr", ".zip", ".rar", ".cb7", ".pdf")
 
 
@@ -61,8 +62,17 @@ def gap_index(list_id: int, path=None) -> dict:
 def match_file(name: str, gaps: dict) -> int | None:
     """The gap item a pack file fills, or None. The longest series name that
     leads the file name wins — 'Secret Wars 2099 001' is Secret Wars 2099's, not
-    Secret Wars #2099."""
+    Secret Wars #2099. Story-arc packs number their files in reading order
+    ('103 X-tinction Agenda 04'): that prefix is tried off when the name as
+    written matches nothing ('1872 002' is a title that starts with a number)."""
     stem = os.path.splitext(os.path.basename(name))[0]
+    hit = _match_stem(stem, gaps)
+    if hit is None and re.match(r"^\d{1,4}\s+\D", stem):
+        hit = _match_stem(re.sub(r"^\d{1,4}\s+", "", stem), gaps)
+    return hit
+
+
+def _match_stem(stem: str, gaps: dict) -> int | None:
     k = _key(stem)
     best = None
     for key in gaps:

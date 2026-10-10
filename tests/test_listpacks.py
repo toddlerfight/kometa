@@ -153,3 +153,15 @@ def test_a_magnet_whose_swarm_never_answers_is_couldnt_look_not_zero_files(swlis
     rows = [{"title": "Secret Wars (Story Arc) (2015-2016)", "protocol": "torrent", "url": "", "magnet": "magnet:?xt=urn:btih:abc", "size": 1e10, "seeders": 8}]
     hunt = lp.find_packs(swlist, db_path, prowlarr=_Prowlarr(rows), magnet_files=lambda m: None)
     assert hunt["candidates"] == []
+
+
+
+def test_reading_order_prefixes_come_off_but_numeric_titles_stay(db_path):
+    lid = rl.save_list("SW", [{"series": "X-Tinction Agenda", "number": "4", "volume": "2015"},
+                              {"series": "1872", "number": "2", "volume": "2015"}], "cbl", None, db_path)
+    gaps = lp.gap_index(lid, db_path)
+    xt = gaps[lp._key("X-Tinction Agenda")]["numbers"][4.0]
+    n1872 = gaps[lp._key("1872")]["numbers"][2.0]
+    assert lp.match_file("Secret Wars (Story Arc) (2015-2016)/103 X-tinction Agenda 04 (of 04) (2015) (digital).cbr", gaps) == xt
+    assert lp.match_file("1872 002 (2015) (Digital).cbz", gaps) == n1872
+    assert lp.match_file("Fear Itself S01E03 XviD.avi", gaps) is None
