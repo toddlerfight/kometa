@@ -108,7 +108,7 @@ def _forget_resolved():
     shouldn't wait that long."""
     try:
         from kometa import related
-        related._lists_cache["value"] = None
+        related._lists_cache["at"] = 0.0          # stale: the next read serves it once and rebuilds in the background
     except Exception:
         pass
 

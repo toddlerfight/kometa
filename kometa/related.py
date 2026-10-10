@@ -310,15 +310,8 @@ def _series_with_counts(path) -> dict[int, dict]:
     return series
 
 
-def _resolved_lists(path) -> list[dict]:
-    """Every reading list resolved ONCE and kept warm: a Because-rows call used
-    to resolve all nineteen lists per anchor (114 resolutions, 2–4 s a page).
-    Gaps and adjacency change on import or download, not per tap."""
-    import time
+def _build_lists(path) -> list[dict]:
     from kometa import readlists
-    now = time.time()
-    if _lists_cache["value"] is not None and _lists_cache["path"] == path and now - _lists_cache["at"] < LISTS_TTL_S:
-        return _lists_cache["value"]
     out = []
     try:
         readlists.ensure_tables(path)
@@ -331,16 +324,44 @@ def _resolved_lists(path) -> list[dict]:
                 logger.info(f"Related: list {lid} skipped: {e}")
     except Exception as e:
         logger.info(f"Related: lists unavailable: {e}")
-    _lists_cache.update(at=now, path=path, value=out)
     return out
 
 
+_lists_lock = threading.Lock()
+
+
+def _refresh_lists(path) -> list[dict]:
+    """Build once and SWAP — never empty the cache first. ONE builder at a time:
+    a second caller waits for the first instead of starting its own 12 s walk."""
+    import time
+    with _lists_lock:
+        fresh = _build_lists(path)
+        _lists_cache.update(at=time.time(), path=path, value=fresh)
+        return fresh
+
+
+def _resolved_lists(path) -> list[dict]:
+    """Every reading list resolved ONCE and kept warm: a Because-rows call used
+    to resolve all nineteen lists per anchor (114 resolutions, 2–4 s a page).
+
+    Stale-while-revalidate (2026-10-10): an expired copy is still SERVED and
+    one background thread rebuilds it. Pages only wait on a cold start. The old
+    shape — expire, then whoever asks rebuilds inline, and the warm job blanked
+    the cache before rebuilding — put 8–15 s on On Deck and every series page,
+    with several requests rebuilding at once and fighting over the disk."""
+    import time
+    if _lists_cache["value"] is not None and _lists_cache["path"] == path:
+        if time.time() - _lists_cache["at"] >= LISTS_TTL_S and not _lists_lock.locked():
+            threading.Thread(target=_refresh_lists, args=(path,), daemon=True).start()
+        return _lists_cache["value"]
+    return _refresh_lists(path)
+
+
 def warm_lists(path=None) -> int:
-    """Scheduler: keep the resolved lists and the neighbour map warm so the
-    first On Deck after a restart doesn't pay the 2.5 s build. Returns lists."""
+    """Scheduler: keep the resolved lists and the neighbour map warm. Rebuilds
+    and swaps; readers keep the old copy until the new one lands."""
     path = path or DB_PATH
-    _lists_cache["value"] = None
-    n = len(_resolved_lists(path))
+    n = len(_refresh_lists(path))
     _list_neighbours(path)
     return n
 
