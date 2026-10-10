@@ -170,6 +170,8 @@ from kometa.marks import router as _marks_router            # favourites + ratin
 app.include_router(_marks_router)
 from kometa.people import router as _people_router          # search by writer / artist
 app.include_router(_people_router)
+from kometa.search import router as _search_router          # universal search: series, people, lists, issue jumps
+app.include_router(_search_router)
 from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
 app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the

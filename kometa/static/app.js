@@ -107,8 +107,6 @@ function updateNav() {
 }
 
 function setTopbar() {
-  // the Library has its own search box; everywhere else the header carries one
-  document.getElementById('global-search')?.classList.toggle('hidden', currentView === 'library' || currentView === 'stack');
   document.getElementById('topbar-title').textContent = '';
   document.getElementById('topbar-chips').innerHTML = '';
   document.getElementById('topbar-actions').innerHTML = '';
@@ -1553,24 +1551,139 @@ function showToastAction(msg, label, fn) {
   _toastTimer = setTimeout(() => { el.className = 'toast-hidden'; }, 8000);
 }
 
-// The header's search, from any page: hand the text to the Library, which
-// already searches titles and people. Debounced like the Library's own box.
+// --- universal search: the header palette (kometa/search.py) ----------------------
+// One box on every page. Results drop down grouped — top hit, series, people,
+// reading lists, an issue jump ('batman 13') — arrow keys move, Enter opens,
+// Esc closes. 'See all in Library' hands the text to the Library's own search.
 let _globalSearchHandoff = '';
-let _globalSearchTimer = null;
-function globalSearch(val) {
-  clearTimeout(_globalSearchTimer);
-  _globalSearchTimer = setTimeout(async () => {
-    if (!val.trim()) return;
-    _globalSearchHandoff = val;
-    const box = document.getElementById('global-search');
-    if (box) { box.value = ''; box.blur(); }
-    navigate('library');                          // renderLibraryBrowse picks the text up and runs it
-  }, 350);
+const _pal = { q: '', data: null, rows: [], sel: 0, timer: null, seq: 0 };
+const _PAL_RECENT = 'kometa.search.recent';
+
+function _palRecent() { try { return JSON.parse(localStorage.getItem(_PAL_RECENT) || '[]'); } catch { return []; } }
+function _palRemember(q) {
+  q = (q || '').trim(); if (q.length < 2) return;
+  try { localStorage.setItem(_PAL_RECENT, JSON.stringify([q, ..._palRecent().filter(x => x !== q)].slice(0, 6))); } catch {}
 }
-document.addEventListener('keydown', e => {           // '/' jumps to search from anywhere that isn't a text field
-  if (e.key !== '/' || e.target.closest('input, textarea, [contenteditable]') || currentView === 'read') return;
+
+function palOpen() { _palRender(); _palShow(true); }
+function _palShow(on) {
+  const el = document.getElementById('search-pal'), box = document.getElementById('global-search');
+  if (!el) return;
+  el.classList.toggle('hidden', !on);
+  box?.setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+function palClose() { _palShow(false); }
+
+function palInput(val) {
+  _pal.q = val;
+  clearTimeout(_pal.timer);
+  if (val.trim().length < 2) { _pal.data = null; _palRender(); return; }
+  _pal.timer = setTimeout(async () => {
+    const mine = ++_pal.seq;
+    let d = null;
+    try { d = await api.get(`/api/search?q=${encodeURIComponent(val)}&limit=6`); } catch {}
+    if (mine !== _pal.seq || _pal.q !== val) return;      // typed on: a newer search owns the box
+    _pal.data = d; _pal.sel = 0; _palRender(); _palShow(true);
+  }, 150);
+}
+
+function _palCover(src) {
+  return src ? `<img class="pal-cover" src="${esc(_ext(src))}" alt="" loading="lazy" onerror="this.onerror=null;this.style.opacity='0.15'">`
+    : '<span class="pal-cover pal-cover-none"></span>';
+}
+
+function _palRender() {
+  const el = document.getElementById('search-pal');
+  if (!el) return;
+  const rows = []; let html = '';
+  const row = (kind, item, cover, title, sub) => {
+    const i = rows.push({ kind, item }) - 1;
+    return `<div class="pal-row" role="option" id="pal-${i}" data-i="${i}" onmousedown="event.preventDefault()" onclick="palPick(${i})" onmousemove="palHover(${i})">
+      ${cover}<span class="pal-text"><span class="pal-title">${title}</span>${sub ? `<span class="pal-sub">${sub}</span>` : ''}</span></div>`;
+  };
+  const head = t => `<div class="pal-head">${t}</div>`;
+  const d = _pal.data;
+  if (_pal.q.trim().length < 2 || !d) {
+    const recent = _palRecent();
+    if (recent.length) html += head('Recent') + recent.map(q => row('recent', q, '<span class="pal-cover pal-cover-none pal-icon">↺</span>', esc(q), '')).join('');
+    else html += `<div class="pal-empty">Series, people, reading lists — or an issue: <em>batman 13</em></div>`;
+  } else {
+    const seriesRow = s => row('series', s, _palCover(s.cover), esc(s.title),
+      esc(s.why || [s.publisher, s.year_began, s.total ? `${s.owned}/${s.total}` : ''].filter(Boolean).join(' · ')));
+    const issueRow = i => row('issue', i, _palCover(i.cover), `${esc(i.series)} ${esc(i.label)}`, i.book_id ? 'On the shelf · Enter reads it' : 'Not on the shelf');
+    const personRow = p => row('person', p, '<span class="pal-cover pal-cover-none pal-icon">✎</span>', esc(p.name), esc(`${p.roles.slice(0, 3).join(', ')} · ${p.count} series`));
+    const listRow = l => row('list', l, l.cover_book_id ? _palCover(`/api/books/${l.cover_book_id}/cover`) : _palCover(l.cover), esc(l.name), `Reading list · ${l.owned}/${l.total}`);
+    const t = d.top;
+    if (t) {
+      html += head('Top hit');
+      html += t.kind === 'series' ? seriesRow(t) : t.kind === 'issue' ? issueRow(t) : t.kind === 'person' ? personRow(t) : listRow(t);
+    }
+    const same = (k, x) => t && t.kind === k && (k === 'series' ? t.id === x.id : k === 'issue' ? t.series_id === x.series_id && t.number === x.number
+      : k === 'person' ? t.name === x.name : t.id === x.id);
+    const sect = (title, k, list, fn) => { const l = (list || []).filter(x => !same(k, x)); if (l.length) html += head(title) + l.map(fn).join(''); };
+    sect('Issues', 'issue', d.issues, issueRow);
+    sect('Series', 'series', d.series, seriesRow);
+    sect('People', 'person', d.people, personRow);
+    sect('Reading lists', 'list', d.lists, listRow);
+    if (!t) html += `<div class="pal-empty">Nothing for “${esc(_pal.q)}”.</div>`;
+    html += row('all', _pal.q, '<span class="pal-cover pal-cover-none pal-icon">→</span>', `See all “${esc(_pal.q)}” in the Library`, '');
+  }
+  _pal.rows = rows;
+  if (_pal.sel >= rows.length) _pal.sel = 0;
+  el.innerHTML = html;
+  _palMark();
+}
+
+function _palMark() {
+  document.querySelectorAll('#search-pal .pal-row').forEach(r => r.classList.toggle('sel', +r.dataset.i === _pal.sel));
+  const cur = document.getElementById(`pal-${_pal.sel}`);
+  document.getElementById('global-search')?.setAttribute('aria-activedescendant', cur ? cur.id : '');
+  cur?.scrollIntoView({ block: 'nearest' });
+}
+function palHover(i) { if (_pal.sel !== i) { _pal.sel = i; _palMark(); } }
+
+function palKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); if (_pal.q) { e.target.value = ''; palInput(''); } else { palClose(); e.target.blur(); } return; }
+  if (!_pal.rows.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); _pal.sel = (_pal.sel + 1) % _pal.rows.length; _palMark(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _pal.sel = (_pal.sel - 1 + _pal.rows.length) % _pal.rows.length; _palMark(); }
+  else if (e.key === 'Enter') { e.preventDefault(); palPick(_pal.sel); }
+}
+
+function _palToLibrary(q) {
+  _globalSearchHandoff = q;
+  navigate('library');                            // renderLibraryBrowse picks the text up and runs it
+}
+
+function palPick(i) {
+  const r = _pal.rows[i];
+  if (!r) return;
+  const box = document.getElementById('global-search');
+  if (r.kind === 'recent') { box.value = r.item; palInput(r.item); box.focus(); return; }
+  _palRemember(_pal.q);
+  palClose(); box.blur(); box.value = ''; _pal.q = ''; _pal.data = null;
+  const x = r.item;
+  if (r.kind === 'series') navigate('series-detail', { id: x.id });
+  else if (r.kind === 'issue') {
+    if (x.book_id) navigate('read', { book: x.book_id });
+    else { _pendingIssueOpen = { seriesId: x.series_id, number: x.number }; navigate('series-detail', { id: x.series_id }); }
+  }
+  else if (r.kind === 'person') { if (x.id) showCreatorModal(x.id, x.name); else _palToLibrary(x.name); }
+  else if (r.kind === 'list') navigate('readlist', { id: x.id });
+  else if (r.kind === 'all') _palToLibrary(x);
+}
+
+document.addEventListener('mousedown', e => {      // a click anywhere else closes it
+  if (!e.target.closest('#pal-wrap')) palClose();
+});
+document.addEventListener('keydown', e => {        // '/' or ⌘K / Ctrl+K: search, from anywhere
+  if (currentView === 'read') return;
+  const cmdK = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
+  const slash = e.key === '/' && !e.target.closest('input, textarea, [contenteditable]');
+  if (!cmdK && !slash) return;
   e.preventDefault();
-  (document.getElementById(currentView === 'library' ? 'browse-search' : 'global-search'))?.focus();
+  const box = document.getElementById('global-search');
+  box?.focus(); box?.select();
 });
 
 function browseSearch(val) {

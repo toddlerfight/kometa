@@ -68,7 +68,11 @@ def _add(idx: dict, name: str, role: str, sid: int, pid):
 def build(path=None) -> dict:
     path = path or DB_PATH
     idx: dict = {}
+    from kometa import record
+    record.ensure_tables(path)                # a fresh DB has no issue_record yet
     with db._connect(path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS series_signals (tracked_series_id INTEGER PRIMARY KEY,
+            creators_json TEXT, arcs_json TEXT, fetched_at TEXT DEFAULT (datetime('now')))""")
         live = {r["id"] for r in conn.execute("SELECT id FROM tracked_series WHERE COALESCE(kind, 'series') != 'arc'")}
         for r in conn.execute("SELECT tracked_series_id, creators_json FROM series_signals WHERE creators_json NOT IN ('[]', '')"):
             if r["tracked_series_id"] not in live:
