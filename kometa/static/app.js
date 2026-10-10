@@ -615,7 +615,7 @@ function _renderBrowseResults() {
     const nextRelease = s.calendar_date
       ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
-    const thumbFall = s.card_image  ? `this.src='/api/series/${s.id}/thumbnail'` : `this.style.opacity='0.15'`;
+    const thumbFall = s.card_image  ? `this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${s.id}/thumbnail'` : `this.onerror=null;this.style.opacity='0.15'`;
     return head + `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
@@ -3112,7 +3112,7 @@ async function _renderPullListContent() {
               onclick="navigate('series-detail', {id: ${sid}})"
               onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})">
               <div class="pull-thumb-wrap"><img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
-                loading="lazy" onerror="this.src='/api/series/${sid}/thumbnail';this.onerror=null"></div>
+                loading="lazy" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${sid}/thumbnail'"></div>
               <div class="pull-meta">
                 <div class="pull-series u-truncate">${esc(e.title)}</div>
                 <div class="pull-issue">#${fmtNum(e.number)}</div>
@@ -3308,11 +3308,11 @@ function _actThumb(q) {
   if (q.kind === 'trade') {
     // A proposal shows the cover of what actually came back; otherwise the
     // trade's own LOCG cover (stashed in meta), falling back to the series.
-    if (q.state === 'proposed') return `<img src="/api/queue/${q.id}/proposal-cover" alt="" onerror="this.src='${seriesThumb}'">`;
+    if (q.state === 'proposed') return `<img src="/api/queue/${q.id}/proposal-cover" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
-    return `<img src="${esc(m.cover || seriesThumb)}" alt="" onerror="this.src='${seriesThumb}'">`;
+    return `<img src="${esc(m.cover || seriesThumb)}" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
   }
-  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" alt="" onerror="this.src='${seriesThumb}'">`;
+  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
 }
 
 // Plain-language failure reason for an Activity row — surfaces what used to be a
