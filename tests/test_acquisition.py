@@ -1196,6 +1196,98 @@ class TestUsenetStall:
         acq._poll_usenet_jobs()
         assert deleted == []
 
+    def _shared_sab(self, slots, deleted):
+        """A SAB shared with Radarr: slots = {nzo: {status, index, mbleft}}, the
+        whole queue (other people's jobs too), served through snapshot()."""
+        from kometa.sabnzbd_client import SABnzbdClient
+        class SharedSab(SABnzbdClient):
+            def __init__(self):
+                super().__init__("http://sab", "k")
+            def snapshot(self, ids):
+                return {"queue": {n: {"nzo_id": n, "percentage": "0", **s} for n, s in slots.items()}, "history": {}}
+            def queue_paused(self):
+                return False
+            def delete_job(self, nzo):
+                deleted.append(nzo)
+                return True
+        return SharedSab()
+
+    def _tick(self, monkeypatch, at):
+        monkeypatch.setattr(acq, "_utcnow", lambda: at)
+        acq._poll_usenet_jobs()
+
+    def test_queued_behind_a_film_for_thirty_minutes_is_waiting_not_stalled(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._pending(db_path, series, 1.0, "comic")
+        acq._usenet_seen.clear(); acq.clear_search_status(qid)
+        deleted = []
+        slots = {"film": {"status": "Downloading", "index": 0, "mbleft": 90000.0},
+                 "comic": {"status": "Queued", "index": 1, "mbleft": 40.0}}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._shared_sab(slots, deleted))
+        monkeypatch.setattr(acq, "_try_torrent", lambda item, q: False)
+        monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: False)
+        t0 = acq._utcnow()
+        for m in (0, 10, 20, 30):
+            slots["film"]["mbleft"] -= 1000                                   # the film is moving, the comic isn't
+            self._tick(monkeypatch, t0 + acq.timedelta(minutes=m))
+        assert deleted == []
+        assert next(x for x in db.get_queue(db_path) if x["id"] == qid)["state"] == "pending_usenet"
+        assert acq.get_search_status(qid) == acq.SAB_WAITING_TEXT                # Activity says why it sits at 0%
+        # its turn comes: the clock starts NOW, not at submission
+        slots.pop("film"); slots["comic"].update(status="Downloading", index=0)
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=31))
+        assert acq.get_search_status(qid) is None
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=30 + acq.STALL_MIN - 1))   # clock began at its last wait (min 30)
+        assert deleted == []
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=30 + acq.STALL_MIN + 1))
+        assert deleted == ["comic"]
+
+    def test_the_downloading_head_that_moves_nothing_is_stalled(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._pending(db_path, series, 1.0, "comic")
+        acq._usenet_seen.clear()
+        deleted, tried = [], []
+        slots = {"comic": {"status": "Downloading", "index": 0, "mbleft": 40.0},
+                 "film": {"status": "Queued", "index": 1, "mbleft": 90000.0}}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._shared_sab(slots, deleted))
+        monkeypatch.setattr(acq, "_try_torrent", lambda item, q: tried.append(q) or True)
+        t0 = acq._utcnow()
+        self._tick(monkeypatch, t0)
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=acq.STALL_MIN + 1))
+        assert deleted == ["comic"] and tried == [qid]
+
+    def test_a_job_that_was_moving_and_stops_is_stalled(self, wired, monkeypatch):
+        db_path, series = wired
+        qid = self._pending(db_path, series, 1.0, "comic")
+        acq._usenet_seen.clear()
+        deleted = []
+        slots = {"comic": {"status": "Downloading", "index": 0, "mbleft": 40.0},
+                 "paused-film": {"status": "Paused", "index": 1, "mbleft": 90000.0}}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._shared_sab(slots, deleted))
+        monkeypatch.setattr(acq, "_try_torrent", lambda item, q: True)
+        t0 = acq._utcnow()
+        self._tick(monkeypatch, t0)
+        slots["comic"]["mbleft"] = 25.0
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=5))               # moving
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=5 + acq.STALL_MIN - 1))
+        assert deleted == []
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=5 + acq.STALL_MIN + 1))  # then dead still
+        assert deleted == ["comic"]
+
+    def test_behind_only_a_paused_job_is_not_waiting(self, wired, monkeypatch):
+        db_path, series = wired
+        self._pending(db_path, series, 1.0, "comic")
+        acq._usenet_seen.clear()
+        deleted = []
+        slots = {"paused-film": {"status": "Paused", "index": 0, "mbleft": 90000.0},
+                 "comic": {"status": "Queued", "index": 1, "mbleft": 40.0}}
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: self._shared_sab(slots, deleted))
+        monkeypatch.setattr(acq, "_try_torrent", lambda item, q: True)
+        t0 = acq._utcnow()
+        self._tick(monkeypatch, t0)
+        self._tick(monkeypatch, t0 + acq.timedelta(minutes=acq.STALL_MIN + 1))
+        assert deleted == ["comic"]                                            # nothing live ahead: SAB isn't serving it
+
     def test_a_paused_queue_is_held_not_stalled(self, wired, monkeypatch):
         db_path, series = wired
         self._pending(db_path, series)

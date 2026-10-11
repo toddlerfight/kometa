@@ -818,18 +818,59 @@ def _gc_rescue(item, qid) -> bool:
 
 # A usenet job that moves no bytes for this long, while no other comic job is
 # moving either, is stalled — not waiting its turn. It gets the failure cascade.
+# The clock only runs while SAB is actually WORKING the job: a comic parked behind
+# somebody's 100 GB Radarr remux sits at 0% for an hour, and that's a queue, not a
+# corpse. Seven comics got shot for standing in line on 2026-10-11.
 STALL_MIN = 20
 _usenet_seen: dict[int, tuple] = {}     # qid -> (mbleft, since) — the stall clock, in memory
+SAB_WAITING_TEXT = "Waiting in SABnzbd behind other downloads"
 
 
-def _usenet_stalls(sab, queued: list[tuple], now) -> list[tuple]:
+def _slot_index(slot) -> int | None:
+    try:
+        return int(slot.get("index"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _usenet_waiting(nzo_id, res: dict, snap: dict | None) -> bool:
+    """True when SAB has this job in line behind another live download — an
+    unpaused slot sits ahead of it in SAB's queue order. That's waiting, and the
+    stall clock doesn't run. Nothing ahead (or no queue order to read) = SAB is
+    on it, and a job SAB is on that moves nothing for STALL_MIN is stalled."""
+    queue = (snap or {}).get("queue") or {}
+    mine = _slot_index(queue[nzo_id]) if nzo_id in queue else _slot_index(res)
+    if mine is None or mine <= 0:
+        return False
+    if not queue:
+        return True                         # no full queue to read; SAB says it isn't first in line
+    for other_id, slot in queue.items():
+        if other_id == nzo_id:
+            continue
+        idx = _slot_index(slot)
+        if idx is not None and idx < mine and (slot.get("status") or "").lower() != "paused":
+            return True
+    return False
+
+
+def _usenet_stalls(sab, queued: list[tuple], now, snap: dict | None = None) -> list[tuple]:
     """queued = [(item, result)] from this tick. Returns the (item, result) pairs
     that have sat still for STALL_MIN with the whole comic pipeline still too.
-    A held queue (paused by a person) or a job paused on its own never counts."""
+    A held queue (paused by a person), a job paused on its own, or a job SAB has
+    queued behind another download never counts — a waiter's clock keeps resetting
+    until it's at the front, and only then does it get its STALL_MIN."""
     from datetime import timedelta
     moved = False
+    waiting = set()
     for item, res in queued:
         qid, left = item["id"], res.get("mbleft")
+        if _usenet_waiting(item.get("sab_nzo_id"), res, snap):
+            waiting.add(qid)
+            set_search_status(qid, SAB_WAITING_TEXT)
+            _usenet_seen[qid] = (left, now)                # in line: the clock starts at its turn
+            continue
+        if get_search_status(qid) == SAB_WAITING_TEXT:
+            clear_search_status(qid)
         prev = _usenet_seen.get(qid)
         if prev is None or left is None or prev[0] is None or left < prev[0]:
             if prev is not None and left is not None and prev[0] is not None and left < prev[0]:
@@ -837,6 +878,8 @@ def _usenet_stalls(sab, queued: list[tuple], now) -> list[tuple]:
             _usenet_seen[qid] = (left, now)
     for qid in [q for q in _usenet_seen if q not in {i["id"] for i, _ in queued}]:
         _usenet_seen.pop(qid, None)                      # gone from SAB's queue: done, failed, removed
+        if get_search_status(qid) == SAB_WAITING_TEXT:
+            clear_search_status(qid)
     if moved:
         # comics are flowing: everyone still at 0 is in line behind them. Restart
         # their clocks so a long pack doesn't make the singles look dead.
@@ -847,7 +890,8 @@ def _usenet_stalls(sab, queued: list[tuple], now) -> list[tuple]:
     if paused and paused():
         return []
     return [(item, res) for item, res in queued
-            if (res.get("sab_status") or "").lower() != "paused"
+            if item["id"] not in waiting
+            and (res.get("sab_status") or "").lower() != "paused"
             and now - _usenet_seen[item["id"]][1] >= timedelta(minutes=STALL_MIN)]
 
 
@@ -1017,7 +1061,7 @@ def _poll_usenet_jobs():
     # (it's not a bad file — but this release isn't coming, so it's benched for
     # the row) and take the same road a failure takes.
     try:
-        stalls = _usenet_stalls(sab, queued, _utcnow())
+        stalls = _usenet_stalls(sab, queued, _utcnow(), snap)
     except Exception as e:
         logger.info(f"Usenet stall check skipped: {e}")
         stalls = []

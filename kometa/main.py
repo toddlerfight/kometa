@@ -1691,7 +1691,7 @@ def get_queue():
         prog = get_progress(item["id"])
         if prog:
             item["progress"] = prog
-        if item["state"] == "searching":
+        if item["state"] in ("searching", "pending_usenet"):     # pending_usenet: 'waiting in SAB' line
             ss = get_search_status(item["id"])
             if ss:
                 item["search_status"] = ss
