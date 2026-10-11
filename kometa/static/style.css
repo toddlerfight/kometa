@@ -77,6 +77,7 @@ button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
   --t-mid:    .2s;
   --t-slow:   .28s;
   --t-scrim:  .38s;
+  --t-view:   .24s;   /* a view settling in (app.js view transitions) */
   /* motion — magnitudes (blur, zoom, entrance offsets) */
   --blur:    12px;   /* cover blur-in */
   --zoom:    1.06;   /* hover + settle zoom */
@@ -84,6 +85,7 @@ button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
   --rise:    6px;    /* small entrance offset (cards, results) */
   --drop:   -32px;   /* modal entrance offset */
   --sink:    16px;   /* modal exit offset */
+  --view-rise: 8px;  /* a new view settles up from this far below */
   /* layout */
   --nw:    140px;
   --tb:    48px;
@@ -188,6 +190,37 @@ body {
   gap: var(--sp-sm);
 }
 #topbar-sub:empty { display: none; }
+
+/* ---- View transitions (app.js _navBegin / _vtLeave / _vtReveal) ----
+   pending: the new view renders unseen while the ghost (the old view, moved into
+   a shadow root) fades off on top. in: it settles up from just below; Back
+   settles down from just above, half the distance. Opacity + transform only. */
+#content.vt-pending > #topbar, #content.vt-pending > #app, #content.vt-pending > #series-bg { opacity: 0; }
+#content.vt-in > #topbar, #content.vt-in-back > #topbar,
+#content.vt-in > #series-bg, #content.vt-in-back > #series-bg { animation: fade-in var(--t-view) var(--ease-out) backwards; }
+#content.vt-in > #app      { animation: vt-settle      var(--t-view) var(--ease-out) backwards; }
+#content.vt-in-back > #app { animation: vt-settle-back var(--t-view) var(--ease-out) backwards; }
+@keyframes vt-settle      { from { opacity: 0; transform: translateY(var(--view-rise)); } to { opacity: 1; transform: none; } }
+@keyframes vt-settle-back { from { opacity: 0; transform: translateY(calc(var(--view-rise) * -.5)); } to { opacity: 1; transform: none; } }
+.vt-ghost { position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  animation: vt-out var(--t-fast) var(--ease-in) forwards; }
+@keyframes vt-out { from { opacity: 1; } to { opacity: 0; } }
+/* the transform makes #app the containing block for the fixed A–Z rail for a
+   quarter second — sit it out instead of jumping 50px when it lets go */
+#content.vt-in .letter-rail, #content.vt-in-back .letter-rail { opacity: 0; }
+.letter-rail { transition: opacity var(--t-fast) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  /* JS never builds a ghost or a pending state here — belt and braces */
+  .vt-ghost { display: none; }
+  #content.vt-in > #app, #content.vt-in-back > #app { animation-name: fade-in; }
+}
+
+/* the loading bar: a lime hairline across the very top while a slow view loads */
+#nav-bar { position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; height: 2px; z-index: 1000;
+  pointer-events: none; opacity: 0; transition: opacity var(--t-mid) var(--ease-out) var(--t-fast); }
+#nav-bar.on { opacity: 1; transition-duration: var(--t-fast); transition-delay: 0s; }
+#nav-bar-fill { height: 100%; background: var(--pri); transform: scaleX(0); transform-origin: left;
+  transition: transform 6s cubic-bezier(.1, .7, .2, 1); }
 
 #app {
   flex: 1;
@@ -1992,6 +2025,14 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   touch-action: pan-x pan-y pinch-zoom;
 }
 #reader.hidden { display: none; }
+/* Opening: the view you launched from fades off (#layout), THEN the reader fades
+   up over the dark — the delay is that handover. Closing: the reader fades off
+   while the layout fades back up beneath it. */
+#layout { transition: opacity var(--t-mid) var(--ease-out); }
+body.reading #layout { opacity: 0; transition: opacity var(--t-fast) var(--ease-in); }
+#reader.rd-enter { animation: fade-in var(--t-mid) var(--ease-out) var(--t-fast) backwards; }
+#reader.rd-leaving { opacity: 0; pointer-events: none; transition: opacity var(--t-fast) var(--ease-in); }
+@media (prefers-reduced-motion: reduce) { #reader.rd-enter { animation: none; } }
 .rd-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
   font-size: var(--fs-label); letter-spacing: var(--track-wide); color: var(--tq); text-transform: uppercase; }
 .rd-loading { z-index: 5; background: var(--bg, #000); transition: opacity .45s var(--ease-out), transform .45s var(--ease-out); }
