@@ -188,6 +188,15 @@ of frustration). Pick the path by what changed:
   place (tar extract overwrites). `compose restart` needs `cd $KOMETA_COMPOSE_DIR`
   first (or `-f`), or you get "no configuration file provided".
 
+Library mounts (2026-10-11): `/comics` and `/downloads` are **NFS 4.1 volumes straight
+from the NAS** (top-level `volumes:` in the live compose, `driver_opts: type: nfs`), not a
+bind of the host's SMB mount. Through OrbStack the bind read at 0.1–3 MB/s (a new book took
+minutes to open); NFS does a page in ~0.3 s. The NAS export needs non-privileged ports
+allowed and squash = map all users to admin. Changing a mount means recreating the
+container (`compose up -d kometa`), not a restart. If the recreate fails with "container is
+running", the old process is stuck on the share: `docker stop -t 30 kometa`, `compose up -d
+kometa` again, and if it comes back named `<id>_kometa`, `docker rename <id>_kometa kometa`.
+
 Always: after, `curl http://$KOMETA_HOST:6969/api/series` → 200, and confirm the new
 code is actually live, e.g. `docker exec kometa grep -c <new-symbol> /app/kometa/<file>`.
 Note: app-level Python loggers do NOT reach `docker logs` (only uvicorn access logs are
