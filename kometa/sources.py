@@ -10,7 +10,7 @@ import os
 import logging
 
 from kometa.komga_client import KomgaClient
-from kometa.sabnzbd_client import SABnzbdClient
+from kometa.sabnzbd_client import SABnzbdClient, SAB_PRIORITY
 from kometa.qbittorrent_client import QBittorrentClient
 import kometa.db as db
 
@@ -75,9 +75,9 @@ def sabnzbd() -> SABnzbdClient | None:
     if not url or not key:
         return None
     try:
-        prio = int(cfg.get("sab_priority") or 1)             # -1 low · 0 normal · 1 high · 2 force
+        prio = int(cfg.get("sab_priority") or SAB_PRIORITY)  # -1 low · 0 normal · 1 high (2 force is clamped)
     except ValueError:
-        prio = 1
+        prio = SAB_PRIORITY
     jump = (cfg.get("sab_jump_queue") or "1") not in ("0", "false", "off")
     return _cached("sabnzbd", f"{url}|{key}|{prio}|{jump}", lambda: SABnzbdClient(url, key, prio, jump))
 

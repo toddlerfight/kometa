@@ -7,14 +7,19 @@ from kometa.naming import PIPELINE_EXTS
 logger = logging.getLogger(__name__)
 
 
+# SAB addurl priority: High (1). Never Force (2) — Force walks straight through a
+# paused queue, and whoever paused SAB meant it.
+SAB_PRIORITY = 1
+
+
 class SABnzbdClient:
     # The SAB is shared with the movie stack, which submits at High. A 40 MB comic
     # queued behind a 30 GB 4K remux waits an hour for nothing (DIE: Loaded,
     # 2026-10-10). So a comic goes in at High AND to the top of the queue.
-    def __init__(self, url: str, apikey: str, priority: int = 1, jump_queue: bool = True):
+    def __init__(self, url: str, apikey: str, priority: int = SAB_PRIORITY, jump_queue: bool = True):
         self.url = url.rstrip("/")
         self.apikey = apikey
-        self.priority = priority
+        self.priority = min(priority, SAB_PRIORITY)     # a Force (2) setting is clamped to High
         self.jump_queue = jump_queue
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "kometa/1.0"
@@ -118,7 +123,7 @@ class SABnzbdClient:
                 mbleft = float(slot.get("mbleft", 0) or 0)
             except (ValueError, TypeError):
                 mbleft = None
-            return {"status": "queued", "pct": pct, "mbleft": mbleft, "sab_status": slot.get("status") or ""}
+            return {"status": "queued", "pct": pct, "mbleft": mbleft, "sab_status": slot.get("status") or "", "index": slot.get("index")}
 
         slot = snap["history"].get(nzo_id) if snap else self.get_history_slot(nzo_id)
         if slot:

@@ -3567,7 +3567,7 @@ function _actChip(state) {
 // the innerHTML builder esc()s it, the textContent patcher must not.
 function _actProgressDetail(q) {
   return q.state === 'pending_usenet'
-    ? ' · Usenet'
+    ? ' · Usenet' + (q.search_status ? ' · ' + q.search_status : '')
     : q.state === 'pending_torrent'
     ? ' · Torrent' + (q.search_status ? ' · ' + q.search_status : '')
     : (q.progress ? ' — ' + _fmtBytes(q.progress.done) + ' / ' + _fmtBytes(q.progress.total) : '');

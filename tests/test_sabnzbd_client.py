@@ -27,6 +27,20 @@ def test_priority_and_jumping_are_config():
     assert c.calls[0]["priority"] == 0 and len(c.calls) == 1
 
 
+def test_force_is_clamped_to_high():
+    c = _Fake(priority=2)
+    c.add_nzb_url("http://prowlarr/x.nzb")
+    assert c.calls[0]["priority"] == 1                      # Force would walk through a paused queue
+
+
+def test_poll_job_carries_the_queue_position():
+    c = _Fake()
+    snap = {"queue": {"n1": {"nzo_id": "n1", "status": "Queued", "index": 3, "percentage": "0", "mbleft": "40"}},
+            "history": {}}
+    r = c.poll_job("n1", snap)
+    assert r["index"] == 3 and r["sab_status"] == "Queued"
+
+
 def test_delete_job_clears_queue_and_history():
     c = _Fake()
     assert c.delete_job("SABnzbd_nzo_1")
