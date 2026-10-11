@@ -68,7 +68,7 @@ def test_a_franchise_is_one_stack_card_that_opens_to_its_members(app_server, pag
     expect(page.locator(".series-card")).to_have_count(2)                     # one stack + one loose series
     stack = page.locator(".stack-card")
     expect(stack.locator(".series-card-title")).to_have_text("Aliens")
-    expect(stack.locator(".series-card-count")).to_have_text("5 series")
+    expect(stack.locator(".series-card-publisher")).to_contain_text("5 series")
     stack.click()
     expect(page.locator("#topbar-title")).to_have_text("Aliens")
     expect(page.locator(".series-card")).to_have_count(5)                     # the stack's page: its members, flat
