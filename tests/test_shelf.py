@@ -176,3 +176,15 @@ def test_loose_rows_from_long_gone_folders_are_cleared(shelf):
     sh.scan_shelf(str(root))
     with db._connect(sh.DB_PATH) as c:
         assert c.execute("SELECT COUNT(*) FROM books WHERE path = '/nowhere/Gone #001.cbz'").fetchone()[0] == 0
+
+
+def test_loose_rows_in_quarantine_folders_are_cleared(shelf):
+    root, _ = shelf
+    q = root / "Marvel Comics" / "_misgrabbed" / "New Avengers"; q.mkdir(parents=True)
+    f = q / "New Avengers #001.cbz"; f.write_bytes(b"PK")
+    sh.scan_shelf(str(root))
+    with db._connect(sh.DB_PATH) as c:
+        c.execute("INSERT INTO books (path, size, mtime, shelf_series_id) VALUES (?, 1, 1.0, 99999)", (str(f),))
+    sh.scan_shelf(str(root))
+    with db._connect(sh.DB_PATH) as c:
+        assert c.execute("SELECT COUNT(*) FROM books WHERE path = ?", (str(f),)).fetchone()[0] == 0
