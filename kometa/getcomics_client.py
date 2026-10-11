@@ -114,8 +114,21 @@ def _event_subtitle(title: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+# 'The Infinity Gauntlet' is what the tracker calls it; GetComics files it as
+# 'Infinity Gauntlet #1 – 6 (1991-1992)'. A substring test for 'the infinity
+# gauntlet' in 'infinity gauntlet 1 6 1991 1992' fails on the article alone, and
+# the one post holding the missing #1 came back 'no result'. A leading 'The' is
+# optional on BOTH sides: drop it from our name and the post's copy still
+# contains the rest; the post's own 'the' is _TITLE_NOISE downstream.
+def _core_title(title_norm: str) -> str:
+    """Normalised title minus a leading article ('the infinity gauntlet' -> 'infinity gauntlet')."""
+    core = re.sub(r'^the\s+', '', title_norm)
+    return core or title_norm
+
+
 def _series_matches(title_norm: str, post_norm: str) -> bool:
     """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
+    title_norm = _core_title(title_norm)
     if title_norm not in post_norm:
         return False
     # Strip incidental numbers, find extra words in the post beyond the series title
@@ -159,7 +172,7 @@ def _pack_post_matches(title_norm: str, post_raw: str, last_issue: int,
     against the count, the real 'Avengers Vol. 5 #1 - 41' pack looks five short
     and gets thrown out; measured against the last issue it's off by three, which
     is ordinary pack drift (the tail of a run often lags a collection)."""
-    if title_norm not in _normalize(post_raw):
+    if _core_title(title_norm) not in _normalize(post_raw):
         return False
     # Read the range off the RAW title — _normalize eats the '#', and without it
     # a collected-edition range ('Vol. 1 - 3') is indistinguishable from issues.
@@ -249,7 +262,7 @@ _AFTER_TITLE_RE = (r"(?=\s*(?:$|vol(?:ume)?\b|v\d|tpb\b|hc\b|hardcover\b|omnibus
 
 def _title_leads(title_norm: str, post_norm: str) -> bool:
     """The series name, as whole words, followed by nothing but trade-speak."""
-    return bool(re.search(rf"\b{re.escape(title_norm)}\b" + _AFTER_TITLE_RE, post_norm))
+    return bool(re.search(rf"\b{re.escape(_core_title(title_norm))}\b" + _AFTER_TITLE_RE, post_norm))
 
 
 _STOP = {"the", "a", "an", "and", "of", "vol", "volume", "tpb", "hc"}
@@ -303,7 +316,7 @@ def _trade_post_matches(title_norm: str, post_norm: str, vol=None, vol_range=Non
     if re.search(r'#\s*\d', post_raw):
         return False
     leftover = re.sub(r'\b\d{4}\b', ' ', post_norm)
-    leftover = re.sub(rf'\b{re.escape(title_norm)}\b', ' ', leftover)
+    leftover = re.sub(rf'\b{re.escape(_core_title(title_norm))}\b', ' ', leftover)
     return not re.search(r'\b\d{1,3}\b', leftover)
 
 
@@ -446,7 +459,10 @@ class GetComicsClient:
             post_url = self._search_page(query, name, issue_number,
                                          series_year=series_year, packs=packs)
             if post_url:
-                url, fname = self._extract_download(post_url)
+                # The singles tiers take a range post too ('Infinity Gauntlet #1 – 6'
+                # reads as covering #1). Hand over the issue so a CHUNKED range post
+                # gives up the chunk with our issue in it, not whatever's listed first.
+                url, fname = self._extract_download(post_url, issue_number=issue_number)
                 if url and url in exclude_urls:
                     logger.info(f"GetComics: {post_url} resolves to an excluded download — skipping")
                     continue
