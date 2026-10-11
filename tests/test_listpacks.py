@@ -176,3 +176,19 @@ def test_retry_on_a_pack_goes_back_to_its_download_not_a_search(db_path, series,
     assert main.retry_queue_item(qid)["ok"]
     q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
     assert (q["state"], q["error"]) == ("pending_torrent", None)
+
+
+def test_a_fresh_retry_forgets_the_rejected_releases(db_path, series, monkeypatch):
+    import kometa.main as main
+    monkeypatch.setattr(main, "DB_PATH", db_path)
+    monkeypatch.setattr(main, "_process_queue", lambda: None)
+    db.queue_issue(series, 2.0, db_path)
+    with db._connect(db_path) as c:
+        qid = c.execute("SELECT id FROM download_queue").fetchone()[0]
+        c.execute("UPDATE download_queue SET state = 'not_found', failed_sources = '[\"nzb://x\"]', failed_channels = '[\"usenet\"]' WHERE id = ?", (qid,))
+    main.retry_queue_item(qid)
+    with db._connect(db_path) as c:
+        assert c.execute("SELECT failed_sources FROM download_queue WHERE id = ?", (qid,)).fetchone()[0]   # plain retry keeps them
+    main.retry_queue_item(qid, fresh=1)
+    with db._connect(db_path) as c:
+        assert tuple(c.execute("SELECT failed_sources, failed_channels FROM download_queue WHERE id = ?", (qid,)).fetchone()) == (None, None)

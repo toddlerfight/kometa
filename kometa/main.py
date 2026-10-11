@@ -1714,7 +1714,7 @@ def retry_not_found():
 
 
 @app.post("/api/queue/{queue_id}/retry", status_code=200)
-def retry_queue_item(queue_id: int):
+def retry_queue_item(queue_id: int, fresh: int = 0):
     """'Search now'. If a worker pass is mid-download the ask is remembered and
     runs the moment it's free — and we SAY so, instead of a dead click."""
     from kometa.acquisition import queue_busy
@@ -1727,6 +1727,12 @@ def retry_queue_item(queue_id: int):
             raise HTTPException(409, "This pack has no download to go back to — run Get missing on the list")
         db.update_queue_state(queue_id, "pending_torrent" if row["torrent_hash"] else "pending_usenet", error=None, path=DB_PATH)
         return {"ok": True, "busy": False}
+    if fresh:
+        # forget the releases this row rejected (and the channels it benched):
+        # the reason for the rejection was fixed — Where Monsters Dwell #2–4 were
+        # turned away by a page check that's since been corrected
+        with db._connect(DB_PATH) as conn:
+            conn.execute("UPDATE download_queue SET failed_sources = NULL, failed_channels = NULL WHERE id = ?", (queue_id,))
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
     db.reset_rl_attempts(queue_id, path=DB_PATH)
     busy = queue_busy()
