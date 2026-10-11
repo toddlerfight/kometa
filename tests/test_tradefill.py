@@ -370,6 +370,16 @@ def test_refresh_coverage_reads_an_owned_locg_trades_collecting_line(db_path, tm
     assert q[14.1] == ("done", f"In {f}") and q[21.0][0] == "not_found"
 
 
+def test_a_reprint_goes_to_the_dated_run_not_a_yearless_namesake():
+    yearless = {"id": 395, "year_began": None}
+    run_1997 = {"id": 956, "year_began": 1997}
+    run_2018 = {"id": 7, "year_began": 2018}
+    assert tf._same_run([yearless, run_1997, run_2018], 1998) is run_1997      # Unthinkable's #501 (1998)
+    assert tf._same_run([yearless, run_2018], 1998) is yearless                 # no dated run fits: the yearless one
+    assert tf._same_run([run_2018], 1998) is None
+    assert tf._same_run([yearless, run_1997], None) is yearless                 # no year on the reprint: as before
+
+
 def test_dropping_a_trade_that_wasnt_found_sends_its_issues_back_to_the_single_search(db_path, monkeypatch):
     monkeypatch.setattr(tf, "DB_PATH", db_path)
     tf.ensure_tables(db_path)

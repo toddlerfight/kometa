@@ -847,6 +847,20 @@ def decline(qid: int, path=None) -> dict:
 
 
 # --- 4. coverage: an owned trade's issues aren't missing --------------------------------
+def _same_run(candidates: list[dict], year) -> dict | None:
+    """The tracked run a reprint '<Series> (<year>) #n' belongs to, among the
+    same-named ones: the dated run within a year of it, nearest first; a run
+    with no year only when no dated one fits. First-come used to win, and a
+    yearless 'Fantastic Four' swallowed Unthinkable's #501–502 meant for the
+    1997 run (2026-10-11)."""
+    if not year:
+        return candidates[0] if candidates else None
+    dated = [s for s in candidates if s.get("year_began") and abs(s["year_began"] - year) <= 1]
+    if dated:
+        return min(dated, key=lambda s: abs(s["year_began"] - year))
+    return next((s for s in candidates if not s.get("year_began")), None)
+
+
 def refresh_coverage(path=None) -> int:
     """Stamp issue_status.covered_by = the owned trade's file for every issue an
     owned trade collects (exact reprint matches only); clear stale stamps.
@@ -895,10 +909,9 @@ def refresh_coverage(path=None) -> int:
             for rp in contents(t["tracked_series_id"], tr):
                 hit = by_metron.get(rp.get("metron_issue_id")) if rp.get("metron_issue_id") else None
                 if not hit:
-                    for s in names.get(norm_key(rp.get("series") or ""), []):
-                        if not s["year_began"] or not rp.get("year") or abs(s["year_began"] - rp["year"]) <= 1:
-                            hit = (s["id"], rp["number"])
-                            break
+                    s = _same_run(names.get(norm_key(rp.get("series") or ""), []), rp.get("year"))
+                    if s:
+                        hit = (s["id"], rp["number"])
                 if hit:
                     covered[(hit[0], float(hit[1]))] = book
     # a trade Kometa fetched FOR some issues (complete_trade kept which, and the
