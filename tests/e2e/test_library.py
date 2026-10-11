@@ -115,3 +115,20 @@ def test_boot_fetches_the_library_once_and_back_paints_without_waiting(app_serve
     page.route("**/api/series", lambda r: (__import__("time").sleep(2), r.continue_()))
     page.go_back()
     expect(page.locator(".series-card")).to_have_count(3, timeout=1000)   # painted from what it had
+
+
+def test_the_pull_list_filter_shows_every_pulled_series_flat(app_server, page):
+    """A pulled special folded under its run, and pulled members of a stack, are
+    their own cards while Pull list is on — the Pull list section showed 5 for next
+    week while the filtered Library showed 2."""
+    fr = {"key": "batman", "name": "Batman", "count": 5}
+    soon = {"on_pull_list": True, "calendar_date": "2099-10-14", "upcoming": 1}
+    rows = ([_row(1, "100 Bullets"), _row(2, "100 Bullets: The US of Anger", family_parent=1, **soon)]
+            + [_row(10 + i, f"Batman: Part {i}", franchise=fr) for i in range(4)]
+            + [_row(20, "Batman: Bad Seeds – Gotham Central", franchise=fr, **soon)]
+            + [_row(30, "The Seasons", **soon)])
+    _canned_series(page, app_server["base"], rows)
+    page.locator('.browse-filter-tab[data-key="pulling"]').click()
+    titles = page.locator(".series-card .series-card-title").all_inner_texts()
+    assert sorted(titles) == sorted(["100 Bullets: The US of Anger", "Batman: Bad Seeds – Gotham Central", "The Seasons"]), titles
+    expect(page.locator(".stack-card")).to_have_count(0)

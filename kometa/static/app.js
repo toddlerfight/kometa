@@ -742,7 +742,10 @@ function _renderBrowseResults(quiet = false) {
     if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
-    if (s.family_parent && !toggles.specials && !search) return false;   // folded under its run (a search still finds it)
+    // folded under its run — unless you searched, or asked for what you're pulling:
+    // a filtered list never hides a match inside another card (US of Anger #4 sat
+    // inside 100 Bullets while the Pull list said it was out next week)
+    if (s.family_parent && !toggles.specials && !search && !toggles.pulling) return false;
     // Neither toggle on -> no narrowing (the default, everything). Either on ->
     // UNION: "needs attention" (upcoming release OR missing issue), not the
     // (much rarer, and less useful) intersection of both at once.
@@ -757,7 +760,7 @@ function _renderBrowseResults(quiet = false) {
   // stamped by kometa/family.py) is ONE card here and a page of its own. A
   // search looks inside stacks and shows the member, not the stack.
   let items = filtered;
-  if (toggles.stacks && !search && !stack) {
+  if (toggles.stacks && !search && !stack && !toggles.pulling) {          // pulling: every series flat, no stacks
     const groups = new Map();
     items = [];
     for (const s of filtered) {
