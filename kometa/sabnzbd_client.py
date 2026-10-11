@@ -52,6 +52,14 @@ class SABnzbdClient:
             logger.warning(f"SABnzbd addurl failed: {e}")
             return None
 
+    def move_to_top(self, nzo_id: str) -> bool:
+        try:
+            self._api(mode="switch", value=nzo_id, value2=0)
+            return True
+        except Exception as e:
+            logger.info(f"SABnzbd: couldn't move {nzo_id} to the top: {e}")
+            return False
+
     def queue_paused(self) -> bool:
         """The whole queue paused by a person — nothing is stalled then, it's held."""
         try:

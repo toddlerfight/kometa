@@ -1207,6 +1207,8 @@ class TestUsenetStall:
                 return {"queue": {n: {"nzo_id": n, "percentage": "0", **s} for n, s in slots.items()}, "history": {}}
             def queue_paused(self):
                 return False
+            def move_to_top(self, nzo):
+                return False                                                  # tests that want it swap it in
             def delete_job(self, nzo):
                 deleted.append(nzo)
                 return True
@@ -1241,6 +1243,32 @@ class TestUsenetStall:
         assert deleted == []
         self._tick(monkeypatch, t0 + acq.timedelta(minutes=30 + acq.STALL_MIN + 1))
         assert deleted == ["comic"]
+
+    def test_a_comic_behind_a_film_is_moved_back_to_the_front(self, wired, monkeypatch):
+        db_path, series = wired
+        self._pending(db_path, series, 1.0, "comic")
+        self._pending(db_path, series, 2.0, "comic2")
+        acq._usenet_seen.clear()
+        slots = {"film": {"status": "Downloading", "index": 0, "mbleft": 90000.0},
+                 "comic": {"status": "Queued", "index": 1, "mbleft": 40.0},
+                 "comic2": {"status": "Queued", "index": 2, "mbleft": 40.0}}
+        moves = []
+        sab = self._shared_sab(slots, [])
+        def move_to_top(nzo):
+            moves.append(nzo)
+            for sl in slots.values():
+                sl["index"] += 1
+            slots[nzo]["index"] = 0
+            for i, (k, _) in enumerate(sorted(slots.items(), key=lambda kv: kv[1]["index"])):
+                slots[k]["index"] = i
+            return True
+        sab.move_to_top = move_to_top
+        monkeypatch.setattr(acq, "_sabnzbd", lambda: sab)
+        self._tick(monkeypatch, acq._utcnow())
+        assert slots["film"]["index"] == 2 and sorted(moves) == ["comic", "comic2"]
+        moves.clear()
+        self._tick(monkeypatch, acq._utcnow())
+        assert moves == []                                                    # comics behind comics stay put
 
     def test_the_downloading_head_that_moves_nothing_is_stalled(self, wired, monkeypatch):
         db_path, series = wired

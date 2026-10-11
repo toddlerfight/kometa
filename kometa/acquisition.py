@@ -853,6 +853,28 @@ def _usenet_waiting(nzo_id, res: dict, snap: dict | None) -> bool:
     return False
 
 
+def _jump_the_films(sab, queued: list[tuple], snap: dict | None) -> None:
+    """A comic sitting behind somebody else's download goes back to the front.
+    add_nzb_url puts it there on submit, but SAB re-files a URL job once it has
+    fetched the NZB — at the back of its priority. The Unthinkable trade (615 MB)
+    ended up behind 145 GB of Radarr remuxes, 2026-10-11. Comics ahead of comics
+    are left alone, so they don't take turns shoving each other every tick."""
+    move = getattr(sab, "move_to_top", None)
+    queue = (snap or {}).get("queue") or {}
+    if not move or not queue or not getattr(sab, "jump_queue", True):
+        return
+    ours = {item.get("sab_nzo_id") for item, _ in queued}
+    for item, _ in queued:
+        nzo = item.get("sab_nzo_id")
+        mine = _slot_index(queue.get(nzo) or {})
+        if mine is None or mine <= 0:
+            continue
+        if any(other not in ours and (i := _slot_index(slot)) is not None and i < mine
+               for other, slot in queue.items()):
+            if move(nzo):
+                logger.info(f"SABnzbd: moved queue #{item['id']} back in front of the films")
+
+
 def _usenet_stalls(sab, queued: list[tuple], now, snap: dict | None = None) -> list[tuple]:
     """queued = [(item, result)] from this tick. Returns the (item, result) pairs
     that have sat still for STALL_MIN with the whole comic pipeline still too.
@@ -862,6 +884,7 @@ def _usenet_stalls(sab, queued: list[tuple], now, snap: dict | None = None) -> l
     from datetime import timedelta
     moved = False
     waiting = set()
+    _jump_the_films(sab, queued, snap)
     for item, res in queued:
         qid, left = item["id"], res.get("mbleft")
         if _usenet_waiting(item.get("sab_nzo_id"), res, snap):
