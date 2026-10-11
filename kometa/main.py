@@ -1581,6 +1581,15 @@ def retry_queue_item(queue_id: int):
     """'Search now'. If a worker pass is mid-download the ask is remembered and
     runs the moment it's free — and we SAY so, instead of a dead click."""
     from kometa.acquisition import queue_busy
+    with db._connect(DB_PATH) as conn:
+        row = conn.execute("SELECT kind, torrent_hash, sab_nzo_id FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+    if row and row["kind"] == "list_pack":
+        # a pack has nothing to search for ('queued' sent it hunting issue #-1220):
+        # back to its download — the poller sees it finished and places it again
+        if not (row["torrent_hash"] or row["sab_nzo_id"]):
+            raise HTTPException(409, "This pack has no download to go back to — run Get missing on the list")
+        db.update_queue_state(queue_id, "pending_torrent" if row["torrent_hash"] else "pending_usenet", error=None, path=DB_PATH)
+        return {"ok": True, "busy": False}
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
     db.reset_rl_attempts(queue_id, path=DB_PATH)
     busy = queue_busy()

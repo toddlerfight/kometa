@@ -275,6 +275,14 @@ def delete_list(list_id: int, path=None):
         conn.execute("DELETE FROM reading_lists WHERE id = ?", (list_id,))
 
 
+def delete_item(list_id: int, item_id: int, path=None) -> bool:
+    """One entry out of a list: a wrong pick in a hand-built order (Death of
+    Dracula sat in Fear Itself). The rest keep their positions."""
+    _forget_resolved()
+    with db._connect(path or DB_PATH) as conn:
+        return conn.execute("DELETE FROM reading_list_items WHERE list_id = ? AND id = ?", (list_id, item_id)).rowcount > 0
+
+
 # --- resolution -------------------------------------------------------------------
 _YEAR = re.compile(r"\s*\((?:19|20)\d{2}\s*-?\s*(?:(?:19|20)\d{2})?\)\s*$")   # '(2020)', '(2020-)', '(2020-2021)'
 _TRADE_TAIL = re.compile(r"\s*(?:\((?:19|20)\d{2}\)|tpb|hc|\d{2,3})\s*$", re.I)
@@ -801,6 +809,12 @@ def api_next(list_id: int, after: int):
 @router.delete("/api/readlists/{list_id}", status_code=204)
 def api_delete(list_id: int):
     delete_list(list_id)
+
+
+@router.delete("/api/readlists/{list_id}/items/{item_id}", status_code=204)
+def api_delete_item(list_id: int, item_id: int):
+    if not delete_item(list_id, item_id):
+        raise HTTPException(404, "No such entry in this list")
 
 
 @router.post("/api/readlists/import")

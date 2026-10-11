@@ -1247,6 +1247,15 @@ def reset_stuck_queue_items(path=DB_PATH):
     restart. 'processing' counts: a crash mid-finalize would otherwise strand the
     row in a state nothing ever advances."""
     with _connect(path) as conn:
+        # a list pack cut off mid-placing goes back to waiting on its finished
+        # download: the poller sees it done and places again, and placing skips
+        # what already landed. Failing it threw away a completed 20-issue torrent
+        conn.execute("""
+            UPDATE download_queue
+            SET state = CASE WHEN torrent_hash IS NOT NULL THEN 'pending_torrent' ELSE 'pending_usenet' END,
+                error = NULL, updated_at = datetime('now')
+            WHERE state = 'processing' AND kind = 'list_pack' AND (torrent_hash IS NOT NULL OR sab_nzo_id IS NOT NULL)
+        """)
         conn.execute("""
             UPDATE download_queue
             SET state = 'failed', error = 'Interrupted by a restart while placing — run Get missing again',

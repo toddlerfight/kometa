@@ -41,3 +41,18 @@ def test_nothing_anywhere_still_404s(wired):
     with pytest.raises(HTTPException) as e:
         th.series_thumbnail(series)
     assert e.value.status_code == 404
+
+
+def test_a_cover_not_ready_answers_at_once_and_keeps_cooking():
+    import threading
+    import kometa.thumbnails as th
+    gate, made = threading.Event(), []
+    def slow():
+        gate.wait(5)
+        made.append(1)
+        return "cover"
+    assert th._within("t-slow", slow).status_code == 204      # not ready: no waiting on the share
+    gate.set()
+    th._inflight.get("t-slow") and th._inflight["t-slow"].result(5)
+    assert made == [1]                                        # it finished anyway, for next time
+    assert th._within("t-fast", lambda: "ready") == "ready"

@@ -76,6 +76,13 @@ def test_reimport_replaces_and_continue_skips_finished(shelf):
     assert rl.get_lists(path=shelf) == []
 
 
+def test_one_entry_comes_out_and_the_rest_keep_their_order(shelf):
+    lid = rl.import_cbl(CBL, path=shelf)
+    items = rl.get_items(lid, path=shelf)
+    assert rl.delete_item(lid, items[1]["id"], path=shelf)
+    assert [i["id"] for i in rl.get_items(lid, path=shelf)] == [items[0]["id"]] + [i["id"] for i in items[2:]]
+    assert not rl.delete_item(lid + 1, items[0]["id"], path=shelf)      # another list's entry is left alone
+
 def test_bad_cbl_is_refused(shelf):
     with pytest.raises(rl.CblError):
         rl.import_cbl(b"<html>nope</html>", path=shelf)

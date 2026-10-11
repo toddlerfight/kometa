@@ -165,3 +165,14 @@ def test_reading_order_prefixes_come_off_but_numeric_titles_stay(db_path):
     assert lp.match_file("Secret Wars (Story Arc) (2015-2016)/103 X-tinction Agenda 04 (of 04) (2015) (digital).cbr", gaps) == xt
     assert lp.match_file("1872 002 (2015) (Digital).cbz", gaps) == n1872
     assert lp.match_file("Fear Itself S01E03 XviD.avi", gaps) is None
+
+
+def test_retry_on_a_pack_goes_back_to_its_download_not_a_search(db_path, series, monkeypatch):
+    import kometa.main as main
+    monkeypatch.setattr(main, "DB_PATH", db_path)
+    with db._connect(db_path) as c:
+        qid = c.execute("""INSERT INTO download_queue (tracked_series_id, issue_number, kind, state, torrent_hash, error)
+            VALUES (?, -1220, 'list_pack', 'failed', 'abc', 'Interrupted by a restart while placing')""", (series,)).lastrowid
+    assert main.retry_queue_item(qid)["ok"]
+    q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+    assert (q["state"], q["error"]) == ("pending_torrent", None)

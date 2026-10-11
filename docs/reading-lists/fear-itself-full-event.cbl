@@ -62,7 +62,6 @@
     <Book Series="Fear Itself - Deadpool" Number="1" />
     <Book Series="New Mutants" Number="29" Volume="2009" />
     <Book Series="Ghost Rider" Number="0.1" Volume="2011" />
-    <Book Series="Death of Dracula" Number="1" Volume="2010" />
     <Book Series="Fear Itself" Number="5" />
     <Book Series="Fear Itself - The Home Front" Number="5" />
     <Book Series="Journey into Mystery" Number="626" Volume="2011" />

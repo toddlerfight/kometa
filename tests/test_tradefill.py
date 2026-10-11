@@ -189,3 +189,11 @@ def test_an_interrupted_look_comes_back_in_an_hour_a_dead_end_in_a_week(db_path)
     with db._connect(db_path) as c:
         c.execute("UPDATE trade_fallback SET checked_at = ?", (two_hours_ago,))
     assert [r["id"] for r in tf.stuck_rows(db_path, 50)] == [ids[0]]
+
+
+def test_trade_searches_use_the_name_releases_carry():
+    from kometa.acquisition import trade_search_title as t
+    assert t("Fantastic Four by Waid & Wieringo: Unthinkable TP") == "Fantastic Four: Unthinkable"
+    assert t("Avengers Academy: The Complete Collection Vol. 2 TP", 2) == "Avengers Academy: The Complete Collection"
+    assert t("Batman: Hush") == "Batman: Hush"
+    assert t("Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition") == "Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition"

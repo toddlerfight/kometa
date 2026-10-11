@@ -7,6 +7,7 @@ main imports it back for the progress routes.
 """
 import os
 import json
+import re
 import time
 import logging
 import threading
@@ -100,6 +101,22 @@ def _trade_label(vol, vol_range) -> str:
     if vol is not None:
         return f"Vol {vol}"
     return ""
+
+
+def trade_search_title(title: str, vol=None) -> str:
+    """A catalogue's edition name → the name releases actually carry. LOCG writes
+    'Fantastic Four by Waid & Wieringo: Unthinkable TP' and 'Avengers Academy:
+    The Complete Collection Vol. 2 TP'; nobody posts either, and the GetComics
+    matcher wants every word of the query in the post, so the junk words alone
+    sink it. Drop the format suffix, the creator credit, and a 'Vol. N' the
+    search adds back itself."""
+    t = re.sub(r"\s+\((?:TPB?|HC|GN|Paperback|Hardcover)\)\s*$", "", title or "", flags=re.I)
+    t = re.sub(r"\s+(?:TPB?|HC|GN|Paperback|Hardcover)\s*$", "", t, flags=re.I)
+    t = re.sub(r"\s+by\s+[^:]+?(?=:)", "", t, count=1, flags=re.I)     # 'by Waid & Wieringo'
+    if vol is not None:
+        t = re.sub(rf"\s*,?\s*(?:Vol(?:ume)?\.?|Book)\s*0*{int(vol)}\b", "", t, flags=re.I)
+    t = t.replace("&", "and")
+    return re.sub(r"\s+", " ", t).strip(" -:\u2013")
 
 
 def _trade_fallback_name(meta: dict, default_title: str) -> str:
@@ -567,9 +584,9 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
     download_issue, and no issue_status to reconcile (folder is truth). Raises up
     to the shared handler, so trades get the same parking/civility for free."""
     meta = json.loads(item.get("meta_json") or "{}")
-    title = meta.get("title") or item["title"]
     vol = meta.get("vol")
     vol_range = meta.get("vol_range")
+    title = trade_search_title(meta.get("title") or item["title"], vol)
     label = _trade_label(vol, vol_range)
     fallback = _trade_fallback_name(meta, item["title"])
 

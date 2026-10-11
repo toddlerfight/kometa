@@ -2583,14 +2583,22 @@ async function wizardSearch() {
     // leads with "originates in Batman (1940)", whatever else the title search finds.
     const slP = api.get(`/api/search/storyline?q=${encodeURIComponent(q)}`).catch(() => []);
 
-    const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
+    // Metron is the primary catalogue (since 2026-10-08) and this search never
+    // asked it — 'shadow of the bat' found nothing because LOCG doesn't index the
+    // phrase. Metron leads; LOCG fills in what Metron lacks; a shut LOCG costs nothing.
+    const metP = api.get(`/api/search/metron?q=${encodeURIComponent(q)}`).catch(() => []);
+    const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`).catch(() => []);
+    const metron = await metP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    if (locgResults.length) {
+    const runKey = r => `${(r.series || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, '')}|${r.year_began || ''}`;
+    const seen = new Set(metron.map(runKey));
+    const runs = [...metron, ...locgResults.filter(r => !seen.has(runKey(r)))];
+    if (runs.length) {
       const arcs = (await cvP).filter(r => r.kind === 'arc');
-      _renderWizardResults([...(await slP), ...arcs, ...locgResults], q); return;
+      _renderWizardResults([...(await slP), ...arcs, ...runs], q); return;
     }
 
-    // LOCG empty — show the full ComicVine result (arcs + collected-edition volumes).
+    // Nobody has a run — show the full ComicVine result (arcs + collected-edition volumes).
     const cvResults = await cvP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
     _renderWizardResults([...(await slP), ...cvResults], q);
@@ -3325,7 +3333,17 @@ function _actProgressDetail(q) {
 
 // Activity rows are kind-agnostic: a trade shows "Vol N" and the series cover
 // (no per-issue thumbnail), an issue shows "#N" and its own.
+// A reading list's pack is one torrent/NZB for a whole list, filed under one of
+// the runs it fills (the queue keys on a series) with a placeholder issue number
+// (-1000 - list*10 - n). Shown as itself: 'Ghost Racers #-1260' was the Secret Wars pack.
+function _actPack(q) {
+  if (q.kind !== 'list_pack') return null;
+  let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
+  return { title: (m.pack_title || 'Reading-list pack').replace(/\s+/g, ' ').trim(), fills: (m.fills || []).length, listId: m.list_id };
+}
 function _actLabel(q) {
+  const pack = _actPack(q);
+  if (pack) return `Reading-list pack${pack.fills ? ` · fills ${pack.fills}` : ''}`;
   if (q.kind === 'trade') {
     if (String(q.locg_id) === '-1') return 'Complete run';     // a whole-run pack of singles, not a collected edition
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
@@ -3333,17 +3351,30 @@ function _actLabel(q) {
   }
   return `#${fmtNum(q.issue_number)}`;
 }
+// Activity asks for covers with ?fast=1: a cover not made yet answers 204 at once
+// (the server keeps making it) instead of parking a browser connection for seconds
+// on the comics share. The row dims, then asks once more when it's likely done.
+function _actCoverMiss(img, fallback) {
+  if (fallback && !img.dataset.fellBack) { img.dataset.fellBack = '1'; img.src = fallback; return; }
+  img.style.opacity = '0.15';
+  if (img.dataset.retried) { img.onerror = null; return; }
+  img.dataset.retried = '1';
+  const src = img.src;
+  setTimeout(() => { if (img.isConnected) { img.style.opacity = ''; img.src = src + (src.includes('?') ? '&' : '?') + 'r=1'; } }, 8000);
+}
 function _actThumb(q) {
   if (!q.tracked_series_id) return '';
-  const seriesThumb = `/api/series/${q.tracked_series_id}/thumbnail`;
+  const seriesThumb = `/api/series/${q.tracked_series_id}/thumbnail?fast=1`;
+  const img = (src, fallback) => `<img src="${esc(src)}" alt="" onerror="_actCoverMiss(this, ${fallback ? `'${fallback}'` : 'null'})">`;
   if (q.kind === 'trade') {
     // A proposal shows the cover of what actually came back; otherwise the
     // trade's own LOCG cover (stashed in meta), falling back to the series.
-    if (q.state === 'proposed') return `<img src="/api/queue/${q.id}/proposal-cover" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
+    if (q.state === 'proposed') return img(`/api/queue/${q.id}/proposal-cover`, seriesThumb);
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}
-    return `<img src="${esc(m.cover || seriesThumb)}" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
+    return m.cover ? img(m.cover, seriesThumb) : img(seriesThumb, null);
   }
-  return `<img src="/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail" alt="" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='${seriesThumb}'">`;
+  if (q.kind === 'list_pack' || q.issue_number == null || q.issue_number < 0) return img(seriesThumb, null);
+  return img(`/api/series/${q.tracked_series_id}/issues/${q.issue_number}/thumbnail?fast=1`, seriesThumb);
 }
 
 // Plain-language failure reason for an Activity row — surfaces what used to be a
@@ -3467,12 +3498,14 @@ async function proposalDecide(qid, action, btn) {
 function _actRowHtml(q) {
   const active = ACT_ACTIVE_STATES.includes(q.state);
   const errTip = q.error ? ` title="${esc(q.error)}"` : '';
-  const nav = q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
+  const pack = _actPack(q);
+  const nav = pack && pack.listId ? ` style="cursor:pointer" onclick="navigate('readlist',{id:${pack.listId}})"`
+    : q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
   return `
         <div class="act-row${q.state === 'done' ? ' done' : ''}" data-qid="${q.id}" data-qstate="${q.state}"${errTip}>
           <div class="act-row-cover">${_actThumb(q)}</div>
           <div class="act-row-meta"${nav}>
-            <div class="act-row-title u-truncate">${esc(q.title)}</div>
+            <div class="act-row-title u-truncate">${esc(pack ? pack.title : q.title)}</div>
             <div class="act-row-issue">${active && q.publisher ? esc(q.publisher) + ' · ' : ''}${_actLabel(q)}</div>
             ${_actSubHtml(q)}
           </div>

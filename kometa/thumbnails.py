@@ -12,7 +12,9 @@ kometa/covers.py) comes first — page 1 of the file you own, made by Kometa —
 then the catalogue; Komga is a last resort behind the `komga_covers` flag.
 """
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
 import hashlib
 import logging
 
@@ -206,8 +208,39 @@ def _tag(resp, source: str):
     return resp
 
 
+# --- don't-wait covers (Activity) ---------------------------------------------------
+# A cover nobody has made yet is page 1 of a file on the comics share. With the NAS
+# busy that's 1–6 s a cover, and a list of fifty rows parks the browser's six
+# connections on them — the page's own API calls queue behind the art. ?fast=1:
+# a cover that's ready comes straight back; one that isn't gets a 204 in under half
+# a second and keeps cooking in the background, so it's in the store next time.
+FAST_WAIT_S = 0.4
+_bg = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cover")
+_inflight: dict = {}
+_inflight_lock = threading.Lock()
+
+
+def _within(key: str, fn):
+    with _inflight_lock:
+        fut = _inflight.get(key)
+        if fut is None:
+            fut = _bg.submit(fn)
+            _inflight[key] = fut
+            fut.add_done_callback(lambda _f: _inflight.pop(key, None))
+    try:
+        return fut.result(timeout=FAST_WAIT_S)
+    except _FutureTimeout:
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
 @router.get("/api/series/{series_id}/thumbnail")
-def series_thumbnail(series_id: int):
+def series_thumbnail(series_id: int, fast: int = 0):
+    if fast:
+        return _within(f"s{series_id}", lambda: _series_thumbnail(series_id))
+    return _series_thumbnail(series_id)
+
+
+def _series_thumbnail(series_id: int):
     """The run's card. Order (Komga retirement, 2026-10-10): a poster you set in
     Komga → page 1 of the lowest owned issue, from the store → the catalogue's
     cover from the store → the catalogue live → a trade's cover → page 1 made
@@ -286,7 +319,13 @@ def _shelf_cover_response(series_id: int) -> Response | None:
 
 
 @router.get("/api/series/{series_id}/issues/{number}/thumbnail")
-def issue_thumbnail(series_id: int, number: float, request: Request = None):
+def issue_thumbnail(series_id: int, number: float, request: Request = None, fast: int = 0):
+    if fast:
+        return _within(f"i{series_id}/{number:g}", lambda: _issue_thumbnail(series_id, number, request))
+    return _issue_thumbnail(series_id, number, request)
+
+
+def _issue_thumbnail(series_id: int, number: float, request: Request = None):
     """The issue's tile. Order (Komga retirement, 2026-10-10): your chosen
     variant → page 1 of the file you own, from the store (made on the spot the
     first time) → the catalogue's cover from the store → the catalogue live →

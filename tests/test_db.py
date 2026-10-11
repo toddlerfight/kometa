@@ -95,6 +95,18 @@ class TestResetStuckQueueItems:
         assert states[ids[1.0]] == "queued"
         assert states[ids[2.0]] == "queued"
 
+    def test_a_pack_cut_off_mid_placing_goes_back_to_its_finished_download(self, db_path, series):
+        with db._connect(db_path) as c:
+            c.execute("""INSERT INTO download_queue (tracked_series_id, issue_number, kind, state, torrent_hash)
+                VALUES (?, -1220, 'list_pack', 'processing', 'abc')""", (series,))
+            c.execute("""INSERT INTO download_queue (tracked_series_id, issue_number, kind, state, sab_nzo_id)
+                VALUES (?, -1221, 'list_pack', 'processing', 'nzo')""", (series,))
+            c.execute("""INSERT INTO download_queue (tracked_series_id, issue_number, kind, state)
+                VALUES (?, -1222, 'list_pack', 'processing')""", (series,))
+        db.reset_stuck_queue_items(db_path)
+        states = {q["issue_number"]: q["state"] for q in db.get_queue(db_path)}
+        assert states == {-1220: "pending_torrent", -1221: "pending_usenet", -1222: "failed"}
+
 
 class TestEnvConfigSeeding:
     """Env vars provision config on first boot (so compose-only setup works),
