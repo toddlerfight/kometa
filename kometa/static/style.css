@@ -2060,6 +2060,11 @@ body.reading #layout { opacity: 0; transition: opacity var(--t-fast) var(--ease-
   animation: act-spin .9s linear infinite; }
 .rd-stage > .rd-spin { position: absolute; top: 50%; left: 50%; margin: -14px 0 0 -14px; z-index: 0; }
 .rd-stage .rd-page { position: relative; z-index: 1; }
+/* the page sits above its spinner INSIDE the stage only — without isolation its
+   z-index lifted it over the reader bar and thumbnail strip too */
+.rd-stage { isolation: isolate; }
+.rd-progress, .rd-count { z-index: 2; }
+.rd-chrome { z-index: 3; }
 .rd-stage.rd-loaded > .rd-spin { display: none; }
 @media (prefers-reduced-motion: reduce) { .rd-spin { animation: none; border-color: var(--pri); } .rd-load-fill { transition: none !important; }
   .rd-loading, .rd-loading-out { transform: none; transition: opacity .2s linear; }
