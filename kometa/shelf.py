@@ -129,6 +129,17 @@ def scan_shelf(root: str | None = None) -> dict:
             if not os.path.isdir(vfolder):
                 gone += db.forget_missing_books(vid, [], DB_PATH, keep_read=True)
         pruned = db.prune_shelf(stamp, DB_PATH)
+        # rows already cut loose from any folder (pruned before books were) whose
+        # file is really gone and that nobody read: nothing points at them
+        with db._connect(DB_PATH) as conn:
+            loose = [(r["id"], r["path"]) for r in conn.execute("""
+                SELECT b.id, b.path FROM books b LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
+                WHERE s.id IS NULL AND NOT EXISTS (SELECT 1 FROM read_progress p WHERE p.book_id = b.id)""")]
+        dead = [i for i, fp in loose if not os.path.exists(fp)]
+        if dead:
+            with db._connect(DB_PATH) as conn:
+                db._forget_book_ids(conn, dead)
+            gone += len(dead)
         healed = db.reparse_null_numbers(DB_PATH)      # names that parse now (renamed, re-titled)
         if healed:
             logger.info(f"Shelf scan: {healed} book(s) given the number their name now carries")

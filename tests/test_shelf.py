@@ -166,3 +166,13 @@ def test_a_vanished_folders_unread_books_go_and_read_ones_stay(shelf):
     with db._connect(sh.DB_PATH) as c:
         left = {r[0] for r in c.execute("SELECT id FROM books WHERE shelf_series_id = ?", (kid,))}
     assert left == {b[0]["id"]}
+
+
+def test_loose_rows_from_long_gone_folders_are_cleared(shelf):
+    root, _ = shelf
+    sh.scan_shelf(str(root))
+    with db._connect(sh.DB_PATH) as c:
+        c.execute("INSERT INTO books (path, size, mtime, shelf_series_id) VALUES ('/nowhere/Gone #001.cbz', 1, 1.0, 99999)")
+    sh.scan_shelf(str(root))
+    with db._connect(sh.DB_PATH) as c:
+        assert c.execute("SELECT COUNT(*) FROM books WHERE path = '/nowhere/Gone #001.cbz'").fetchone()[0] == 0
