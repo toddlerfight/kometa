@@ -548,4 +548,5 @@ def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:
         [num for num, iss in existing.items() if num not in owned_numbers and iss["owned"]],
         False, DB_PATH,
     )
+    db.close_rows_now_owned(series["id"], DB_PATH)
     return {"scanned": True, "owned": len(owned_numbers)}

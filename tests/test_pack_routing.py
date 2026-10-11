@@ -201,3 +201,21 @@ def test_sweep_retires_the_dead_pack(monkeypatch, db_path, big_backlog):
     _sweep(monkeypatch, db_path)
     assert _row(db_path, qid)["state"] == "done"
     assert _FakeGC.calls == [], "nothing missing — no pack search should run"
+
+
+def test_a_dead_issue_row_closes_once_the_issue_is_on_the_shelf(db_path, big_backlog):
+    # JIM #626.1: 'No result' as a single, then it arrived inside a run pack
+    db.queue_issue(big_backlog, 3.0, db_path)
+    db.queue_issue(big_backlog, 4.0, db_path)
+    db.queue_issue(big_backlog, 5.0, db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE download_queue SET state='not_found' WHERE tracked_series_id=? AND issue_number IN (3, 4)", (big_backlog,))
+        conn.execute("UPDATE download_queue SET state='downloading' WHERE tracked_series_id=? AND issue_number=5", (big_backlog,))
+        conn.execute("UPDATE issue_status SET owned=1 WHERE tracked_series_id=? AND number IN (3, 5)", (big_backlog,))
+    assert db.close_rows_now_owned(big_backlog, db_path) == 1
+    with db._connect(db_path) as conn:
+        st = {r[0]: (r[1], r[2]) for r in conn.execute(
+            "SELECT issue_number, state, error FROM download_queue WHERE tracked_series_id=? AND issue_number > 0", (big_backlog,))}
+    assert st[3.0] == ("done", "On the shelf")
+    assert st[4.0][0] == "not_found"          # still not here
+    assert st[5.0][0] == "downloading"        # a working row is never touched

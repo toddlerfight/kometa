@@ -1712,6 +1712,25 @@ def pack_attempt_failed(series_id, path=DB_PATH) -> bool:
     return row is not None
 
 
+def close_rows_now_owned(series_id, path=DB_PATH) -> int:
+    """A failed / not-found issue row whose issue is now on the shelf has nothing
+    left to do: done. A pack (or a hand-placed file) brought it in some other way —
+    JIM #626.1 landed in the #622–655 pack and its 'No result' row sat in Activity
+    anyway (2026-10-12). Only dead rows; a working one is never touched."""
+    with _connect(path) as conn:
+        return conn.execute("""
+            UPDATE download_queue
+            SET state = 'done', error = 'On the shelf', updated_at = datetime('now')
+            WHERE tracked_series_id = ?
+              AND COALESCE(kind, 'issue') = 'issue'
+              AND issue_number >= 0
+              AND state IN ('failed', 'not_found')
+              AND EXISTS (SELECT 1 FROM issue_status i
+                          WHERE i.tracked_series_id = download_queue.tracked_series_id
+                            AND i.number = download_queue.issue_number AND i.owned = 1)""",
+            (series_id,)).rowcount
+
+
 def retire_completed_packs(path=DB_PATH) -> int:
     """Close out dead whole-run pack rows whose series no longer needs them.
     A failed/not-found pack used to sit in Activity forever — The Sacrificers'
