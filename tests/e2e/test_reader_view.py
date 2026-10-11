@@ -138,3 +138,16 @@ def test_a_long_jittery_momentum_tail_turns_one_page(app, app_server):
         app.mouse.wheel(d, 0)
     app.wait_for_timeout(300)
     expect(page).to_have_attribute("alt", f"Page {start + 1}")
+
+
+def test_recorded_safari_swipes_turn_one_page_each(app, app_server):
+    # Real Safari/macOS trackpad streams (timestamp, dx, dy) from the 2026-10-11 recorder:
+    # brisk swipes still accelerating at the turn, finger-lift spikes, resting-finger
+    # drift. The old rules turned 23 pages; there are 12 swipes in here.
+    import json, pathlib
+    streams = json.loads((pathlib.Path(__file__).parent / "fixtures_safari_swipes.json").read_text())
+    turns = app.evaluate("""streams => streams.map(ev => {
+        const f = _rdWheelGesture(); let n = 0;
+        for (const [t, dx, dy] of ev) if (f(t, dx, dy)) n++;
+        return n; })""", streams)
+    assert turns == [1, 4, 7], turns

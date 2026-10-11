@@ -433,16 +433,9 @@ function _rdBindInput() {
       _rdStep(dx < 0 ? 1 : -1, 'swipe');
     }
   });
-  // A two-finger sideways swipe on a trackpad arrives as a stream of wheel events,
-  // then macOS keeps sending a decaying momentum tail. One page per swipe:
-  //  - a swipe is judged on its whole travel (sideways beats up-down overall), not
-  //    event by event — a slightly diagonal swipe used to fall short;
-  //  - it turns once its sideways travel passes WHEEL_TURN_PX;
-  //  - a NEW swipe starts after a pause, or when the speed rises again — momentum
-  //    only ever decays, so a fresh push inside the tail is a fresh swipe (a quick
-  //    second swipe used to be swallowed by the first one's momentum).
-  const WHEEL_TURN_PX = 40, WHEEL_GAP_MS = 140, WHEEL_COOLDOWN_MS = 450;
-  const g = { x: 0, y: 0, last: 0, low: 0, at: 0, spent: false, turnedAt: 0 };
+  // A two-finger sideways swipe on a trackpad arrives as a stream of wheel events plus
+  // macOS's momentum tail. One page per swipe — the rules live in _rdWheelGesture.
+  const turnFor = _rdWheelGesture();
   // TEMPORARY flight recorder: each gesture's raw stream + where it turned, posted
   // once the wheel goes quiet. Remove with /api/debug/wheel.
   const rec = { ev: [], t: 0 };
@@ -456,26 +449,16 @@ function _rdBindInput() {
   el.addEventListener('wheel', e => {
     if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
-    const dx = e.deltaX * k, dy = e.deltaY * k, mag = Math.abs(dx);
+    const dx = e.deltaX * k, dy = e.deltaY * k;
     const now = e.timeStamp || performance.now();
     if (rec.ev.length > 600) recFlush();
     rec.ev.push([Math.round(now), +dx.toFixed(1), +dy.toFixed(1), e.deltaMode, 0]);
     clearTimeout(rec.t); rec.t = setTimeout(recFlush, 1200);
-    // a fresh push inside the momentum tail: well above the tail's lowest point, not a
-    // wobble in it (the tail jitters — reading every uptick as a new swipe turned
-    // several pages per swipe)
-    const rising = g.spent && mag > 12 && mag > Math.max(g.low, 1) * 3;
-    const turnedSideways = mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x);   // a scroll, then a swipe
-    if (now - g.at > WHEEL_GAP_MS) g.turnedAt = 0;                 // fingers lifted and came back: a new swipe, no cooldown
-    if (now - g.at > WHEEL_GAP_MS || rising || turnedSideways) Object.assign(g, { x: 0, y: 0, spent: false, low: mag });
-    g.at = now; g.last = mag; g.low = Math.min(g.low || mag, mag);
-    g.x += dx; g.y += dy;
-    if (Math.abs(g.x) <= Math.abs(g.y)) return;                    // an up-down scroll: leave it alone
-    e.preventDefault();                                              // and not the browser's back/forward swipe
-    if (!g.spent && Math.abs(g.x) >= WHEEL_TURN_PX && now - g.turnedAt > WHEEL_COOLDOWN_MS) {
-      g.spent = true; g.turnedAt = now; g.low = mag;
-      rec.ev[rec.ev.length - 1][4] = g.x > 0 ? 1 : -1;
-      _rdStep(g.x > 0 ? 1 : -1, 'swipe');
+    const turn = turnFor(now, dx, dy);
+    if (Math.abs(dx) > Math.abs(dy) || turn) e.preventDefault();   // ours, not the browser's back/forward swipe
+    if (turn) {
+      rec.ev[rec.ev.length - 1][4] = turn;
+      _rdStep(turn, 'swipe');
     }
   }, { passive: false });
   document.addEventListener('keydown', e => {
@@ -1294,4 +1277,45 @@ async function _rlPollGetMissing(listId) {
   const unknown = (st.unknown || []).length;
   showToast(`${st.queued} issues queued across ${st.created} new runs${unknown ? ` · ${unknown} unknown to every catalogue` : ''}`);
   if (currentView === 'readlist' && currentParams.id === listId) renderReadList(listId);
+}
+
+
+// Trackpad swipe → page turn, fed one wheel event at a time; returns 1 / -1 when a page
+// should turn, else 0. Built from Safari's real event stream (2026-10-11 recorder), which
+// taught us the hard way:
+//  - one swipe = speed ramps up from near zero, peaks, decays through a long momentum
+//    tail. The page turns once the sideways travel passes TURN px — often while the
+//    swipe is STILL accelerating, so "speed rose again" is NOT a new swipe. That rule
+//    double-turned every brisk swipe.
+//  - on finger lift Safari spits a lone spike (32, 122…) into the tail. One event, not a push.
+//  - fingers resting on the pad drift 1–2 px an event; that crawls past TURN in a few
+//    hundred ms. A swipe has to actually get going (PUSH) to count.
+//  - so after a turn, a NEW swipe inside the stream needs the tail to bottom out
+//    (≤ TROUGH) and then a sustained climb: 3 events, none falling, ending ≥ PUSH.
+//    Or a pause (GAP) — fingers lifted, everything resets.
+function _rdWheelGesture() {
+  const TURN = 40, GAP = 140, TROUGH = 4, PUSH = 6;
+  const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: false, ramp: [] };
+  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: false, ramp: [] });
+  return (now, dx, dy) => {
+    const mag = Math.abs(dx);
+    if (now - g.at > GAP) fresh();
+    else if (mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x)) fresh();   // a scroll, then a swipe
+    else if (g.spent) {
+      if (mag <= TROUGH) { g.low = true; g.ramp = []; }
+      else if (g.low) {
+        if (g.ramp.length && mag < g.ramp[g.ramp.length - 1]) g.ramp = [];
+        g.ramp.push(mag);
+        if (g.ramp.length >= 3 && mag >= PUSH) {               // a real second push: start over, keep its travel
+          const travel = g.ramp.reduce((a, b) => a + b, 0) * Math.sign(dx);
+          fresh(); g.x = travel - dx;
+        }
+      }
+    }
+    g.at = now; g.x += dx; g.y += dy; g.peak = Math.max(g.peak, mag);
+    if (Math.abs(g.x) <= Math.abs(g.y)) return 0;                // an up-down scroll: leave it alone
+    if (g.spent || Math.abs(g.x) < TURN || g.peak < PUSH) return 0;
+    g.spent = true; g.low = false; g.ramp = [];
+    return g.x > 0 ? 1 : -1;
+  };
 }
