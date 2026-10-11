@@ -783,7 +783,7 @@ def calendar_date(recent_release, next_release):
     return recent_release or next_release
 
 
-def get_all_series_summaries(path=DB_PATH):
+def get_all_series_summaries(path=DB_PATH, series_id=None):
     """Bulk per-series aggregation: counts, next-release date, and the card cover.
 
     card_image is the library card's cover, sourced exactly like the issue tile so
@@ -799,7 +799,7 @@ def get_all_series_summaries(path=DB_PATH):
     cutoff = str(date.today() + timedelta(days=30))
     week_ago = str(date.today() - timedelta(days=RECENT_RELEASE_DAYS))
     with _connect(path) as conn:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT
                 tracked_series_id,
                 MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
@@ -824,8 +824,10 @@ def get_all_series_summaries(path=DB_PATH):
                    AND i2.store_date IS NOT NULL AND i2.store_date <= ?
                    ORDER BY i2.store_date DESC LIMIT 1) as recent_owned
             FROM issue_status
+            {"WHERE tracked_series_id = ?" if series_id is not None else ""}
             GROUP BY tracked_series_id
-        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today))
+        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today)
+            + ((series_id,) if series_id is not None else ()))
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
@@ -992,15 +994,19 @@ def get_arc_discovery(tracked_series_id, path=DB_PATH):
     return {"arcs": json.loads(row["data_json"]), "age": row["age"]}
 
 
-def get_issues_for_series(tracked_series_id, path=DB_PATH):
+def get_issues_for_series(tracked_series_id, path=DB_PATH, number=None):
+    """The run's issues, each with your chosen variant's cover. number= returns
+    just that issue (a cover tile wanted one row and read all 544 of a long run)."""
+    one = " AND i.number = ?" if number is not None else ""
+    args = (tracked_series_id,) + ((float(number),) if number is not None else ())
     with _connect(path) as conn:
-        rows = [dict(r) for r in conn.execute("""
+        rows = [dict(r) for r in conn.execute(f"""
             SELECT i.* FROM issue_status i
-            WHERE i.tracked_series_id = ? ORDER BY i.number
-        """, (tracked_series_id,))]
+            WHERE i.tracked_series_id = ?{one} ORDER BY i.number
+        """, args)]
         prefs = {r["number"]: r for r in conn.execute(
-            "SELECT number, selected, primary_id FROM variant_prefs WHERE tracked_series_id = ?",
-            (tracked_series_id,)
+            f"SELECT number, selected, primary_id FROM variant_prefs WHERE tracked_series_id = ?{one.replace('i.', '')}",
+            args
         )}
     # Stamp variant_cover = the chosen variant's image on issues that have a saved pref.
     # Lets the modal header show YOUR pick for an upcoming/not-yet-downloaded issue

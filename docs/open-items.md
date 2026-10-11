@@ -6,15 +6,15 @@ Kept here so they don't live in a chat. Newest at the top of each section.
 
 - [ ] **Revoke the Gitea `claude-code` token** and make a new one (Gitea → Settings → Applications). The old one is in this repo's public history (commit 3058eff, Apr 29, `deploy.sh`), reachable from `origin/main` and all tags. Then the new token moves out of plain text.
 
-## Next wave — fixes from the 2026-10-11 second review (security + efficiency)
+## From the 2026-10-11 second review — security still to do
 
-Bugs from today's waves:
-- [ ] Book rows for deleted/renamed files are never dropped (wave 1 removed the per-row exists checks assuming the scan prunes them — it doesn't). 25 ghost rows live. Mark rows not seen by a scan; drop or flag them; finalize forgets files it deletes.
-- [ ] `?fast=1` cover threads lose the "interactive" flag (thread pools don't copy contextvars) and wait on LOCG without a timeout — copy the context on submit (covers and the share-read lanes).
-- [ ] `LOAD_TRUNCATED_IMAGES` flipped process-wide during cover checks while other threads decode — detect truncation per image instead.
-- [ ] Startup scan skip also skips new-folder import and trash purge — run those anyway.
-- [ ] `_archive_verdict`'s memory cache remembers "couldn't look" until restart.
-- [ ] `missing` counted two ways (Library card vs series page) once trades cover gaps.
+Bugs from today's waves — **fixed 2026-10-11** (kept for the record):
+- [x] Book rows for deleted/renamed files are never dropped (wave 1 removed the per-row exists checks assuming the scan prunes them — it doesn't). 25 ghost rows live. Mark rows not seen by a scan; drop or flag them; finalize forgets files it deletes.
+- [x] `?fast=1` cover threads lose the "interactive" flag (thread pools don't copy contextvars) and wait on LOCG without a timeout — copy the context on submit (covers and the share-read lanes).
+- [x] `LOAD_TRUNCATED_IMAGES` flipped process-wide during cover checks while other threads decode — detect truncation per image instead.
+- [x] Startup scan skip also skips new-folder import and trash purge — run those anyway.
+- [x] `_archive_verdict`'s memory cache remembers "couldn't look" until restart.
+- [x] `missing` counted two ways (Library card vs series page) once trades cover gaps.
 
 Security (LAN + tailnet; Funnel is off — checked):
 - [ ] One request filter: accept changes only from Kometa's own pages / YondeB / curl and only for Kometa's own addresses (CSRF + DNS rebinding).
@@ -28,10 +28,7 @@ Security (LAN + tailnet; Funnel is off — checked):
 - [ ] Pre-commit hook: catch tokens inside URLs (`user:token@host`) — how the Gitea token got in.
 
 Efficiency leftovers:
-- [ ] OPDS page route (Panels) onto the share-read lanes.
-- [ ] Reading lists resolved twice every ~2 min (warm_lists) — reuse, skip when nothing changed.
-- [ ] Shelf scan: one transaction per publisher; skip folders whose mtime hasn't changed.
-- [ ] `_variant_cache` unbounded; series status and cover tiles read whole tables for one row; two `BaseHTTPMiddleware` layers → pure ASGI; Activity fetches the whole queue every 2 s while active.
+- [ ] Activity fetches the whole queue every 2 s while something's active (~6 KB gzipped) — a `?since=` merge would do; skipped as not worth the risk yet.
 
 Personal details (low, current tree): machine/drive names (ginbako, Voot II, emoji shares), ports, Brisbane in docs/scripts — genericise if wanted. YondeB has the tailnet/LAN address and Apple Team ID hard-coded (fine while private).
 

@@ -162,18 +162,17 @@ def _list_neighbours(path) -> dict[int, dict[int, float]]:
     return value
 
 
-def _compute_list_neighbours(path) -> dict[int, dict[int, float]]:
-    from kometa import readlists
+def _compute_list_neighbours(path, resolved: list[dict] | None = None) -> dict[int, dict[int, float]]:
+    """From the resolved lists — the warm copy, not a second resolve of every
+    list (it resolved them all again right after warm_lists had: ~0.35 s of CPU
+    every few minutes, all day)."""
     out: dict[int, dict[int, float]] = defaultdict(lambda: defaultdict(float))
-    try:
-        lists = readlists.get_lists(path)
-    except Exception:
-        return out
-    for l in lists:
+    if resolved is None:
         try:
-            res = readlists.resolve(l["id"], path)
+            resolved = _resolved_lists(path)
         except Exception:
-            continue
+            return out
+    for res in resolved:
         seq = [(e["position"], e["series_id"]) for e in res["entries"] if e.get("series_id")]
         # A short list is an order: everything on it is related. A long one (the
         # 59-series 'Batman' collection) is a shelf: only true neighbours count,
@@ -322,13 +321,44 @@ def _resolved_lists(path) -> list[dict]:
     return _refresh_lists(path)
 
 
+_warm_sig = {"path": None, "sig": None}
+
+
+def _lists_fingerprint(path) -> tuple:
+    """What a resolved list depends on — the books, the lists, the runs, your
+    progress. Unchanged since the last warm-up → nothing to rebuild."""
+    import sqlite3
+
+    def q(conn, sql):
+        try:
+            return tuple(conn.execute(sql).fetchone())
+        except sqlite3.OperationalError:
+            return None                             # a table this DB doesn't have yet
+    with db._connect(path) as conn:
+        return tuple(q(conn, sql) for sql in (
+            "SELECT COUNT(*), MAX(id), MAX(mtime) FROM books",
+            "SELECT COUNT(*), MAX(id) FROM reading_list_items",
+            "SELECT COUNT(*), MAX(id) FROM tracked_series",
+            "SELECT COUNT(*), MAX(updated_at) FROM read_progress",
+            "SELECT COUNT(*), SUM(owned), SUM(ignored), COUNT(covered_by) FROM issue_status"))
+
+
 def warm_lists(path=None) -> int:
     """Scheduler: keep the resolved lists and the neighbour map warm. Rebuilds
-    and swaps; readers keep the old copy until the new one lands."""
+    and swaps; readers keep the old copy until the new one lands. Skipped when
+    nothing the lists depend on has changed since the last rebuild."""
     path = path or DB_PATH
-    n = len(_refresh_lists(path))
-    _list_neighbours(path)
-    return n
+    sig = _lists_fingerprint(path)
+    if (_warm_sig["path"] == path and _warm_sig["sig"] == sig and _lists_cache["value"] is not None
+            and _nb_cache["value"] is not None):
+        now = time.time()
+        _lists_cache["at"] = now
+        _nb_cache["at"] = now
+        return len(_lists_cache["value"])
+    fresh = _refresh_lists(path)
+    _nb_cache.update(at=time.time(), path=path, value=_compute_list_neighbours(path, fresh))
+    _warm_sig.update(path=path, sig=sig)
+    return len(fresh)
 
 
 def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:

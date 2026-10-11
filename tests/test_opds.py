@@ -120,3 +120,24 @@ def test_a_streamed_page_is_a_page_read_lagging_the_prefetch(db_path, tmp_path):
     assert pr["page"] == 22 and pr["completed"] == 1
     op.note_page_read(book, 3, db_path)
     assert db.get_progress("me", ids[0], db_path)["completed"] == 1    # re-reading page 4 doesn't un-finish it
+
+
+def test_a_pse_page_is_served_and_its_page_list_read_on_first_open(db_path, tmp_path, monkeypatch):
+    import asyncio
+    import kometa.reader as rd
+    monkeypatch.setattr(rd, "DB_PATH", db_path)
+    monkeypatch.setattr(op, "DB_PATH", db_path)
+    monkeypatch.setattr(rd, "PAGE_CACHE_DIR", str(tmp_path / "cache"))
+    sid, ids = _shelf(db_path, tmp_path)
+    import io, zipfile
+    from PIL import Image
+    buf = io.BytesIO(); Image.new("RGB", (600, 900), (20, 120, 200)).save(buf, "JPEG")
+    with zipfile.ZipFile(db.get_book(ids[0], db_path)["path"], "w") as z:      # a page that really renders
+        z.writestr("001.jpg", buf.getvalue()); z.writestr("002.jpg", buf.getvalue())
+    with db._connect(db_path) as c:
+        c.execute("UPDATE books SET page_count = NULL, pages_json = NULL")      # never opened
+    resp = asyncio.run(op.api_page(ids[0], 0, maxWidth=400))
+    assert resp.media_type == "image/jpeg" and len(resp.body) > 100
+    assert db.get_book(ids[0], db_path)["page_count"]                          # the page list landed
+    again = asyncio.run(op.api_page(ids[0], 0, maxWidth=400))                   # from the cache this time
+    assert again.body == resp.body

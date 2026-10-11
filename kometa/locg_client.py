@@ -698,7 +698,11 @@ def select_editions(trades: list[dict]) -> list[dict]:
 # variants for weeks after release. Cache hard enough to make modal reopens
 # free, short enough that a new variant shows up same-day.
 _VARIANT_CACHE_TTL = 6 * 3600  # seconds
-_variant_cache: dict[str, tuple[float, dict]] = {}
+# bounded: the LOCG sweep fetches variants for every owned issue (~7k), and a
+# plain dict kept every one until restart (10–30 MB) — oldest go first now
+import collections as _collections
+_variant_cache: "_collections.OrderedDict[str, tuple[float, dict]]" = _collections.OrderedDict()
+_VARIANT_CACHE_MAX = 512
 
 
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
@@ -742,6 +746,9 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
 
     result = {'title': issue_title, 'covers': covers}
     _variant_cache[locg_issue_id] = (time.time(), result)
+    _variant_cache.move_to_end(locg_issue_id)
+    while len(_variant_cache) > _VARIANT_CACHE_MAX:
+        _variant_cache.popitem(last=False)
     return result
 
 

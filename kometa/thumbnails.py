@@ -339,8 +339,7 @@ def _issue_thumbnail(series_id: int, number: float, request: Request = None):
     variant → page 1 of the file you own, from the store (made on the spot the
     first time) → the catalogue's cover from the store → the catalogue live →
     LOCG's variant art → Komga's thumbnail, only if komga_covers is on."""
-    issues = db.get_issues_for_series(series_id, DB_PATH)
-    issue = next((i for i in issues if i["number"] == number), None)
+    issue = next(iter(db.get_issues_for_series(series_id, DB_PATH, number=number)), None)
     from kometa import covers, images
 
     # Your chosen variant wins — an explicit pick beats the file's own cover, the

@@ -413,26 +413,34 @@ def api_file(book_id: int):
 
 
 @router.get("/opds/books/{book_id}/pages/{page}")
-def api_page(book_id: int, page: int, maxWidth: int | None = None):
+async def api_page(book_id: int, page: int, maxWidth: int | None = None):
+    """PSE page: 0-based, optional maxWidth → the reader's own buckets. Same
+    lanes as the web reader (kometa/reader.py): a cached page straight off local
+    disk, share reads on their own threads — Panels fetches ahead, and on the web
+    threadpool those reads parked workers the rest of the app needed."""
+    from starlette.concurrency import run_in_threadpool
+    from kometa import reader
     from kometa.activity import note_reading
     note_reading()
-    """PSE page: 0-based, optional maxWidth → the reader's own buckets."""
-    from kometa import reader
-    book = reader._book_or_404(book_id)
+    book = await run_in_threadpool(reader._book_or_404, book_id)
     if not book.get("pages"):
-        # first open: the reader's own scan fills the page list (and the real count)
-        book = reader.ensure_book(book["path"], book.get("tracked_series_id"), book.get("number"))
+        # first open: the page list (and the real count), sizes later
+        book = await reader._on_share(reader.ensure_book, book["path"], book.get("tracked_series_id"),
+                                      book.get("number"), quick=True, lane="open")
     if not 0 <= page < (book["page_count"] or 0):
         raise HTTPException(404, "No such page")
+    width = reader._bucket(maxWidth)
+    data = await run_in_threadpool(reader._cached_page, book, page, width)
+    if data is None:
+        try:
+            data = await reader._on_share(reader.get_page_bytes, book, page, width)
+        except FileNotFoundError:
+            raise HTTPException(404, "File is gone from the shelf")
+        except Exception as e:
+            logger.warning(f"OPDS: page {page} of book {book_id} failed: {e}")
+            raise HTTPException(422, "This page can't be rendered")
     try:
-        data = reader.get_page_bytes(book, page, reader._bucket(maxWidth))
-    except FileNotFoundError:
-        raise HTTPException(404, "File is gone from the shelf")
-    except Exception as e:
-        logger.warning(f"OPDS: page {page} of book {book_id} failed: {e}")
-        raise HTTPException(422, "This page can't be rendered")
-    try:
-        note_page_read(book, page)
+        await run_in_threadpool(note_page_read, book, page)
     except Exception as e:
         logger.info(f"OPDS: progress for book {book_id} not saved: {e}")
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})

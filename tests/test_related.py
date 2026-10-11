@@ -44,13 +44,12 @@ def test_a_long_list_only_relates_true_neighbours(db_path, monkeypatch):
     import kometa.readlists as rl
     ids = [db.add_series(title=f"S{i}", publisher="X", folder_path=None, on_pull_list=False, path=db_path) for i in range(20)]
     fake = {"entries": [{"position": i + 1, "series_id": sid} for i, sid in enumerate(ids)]}
-    monkeypatch.setattr(rl, "get_lists", lambda path=None: [{"id": 1}])
-    monkeypatch.setattr(rl, "resolve", lambda lid, path=None: fake)
+    monkeypatch.setattr(rel, "_resolved_lists", lambda path=None: [fake])          # the warm copy
     rel._nb_cache['value'] = None
     nb = rel._list_neighbours(db_path)
     assert set(nb[ids[5]]) == {ids[3], ids[4], ids[6], ids[7]}
     short = {"entries": fake["entries"][:5]}
-    monkeypatch.setattr(rl, "resolve", lambda lid, path=None: short)
+    monkeypatch.setattr(rel, "_resolved_lists", lambda path=None: [short])
     rel._nb_cache['value'] = None
     assert set(rel._list_neighbours(db_path)[ids[0]]) == set(ids[1:5])
 
@@ -172,3 +171,15 @@ def test_a_fill_metron_cut_short_is_partial_and_retried_soon(db_path):
     with db._connect(db_path) as c:
         c.execute("UPDATE creator_works SET fetched_at = datetime('now', '-11 minutes') WHERE creator_id = 9")
     assert rel._cached_works(9, db_path) is None                           # eleven minutes on: ask again
+
+
+def test_warm_lists_skips_when_nothing_changed(db_path, monkeypatch):
+    builds = []
+    monkeypatch.setattr(rel, "_build_lists", lambda path: (builds.append(1), [])[1])
+    monkeypatch.setattr(rel, "_warm_sig", {"path": None, "sig": None})
+    rel._lists_cache.update(value=None); rel._nb_cache.update(value=None)
+    rel.warm_lists(db_path); rel.warm_lists(db_path)
+    assert builds == [1]                                                           # second warm-up: nothing to do
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    rel.warm_lists(db_path)
+    assert builds == [1, 1]                                                        # a new run: rebuilt

@@ -97,6 +97,10 @@ def scan_shelf(root: str | None = None) -> dict:
         for pub in sorted(os.scandir(root), key=lambda e: e.name.lower()):
             if not pub.is_dir() or _skip(pub.name):
                 continue
+            # list the publisher first (the share), THEN write it in one transaction
+            # (the DB) — ~1,600 separate commits a scan before, and never a write
+            # lock held while the share is being read
+            found = []
             for ser in os.scandir(pub.path):
                 if not ser.is_dir() or _skip(ser.name):
                     continue
@@ -106,9 +110,9 @@ def scan_shelf(root: str | None = None) -> dict:
                 # (2026-10-08, found by the Komga history import's unmatched list).
                 # A sub-folder is its own series, titled by its own name when that
                 # name stands alone ('Batman (2016)'), else 'Parent - Sub'.
-                for folder, title, files in _series_folders(ser):
-                    if not files:
-                        continue
+                found += [f for f in _series_folders(ser) if f[2]]
+            with db._connect(DB_PATH):
+                for folder, title, files in found:
                     tid = tracked.get(os.path.realpath(folder))
                     sid = db.upsert_shelf_series(folder, title, pub.name, tid, len(files), stamp, DB_PATH)
                     db.index_books([(p, size, mtime, parse_issue_number(name, title), sid, tid)

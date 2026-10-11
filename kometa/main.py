@@ -166,29 +166,44 @@ _gzip.DEFAULT_EXCLUDED_CONTENT_TYPES = ("text/event-stream", "image/", "video/",
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 
-@app.middleware("http")
-async def _interactive(request, call_next):
-    """Everything a web request does is interactive (kometa/interactive.py): the
-    rate-limited sources make it fail fast instead of queueing behind background
-    jobs. The flag rides contextvars into the threadpool; scheduler jobs and
-    threads a handler starts don't carry it."""
-    from kometa.interactive import INTERACTIVE
-    token = INTERACTIVE.set(True)
-    try:
-        return await call_next(request)
-    finally:
-        INTERACTIVE.reset(token)
+class _RequestWrap:
+    """Two jobs, one plain ASGI layer (BaseHTTPMiddleware ran every response —
+    each reader page and cover — through extra stream tasks, twice):
+
+    - everything a web request does is interactive (kometa/interactive.py): the
+      rate-limited sources fail fast for it instead of queueing behind background
+      jobs. Set on this task, so it rides contextvars into the threadpool;
+      scheduler jobs and threads a handler starts don't carry it.
+    - app.js?v=300, style.css?v=249: the version is in the URL and index.html
+      names the current one, so a versioned asset is cached for a year instead of
+      revalidated by heuristic on every load."""
+
+    IMMUTABLE = b"public, max-age=31536000, immutable"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        from kometa.interactive import INTERACTIVE
+        path, qs = scope.get("path", ""), scope.get("query_string", b"")
+        versioned = path.endswith((".js", ".css")) and (qs.startswith(b"v=") or b"&v=" in qs)
+
+        async def send_wrapped(message):
+            if versioned and message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"cache-control"]
+                message = {**message, "headers": headers + [(b"cache-control", self.IMMUTABLE)]}
+            await send(message)
+
+        token = INTERACTIVE.set(True)
+        try:
+            await self.app(scope, receive, send_wrapped)
+        finally:
+            INTERACTIVE.reset(token)
 
 
-@app.middleware("http")
-async def _static_cache(request, call_next):
-    """app.js?v=297, style.css?v=244: the version is in the URL and index.html
-    names the current one, so a versioned asset never changes — cache it for a
-    year instead of revalidating by heuristic on every load."""
-    resp = await call_next(request)
-    if request.query_params.get("v") and request.url.path.endswith((".js", ".css")):
-        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return resp
+app.add_middleware(_RequestWrap)
 
 # Cover-art pipeline (thumbnail routes + disk cache) lives in kometa/thumbnails —
 # fully self-contained; nothing else in the app imports from it.
@@ -680,7 +695,7 @@ def series_status(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
-    summ = db.get_all_series_summaries(DB_PATH).get(series_id, {})
+    summ = db.get_all_series_summaries(DB_PATH, series_id=series_id).get(series_id, {})
     with db._connect(DB_PATH) as conn:
         n = conn.execute("SELECT COUNT(*) FROM issue_status WHERE tracked_series_id = ?", (series_id,)).fetchone()[0]
     return {"id": series_id, "last_synced": s.get("last_synced"), "issue_count": n,
