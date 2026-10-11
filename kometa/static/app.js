@@ -62,6 +62,7 @@ let _autoTabFor = null;   // series id we've already made the B1 trades-default 
 let _wantTab = null;      // a tab asked for by whoever navigated here (a trade's 'Go to series' → Trades)
 
 function navigate(view, params = {}) {
+  _navBegin(view, params, 'fwd');
   currentView = view;
   currentParams = params;
   if (view !== 'series-detail') {
@@ -76,16 +77,20 @@ function navigate(view, params = {}) {
   // Re-clicking the active nav item used to pushState a duplicate entry —
   // Back then needed N presses to visibly move. Same destination replaces.
   if (location.hash === hash) {
-    history.replaceState({ view, params }, '', hash);
+    history.replaceState({ view, params, idx: _histIdx }, '', hash);
   } else {
-    history.pushState({ view, params }, '', hash);
+    history.pushState({ view, params, idx: ++_histIdx }, '', hash);
   }
   updateNav();
   renderView();
 }
 
-window.addEventListener('popstate', () => {
+window.addEventListener('popstate', e => {
   const { view, params } = _parseHash();
+  // Back or forward? Every entry we push carries its depth — a shallower one is Back.
+  const idx = e.state?.idx ?? 0;
+  _navBegin(view, params, idx < _histIdx ? 'back' : 'fwd');
+  _histIdx = idx;
   currentView = view;
   currentParams = params;
   if (view !== 'series-detail') {
@@ -97,6 +102,162 @@ window.addEventListener('popstate', () => {
   updateNav();
   renderView();
 });
+
+// --- View transitions + the loading bar ---------------------------------------
+// The app got so fast that views started SLAMMING in like a door in a gale.
+// This is the motion between them: the old view fades off a ghost while the new
+// one renders underneath, unseen, then settles in once it has actually painted.
+// The renderers never know — they write #app exactly as before, ids and all.
+//
+// The ghost: #app's old children MOVED (not cloned — covers stay decoded, no
+// re-download, no second blur-in) into a CLOSED shadow root wearing a copy of the
+// house stylesheet. Closed = invisible to getElementById/querySelector, so a
+// renderer asking "is #browse-search already here?" can't be fooled by a corpse.
+
+const _motionOK = () => !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+let _histIdx = (history.state && history.state.idx) || 0;
+const _vt = { gen: 0, ghost: null, t0: 0, dir: 'fwd', inTimer: null, dogTimer: null };
+const _navBar = { timer: null, on: false };
+
+// navigate/popstate call this BEFORE current{View,Params} move, and it decides
+// whether the hop earns a transition at all. The reader is its own layer (it
+// fades the whole layout — reader.js), and re-navigating to the thing you're
+// already on (same view, same id) is a quiet repaint, not a journey.
+function _navBegin(view, params, dir) {
+  const gen = ++_vt.gen;
+  if (view === 'read') {                                 // the reader brings its own loader
+    _navBarDone();
+    document.getElementById('content')?.classList.remove('vt-pending');   // never strand the view under it invisible
+    return;
+  }
+  _navBarStart();
+  const fromView = currentView, fromParams = currentParams || {};
+  if (fromView === 'read') return;                       // closing the reader: it fades off the view underneath
+  const sameThing = fromView === view && (fromParams.id ?? fromParams.key) === (params?.id ?? params?.key);
+  if (sameThing || !_motionOK()) return;                 // reduced motion = an honest instant swap
+  _vtLeave(dir, gen);
+}
+
+function _vtLeave(dir, gen) {
+  const content = document.getElementById('content'), app = document.getElementById('app');
+  if (!content || !app) return;
+  clearTimeout(_vt.inTimer);
+  content.classList.remove('vt-in', 'vt-in-back');
+  _vt.dir = dir;
+  _vt.t0 = performance.now();
+  // Hopping again mid-leave: the ghost already on screen IS the view you left —
+  // let it keep fading; whatever half-rendered thing is in #app just gets overwritten.
+  if (!_vt.ghost && app.childNodes.length) _vt.ghost = _vtGhost(content, app);
+  content.classList.add('vt-pending');
+  // A view that never settles (a hung fetch) still gets shown — its own
+  // "Loading..." beats a black hole. The bar keeps crawling regardless.
+  clearTimeout(_vt.dogTimer);
+  _vt.dogTimer = setTimeout(() => _vtReveal(gen), 1500);
+}
+
+let _vtSheets = null;
+function _vtStyleSheets() {
+  if (_vtSheets) return _vtSheets;
+  if (typeof CSSStyleSheet !== 'function' || !('adoptedStyleSheets' in Document.prototype)) return (_vtSheets = []);
+  try {
+    const css = [];
+    for (const sh of document.styleSheets) {
+      // the font CSS is cross-origin (unreadable) — and @font-face crosses shadow lines anyway
+      if (sh.href && !sh.href.includes('/style.css')) continue;
+      for (const r of sh.cssRules) css.push(r.cssText);
+    }
+    const house = new CSSStyleSheet();
+    house.replaceSync(css.join('\n'));
+    // A frozen frame: no cover re-blur, no card re-cascade as the nodes land in the
+    // ghost. Every animation jumps straight to its END state — not `animation: none`,
+    // which strands the opacity:0-until-it-plays cards (.card-cascade) invisible.
+    const still = new CSSStyleSheet();
+    still.replaceSync(`.vt-ghost-wrap { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+      *, *::before, *::after { animation-duration: 1ms !important; animation-delay: -1s !important;
+        animation-iteration-count: 1 !important; transition: none !important; }`);
+    _vtSheets = [house, still];
+  } catch { _vtSheets = []; }
+  return _vtSheets;
+}
+
+function _vtGhost(content, app) {
+  const sheets = _vtStyleSheets();
+  if (!sheets.length) return null;                     // no constructable sheets: the old view just goes, the new one still fades in
+  const host = document.createElement('div');
+  host.className = 'vt-ghost';
+  host.setAttribute('aria-hidden', 'true');
+  host.inert = true;
+  const root = host.attachShadow({ mode: 'closed' });
+  root.adoptedStyleSheets = sheets;
+  const wrap = document.createElement('div');
+  wrap.className = 'vt-ghost-wrap';
+  const box = document.createElement('main');
+  box.id = 'app';                                      // shadow-scoped: the house #app rules apply, the document never sees it
+  box.className = app.className;
+  const scroll = app.scrollTop;
+  box.append(...app.childNodes);
+  wrap.append(document.getElementById('series-bg').cloneNode(true), document.getElementById('topbar').cloneNode(true), box);
+  root.append(wrap);
+  content.appendChild(host);
+  box.scrollTop = scroll;
+  const gone = () => { host.remove(); if (_vt.ghost === host) _vt.ghost = null; };
+  host.addEventListener('animationend', gone, { once: true });
+  setTimeout(gone, 400);                               // a backgrounded tab never fires animationend
+  return host;
+}
+
+// The renderer settled (painted, or failed into its Retry). The bar finishes;
+// the new view settles in — no earlier than most of the way through the ghost's
+// fade, so the two overlap a hair instead of stacking end to end.
+function _navSettled(gen) {
+  if (gen !== _vt.gen) return;                         // a slow loser from a view you've already left
+  _navBarDone();
+  const wait = Math.max(0, _vt.t0 + 110 - performance.now());
+  setTimeout(() => requestAnimationFrame(() => _vtReveal(gen)), wait);
+}
+
+function _vtReveal(gen) {
+  if (gen !== _vt.gen) return;
+  clearTimeout(_vt.dogTimer);
+  const content = document.getElementById('content');
+  if (!content || !content.classList.contains('vt-pending')) return;
+  content.classList.remove('vt-pending');
+  content.classList.add(_vt.dir === 'back' ? 'vt-in-back' : 'vt-in');
+  // a timer, not animationend: every cascading card underneath bubbles its own
+  clearTimeout(_vt.inTimer);
+  _vt.inTimer = setTimeout(() => content.classList.remove('vt-in', 'vt-in-back'), 340);
+}
+
+// The bar: only for a view that's genuinely slow. Under ~100 ms it never shows.
+function _navBarStart() {
+  const bar = document.getElementById('nav-bar');
+  if (!bar) return;
+  clearTimeout(_navBar.timer);
+  if (_navBar.on) return;                              // still crawling for the hop before: keep going
+  _navBar.timer = setTimeout(() => {
+    const fill = bar.firstElementChild;
+    fill.style.transition = 'none';
+    fill.style.transform = 'scaleX(0)';
+    void fill.offsetWidth;
+    fill.style.transition = '';                        // the CSS crawl: quick off the line, never arrives on its own
+    fill.style.transform = 'scaleX(.9)';
+    bar.classList.add('on');
+    _navBar.on = true;
+  }, 100);
+}
+
+function _navBarDone() {
+  clearTimeout(_navBar.timer);
+  if (!_navBar.on) return;
+  _navBar.on = false;
+  const bar = document.getElementById('nav-bar');
+  if (!bar) return;
+  const fill = bar.firstElementChild;
+  fill.style.transition = 'transform var(--t-mid) var(--ease-out)';
+  fill.style.transform = 'scaleX(1)';
+  bar.classList.remove('on');                          // fades a beat later (CSS transition-delay), once the fill lands
+}
 
 function updateNav() {
   const navView = (currentView === 'series-detail' || currentView === 'shelf' || currentView === 'stack') ? 'library'
@@ -119,6 +280,7 @@ function setApp(html) {
 
 function renderView() {
   const view = currentView;
+  const gen = _vt.gen;
   // The reader is a full-screen layer over whatever view you came from — the
   // view underneath stays painted, so Back is instant.
   if (view === 'read') return renderReader(currentParams);
@@ -150,7 +312,7 @@ function renderView() {
       setApp(`<div class="state-msg">Couldn't load this view. ${esc(String(e && e.message || e))}<br><br>
         <button class="btn btn-sm" onclick="renderView()">Retry</button></div>`);
     }
-  });
+  }).finally(() => _navSettled(gen));
 }
 
 // --- Helpers ---

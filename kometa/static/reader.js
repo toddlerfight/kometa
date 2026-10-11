@@ -481,7 +481,13 @@ function _rdStage(name) {
 
 function _rdShowLoading() {
   const el = _rdEl();
-  el.classList.remove('hidden');
+  // A fresh open (or a re-open mid-close): the view you launched from fades off
+  // first (body.reading → #layout), THEN the reader fades up over the dark —
+  // rd-enter's delay is that handover. A next-book hop inside the reader is neither.
+  const fresh = el.classList.contains('hidden') || el.classList.contains('rd-leaving');
+  clearTimeout(_rd.leaveTimer);
+  el.classList.remove('hidden', 'rd-leaving');
+  if (fresh) { el.classList.remove('rd-enter'); void el.offsetWidth; el.classList.add('rd-enter'); }
   document.body.classList.add('reading');
   if (!el.querySelector('#rd-loading')) {
     _rd.loadAt = 0;
@@ -551,17 +557,22 @@ function _rdFullscreenHint(standalone) {
 
 function closeReader() {
   const el = document.getElementById('reader');
-  if (!el || el.classList.contains('hidden')) return;
+  if (!el || el.classList.contains('hidden') || el.classList.contains('rd-leaving')) return;
   if (_rd.book && _rd.saveTimer) {
     clearTimeout(_rd.saveTimer);
     const s = _rd.spreads[_rd.at];
     if (s && !_rd.ended) _rdSave(s[s.length - 1]);
   }
-  el.classList.add('hidden');
-  el.innerHTML = '';
-  document.body.classList.remove('reading');
+  document.body.classList.remove('reading');            // the view underneath fades back up…
   _rd.book = null;
   _rd.opening = false;
+  const gone = () => { el.classList.add('hidden'); el.classList.remove('rd-leaving', 'rd-enter'); el.innerHTML = ''; };
+  if (typeof _motionOK === 'function' && !_motionOK()) return gone();
+  // …while the reader fades off the top of it: one crossfade, not a slammed door.
+  el.classList.remove('rd-enter');
+  el.classList.add('rd-leaving');
+  clearTimeout(_rd.leaveTimer);
+  _rd.leaveTimer = setTimeout(gone, 180);
 }
 
 function _rdExit() {

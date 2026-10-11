@@ -161,14 +161,12 @@ def browser_context_args(browser_context_args):
     return {**browser_context_args, "reduced_motion": "reduce"}
 
 
-@pytest.fixture
-def app(app_server, page):
-    """Page wired to the app with the network quarantine applied."""
+def quarantine(page):
+    """Backend routes that reach the outside world (anonymous LOCG/CV/Wikipedia)
+    get canned empties; individual tests override with their own page.route."""
     def canned(body):
         return lambda route: route.fulfill(status=200, content_type="application/json", body=body)
 
-    # Backend routes that reach the outside world (anonymous LOCG/CV/Wikipedia)
-    # get canned empties; individual tests override with their own page.route.
     page.route("**/api/search/**", canned("[]"))
     page.route("**/api/search/storyline**", canned("[]"))
     page.route("**/api/series/*/arcs", canned('{"arcs": []}'))
@@ -176,8 +174,25 @@ def app(app_server, page):
     page.route("**/api/series/*/issues/*/variants", canned('{"covers": [], "selected_ids": []}'))
     page.route("**/api/series/*/issues/*/locg-details", canned('{"desc": "", "credits": []}'))
 
+
+@pytest.fixture
+def app(app_server, page):
+    """Page wired to the app with the network quarantine applied."""
+    quarantine(page)
     page.goto(f"{app_server['base']}/")
     return page
+
+
+@pytest.fixture
+def motion_app(app_server, browser):
+    """Like `app`, but with motion ON — for tests of the transitions themselves.
+    Everything else in the suite runs reduced-motion so waits never race them."""
+    ctx = browser.new_context(reduced_motion="no-preference", viewport={"width": 1180, "height": 820})
+    page = ctx.new_page()
+    quarantine(page)
+    page.goto(f"{app_server['base']}/")
+    yield page
+    ctx.close()
 
 
 def pytest_collection_modifyitems(items):
