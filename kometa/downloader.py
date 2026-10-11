@@ -43,18 +43,49 @@ def _patch_comic_info(xml_bytes: bytes, added_covers: int) -> bytes:
         return xml_bytes
 
 
+RESUMES = 4
+
+
+class IncompleteDownloadError(RuntimeError):
+    """The connection kept dropping and the file never finished."""
+
+
 def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
-    """Write a download to staging; if the stream breaks, take the half-file with
-    it. A cut connection left 252 MB of a 673 MB Avengers Academy trade sitting
-    in /downloads, looking like a download that had landed."""
-    done = 0
+    """Write a download to staging; if the stream breaks, pick it up where it
+    stopped (a Range request to the URL the download landed on, up to RESUMES
+    times — GetComics' hosts drop big files partway: FF 001–023 at 160 MB of
+    742, an Avengers Academy trade at 252 of 673, each started over from zero).
+    If it can't be finished, take the half-file with it: a cut connection left
+    252 MB sitting in /downloads looking like a download that had landed."""
+    done, resp, tries = 0, r, 0
+    url = getattr(r, "url", None)
     try:
         with open(staging_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-                done += len(chunk)
-                if progress_fn:
-                    progress_fn(done, total)
+            while True:
+                try:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        f.write(chunk)
+                        done += len(chunk)
+                        if progress_fn:
+                            progress_fn(done, total)
+                    break
+                except (requests.exceptions.ChunkedEncodingError, requests.ConnectionError, requests.Timeout) as e:
+                    if not url or tries >= RESUMES:
+                        raise
+                    tries += 1
+                    logger.warning(f"Download cut off at {done // 1048576} MB ({e.__class__.__name__}) — resuming ({tries}/{RESUMES})")
+                    if resp is not r:
+                        resp.close()
+                    time.sleep(3 * tries)
+                    resp = requests.get(url, stream=True, timeout=120, allow_redirects=True,
+                                        headers={**HEADERS, "Range": f"bytes={done}-"})
+                    if resp.status_code != 206:                 # the host won't resume: give up as before
+                        resp.close()
+                        raise
+        if resp is not r:
+            resp.close()
+        if total and done < total:
+            raise IncompleteDownloadError(f"download cut off at {done // 1048576} of {total // 1048576} MB")
     except BaseException:
         try:
             os.remove(staging_path)
@@ -332,12 +363,30 @@ def _wrapped_archive_entry(path: str) -> str | None:
     return entries[0] if entries[0].lower().endswith(_WRAPPED_ARCHIVE_EXTS) else None
 
 
+UNWRAP_STALE_S = 3600
+
+
+def _sweep_stale_unwraps(folder: str | None) -> None:
+    """Our own scratch dirs from an unwrap a restart cut off (Deadpool's Secret
+    Secret Wars #4 had five). An hour old = nobody's using it."""
+    if not folder:
+        return
+    try:
+        for d in os.scandir(folder):
+            if d.is_dir() and d.name.startswith('.unwrap_') and time.time() - d.stat().st_mtime > UNWRAP_STALE_S:
+                shutil.rmtree(d.path, ignore_errors=True)
+                logger.info(f"Removed a stale unwrap folder: {d.path}")
+    except OSError:
+        pass
+
+
 def _unwrap_archive(path: str, inner_name: str, extracted_dir: str | None,
                     depth: int) -> str | None:
     """Lift the inner archive out and run it back through ensure_cbz. Returns the
     new path, or None if anything about it failed — in which case the caller keeps
     the file exactly as delivered. Never trades a real file for a broken one."""
     parent = os.path.dirname(path) or None
+    _sweep_stale_unwraps(parent)
     tmpd = tempfile.mkdtemp(dir=parent, prefix='.unwrap_')
     try:
         # Stream it out under a name WE choose — never the archive's own, which is
@@ -706,7 +755,12 @@ def _page_sequence_problem(names) -> str | None:
     if len(idx) < _PAGE_GROUP_MIN or len(idx) < _PAGE_GROUP_SHARE * total:
         return None
     lo, hi = min(idx), max(idx)
-    if lo >= 2:
+    # numbering that starts at 002 is only a hole if nothing else could be the
+    # opening pages: scans often name the cover apart ('… 004 - 00 (cover).jpg',
+    # 'cover.jpg'), outside the numbered run — Where Monsters Dwell #2–4 were
+    # rejected with their covers (most likely) sitting right there
+    others = total - len(idx)
+    if lo >= 2 and others == 0:
         return f"pages start at {lo:03d} — the cover and opening pages are missing"
     missing = sorted(set(range(lo, hi + 1)) - idx)
     if len(missing) >= _PAGE_GAP_MIN and len(missing) >= _PAGE_GAP_SHARE * (hi - lo + 1):
@@ -1145,10 +1199,19 @@ def download_issue(
 
             dest_path = os.path.join(dest_dir, _safe(filename))
             if os.path.exists(dest_path):
-                os.remove(staging_path)
-                raise DuplicateIssueError(
-                    f"{filename} already exists in library — GetComics served an existing issue"
-                )
+                # Same name already there. If it's THIS issue, it's a leftover — a
+                # placement a restart cut off (a raw GetComics .zip never unwrapped):
+                # we're only here because the issue isn't owned, so replace it. It
+                # used to block the issue forever. A DIFFERENT issue's file is the
+                # real duplicate: GetComics handed back one we have.
+                if parse_issue_number(os.path.basename(dest_path), title) == issue_number:
+                    logger.info(f"Replacing an unfinished copy of this issue: {dest_path}")
+                    os.remove(dest_path)
+                else:
+                    os.remove(staging_path)
+                    raise DuplicateIssueError(
+                        f"{filename} already exists in library — GetComics served an existing issue"
+                    )
             shutil.move(staging_path, dest_path)
             dest_path = _fix_extension(dest_path)
             logger.info(f"Placed: {dest_path}")

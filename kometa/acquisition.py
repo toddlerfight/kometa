@@ -1369,14 +1369,20 @@ def _poll_torrent_jobs():
                 # while is dead — fail it instead of polling forever. metaDL counts too:
                 # a seedless magnet never even fetches its metadata, and qBit parks it
                 # in metaDL for eternity instead of ever promoting it to stalledDL.
+                # A torrent stuck fetching its metadata, or stalled with nobody
+                # actually connected, for two hours is dead — whatever the tracker
+                # claims about seeders. Keying on that claim kept the Infinity
+                # Gauntlet pack in metaDL at 0% for nine hours ('2 seeders').
                 state = result.get("state", "")
-                if result.get("seeders", 0) == 0 and ("stalled" in state or state == "metaDL"):
+                connected = result.get("connected", result.get("seeders", 0))
+                if state == "metaDL" or ("stalled" in state and connected == 0):
                     age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
                     if age > timedelta(hours=2):
                         clear_progress(qid)
                         db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
                         db.add_failed_channel(qid, "torrent", path=DB_PATH)
-                        db.update_queue_state(qid, "failed", error="Torrent: stalled, no seeders", path=DB_PATH)
+                        why = "no metadata after 2 h" if state == "metaDL" else "stalled, no seeders connected"
+                        _hand_off(qid, "Torrent", _torrent_dead, item, qid, ih, why)
                         continue
                 set_progress(qid, result.get("pct", 0), 100)
                 set_search_status(qid, f"{result.get('seeders', 0)} seeders")
@@ -1400,6 +1406,21 @@ def _poll_torrent_jobs():
                 db.update_queue_state(qid, "failed", error=f"Torrent: {err}", path=DB_PATH)
         except Exception as e:
             logger.warning(f"Torrent poll: {ih} (qid {qid}) raised — skipping this tick: {e}")
+
+
+def _torrent_dead(item, qid, infohash, why: str) -> None:
+    """A dead torrent: drop it from qBittorrent, then the one road left — GetComics
+    (a single issue only; a pack or trade has its own search) — else failed."""
+    try:
+        q = _qbittorrent()
+        if q:
+            q.delete_torrent(infohash, delete_files=True)
+    except Exception as e:
+        logger.info(f"Torrent {infohash}: couldn't drop it from qBittorrent: {e}")
+    if item.get("kind") in (None, "issue") and (item.get("issue_number") or 0) >= 0 and _gc_rescue(item, qid):
+        logger.info(f"Torrent {infohash} ({why}); GetComics rescue landed qid {qid}")
+        return
+    db.update_queue_state(qid, "failed", error=f"Torrent: {why}", path=DB_PATH)
 
 
 def _release_day_retry():

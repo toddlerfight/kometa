@@ -1279,3 +1279,27 @@ def test_a_single_file_torrent_is_just_that_file(tmp_path):
     assert acq._downloaded_comics(str(shared / "Saga 001.cbz")) == [str(shared / "Saga 001.cbz")]
     assert len(acq._downloaded_comics(str(shared))) == 3                 # a multi-file job is its directory
     assert acq._downloaded_comics(str(shared / "readme.txt")) == []
+
+
+def test_a_torrent_stuck_fetching_metadata_is_given_up_on_whatever_the_tracker_claims(db_path, monkeypatch):
+    import kometa.acquisition as acq
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    sid = db.add_series(title="The Infinity Gauntlet", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 1.0, db_path)
+    with db._connect(db_path) as c:
+        qid = c.execute("SELECT id FROM download_queue").fetchone()[0]
+        c.execute("UPDATE download_queue SET state = 'pending_torrent', torrent_hash = 'abc', "
+                  "updated_at = datetime('now', '-3 hours') WHERE id = ?", (qid,))
+    dropped, asked_gc = [], []
+    class Q:
+        def snapshot(self, hashes): return {"abc": {"hash": "abc", "state": "metaDL", "progress": 0, "num_complete": 2, "num_seeds": 0}}
+        def poll_job(self, ih, snap=None):
+            from kometa.qbittorrent_client import QBittorrentClient
+            return QBittorrentClient.poll_job(self, ih, snap)
+        def delete_torrent(self, ih, delete_files=True): dropped.append(ih); return True
+    monkeypatch.setattr(acq, "_qbittorrent", lambda: Q())
+    monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: (asked_gc.append(q), False)[1])
+    acq._poll_torrent_jobs()
+    q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
+    assert (q["state"], q["error"]) == ("failed", "Torrent: no metadata after 2 h")
+    assert dropped == ["abc"] and asked_gc == [qid]

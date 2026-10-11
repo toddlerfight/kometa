@@ -161,7 +161,8 @@ class QBittorrentClient:
         return {
             "status": "downloading",
             "pct": round(float(t.get("progress", 0) or 0) * 100, 1),
-            "seeders": int(t.get("num_complete", 0) or 0),
+            "seeders": int(t.get("num_complete", 0) or 0),        # what the tracker claims
+            "connected": int(t.get("num_seeds", 0) or 0),         # seeds actually connected
             "state": state,
         }
 

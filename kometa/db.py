@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import sqlite3
 import threading
 import unicodedata
@@ -1464,6 +1465,33 @@ def set_torrent_hash(queue_id, torrent_hash, path=DB_PATH):
         )
 
 
+_INCOMPLETE = re.compile(r"IncompleteRead\((\d+) bytes read, (\d+) more expected\)")
+_KEYS = re.compile(r"((?:api_?key|apikey|token|password)=)[^&\s'\")]+", re.I)
+
+
+def plain_error(err):
+    """What a queue error says in Activity: words, not a Python exception repr.
+    "('Connection broken: IncompleteRead(159699576 bytes read, 582463777 more
+    expected)', IncompleteRead(...))" becomes "download cut off at 152 of 708 MB".
+    Any key or token in a URL is blanked on the way."""
+    if not err:
+        return err
+    err = str(err)
+    m = _INCOMPLETE.search(err)
+    if m:
+        got, more = int(m.group(1)), int(m.group(2))
+        head = err.split(":", 1)[0] if ":" in err and len(err.split(":", 1)[0]) < 20 else ""
+        return f"{head + ': ' if head else ''}download cut off at {got // 1048576} of {(got + more) // 1048576} MB"
+    low = err.lower()
+    if "max retries exceeded" in low or "failed to establish a new connection" in low or "name or service not known" in low:
+        head = err.split(":", 1)[0] if len(err.split(":", 1)[0]) < 20 else ""
+        return f"{head + ': ' if head else ''}couldn't reach the download host"
+    if "read timed out" in low:
+        head = err.split(":", 1)[0] if len(err.split(":", 1)[0]) < 20 else ""
+        return f"{head + ': ' if head else ''}the download host stopped answering"
+    return _KEYS.sub(r"\1…", err)
+
+
 def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, retry_after=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("""
@@ -1475,7 +1503,7 @@ def update_queue_state(queue_id, state, source_url=None, filename=None, error=No
                 retry_after = ?,
                 updated_at  = datetime('now')
             WHERE id = ?
-        """, (state, source_url, filename, error, retry_after, queue_id))
+        """, (state, source_url, filename, plain_error(error), retry_after, queue_id))
 
 
 def requeue_not_found(path=DB_PATH) -> int:

@@ -618,3 +618,24 @@ def test_a_broken_download_leaves_no_half_file(tmp_path):
     with pytest.raises(ConnectionError):
         dl._stream_to(R(), str(dest), 100)
     assert not dest.exists()
+
+
+def test_a_dropped_download_resumes_where_it_stopped(tmp_path, monkeypatch):
+    import requests
+    import kometa.downloader as dl
+    body = bytes(range(100))
+    class First:
+        url = "https://host/file.cbz"
+        def iter_content(self, chunk_size):
+            yield body[:40]
+            raise requests.exceptions.ChunkedEncodingError("IncompleteRead(40 bytes read, 60 more expected)")
+    asked = []
+    class Rest:
+        status_code = 206
+        def iter_content(self, chunk_size): yield body[40:]
+        def close(self): pass
+    monkeypatch.setattr(dl.requests, "get", lambda url, **k: (asked.append(k["headers"]["Range"]), Rest())[1])
+    monkeypatch.setattr(dl.time, "sleep", lambda s: None)
+    dest = tmp_path / "Saga 001.cbz"
+    dl._stream_to(First(), str(dest), len(body))
+    assert dest.read_bytes() == body and asked == ["bytes=40-"]

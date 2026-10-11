@@ -3424,6 +3424,7 @@ function _actPack(q) {
 function _actLabel(q) {
   const pack = _actPack(q);
   if (pack) return `Reading-list pack${pack.fills ? ` · fills ${pack.fills}` : ''}`;
+  if (q.issue_number === -1 && (q.kind || 'issue') === 'issue') return 'Complete run';   // the whole-run pack sentinel, not 'issue #-1'
   if (q.kind === 'trade') {
     if (String(q.locg_id) === '-1') return 'Complete run';     // a whole-run pack of singles, not a collected edition
     let m = {}; try { m = JSON.parse(q.meta_json || '{}'); } catch {}

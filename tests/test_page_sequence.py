@@ -140,3 +140,10 @@ class TestUsenetFinalizeIncomplete:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         assert q["state"] == "failed"
         assert "start at 003" in q["error"]
+
+
+def test_a_cover_named_apart_from_the_numbered_pages_counts_as_the_opening():
+    names = [f"Where Monsters Dwell 004-{n:03d}.jpg" for n in range(2, 24)] + ["Where Monsters Dwell 004 - Cover.jpg"]
+    assert _page_sequence_problem(names) is None
+    truly_cut = [f"Where Monsters Dwell 004-{n:03d}.jpg" for n in range(3, 24)]
+    assert "pages start at 003" in _page_sequence_problem(truly_cut)

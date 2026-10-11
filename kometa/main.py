@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import logging
 import threading
@@ -1669,7 +1670,22 @@ def queue_summary(since: str = ""):
 @app.get("/api/queue")
 def get_queue():
     items = db.get_queue(DB_PATH)
+    # an issue waiting on a trade says what became of the trade: seven rows said
+    # 'Getting it in …' for trades that had failed hours before
+    trade_fate = {}
+    for t in items:
+        if t.get("kind") == "trade" and t["state"] in ("failed", "not_found"):
+            try:
+                meta = json.loads(t.get("meta_json") or "{}")
+            except ValueError:
+                continue
+            fate = "wasn't found" if t["state"] == "not_found" else "failed"
+            for qid in meta.get("fills") or []:
+                trade_fate[qid] = f"{meta.get('title') or 'The trade'} {fate} — retry it, or drop it to search singles again"
     for item in items:
+        if item["state"] == "via_trade" and item["id"] in trade_fate:
+            item["error"] = trade_fate[item["id"]]
+        item["error"] = db.plain_error(item.get("error"))
         for k in _QUEUE_PRIVATE:
             item.pop(k, None)
         prog = get_progress(item["id"])

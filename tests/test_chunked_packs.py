@@ -256,3 +256,18 @@ class TestBatchDedupeShelfCheck:
         assert (handled, err) == (True, None)
         row = next(q for q in db.get_queue(path=db_path) if q["id"] == item["id"])
         assert row["state"] == "done"
+
+
+def test_an_unfinished_copy_of_the_same_issue_is_replaced_not_a_duplicate(library, monkeypatch):
+    """A restart cut a placement off and left the raw file under its server name;
+    every retry then called it a duplicate and the issue never came (Deadpool's
+    Secret Secret Wars #4, 2026-10-11)."""
+    from kometa import downloader
+    (library / "Curse Words 004.cbz").write_bytes(b"leftover")
+    monkeypatch.setattr(downloader, "_get_with_retries", lambda url, label: _DlResp(_comic_bytes(4)))
+    dest = downloader.download_issue(
+        url="https://getcomics.org/dls/x", title="Curse Words", publisher="Image Comics",
+        issue_number=4.0, store_date="2017-02-22", hint_filename="Curse Words 004.cbz",
+        komga_scan_fn=lambda: None, dest_dir=str(library))
+    import os
+    assert os.path.getsize(dest) > len(b"leftover")
