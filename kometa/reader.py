@@ -431,18 +431,20 @@ def _book_or_404(book_id: int) -> dict:
 # scan took 35–45 s with the NAS busy, and every one held a web worker: open one
 # book (the reader fetches ahead) and the rest of the app queued behind it. Share
 # reads now run on their own few threads; the routes await them, holding nothing.
-SHARE_READERS = 4
-_share_pool = None
+# Two lanes: opening a book (what you just tapped) never queues behind the
+# reader's fetch-ahead of pages you haven't reached.
+SHARE_READERS = {"open": 2, "page": 4}
+_share_pools: dict = {}
 
 
-async def _on_share(fn, *a, **k):
+async def _on_share(fn, *a, lane: str = "page", **k):
     import asyncio
     import functools
     from concurrent.futures import ThreadPoolExecutor
-    global _share_pool
-    if _share_pool is None:
-        _share_pool = ThreadPoolExecutor(max_workers=SHARE_READERS, thread_name_prefix="share-read")
-    return await asyncio.get_running_loop().run_in_executor(_share_pool, functools.partial(fn, *a, **k))
+    pool = _share_pools.get(lane)
+    if pool is None:
+        pool = _share_pools[lane] = ThreadPoolExecutor(max_workers=SHARE_READERS[lane], thread_name_prefix=f"share-{lane}")
+    return await asyncio.get_running_loop().run_in_executor(pool, functools.partial(fn, *a, **k))
 
 
 def _known_book(series_id: int, number: float) -> dict | None:
@@ -471,7 +473,7 @@ async def issue_book(series_id: int, number: float):
     from starlette.concurrency import run_in_threadpool
     book = await run_in_threadpool(_known_book, series_id, number)
     if not book:
-        book = await _on_share(_issue_book_on_share, series_id, number)
+        book = await _on_share(_issue_book_on_share, series_id, number, lane="open")
     return await run_in_threadpool(_book_payload, book)
 
 
@@ -480,7 +482,7 @@ async def book_detail(book_id: int):
     from starlette.concurrency import run_in_threadpool
     book = await run_in_threadpool(_book_or_404, book_id)
     if not (book.get("pages") and book.get("page_count")):          # never opened: read its pages off the share
-        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"))
+        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"), lane="open")
     return await run_in_threadpool(_book_payload, book)
 
 

@@ -105,7 +105,7 @@ function _rdRender() {
   const thumbs = b.pages.map((_, i) => {
     const p = i + 1, on = spread.includes(p);
     return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdGo(${p})">
-      <img src="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
+      <img ${_rd.chrome ? 'src' : 'data-src'}="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
   }).join('');
   el.innerHTML = `
     <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage">${imgs}</div>
@@ -317,7 +317,14 @@ function _rdToggleChrome(force) {
   _rd.chrome = force ?? !_rd.chrome;
   document.getElementById('rd-chrome')?.classList.toggle('on', _rd.chrome);
   document.getElementById('rd-menu')?.classList.add('hidden');
-  if (_rd.chrome) _rdCenterStrip();
+  if (_rd.chrome) { _rdStripLoad(); _rdCenterStrip(); }
+}
+
+// The strip's thumbnails load when the strip is first shown, not on open: hidden
+// chrome is only opacity 0, so lazy-loading still fetched the first dozen — each a
+// page read off the share, queued ahead of the page you actually opened.
+function _rdStripLoad() {
+  document.querySelectorAll('#rd-strip img[data-src]').forEach(im => { im.src = im.dataset.src; im.removeAttribute('data-src'); });
 }
 
 function _rdCycleMode() {
