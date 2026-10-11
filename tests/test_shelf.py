@@ -1,5 +1,6 @@
 """Whole-shelf index (docs/reader-spec.md step 2). Untracked folders become shelf
 rows only — never tracked series — and the scan lists files without opening them."""
+import asyncio
 import os
 
 import pytest
@@ -55,14 +56,14 @@ def test_detail_orders_issues_then_trades_and_opens_in_reader(shelf):
     d = sh.shelf_detail(s["id"])
     assert [b["label"] for b in d["books"]] == ["#1", "#2", "Batman - Knightfall Omnibus"]
     assert d["books"][0]["page_count"] is None                   # listed, not opened
-    assert rd.book_detail(d["books"][0]["id"])["page_count"] == 5   # opening reads pages
+    assert asyncio.run(rd.book_detail(d["books"][0]["id"]))["page_count"] == 5   # opening reads pages
 
 
 def test_rescan_keeps_pages_of_unchanged_files_but_clears_changed_ones(shelf):
     root, _ = shelf
     sh.scan_shelf(str(root))
     b = sh.shelf_detail(_untracked(root)["Batman - Knightfall"]["id"])["books"][0]
-    rd.book_detail(b["id"])
+    asyncio.run(rd.book_detail(b["id"]))
     sh.scan_shelf(str(root))
     assert db.get_book(b["id"], sh.DB_PATH)["page_count"] == 5
     p = db.get_book(b["id"], sh.DB_PATH)["path"]
@@ -92,7 +93,7 @@ def test_reading_stats_for_untracked_and_tracked(shelf):
     db.set_progress("me", b2["id"], 2, False, "2026-10-08T02:00:00Z", sh.DB_PATH)
     row = _untracked(root)["Batman - Knightfall"]
     assert (row["read_count"], row["in_progress"], row["last_read"]) == (1, 1, "2026-10-08T02:00:00Z")
-    saga_book = rd.issue_book(saga, 1.0)
+    saga_book = asyncio.run(rd.issue_book(saga, 1.0))
     db.set_progress("me", saga_book["id"], 2, False, "2026-10-08T03:00:00Z", sh.DB_PATH)
     assert sh.list_shelf()["tracked_reading"][saga]["in_progress"] == 1
 

@@ -427,42 +427,98 @@ def _book_or_404(book_id: int) -> dict:
 
 # --- routes ---------------------------------------------------------------------
 
-@router.get("/api/series/{series_id}/issues/{number}/book")
-def issue_book(series_id: int, number: float):
-    """The book behind an owned issue — the 'Read' button's first hop."""
+# Reading touches the share; nothing else should wait for it. A page off a 317 MB
+# scan took 35–45 s with the NAS busy, and every one held a web worker: open one
+# book (the reader fetches ahead) and the rest of the app queued behind it. Share
+# reads now run on their own few threads; the routes await them, holding nothing.
+SHARE_READERS = 4
+_share_pool = None
+
+
+async def _on_share(fn, *a, **k):
+    import asyncio
+    import functools
+    from concurrent.futures import ThreadPoolExecutor
+    global _share_pool
+    if _share_pool is None:
+        _share_pool = ThreadPoolExecutor(max_workers=SHARE_READERS, thread_name_prefix="share-read")
+    return await asyncio.get_running_loop().run_in_executor(_share_pool, functools.partial(fn, *a, **k))
+
+
+def _known_book(series_id: int, number: float) -> dict | None:
+    """The indexed book for an issue, if it's already been opened (page list known)."""
+    with db._connect(DB_PATH) as conn:
+        r = conn.execute("SELECT id FROM books WHERE tracked_series_id = ? AND number = ? AND page_count > 0 "
+                         "ORDER BY mtime DESC LIMIT 1", (series_id, number)).fetchone()
+    return db.get_book(r["id"], DB_PATH) if r else None
+
+
+def _issue_book_on_share(series_id: int, number: float) -> dict:
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404, "No such series")
     path = find_issue_file(s.get("folder_path"), s["title"], number)
     if not path:
         raise HTTPException(404, "No file on the shelf for this issue")
-    return _book_payload(ensure_book(path, tracked_series_id=series_id, number=number))
+    return ensure_book(path, tracked_series_id=series_id, number=number)
+
+
+@router.get("/api/series/{series_id}/issues/{number}/book")
+async def issue_book(series_id: int, number: float):
+    """The book behind an owned issue — the 'Read' button's first hop. A book
+    opened before comes straight from the index (the shelf scan notices a changed
+    file); only a first open lists the folder and reads the page sizes."""
+    from starlette.concurrency import run_in_threadpool
+    book = await run_in_threadpool(_known_book, series_id, number)
+    if not book:
+        book = await _on_share(_issue_book_on_share, series_id, number)
+    return await run_in_threadpool(_book_payload, book)
 
 
 @router.get("/api/books/{book_id}")
-def book_detail(book_id: int):
-    book = _book_or_404(book_id)
-    book = ensure_book(book["path"], book.get("tracked_series_id"), book.get("number"))
-    return _book_payload(book)
+async def book_detail(book_id: int):
+    from starlette.concurrency import run_in_threadpool
+    book = await run_in_threadpool(_book_or_404, book_id)
+    if not (book.get("pages") and book.get("page_count")):          # never opened: read its pages off the share
+        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"))
+    return await run_in_threadpool(_book_payload, book)
+
+
+def _cached_page(book: dict, index: int, width: int) -> bytes | None:
+    try:
+        with open(_page_cache_path(book, index, width), "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    try:
+        os.utime(os.path.join(PAGE_CACHE_DIR, str(book["id"])))
+    except OSError:
+        pass
+    return data
 
 
 @router.get("/api/books/{book_id}/pages/{page}")
-def book_page(book_id: int, page: int, w: int | None = None):
-    from kometa.activity import note_reading
-    note_reading()
+async def book_page(book_id: int, page: int, w: int | None = None):
     """Page `page` (1-based), resized to the bucket covering `w`. The client
     appends ?v=<version> so a re-downloaded file busts the browser cache —
-    which is why the response can be cached as immutable."""
-    book = _book_or_404(book_id)
+    which is why the response can be cached as immutable. A page already in the
+    local cache never queues behind share reads."""
+    from starlette.concurrency import run_in_threadpool
+    from kometa.activity import note_reading
+    note_reading()
+    book = await run_in_threadpool(_book_or_404, book_id)
     if not 1 <= page <= (book["page_count"] or 0):
         raise HTTPException(404, "No such page")
-    try:
-        data = get_page_bytes(book, page - 1, _bucket(w))
-    except FileNotFoundError:
-        raise HTTPException(404, "File is gone from the shelf")
-    except Exception as e:
-        logger.warning(f"Reader: page {page} of book {book_id} failed: {e}")
-        raise HTTPException(422, "This page can't be rendered")
+    width = _bucket(w)
+    data = await run_in_threadpool(_cached_page, book, page - 1, width)
+    if data is None:
+        try:
+            data = await _on_share(get_page_bytes, book, page - 1, width)
+        except FileNotFoundError:
+            raise HTTPException(404, "File is gone from the shelf")
+        except Exception as e:
+            logger.warning(f"Reader: page {page} of book {book_id} failed: {e}")
+            raise HTTPException(422, "This page can't be rendered")
     return Response(content=data, media_type="image/jpeg",
                     headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
