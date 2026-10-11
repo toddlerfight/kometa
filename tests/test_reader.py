@@ -51,12 +51,16 @@ class TestBooks:
         assert names[:4] == ["p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg"] and names[-1] == "p10.jpg"
         assert b["title"] == "Midnight Spider-Man" and b["series_id"] == sid and b["number"] == 1.0
 
-    def test_wide_spread_is_flagged(self, shelf):
+    def test_opens_on_the_page_list_and_flags_wide_spreads_once_sizes_land(self, shelf):
         b = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        assert b["page_count"] and not any(p["wide"] for p in b["pages"])      # open now, sizes still coming
+        rd._dims_pool.submit(lambda: None).result()                              # background read done
+        b = asyncio.run(rd.book_detail(b["id"]))
         assert [p["wide"] for p in b["pages"]][:4] == [False, False, True, False]
 
     def test_same_file_is_one_book_and_not_rescanned(self, shelf, monkeypatch):
         a = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        rd._dims_pool.submit(lambda: None).result()
         monkeypatch.setattr(rd, "_scan_pages", lambda *a, **k: pytest.fail("rescanned an unchanged file"))
         assert asyncio.run(rd.issue_book(shelf[1], 1.0))["id"] == a["id"]
 

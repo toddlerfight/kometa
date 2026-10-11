@@ -165,12 +165,15 @@ class _Book:
             self._rar.close()
 
 
-def _scan_pages(path: str, version: str) -> list[list]:
+def _scan_pages(path: str, version: str, dims: bool = True) -> list[list]:
     """[[entry_name, width, height], ...] in reading order. Dimensions come from
-    the image header only (Pillow opens lazily) — needed up front so the reader
-    can show a wide spread on its own instead of pairing it."""
-    bk = _Book(path, version)
+    the image header only (Pillow opens lazily) — the reader uses them to show a
+    wide spread on its own. dims=False lists the entries alone (0, 0): one read
+    of the archive's directory instead of one per page, and a CBR isn't unpacked."""
+    bk = _Book(path, version, whole=dims)
     try:
+        if not dims:
+            return [[name, 0, 0] for name in bk.names()]
         pages = []
         for name in bk.names():
             w = h = 0
@@ -185,18 +188,50 @@ def _scan_pages(path: str, version: str) -> list[list]:
         bk.close()
 
 
-def ensure_book(path: str, tracked_series_id=None, number=None) -> dict:
+_dims_pool = None
+
+
+def _sizes_known(pages) -> bool:
+    return any(w for _, w, _h in pages)
+
+
+def _fill_dims_later(path: str, size, mtime):
+    """Page sizes for a book opened quick: read in the background, one book at a
+    time, and saved only if the file hasn't changed meanwhile."""
+    from concurrent.futures import ThreadPoolExecutor
+    global _dims_pool
+    if _dims_pool is None:
+        _dims_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="page-sizes")
+
+    def run():
+        try:
+            pages = _scan_pages(path, _version(size, mtime))
+            cur = db.get_book_by_path(path, DB_PATH)
+            if pages and cur and cur["size"] == size and cur["mtime"] == mtime:
+                db.upsert_book(path, size, mtime, pages, path=DB_PATH)
+        except Exception as e:
+            logger.info(f"Reader: page sizes for {path!r} not read: {e}")
+    _dims_pool.submit(run)
+
+
+def ensure_book(path: str, tracked_series_id=None, number=None, quick: bool = False) -> dict:
     """Register a file as a book, or return the existing row if unchanged.
-    A changed size/mtime (re-download, cover injection) rebuilds the page list."""
+    A changed size/mtime (re-download, cover injection) rebuilds the page list.
+
+    quick (opening it to read): list the pages now and read their sizes in the
+    background. Reading every page's header first was 46 reads into a 317 MB
+    scan on a busy share — the Read button sat there for most of a minute."""
     try:
         st = os.stat(path)
     except OSError:
         raise HTTPException(404, "File is gone from the shelf")
     existing = db.get_book_by_path(path, DB_PATH)
     if existing and existing["size"] == st.st_size and existing["mtime"] == st.st_mtime and existing["pages"]:
+        if quick and not _sizes_known(existing["pages"]):
+            _fill_dims_later(path, st.st_size, st.st_mtime)      # an earlier quick open's sizes never landed
         return existing
     try:
-        pages = _scan_pages(path, _version(st.st_size, st.st_mtime))
+        pages = _scan_pages(path, _version(st.st_size, st.st_mtime), dims=not quick)
     except Exception as e:
         logger.warning(f"Reader: can't open {path!r}: {e}")
         raise HTTPException(422, "This file can't be opened as a comic")
@@ -204,6 +239,8 @@ def ensure_book(path: str, tracked_series_id=None, number=None) -> dict:
         raise HTTPException(422, "This file has no pages")
     book_id = db.upsert_book(path, st.st_size, st.st_mtime, pages,
                              tracked_series_id=tracked_series_id, number=number, path=DB_PATH)
+    if quick:
+        _fill_dims_later(path, st.st_size, st.st_mtime)
     return db.get_book(book_id, DB_PATH)
 
 
@@ -459,10 +496,20 @@ def _issue_book_on_share(series_id: int, number: float) -> dict:
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404, "No such series")
+    # the shelf index already knows the file — no folder listing on the share
+    with db._connect(DB_PATH) as conn:
+        r = conn.execute("SELECT path FROM books WHERE tracked_series_id = ? AND number = ? ORDER BY mtime DESC LIMIT 1",
+                         (series_id, number)).fetchone()
+    if r:
+        try:
+            return ensure_book(r["path"], tracked_series_id=series_id, number=number, quick=True)
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise                                    # moved since the last scan: look in the folder
     path = find_issue_file(s.get("folder_path"), s["title"], number)
     if not path:
         raise HTTPException(404, "No file on the shelf for this issue")
-    return ensure_book(path, tracked_series_id=series_id, number=number)
+    return ensure_book(path, tracked_series_id=series_id, number=number, quick=True)
 
 
 @router.get("/api/series/{series_id}/issues/{number}/book")
@@ -482,7 +529,7 @@ async def book_detail(book_id: int):
     from starlette.concurrency import run_in_threadpool
     book = await run_in_threadpool(_book_or_404, book_id)
     if not (book.get("pages") and book.get("page_count")):          # never opened: read its pages off the share
-        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"), lane="open")
+        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"), quick=True, lane="open")
     return await run_in_threadpool(_book_payload, book)
 
 
