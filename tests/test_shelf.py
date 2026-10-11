@@ -129,14 +129,40 @@ def test_a_restart_skips_the_shelf_walk_when_one_ran_lately(monkeypatch, tmp_pat
     import kometa.db as db
     p = str(tmp_path / "k.db"); db.init_db(p)
     monkeypatch.setattr(sh, "DB_PATH", p)
-    walks = []
+    walks, after = [], []
     monkeypatch.setattr(sh, "scan_shelf", lambda *a, **k: walks.append(1))
     import kometa.shelf_import as si, kometa.trash as tr
-    monkeypatch.setattr(si, "import_in_background", lambda: None)
-    monkeypatch.setattr(tr, "purge_safe", lambda: None)
+    monkeypatch.setattr(si, "import_in_background", lambda: after.append("import"))
+    monkeypatch.setattr(tr, "purge_safe", lambda: after.append("purge"))
     sh.scan_shelf_safe(skip_if_fresh=True)                       # never scanned: walks
     from datetime import datetime, timezone
     db.set_config({sh.SCANNED_KEY: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}, p)
     sh.scan_shelf_safe(skip_if_fresh=True)                       # fresh: skipped
     sh.scan_shelf_safe()                                         # a sync's walk always runs
     assert walks == [1, 1]
+    assert after.count("import") == 3 and after.count("purge") == 3   # new folders and the trash, every time
+
+
+def test_a_file_gone_from_its_folder_leaves_no_ghost_tile(shelf):
+    root, _ = shelf
+    sh.scan_shelf(str(root))
+    kid = _untracked(root)["Batman - Knightfall"]["id"]
+    books = sh.shelf_detail(kid)["books"]
+    gone = next(p for p in (root / "DC Comics" / "Batman - Knightfall").iterdir() if p.suffix in (".cbz", ".cbr"))
+    gone.unlink()
+    sh.scan_shelf(str(root))
+    assert len(sh.shelf_detail(kid)["books"]) == len(books) - 1
+
+
+def test_a_vanished_folders_unread_books_go_and_read_ones_stay(shelf):
+    root, _ = shelf
+    sh.scan_shelf(str(root))
+    kid = _untracked(root)["Batman - Knightfall"]["id"]
+    b = sh.shelf_detail(kid)["books"]
+    db.set_progress("me", b[0]["id"], 3, False, "2026-10-08T01:00:00Z", sh.DB_PATH)
+    import shutil
+    shutil.rmtree(root / "DC Comics" / "Batman - Knightfall")
+    sh.scan_shelf(str(root))
+    with db._connect(sh.DB_PATH) as c:
+        left = {r[0] for r in c.execute("SELECT id FROM books WHERE shelf_series_id = ?", (kid,))}
+    assert left == {b[0]["id"]}

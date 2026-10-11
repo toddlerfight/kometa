@@ -136,3 +136,22 @@ def test_komga_is_not_asked_unless_the_flag_is_on(chain, store, tmp_path, monkey
     db.set_config({"komga_covers": "1"}, store)
     r = th.issue_thumbnail(sid, 1.0)
     assert r.status_code == 200 and r.headers["X-Kometa-Source"] == "komga" and asked["komga"] == 1
+
+
+def test_a_cover_cut_off_halfway_is_refused_but_a_few_missing_bytes_are_fine(tmp_path, monkeypatch):
+    import io, zipfile
+    import pytest
+    from PIL import Image
+    import kometa.reader as rd
+    monkeypatch.setattr(rd, "PAGE_CACHE_DIR", str(tmp_path / "cache"))
+    buf = io.BytesIO()
+    Image.new("RGB", (400, 600), (200, 30, 30)).save(buf, "JPEG", quality=90)
+    jpeg = buf.getvalue()
+    def comic(name, page):
+        p = tmp_path / name
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("001.jpg", page)
+        return str(p)
+    assert rd.get_cover_bytes(comic("short.cbz", jpeg[:-4]))           # five bytes short: still a cover
+    with pytest.raises(rd.TruncatedCover):
+        rd.get_cover_bytes(comic("half.cbz", jpeg[: len(jpeg) // 3]))   # stops a third of the way down

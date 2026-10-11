@@ -1251,6 +1251,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         for sib in _unusable_siblings(dest_dir, dest_path, title, issue_number):
             try:
                 os.remove(sib)
+                db.forget_book_path(sib, DB_PATH)
                 logger.info(f"{label}: removed superseded unusable file {sib}")
             except OSError as e:
                 logger.warning(f"{label}: could not remove {sib}: {e}")

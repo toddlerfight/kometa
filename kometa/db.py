@@ -1794,6 +1794,43 @@ def remove_books_under(folder, path=DB_PATH) -> int:
         return len(ids)
 
 
+def _forget_book_ids(conn, ids) -> None:
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        conn.execute(f"DELETE FROM read_progress WHERE book_id IN ({marks})", chunk)
+        conn.execute(f"DELETE FROM books WHERE id IN ({marks})", chunk)
+
+
+def forget_missing_books(shelf_series_id, present_paths, path=DB_PATH, keep_read: bool = False) -> int:
+    """A folder was just listed: its book rows for files that weren't in the
+    listing are gone (deleted, renamed, replaced). Nothing pruned book rows
+    before — the scan only dropped vanished FOLDERS — so a renamed or deleted
+    file stayed as a tile that opened to 'File is gone'. Called only after a
+    listing that succeeded; an unreadable folder never gets here."""
+    present = set(present_paths)
+    with _connect(path) as conn:
+        ids = [r["id"] for r in conn.execute("SELECT id, path FROM books WHERE shelf_series_id = ?", (shelf_series_id,))
+               if r["path"] not in present]
+        if keep_read and ids:
+            # a folder that went away keeps what you've read: if it comes back,
+            # its history is still there (a parked or renamed folder)
+            marks = ",".join("?" * len(ids))
+            read = {r[0] for r in conn.execute(f"SELECT DISTINCT book_id FROM read_progress WHERE book_id IN ({marks})", ids)}
+            ids = [i for i in ids if i not in read]
+        if ids:
+            _forget_book_ids(conn, ids)
+    return len(ids)
+
+
+def forget_book_path(file_path, path=DB_PATH) -> int:
+    with _connect(path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT id FROM books WHERE path = ?", (file_path,))]
+        if ids:
+            _forget_book_ids(conn, ids)
+    return len(ids)
+
+
 def remove_shelf_series_by_path(folder, path=DB_PATH) -> int:
     with _connect(path) as conn:
         return conn.execute("DELETE FROM shelf_series WHERE folder_path = ?", (folder,)).rowcount

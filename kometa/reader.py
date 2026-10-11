@@ -392,22 +392,18 @@ def get_cover_bytes(path: str) -> bytes:
         names = bk.names()
         if not names:
             raise ValueError("no pages")
-        with bk.open(names[0]) as fh, Image.open(fh) as im:
-            # Strict decode first. A JPEG short by a few bytes is still a cover;
-            # one that stops halfway is not — the lenient decode fills what's
-            # missing with JPEG grey, so measure how much grey sits at the bottom.
-            ImageFile.LOAD_TRUNCATED_IMAGES = False
-            try:
-                im.load()
-            except OSError as e:
-                if "truncated" not in str(e).lower():
-                    raise
-                ImageFile.LOAD_TRUNCATED_IMAGES = True
-                im.load()
-                if _grey_bottom_fraction(im) > 0.2:
-                    raise TruncatedCover(path) from e
-            finally:
-                ImageFile.LOAD_TRUNCATED_IMAGES = True
+        with bk.open(names[0]) as fh:
+            raw = fh.read()
+        with Image.open(io.BytesIO(raw)) as im:
+            # A JPEG short by a few bytes is still a cover; one that stops halfway
+            # is not — the lenient decode fills what's missing with JPEG grey, so
+            # a cut-off file (no end-of-image marker) gets its grey bottom measured.
+            # (This used to flip Pillow's process-wide LOAD_TRUNCATED_IMAGES off and
+            # on around a strict load — racing every other thread decoding pages.)
+            im.load()
+            cut_off = raw[:2] == b"\xff\xd8" and b"\xff\xd9" not in raw[-2048:]
+            if cut_off and _grey_bottom_fraction(im) > 0.2:
+                raise TruncatedCover(path)
             if im.mode not in ("RGB", "L"):
                 im = im.convert("RGB")
             if im.width > COVER_WIDTH:
@@ -490,7 +486,9 @@ async def _on_share(fn, *a, lane: str = "page", **k):
     pool = _share_pools.get(lane)
     if pool is None:
         pool = _share_pools[lane] = ThreadPoolExecutor(max_workers=SHARE_READERS[lane], thread_name_prefix=f"share-{lane}")
-    return await asyncio.get_running_loop().run_in_executor(pool, functools.partial(fn, *a, **k))
+    import contextvars
+    ctx = contextvars.copy_context()                 # run_in_executor doesn't carry it
+    return await asyncio.get_running_loop().run_in_executor(pool, functools.partial(ctx.run, fn, *a, **k))
 
 
 def _known_book(series_id: int, number: float) -> dict | None:

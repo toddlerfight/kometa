@@ -230,7 +230,10 @@ def _within(key: str, fn):
     with _inflight_lock:
         fut = _inflight.get(key)
         if fut is None:
-            fut = _bg.submit(fn)
+            # carry the request's context across: thread pools don't, and without
+            # it these covers waited on LOCG's pace like a background job
+            import contextvars
+            fut = _bg.submit(contextvars.copy_context().run, fn)
             _inflight[key] = fut
             fut.add_done_callback(lambda _f: _inflight.pop(key, None))
     try:

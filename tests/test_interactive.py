@@ -36,3 +36,13 @@ def test_metron_lock_held_by_background_makes_a_page_fail_fast(monkeypatch):
         INTERACTIVE.reset(tok)
     finally:
         mc._lock.release()
+
+
+def test_a_fast_cover_keeps_the_requests_interactive_flag():
+    import kometa.thumbnails as th
+    from kometa.interactive import is_interactive
+    tok = INTERACTIVE.set(True)
+    try:
+        assert th._within("ctx-check", is_interactive) is True
+    finally:
+        INTERACTIVE.reset(tok)

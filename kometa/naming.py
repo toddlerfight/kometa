@@ -165,8 +165,38 @@ _VERDICT_TABLE = """CREATE TABLE IF NOT EXISTS archive_verdict (
 _verdict_ready: set = set()
 
 
-@functools.lru_cache(maxsize=16384)
+_verdict_memo: "collections.OrderedDict" = None
+_VERDICT_MEMO_MAX = 16384
+
+
 def _archive_verdict(path: str, size: int, mtime: float) -> tuple | None:
+    """Memoised wrapper: definite verdicts only. An lru_cache here remembered
+    'couldn't look' (an NFS hiccup, a busy file) until the next restart."""
+    import collections
+    global _verdict_memo
+    if _verdict_memo is None:
+        _verdict_memo = collections.OrderedDict()
+    key = (path, size, mtime)
+    if key in _verdict_memo:
+        _verdict_memo.move_to_end(key)
+        return _verdict_memo[key]
+    v = _archive_verdict_uncached(path, size, mtime)
+    if v is not None:
+        _verdict_memo[key] = v
+        if len(_verdict_memo) > _VERDICT_MEMO_MAX:
+            _verdict_memo.popitem(last=False)
+    return v
+
+
+def _archive_verdict_cache_clear():
+    if _verdict_memo is not None:
+        _verdict_memo.clear()
+
+
+_archive_verdict.cache_clear = _archive_verdict_cache_clear
+
+
+def _archive_verdict_uncached(path: str, size: int, mtime: float) -> tuple | None:
     """(has_pages, season) for an archive, or None if it couldn't be looked into.
 
     Kept in the DB by (path, size, mtime): every restart used to reopen every

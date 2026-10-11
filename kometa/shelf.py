@@ -93,7 +93,7 @@ def scan_shelf(root: str | None = None) -> dict:
         # microseconds: the prune keys on "not stamped by THIS scan", so two scans
         # inside one second must not share a stamp
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        n_series = n_books = 0
+        n_series = n_books = gone = 0
         for pub in sorted(os.scandir(root), key=lambda e: e.name.lower()):
             if not pub.is_dir() or _skip(pub.name):
                 continue
@@ -113,17 +113,26 @@ def scan_shelf(root: str | None = None) -> dict:
                     sid = db.upsert_shelf_series(folder, title, pub.name, tid, len(files), stamp, DB_PATH)
                     db.index_books([(p, size, mtime, parse_issue_number(name, title), sid, tid)
                                     for p, size, mtime, name in files], DB_PATH)
+                    gone += db.forget_missing_books(sid, [f[0] for f in files], DB_PATH)
                     n_series += 1
                     n_books += len(files)
+        # a folder the walk didn't see AND that's really not there: its unread books
+        # go too (read ones keep their history; one that merely failed to list keeps all)
+        with db._connect(DB_PATH) as conn:
+            vanished = [(r["id"], r["folder_path"]) for r in conn.execute(
+                "SELECT id, folder_path FROM shelf_series WHERE scanned_at IS NOT ?", (stamp,))]
+        for vid, vfolder in vanished:
+            if not os.path.isdir(vfolder):
+                gone += db.forget_missing_books(vid, [], DB_PATH, keep_read=True)
         pruned = db.prune_shelf(stamp, DB_PATH)
         healed = db.reparse_null_numbers(DB_PATH)      # names that parse now (renamed, re-titled)
         if healed:
             logger.info(f"Shelf scan: {healed} book(s) given the number their name now carries")
-        result = {"series": n_series, "books": n_books, "pruned": pruned, "scanned_at": stamp}
+        result = {"series": n_series, "books": n_books, "pruned": pruned, "books_gone": gone, "scanned_at": stamp}
         db.set_config({SCANNED_KEY: stamp}, DB_PATH)
         _last_scan.clear()
         _last_scan.update(result)
-        logger.info(f"Shelf scan: {n_series} series, {n_books} books, {pruned} gone")
+        logger.info(f"Shelf scan: {n_series} series, {n_books} books, {pruned} folders and {gone} files gone")
         return result
     finally:
         _scan_lock.release()
@@ -148,6 +157,7 @@ def index_series_folder(series_id: int, path=None) -> int:
                                           len(files), stamp, path)
     db.index_books([(fp, size, mtime, parse_issue_number(name, s["title"]), shelf_id, series_id)
                     for fp, size, mtime, name in files], path)
+    db.forget_missing_books(shelf_id, [f[0] for f in files], path)
     return len(files)
 
 
@@ -170,12 +180,13 @@ def scan_shelf_safe(skip_if_fresh: bool = False):
     # Downloads index their own folder as they land; every full sync still walks.
     if skip_if_fresh and _scanned_recently(STARTUP_FRESH_S):
         logger.info("Shelf scan: skipped at startup — the last one is under 6 hours old")
-        return
-    try:
-        scan_shelf()
-    except Exception as e:
-        logger.warning(f"Shelf scan failed: {e}")
-        return
+        _last_scan.setdefault("scanned_at", db.get_config(DB_PATH).get(SCANNED_KEY))
+    else:
+        try:
+            scan_shelf()
+        except Exception as e:
+            logger.warning(f"Shelf scan failed: {e}")
+            return
     # Every series is a Kometa series: new folders become series (pull list off)
     # and get matched to LOCG in the background, throttled.
     from kometa.shelf_import import import_in_background

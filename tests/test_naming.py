@@ -410,3 +410,15 @@ def test_an_archive_verdict_survives_a_restart_without_reopening_it(tmp_path, db
     naming._archive_verdict.cache_clear()                                 # a restart: memory gone
     monkeypatch.setattr(naming, "_archive_entry_names", lambda p: (_ for _ in ()).throw(AssertionError("reopened")))
     assert naming.counts_as_owned(str(f), "Saga")                          # answered from the DB
+
+
+def test_couldnt_look_is_asked_again_not_remembered(tmp_path, db_path, monkeypatch):
+    import kometa.db as db
+    import kometa.naming as naming
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    naming._archive_verdict.cache_clear()
+    f = tmp_path / "Saga #002.cbz"; f.write_bytes(b"PK")
+    calls = []
+    monkeypatch.setattr(naming, "_archive_entry_names", lambda p: (calls.append(1), None)[1])
+    naming.counts_as_owned(str(f), "Saga"); naming.counts_as_owned(str(f), "Saga")
+    assert len(calls) == 2
