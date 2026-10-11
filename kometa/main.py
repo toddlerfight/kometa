@@ -123,6 +123,13 @@ def _sync_all_job():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db(DB_PATH)
+    # folder paths spelled the old share's way (an accent as 'e' + mark) point at
+    # the folder as NFS spells it; a duplicate the shelf made of it folds back
+    try:
+        for line in db.heal_folder_spellings(DB_PATH):
+            logger.info(f"Folder spelling: {line}")
+    except Exception as e:
+        logger.warning(f"Folder spelling repair failed: {e}")
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
     from kometa.shelf_import import trickle_tick

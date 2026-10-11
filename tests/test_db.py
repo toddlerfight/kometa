@@ -2,6 +2,7 @@
 (the double-download fix lives or dies here), queue requeue rules, and the
 fresh-install migration that once dropped columns on its way to nullable.
 """
+import os
 import sqlite3
 
 import kometa.db as db
@@ -269,3 +270,46 @@ class TestRemoveSeries:
         with db._connect(db_path) as c:
             assert c.execute("SELECT COUNT(*) FROM download_queue WHERE tracked_series_id = ?", (series,)).fetchone()[0] == 0
             assert c.execute("SELECT COUNT(*) FROM download_queue WHERE tracked_series_id = ?", (other,)).fetchone()[0] == 1
+
+
+def _nfs_spelling(monkeypatch):
+    """This Mac's disk treats both spellings of an accent as one folder; NFS on
+    ginbako doesn't. Make isdir answer like NFS: only the NFC spelling exists."""
+    import unicodedata
+    real = os.path.isdir
+    monkeypatch.setattr(db.os.path, "isdir", lambda p: unicodedata.is_normalized("NFC", p) and real(p))
+
+
+class TestFolderSpellings:
+    def test_an_old_spelling_points_at_the_folder_and_its_duplicate_folds_back(self, db_path, tmp_path, monkeypatch):
+        import unicodedata
+        _nfs_spelling(monkeypatch)
+        good = str(tmp_path / "Image Comics" / unicodedata.normalize("NFC", "Stillwater by Zdarsky & Pérez"))
+        old = unicodedata.normalize("NFD", good)
+        os.makedirs(good)
+        orig = db.add_series(title="Stillwater", publisher="Image", folder_path=None, on_pull_list=False,
+                             locg_series_id=147740, path=db_path)
+        with db._connect(db_path) as c:                      # stored the old share's way
+            c.execute("UPDATE tracked_series SET folder_path = ?, match_status = 'manual' WHERE id = ?", (old, orig))
+        dup = db.add_series(title="Stillwater", publisher="Image", folder_path=good, on_pull_list=True, path=db_path)
+        db.set_match_status(dup, "needs_match", db_path)
+        sh = db.upsert_shelf_series(good, "Stillwater", "Image Comics", dup, 1, "2026-10-11T00:00:00Z", db_path)
+        db.index_books([(good + "/Stillwater #001.cbz", 1, 1.0, 1.0, sh, dup)], db_path)
+        did = db.heal_folder_spellings(db_path)
+        assert any("folded duplicate" in d for d in did)
+        assert db.get_series_by_id(dup, db_path) is None
+        assert db.get_series_by_id(orig, db_path)["folder_path"] == good
+        assert db.get_book_by_path(good + "/Stillwater #001.cbz", db_path)["tracked_series_id"] == orig
+        assert db.heal_folder_spellings(db_path) == []         # once
+
+    def test_a_matched_second_series_is_never_folded(self, db_path, tmp_path, monkeypatch):
+        import unicodedata
+        _nfs_spelling(monkeypatch)
+        good = str(tmp_path / unicodedata.normalize("NFC", "Pérez"))
+        os.makedirs(good)
+        a = db.add_series(title="A", publisher="X", folder_path=None, on_pull_list=False, path=db_path)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE tracked_series SET folder_path = ? WHERE id = ?", (unicodedata.normalize("NFD", good), a))
+        b = db.add_series(title="B", publisher="X", folder_path=good, on_pull_list=False, locg_series_id=9, path=db_path)
+        did = db.heal_folder_spellings(db_path)
+        assert db.get_series_by_id(b, db_path) and did and did[0].startswith("left")

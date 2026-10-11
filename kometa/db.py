@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, timedelta
 
@@ -610,6 +611,14 @@ def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
 
 # --- Series ---
 
+def nfc(p):
+    """One spelling for a path. 'é' can be one character or 'e' + an accent; the
+    old macOS share handed out the second, NFS hands out the first, and to a
+    string compare they're different folders — Stillwater by Zdarsky & Pérez came
+    back as a second, unmatched series the minute the mount changed (2026-10-11)."""
+    return unicodedata.normalize("NFC", p) if isinstance(p, str) else p
+
+
 def add_series(komga_series_id=None, title=None, publisher=None,
                year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
                kind="series", cv_arc_id=None, cv_volume_id=None, path=DB_PATH) -> int:
@@ -620,7 +629,7 @@ def add_series(komga_series_id=None, title=None, publisher=None,
                                         kind, cv_arc_id, cv_volume_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (komga_series_id, title, publisher, year_began,
-              folder_path, int(on_pull_list), locg_series_id, kind, cv_arc_id, cv_volume_id))
+              nfc(folder_path), int(on_pull_list), locg_series_id, kind, cv_arc_id, cv_volume_id))
         return cur.lastrowid
 
 
@@ -1110,11 +1119,45 @@ def set_series_title(series_id, title, path=DB_PATH):
         conn.execute("UPDATE tracked_series SET title = ? WHERE id = ?", (title, series_id))
 
 
+def heal_folder_spellings(path=DB_PATH) -> list[str]:
+    """A series whose stored folder spells an accent the old way, when the folder
+    is there under the one spelling: point it there. If the shelf already made a
+    second series for that folder (the import saw a 'new' folder), fold that one
+    back into this one — its shelf entry and book rows come over, the duplicate
+    goes. Only an UNMATCHED duplicate is folded; anything else is left and logged.
+    Database only: nothing on disk moves. Returns what it did, for the log."""
+    did = []
+    with _connect(path) as conn:
+        rows = [dict(r) for r in conn.execute("SELECT id, title, folder_path FROM tracked_series WHERE folder_path IS NOT NULL")]
+    for s in rows:
+        fp, good = s["folder_path"], nfc(s["folder_path"])
+        if fp == good or os.path.isdir(fp) or not os.path.isdir(good):
+            continue
+        with _connect(path) as conn:
+            dups = [dict(r) for r in conn.execute(
+                "SELECT id, title, match_status, metron_series_id, locg_series_id FROM tracked_series WHERE folder_path = ? AND id != ?",
+                (good, s["id"]))]
+            safe = [d for d in dups if d["match_status"] in (None, "pending", "needs_match")
+                    and not d["metron_series_id"] and not d["locg_series_id"]]
+            if len(safe) != len(dups):
+                did.append(f"left {s['title']!r}: another MATCHED series holds {good!r}")
+                continue
+            for d in dups:
+                conn.execute("UPDATE shelf_series SET tracked_series_id = ? WHERE tracked_series_id = ?", (s["id"], d["id"]))
+                conn.execute("UPDATE books SET tracked_series_id = ? WHERE tracked_series_id = ?", (s["id"], d["id"]))
+            conn.execute("UPDATE tracked_series SET folder_path = ? WHERE id = ?", (good, s["id"]))
+        for d in dups:
+            remove_series(d["id"], path)
+            did.append(f"folded duplicate {d['title']!r} (id {d['id']}) into id {s['id']}")
+        did.append(f"{s['title']!r} (id {s['id']}) now points at {good!r}")
+    return did
+
+
 def set_folder_path(series_id, folder_path, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(
             "UPDATE tracked_series SET folder_path = ? WHERE id = ?",
-            (folder_path, series_id),
+            (nfc(folder_path), series_id),
         )
 
 

@@ -87,7 +87,7 @@ def scan_shelf(root: str | None = None) -> dict:
             # an empty or missing root is a dead mount, not an empty library —
             # never prune the shelf on it
             raise RuntimeError(f"comics root {root!r} is missing or empty")
-        tracked = {os.path.realpath(s["folder_path"]): s["id"]
+        tracked = {db.nfc(os.path.realpath(s["folder_path"])): s["id"]
                    for s in db.get_all_series(DB_PATH)
                    if s.get("folder_path") and s.get("kind") != "arc"}
         # microseconds: the prune keys on "not stamped by THIS scan", so two scans
@@ -113,7 +113,7 @@ def scan_shelf(root: str | None = None) -> dict:
                 found += [f for f in _series_folders(ser) if f[2]]
             with db._connect(DB_PATH):
                 for folder, title, files in found:
-                    tid = tracked.get(os.path.realpath(folder))
+                    tid = tracked.get(db.nfc(os.path.realpath(folder)))
                     sid = db.upsert_shelf_series(folder, title, pub.name, tid, len(files), stamp, DB_PATH)
                     db.index_books([(p, size, mtime, parse_issue_number(name, title), sid, tid)
                                     for p, size, mtime, name in files], DB_PATH)
