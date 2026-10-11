@@ -126,6 +126,25 @@ def _core_title(title_norm: str) -> str:
     return core or title_norm
 
 
+# 'Where Monsters Dwell Vol 2 #2 (2015)' is a single issue — GetComics tags the
+# volume when a name has run more than once. 'vol' reads as a collected edition
+# to _series_matches, so all three missing issues sat there 'not found'
+# (2026-10-11). A volume tag right before an issue number is just the run's
+# label: drop it — but only when the post's year fits our run, or Vol 1 #2 (1970)
+# would pass for the 2015 #2.
+_VOL_SINGLE_RE = re.compile(r'\s+vol(?:ume)?\.?\s*\d+(?=\s*#\s*\d)', re.I)
+
+
+def _drop_volume_tag(post_raw: str, series_year=None) -> str:
+    if not _VOL_SINGLE_RE.search(post_raw):
+        return post_raw
+    if series_year:
+        years = [int(y) for y in re.findall(r'\((\d{4})', post_raw)]
+        if not years or not any(abs(y - int(series_year)) <= 1 for y in years):
+            return post_raw
+    return _VOL_SINGLE_RE.sub('', post_raw, count=1)
+
+
 def _series_matches(title_norm: str, post_norm: str) -> bool:
     """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
     title_norm = _core_title(title_norm)
@@ -647,7 +666,7 @@ class GetComicsClient:
             a = h1.find("a")
             if not a:
                 continue
-            text = a.get_text(strip=True)
+            text = _drop_volume_tag(a.get_text(strip=True), series_year)
             href = a.get("href", "")
             if _series_matches(title_norm, _normalize(text)):
                 if _post_covers_issue(text, issue_number) is True:
@@ -663,7 +682,7 @@ class GetComicsClient:
             a = h1.find("a")
             if not a:
                 continue
-            text = a.get_text(strip=True)
+            text = _drop_volume_tag(a.get_text(strip=True), series_year)
             href = a.get("href", "")
             if _series_matches(title_norm, _normalize(text)):
                 coverage = _post_covers_issue(text, issue_number)

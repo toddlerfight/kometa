@@ -61,7 +61,8 @@ def test_volume_entry_on_a_run_the_shelf_has_queues_that_number_only(listdb):
                      search_metron=_metron_search, search_locg=lambda q: [], sync=_fake_sync, root=listdb["root"])
     assert r["result"] == "queued" and r["queued"] == 1 and r["created"]
     issues = {i["number"]: i for i in db.get_issues_for_series(r["series_id"], listdb["db"])}
-    assert issues[3.0]["ignored"] == 0 and all(issues[n]["ignored"] == 1 for n in (1.0, 2.0, 4.0, 5.0, 6.0))
+    assert issues[3.0]["ignored"] == 0 and all(issues[n]["ignored"] == 1 for n in (1.0, 4.0, 5.0, 6.0))
+    assert issues[2.0]["ignored"] == 0          # the list names #2 too: its own entry comes round for it later
     q = [x for x in db.get_queue(listdb["db"]) if x["tracked_series_id"] == r["series_id"]]
     assert [x["issue_number"] for x in q] == [3.0]
 
@@ -153,3 +154,16 @@ def test_running_jobs_say_what_they_are_doing(listdb):
     lg._jobs[999] = {"running": False, "name": "done one", "phase": "entries", "done": 3, "total": 3}
     assert lg.api_jobs() == [{"list_id": listdb["lid"], "name": "Hellboy TPB order", "phase": "packs", "done": 0, "total": 4, "queued": 0}]
     lg._jobs.clear()
+
+
+def test_a_later_entry_unignores_the_issue_it_asks_for(listdb):
+    e = {(x["series"], x["number"]): x for x in rl.resolve(listdb["lid"], listdb["db"])["entries"]}
+    r = lg.get_entry(listdb["lid"], e[("Sir Edward Grey, Witchfinder", "3")]["item_id"], listdb["db"],
+                     search_metron=_metron_search, search_locg=lambda q: [], sync=_fake_sync, root=listdb["root"])
+    db.set_issue_ignored(r["series_id"], 3.0, True, listdb["db"])                 # left ignored by the old rule
+    with db._connect(listdb["db"]) as c:
+        c.execute("DELETE FROM download_queue WHERE tracked_series_id = ?", (r["series_id"],))
+    lg.get_entry(listdb["lid"], e[("Sir Edward Grey, Witchfinder", "3")]["item_id"], listdb["db"],
+                 search_metron=_metron_search, search_locg=lambda q: [], sync=_fake_sync, root=listdb["root"])
+    issues = {i["number"]: i for i in db.get_issues_for_series(r["series_id"], listdb["db"])}
+    assert issues[3.0]["ignored"] == 0

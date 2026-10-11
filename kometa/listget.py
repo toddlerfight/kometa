@@ -157,11 +157,19 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
              if not i["owned"] and (not i["store_date"] or i["store_date"] <= today)]
     if pairs:
         db.queue_issues_bulk(pairs, path)
+        for sid, n in pairs:
+            if any(i["number"] == n and i.get("ignored") for i in wanted):
+                db.set_issue_ignored(sid, n, False, path)                 # the list asks for it: not ignored
     ignored = 0
     if created and not whole_run:
-        # the issues this list never asked for: not missing, just not wanted
+        # the issues this list never asked for: not missing, just not wanted. The
+        # WHOLE list's asks for this run, not just this entry's — Battleworld names
+        # Where Monsters Dwell #1–5 at five places, and #1 creating the run used
+        # to mark #2–5 ignored before their own entries came round (2026-10-11).
+        asked = {readlists._num(e["number"]) for e in res["entries"]
+                 if norm_key(e["series"]) == norm_key(entry["series"])}
         for i in issues:
-            if i["number"] != want_n and not i["owned"]:
+            if i["number"] not in asked and not i["owned"]:
                 db.set_issue_ignored(series["id"], i["number"], True, path)
                 ignored += 1
     return {"entry": entry["series"], "result": "queued", "series_id": series["id"], "series_title": series["title"],
