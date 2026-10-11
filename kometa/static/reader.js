@@ -100,7 +100,7 @@ function _rdRender() {
   const imgs = spread.map(p => `
     <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"
       src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false"
-      onload="this.parentElement.classList.add('rd-loaded')">`).join('');
+      onload="this.parentElement.classList.add('rd-loaded');_rdOpened()" onerror="_rdOpened()">`).join('');
   const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
   const outgoing = document.getElementById('rd-stage');     // the spread you're leaving
   const thumbs = b.pages.map((_, i) => {
@@ -108,6 +108,7 @@ function _rdRender() {
     return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdGo(${p})">
       <img ${_rd.chrome ? 'src' : 'data-src'}="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
   }).join('');
+  const loader = _rd.opening ? document.getElementById('rd-loading') : null;
   el.innerHTML = `
     <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
     <div class="rd-progress" style="width:${(last / b.page_count) * 100}%"></div>
@@ -143,6 +144,7 @@ function _rdRender() {
         </div>
       </div>
     </div>`;
+  if (loader) { el.appendChild(loader); _rdStage('pages'); }   // the open isn't over until page 1 shows
   if (_rd.chrome) _rdCenterStrip();
   _rdTurnMotion(outgoing);
   _rdPreload();
@@ -453,17 +455,52 @@ function _rdBindInput() {
 
 // Read shows the reader at once with this, not after the book answers: a first
 // open comes off the NAS and can take a while — the button looked dead.
+// The bar moves with the real stages of an open — finding the book, its page
+// list, page 1 on screen — easing toward each stage's limit and jumping when the
+// stage is actually done. It never runs ahead of what has happened.
+const _RD_STAGES = { find: [0, 0.4], pages: [0.4, 0.9], done: [1, 1] };
+
 function _rdLoadingHtml() {
-  return `<div class="rd-loading" role="status"><div class="rd-spin" aria-hidden="true"></div><div>Opening…</div>
-    <div class="rd-loading-sub">First time opening this one — it’s coming off the NAS.</div></div>`;
+  return `<div class="rd-loading" id="rd-loading" role="progressbar" aria-label="Opening">
+    <div class="rd-load-track"><div class="rd-load-fill" id="rd-load-fill"></div></div><div>Opening…</div></div>`;
+}
+
+function _rdStage(name) {
+  const fill = document.getElementById('rd-load-fill');
+  if (!fill) return;
+  const [from, to] = _RD_STAGES[name];
+  fill.style.transition = 'none';                       // land on the stage's start…
+  fill.style.transform = `scaleX(${Math.max(from, _rd.loadAt || 0)})`;
+  _rd.loadAt = Math.max(from, _rd.loadAt || 0);
+  void fill.offsetWidth;
+  if (name === 'done') return;
+  fill.style.transition = '';                           // …then ease toward its limit
+  fill.style.transform = `scaleX(${from + (to - from) * 0.92})`;
+  _rd.loadAt = from + (to - from) * 0.92;
 }
 
 function _rdShowLoading() {
   const el = _rdEl();
   el.classList.remove('hidden');
   document.body.classList.add('reading');
-  if (!el.querySelector('.rd-loading')) el.innerHTML = _rdLoadingHtml();
+  if (!el.querySelector('#rd-loading')) {
+    _rd.loadAt = 0;
+    el.innerHTML = _rdLoadingHtml();
+    requestAnimationFrame(() => _rdStage('find'));
+  }
+  _rd.opening = true;
   return el;
+}
+
+// page 1 is on screen: fill, fade, gone
+function _rdOpened() {
+  if (!_rd.opening) return;
+  _rd.opening = false;
+  const ov = document.getElementById('rd-loading');
+  if (!ov) return;
+  _rdStage('done');
+  ov.classList.add('rd-loading-out');
+  setTimeout(() => ov.remove(), 400);
 }
 
 async function renderReader(params) {
@@ -479,6 +516,7 @@ async function renderReader(params) {
     _rd.at = _rdSpreadOf(start);
     _rdRender();
   } catch (e) {
+    _rd.opening = false;
     el.innerHTML = `<div class="rd-end"><div class="rd-end-title">Couldn’t open this book</div>
       <div class="rd-end-actions"><button class="btn btn-primary" onclick="_rdExit()">‹ Back</button></div></div>`;
   }
@@ -523,6 +561,7 @@ function closeReader() {
   el.innerHTML = '';
   document.body.classList.remove('reading');
   _rd.book = null;
+  _rd.opening = false;
 }
 
 function _rdExit() {

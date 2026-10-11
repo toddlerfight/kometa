@@ -66,6 +66,8 @@ def test_read_shows_the_reader_at_once_while_a_slow_book_opens(app, app_server):
     app.route("**/api/series/*/issues/1/book", slow)
     _open_alpha_issue_1(app)
     app.locator("#modal").get_by_role("button", name="Read").click()
-    expect(app.locator("#reader .rd-loading")).to_be_visible(timeout=500)   # before the book answers
+    expect(app.locator("#reader .rd-loading .rd-load-fill")).to_be_visible(timeout=500)   # before the book answers
     expect(app.locator("#reader #rd-stage .rd-page")).to_be_visible(timeout=10000)
+    expect(app.locator("#reader #rd-loading")).to_have_count(0, timeout=5000)            # gone once page 1 shows
+    assert "coming off" not in app.locator("#reader").inner_text()
     app.unroute("**/api/series/*/issues/1/book")
