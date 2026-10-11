@@ -56,3 +56,16 @@ def test_landscape_pairs_pages_but_cover_and_spread_stand_alone(app):
     expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)            # 4 is a wide spread: alone
     expect(reader.locator("#rd-stage .rd-page")).to_have_attribute("alt", "Page 4")
     app.keyboard.press("Escape")
+
+
+def test_read_shows_the_reader_at_once_while_a_slow_book_opens(app, app_server):
+    import time
+    def slow(route):
+        time.sleep(1.5)                                  # a first open off a busy NAS
+        route.continue_()
+    app.route("**/api/series/*/issues/1/book", slow)
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read").click()
+    expect(app.locator("#reader .rd-loading")).to_be_visible(timeout=500)   # before the book answers
+    expect(app.locator("#reader #rd-stage .rd-page")).to_be_visible(timeout=10000)
+    app.unroute("**/api/series/*/issues/1/book")

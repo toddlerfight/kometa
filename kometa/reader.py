@@ -115,6 +115,9 @@ def _extract_rar(path: str, version: str) -> str:
     return out
 
 
+READ_BUFFER = 4 << 20
+
+
 class _Book:
     """Uniform read access over a CBZ or a CBR. Entry names are archive-relative."""
 
@@ -123,11 +126,15 @@ class _Book:
         instead of unpacked. Covers used to unpack every CBR in full and keep it —
         853 of them, 61 GB of page cache for books nobody had opened."""
         self.path = path
-        self._zip = self._dir = self._rar = None
+        self._zip = self._dir = self._rar = self._fh = None
         with open(path, "rb") as fh:
             magic = fh.read(4)
         if magic[:2] == b"PK":
-            self._zip = zipfile.ZipFile(path)
+            # big reads: the share reaches the container through OrbStack, where
+            # every small read is a slow round trip — zipfile's default buffering
+            # made a file list 15 s and one page 10 s; 4 MB reads: 0.2 s and 1.6 s
+            self._fh = open(path, "rb", buffering=READ_BUFFER)
+            self._zip = zipfile.ZipFile(self._fh)
         elif magic == b"Rar!":
             out = _rar_dir(path, version)
             if whole or (os.path.isdir(out) and os.listdir(out)):
@@ -161,6 +168,8 @@ class _Book:
     def close(self):
         if self._zip:
             self._zip.close()
+        if self._fh:
+            self._fh.close()
         if self._rar:
             self._rar.close()
 

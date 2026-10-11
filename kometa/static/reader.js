@@ -99,7 +99,8 @@ function _rdRender() {
   const last = spread[spread.length - 1];
   const imgs = spread.map(p => `
     <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"
-      src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false">`).join('');
+      src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false"
+      onload="this.parentElement.classList.add('rd-loaded')">`).join('');
   const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
   const outgoing = document.getElementById('rd-stage');     // the spread you're leaving
   const thumbs = b.pages.map((_, i) => {
@@ -108,7 +109,7 @@ function _rdRender() {
       <img ${_rd.chrome ? 'src' : 'data-src'}="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
   }).join('');
   el.innerHTML = `
-    <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage">${imgs}</div>
+    <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
     <div class="rd-progress" style="width:${(last / b.page_count) * 100}%"></div>
     <div class="rd-count" aria-hidden="true">${label} / ${b.page_count}</div>
     <div class="rd-chrome${_rd.chrome ? ' on' : ''}" id="rd-chrome">
@@ -450,11 +451,23 @@ function _rdBindInput() {
 
 // --- open / close --------------------------------------------------------------------
 
-async function renderReader(params) {
+// Read shows the reader at once with this, not after the book answers: a first
+// open comes off the NAS and can take a while — the button looked dead.
+function _rdLoadingHtml() {
+  return `<div class="rd-loading" role="status"><div class="rd-spin" aria-hidden="true"></div><div>Opening…</div>
+    <div class="rd-loading-sub">First time opening this one — it’s coming off the NAS.</div></div>`;
+}
+
+function _rdShowLoading() {
   const el = _rdEl();
   el.classList.remove('hidden');
   document.body.classList.add('reading');
-  el.innerHTML = '<div class="rd-loading">Opening…</div>';
+  if (!el.querySelector('.rd-loading')) el.innerHTML = _rdLoadingHtml();
+  return el;
+}
+
+async function renderReader(params) {
+  const el = _rdShowLoading();
   _rdBindInput();
   try {
     const book = await api.get(`/api/books/${params.book}`);
@@ -522,11 +535,13 @@ function _rdExit() {
 
 // The Read button: issue → book id → the reader.
 async function openIssueReader(seriesId, number) {
+  if (typeof closeModal === 'function') closeModal();
+  _rdShowLoading();
   try {
     const book = await api.get(`/api/series/${seriesId}/issues/${number}/book`);
-    if (typeof closeModal === 'function') closeModal();
     navigate('read', { book: book.id });
   } catch (e) {
+    closeReader();
     showToast('Couldn’t open this issue — ' + (e?.message || e), 'error');
   }
 }
