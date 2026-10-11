@@ -368,3 +368,20 @@ def test_refresh_coverage_reads_an_owned_locg_trades_collecting_line(db_path, tm
         q = {r[0]: (r[1], r[2]) for r in c.execute("SELECT issue_number, state, error FROM download_queue WHERE kind = 'issue'")}
     assert cov[14.1] == os.path.join(str(folder), f) and cov[13.0] and cov[21.0] is None
     assert q[14.1] == ("done", f"In {f}") and q[21.0][0] == "not_found"
+
+
+def test_dropping_a_trade_that_wasnt_found_sends_its_issues_back_to_the_single_search(db_path, monkeypatch):
+    monkeypatch.setattr(tf, "DB_PATH", db_path)
+    tf.ensure_tables(db_path)
+    sid = db.add_series(title="Journey Into Mystery", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 626.1, db_path)
+    with db._connect(db_path) as c:
+        issue = c.execute("SELECT id FROM download_queue").fetchone()[0]
+        c.execute("UPDATE download_queue SET state = 'via_trade' WHERE id = ?", (issue,))
+        trade = c.execute("""INSERT INTO download_queue (tracked_series_id, kind, state, locg_id, meta_json)
+            VALUES (?, 'trade', 'not_found', '8015010', ?)""", (sid, json.dumps({"title": "Loki Epic Collection", "fills": [issue]}))).lastrowid
+    tf.decline(trade, db_path)
+    states = {q["id"]: q["state"] for q in db.get_queue(db_path)}
+    assert trade not in states and states[issue] == "queued"
+    with db._connect(db_path) as c:
+        assert "l8015010" in c.execute("SELECT rejected_json FROM trade_fallback WHERE queue_id = ?", (issue,)).fetchone()[0]

@@ -821,13 +821,15 @@ def _teach_owner_locg(series_id: int, lid: str, meta: dict, path):
 
 
 def decline(qid: int, path=None) -> dict:
-    """'Not this one': drop the suggestion, remember the edition, let the next
-    pass offer the next best (or nothing)."""
+    """'Not this one': drop the trade, remember the edition, let the next pass
+    offer the next best (or nothing). Works on a suggestion, and on a trade you
+    confirmed that then failed or wasn't found anywhere — its waiting issues
+    ('Getting it in …') go back to the plain single-issue search."""
     path = path or DB_PATH
     with db._connect(path) as conn:
         r = conn.execute("SELECT * FROM download_queue WHERE id = ?", (qid,)).fetchone()
-        if not r or r["state"] != "suggested":
-            raise HTTPException(404, "Not a suggested trade")
+        if not r or r["kind"] != "trade" or r["state"] not in ("suggested", "failed", "not_found"):
+            raise HTTPException(404, "Not a trade you can drop")
         meta = json.loads(r["meta_json"] or "{}")
         lid = str(r["locg_id"])
         mid = lid[1:] if lid.startswith("m") else f"l{lid}"
@@ -839,6 +841,8 @@ def decline(qid: int, path=None) -> dict:
             conn.execute("INSERT INTO trade_fallback (queue_id, state, rejected_json, checked_at) VALUES (?, 'looking', ?, '2000-01-01') "
                          "ON CONFLICT(queue_id) DO UPDATE SET state = 'looking', rejected_json = excluded.rejected_json, "
                          "checked_at = '2000-01-01'", (fid, json.dumps(sorted(rej))))
+            conn.execute("UPDATE download_queue SET state = 'queued', error = NULL, updated_at = datetime('now') "
+                         "WHERE id = ? AND state = 'via_trade'", (fid,))
     return {"declined": qid}
 
 
