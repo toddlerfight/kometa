@@ -28,7 +28,9 @@ _PIXELDRAIN_RE = re.compile(r'https?://pixeldrain\.com/u/([A-Za-z0-9]+)')
 _MEDIAFIRE_RE = re.compile(r'https?://(?:www\.)?mediafire\.com/file(?:_premium)?/')
 
 _ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
-_ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
+# the end of a range can be a point-one: 'Fear Itself #1 – 7.3' ends at #7.3, not #7
+# (reading it as #1–7 skipped the one post holding #7.1–7.3 as 'wrong issue')
+_ISSUE_RANGE_RE = re.compile(r'#?\s*(\d+(?:\.\d+)?)\s*[-–—]\s*#?\s*(\d+(?:\.\d+)?)')
 _ISSUE_WORD_RE  = re.compile(r'\bissues?\s+(\d+(?:\.\d+)?)\b', re.IGNORECASE)
 
 # Words that pad a post title but don't indicate a different series
@@ -174,7 +176,7 @@ def _series_matches(title_norm: str, post_norm: str) -> bool:
 # the run under the creator), and the two disagree on start year besides. What
 # both ends DO agree on is the shape of the run — it starts at #1, it has N
 # issues, and it ran in a particular window. That's what we match on.
-_PACK_ISSUE_RANGE_RE = re.compile(r'#\s*(\d+)\s*[-–—]\s*#?\s*(\d+)')
+_PACK_ISSUE_RANGE_RE = re.compile(r'#\s*(\d+(?:\.\d+)?)\s*[-–—]\s*#?\s*(\d+(?:\.\d+)?)')
 _POST_YEAR_RANGE_RE = re.compile(r'\((\d{4})(?:\s*[-–—]\s*(\d{4}))?\)')
 # .NOW issues, point-ones and 'extras' make our issue count and the pack's differ
 # by a couple either way. More than a few apart is a different run, not drift.
@@ -198,7 +200,7 @@ def _pack_post_matches(title_norm: str, post_raw: str, last_issue: int,
     m = _PACK_ISSUE_RANGE_RE.search(post_raw)
     if not m:
         return False
-    lo, hi = int(m.group(1)), int(m.group(2))
+    lo, hi = float(m.group(1)), float(m.group(2))
     # #0 is a legitimate first issue — Secret Wars (2015) opens on one, and
     # demanding lo == 1 rejected its complete collection outright.
     if lo not in (0, 1) or hi <= lo:
@@ -227,7 +229,7 @@ def _issue_pack_post_covers(title_norm: str, post_raw: str, issue_number: float,
     m = _PACK_ISSUE_RANGE_RE.search(post_raw)
     if not m:
         return False
-    lo, hi = int(m.group(1)), int(m.group(2))
+    lo, hi = float(m.group(1)), float(m.group(2))
     if hi <= lo or not lo <= issue_number <= hi:
         return False
     ym = _POST_YEAR_RANGE_RE.search(post_raw)

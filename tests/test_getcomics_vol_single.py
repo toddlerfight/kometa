@@ -42,3 +42,12 @@ def test_the_other_volume_of_the_name_is_not(monkeypatch):
 def test_trades_and_packs_still_dont_pass_for_a_single(monkeypatch):
     c = _client(monkeypatch, RESULTS[:3])
     assert c._search_page("Where Monsters Dwell #4", "Where Monsters Dwell", 4.0, series_year=2015) is None
+
+
+def test_a_range_ending_on_a_point_one_covers_the_point_ones():
+    from kometa.getcomics_client import _normalize, _issue_pack_post_covers, _post_covers_issue
+    post = "Fear Itself #1 – 7.3 (2011)"
+    for n in (7.1, 7.2, 7.3, 4.0):
+        assert _post_covers_issue(post, n) is True
+        assert _issue_pack_post_covers(_normalize("Fear Itself"), post, n, 2011)
+    assert _post_covers_issue(post, 8.0) is False
