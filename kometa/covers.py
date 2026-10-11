@@ -185,17 +185,15 @@ def read_comicinfo(file_path: str) -> dict | None:
         except Exception:
             return None
     elif magic == b"Rar!":
+        # the one small file, read out of the archive — not the whole CBR
+        # unpacked into the page cache and kept (that was 61 GB of it)
         try:
-            from kometa import reader
-            st = os.stat(file_path)
-            d = reader._extract_rar(file_path, reader._version(st.st_size, st.st_mtime))
-            for r, _, fs in os.walk(d):
-                for f in fs:
-                    if f.lower() == "comicinfo.xml":
-                        data = open(os.path.join(r, f), "rb").read()
-                        break
-                if data:
-                    break
+            import rarfile
+            with rarfile.RarFile(file_path) as rf:
+                name = next((i.filename for i in rf.infolist()
+                             if i.filename.lower().rsplit("/", 1)[-1] == "comicinfo.xml"), None)
+                if name:
+                    data = rf.read(name)
         except Exception:
             return None
     if not data:

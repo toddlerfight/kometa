@@ -193,6 +193,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
         logger.warning(f"Trade fill not scheduled: {e}")
+    # The page cache keeps to its cap (KOMETA_PAGE_CACHE_GB, 20 by default) even
+    # when nobody reads: what you haven't opened lately goes first.
+    try:
+        from kometa.reader import trim_cache
+        scheduler.add_job(trim_cache, IntervalTrigger(hours=6), id="page_cache_trim",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=5))
+    except Exception as e:
+        logger.warning(f"Page-cache trim not scheduled: {e}")
     # A Get missing a restart cut off (a deploy mid-run) starts again, once the
     # app has settled. Repeat-safe: owned entries skip, queued issues dedupe.
     try:
@@ -201,16 +210,13 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           id="listget_resume", replace_existing=True)
     except Exception as e:
         logger.warning(f"Get missing resume not scheduled: {e}")
-    # The one-time re-check of the 125 'no run' series (kometa/rematch.py):
-    # Metron first, LOCG for Metron's misses, a few per tick. Seeded once.
+    # The re-check of the 'no run' series is retired: it re-asked your own
+    # Needs-matching answers (kometa/rematch.py recheck_undo gives them back).
     try:
-        from kometa.rematch import recheck_seed, recheck_tick
-        recheck_seed()
-        scheduler.add_job(recheck_tick, IntervalTrigger(minutes=10), id="norun_recheck",
-                          replace_existing=True, coalesce=True, max_instances=1,
-                          next_run_time=datetime.now(TZ) + timedelta(minutes=3))
+        from kometa.rematch import recheck_undo
+        recheck_undo()
     except Exception as e:
-        logger.warning(f"Re-check job not scheduled: {e}")
+        logger.warning(f"Re-check undo failed: {e}")
     # The LOCG top-up queue drains in small bursts while a pass is live.
     try:
         from kometa.topup import scheduled_drain

@@ -96,6 +96,10 @@ def _extract_rar(path: str, version: str) -> str:
     only bites on older library files."""
     out = _rar_dir(path, version)
     if os.path.isdir(out) and os.listdir(out):
+        try:
+            os.utime(out)               # last-read time, for eviction
+        except OSError:
+            pass
         return out
     with _rar_locks_guard:
         lock = _rar_locks.setdefault(out, threading.Lock())
@@ -114,22 +118,31 @@ def _extract_rar(path: str, version: str) -> str:
 class _Book:
     """Uniform read access over a CBZ or a CBR. Entry names are archive-relative."""
 
-    def __init__(self, path: str, version: str):
+    def __init__(self, path: str, version: str, whole: bool = True):
+        """whole=False is for a glance (the cover): a CBR is read entry by entry
+        instead of unpacked. Covers used to unpack every CBR in full and keep it —
+        853 of them, 61 GB of page cache for books nobody had opened."""
         self.path = path
+        self._zip = self._dir = self._rar = None
         with open(path, "rb") as fh:
             magic = fh.read(4)
         if magic[:2] == b"PK":
             self._zip = zipfile.ZipFile(path)
-            self._dir = None
         elif magic == b"Rar!":
-            self._zip = None
-            self._dir = _extract_rar(path, version)
+            out = _rar_dir(path, version)
+            if whole or (os.path.isdir(out) and os.listdir(out)):
+                self._dir = _extract_rar(path, version)
+            else:
+                import rarfile
+                self._rar = rarfile.RarFile(path)
         else:
             raise ValueError("not a zip or rar archive")
 
     def names(self) -> list[str]:
         if self._zip:
             raw = self._zip.namelist()
+        elif self._rar:
+            raw = [i.filename for i in self._rar.infolist() if not i.is_dir()]
         else:
             raw = [os.path.relpath(os.path.join(r, f), self._dir)
                    for r, _, fs in os.walk(self._dir) for f in fs]
@@ -138,6 +151,8 @@ class _Book:
     def open(self, name: str):
         if self._zip:
             return self._zip.open(name)
+        if self._rar:
+            return io.BytesIO(self._rar.read(name))
         full = os.path.realpath(os.path.join(self._dir, name))
         if not full.startswith(os.path.realpath(self._dir) + os.sep):
             raise ValueError("entry escapes the archive")
@@ -146,6 +161,8 @@ class _Book:
     def close(self):
         if self._zip:
             self._zip.close()
+        if self._rar:
+            self._rar.close()
 
 
 def _scan_pages(path: str, version: str) -> list[list]:
@@ -230,9 +247,17 @@ def _evict_if_needed():
         try:
             entries = []
             total = 0
-            for d in os.scandir(PAGE_CACHE_DIR):
-                if not d.is_dir():
-                    continue
+            # each book's rendered pages, and each unpacked CBR, is its own entry:
+            # '_rar' counted as ONE folder, touched on every unpack, so it was
+            # always the newest thing here and the cap never reached it
+            dirs = [d for d in os.scandir(PAGE_CACHE_DIR) if d.is_dir() and not d.name.startswith("_")]
+            rar_root = os.path.join(PAGE_CACHE_DIR, "_rar")
+            if os.path.isdir(rar_root):
+                dirs += [d for d in os.scandir(rar_root) if d.is_dir() and not d.name.endswith(".tmp")]
+            covers = os.path.join(PAGE_CACHE_DIR, "_covers")
+            if os.path.isdir(covers):          # never evicted; counted so the cap is the real disk use
+                total += sum(f.stat().st_size for f in os.scandir(covers) if f.is_file())
+            for d in dirs:
                 size = sum(os.path.getsize(os.path.join(r, f))
                            for r, _, fs in os.walk(d.path) for f in fs)
                 total += size
@@ -244,6 +269,11 @@ def _evict_if_needed():
                 total -= size
         except Exception as e:
             logger.warning(f"Reader: page-cache eviction failed: {e}")
+
+
+def trim_cache() -> None:
+    """Scheduler: hold the page cache to its cap even when nobody is reading."""
+    _evict_if_needed()
 
 
 def get_page_bytes(book: dict, index: int, width: int) -> bytes:
@@ -311,7 +341,7 @@ def get_cover_bytes(path: str) -> bytes:
             return fh.read()
     except OSError:
         pass
-    bk = _Book(path, ver)
+    bk = _Book(path, ver, whole=False)
     try:
         names = bk.names()
         if not names:
