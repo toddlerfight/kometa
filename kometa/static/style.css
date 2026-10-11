@@ -2349,6 +2349,7 @@ body.touch .od-menu { opacity: .85; }
 .mark-heart { font-size: 22px; margin-left: auto; }
 .mark-heart.on { color: var(--pink); }
 .fav-btn.on { color: var(--pink); border-color: var(--pink); }
+.want-btn.on { color: var(--pri); border-color: var(--pri); }
 .rating-dots { display: inline-flex; gap: 2px; }
 .rating-dot.on { color: var(--pri); }
 .rating-dot:hover, .rating-dot:focus-visible { color: var(--tp); }

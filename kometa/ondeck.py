@@ -338,11 +338,12 @@ def dismiss_book(book_id: int, undo: int = 0):
 @router.get("/api/ondeck")
 def on_deck():
     from kometa.marks import favourites
+    from kometa.wantread import row as want_row
     # the whole shelf with progress, read once and shared (it was read three times)
     with db._connect(DB_PATH) as conn:
         groups = _series_groups(conn, READER_ID)
     d = {"continue": continue_reading(), "next": up_next(groups=groups), "soon": coming_soon(groups=groups),
-         "released": recent_released(), "added": recent_added(), "favourites": favourites()}
+         "released": recent_released(), "added": recent_added(), "favourites": favourites(), "want": want_row()}
     # a series shows in one row only: the task rows claim theirs first
     seen = {_skey(c.get("series_id"), c.get("shelf_id")) for k in ("continue", "next", "soon", "released", "added")
             for c in d[k]}

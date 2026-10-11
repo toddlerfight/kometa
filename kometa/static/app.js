@@ -994,6 +994,18 @@ async function renderOnDeck() {
         <span class="od-tag amber">${c.position}/${l.total} · not here</span></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>` : bookCard(c, `${c.position}/${l.total}`);
+  // Want to read: what you added, in order. A book card reads; one that isn't here
+  // yet (an issue, or a run you've read all you own of) opens where to get it.
+  const wantCard = c => c.kind === 'book' ? bookCard(c, c.want_series ? 'Next' : null)
+    : c.kind === 'gap' ? `
+    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)} — not on the shelf" onclick="showIssueModal(${c.series_id}, ${c.number})" onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${c.series_id}, ${c.number})">
+      <div class="issue-tile-img"><img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag amber">not here</span></div>
+      <div class="issue-tile-num">${esc(c.label)}</div>
+    </div>` : `
+    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} — nothing unread here" onclick="navigate('series-detail', {id: ${c.series_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail', {id: ${c.series_id}})">
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag amber">not here</span></div>
+      <div class="issue-tile-num">${esc(c.series)}</div>
+    </div>`;
   const lastRead = iso => {
     const d = new Date(iso);
     return 'Last read ' + d.toLocaleDateString(undefined, d.getFullYear() === new Date().getFullYear() ? { month: 'short' } : { month: 'short', year: 'numeric' });
@@ -1006,6 +1018,7 @@ async function renderOnDeck() {
   setApp(
     row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c, null, true)),
         'Nothing in progress. Open anything in the Library and it shows up here.') +
+    ((d.want || []).length ? row('Want to read', '', d.want.map(wantCard), '') : '') +
     row('Next', 'the next unread issue in series you’ve finished something of', d.next.map(c => bookCard(c, 'Next')),
         'Finish an issue and its series lands here.') +
     row('Coming soon', 'series you’re caught up on whose next issue isn’t here yet', d.soon.map(soonCard),
@@ -1025,7 +1038,7 @@ async function renderOnDeck() {
   );
   document.getElementById('app').classList.remove('od-all');
   // what the task rows already show never repeats in a discovery row
-  const onPage = [...new Set([...d.continue, ...d.next, ...d.soon, ...(d.released || []), ...(d.added || []),
+  const onPage = [...new Set([...d.continue, ...(d.want || []), ...d.next, ...d.soon, ...(d.released || []), ...(d.added || []),
     ...(d.lists || []).flatMap(l => l.cards), ...(d.rediscover || []), ...(d.quick || [])].map(c => c.series_id).filter(Boolean))];
   _loadBecause(onPage);
   _loadTrending();
@@ -1278,6 +1291,7 @@ async function showBookModal(c) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${_wantBtnHtml({ book_id: c.book_id })}
       ${goSeries ? `<button class="btn btn-ghost" onclick="closeModal(); ${goSeries}">Go to series</button>` : ''}
       ${c.dismissable ? `<button class="btn btn-ghost" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${c.book_id}, ${completed ? 'false' : 'true'})">${completed ? 'Mark as unread' : 'Mark as read'}</button>
@@ -2245,6 +2259,7 @@ async function renderSeriesDetail(id) {
   document.getElementById('topbar-chips').innerHTML = chips;
   document.getElementById('topbar-actions').innerHTML = `
     ${_favBtn(s)}
+    ${_wantBtnHtml({ series_id: s.id }, 'btn-sm')}
     ${pullBtn}
     ${oversizedBtn}
     ${s.missing > 0 ? `<button class="btn btn-ghost btn-sm" onclick="sweepSeries(${s.id}, this)">Sweep Missing</button>` : ''}
@@ -2252,6 +2267,7 @@ async function renderSeriesDetail(id) {
       ? `<button class="btn btn-ghost btn-sm" title="Rename files and folder to the house convention (dry run first)" onclick="_tidyPlan(${s.id}, this)">Tidy</button>` : ''}
     <button class="btn btn-ghost btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
   `;
+  _wantSync(document.getElementById('topbar-actions'));
   document.getElementById('topbar-sub').innerHTML = `
     <span class="series-meta-text">${esc(meta)}</span>
     <button class="btn btn-ghost btn-sm" title="Folder path" aria-label="Folder path" onclick="showFolderPathModal(${s.id})">${_FF_SVG}</button>
@@ -4508,6 +4524,7 @@ function showModal(html) {
   document.getElementById('modal-backdrop').classList.remove('hidden', 'closing');
   const first = modal.querySelector('button, input, [tabindex]');
   if (first) setTimeout(() => first.focus(), 30);
+  _wantSync(modal);
 }
 
 function closeModal() {
@@ -4729,6 +4746,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
     </div>
     <div class="modal-footer" id="issue-modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${_wantBtnHtml({ series_id: seriesId, number })}
       ${footerAction}
     </div>
   `);
@@ -5182,6 +5200,36 @@ function _favBtn(s) {
   const r = s.rating || s.rating_derived;
   return `<button class="btn btn-sm btn-ghost fav-btn${s.favourite ? ' on' : ''}" id="fav-btn-${s.id}" title="${s.favourite ? 'Favourite — tap to remove' : 'Favourite'}"
     onclick="_toggleSeriesFav(${s.id}, this)">${s.favourite ? '♥' : '♡'}${r ? ` <span class="fav-rating">★ ${r}</span>` : ''}</button>`;
+}
+
+// --- Want to read (kometa/wantread.py) -------------------------------------------
+// One toggle for an issue, a book or a whole series; lit when it's on the list.
+function _wantBtnHtml(target, cls = '') {
+  return `<button class="btn btn-ghost want-btn ${cls}" data-want="${esc(JSON.stringify(target))}" onclick="_wantToggle(this)" disabled>Want to read</button>`;
+}
+
+function _wantPaint(btn, id) {
+  btn.dataset.id = id || '';
+  btn.classList.toggle('on', !!id);
+  btn.textContent = id ? '✓ Want to read' : 'Want to read';
+  btn.title = id ? 'On your Want to read — tap to take it off' : 'Add to Want to read on On Deck';
+}
+
+async function _wantSync(root = document) {
+  for (const btn of root.querySelectorAll('.want-btn')) {
+    const q = new URLSearchParams(Object.entries(JSON.parse(btn.dataset.want)).filter(([, v]) => v != null));
+    try { const r = await api.get(`/api/wantread/check?${q}`); _wantPaint(btn, r.want_id); btn.disabled = false; } catch {}
+  }
+}
+
+async function _wantToggle(btn) {
+  const id = btn.dataset.id;
+  btn.disabled = true;
+  try {
+    if (id) { await api.del(`/api/wantread/${id}`); _wantPaint(btn, null); showToast('Off Want to read'); }
+    else { const r = await api.post('/api/wantread', JSON.parse(btn.dataset.want)); _wantPaint(btn, r.want_id); showToast('On Want to read'); }
+  } catch { showToast('Couldn’t save that', 'error'); }
+  btn.disabled = false;
 }
 
 async function _toggleSeriesFav(id, btn) {

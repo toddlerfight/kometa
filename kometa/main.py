@@ -223,6 +223,8 @@ from kometa.shelf import router as _shelf_router, scan_in_background as _shelf_s
 app.include_router(_shelf_router)
 from kometa.ondeck import router as _ondeck_router          # On Deck: where reading happens
 app.include_router(_ondeck_router)
+from kometa.wantread import router as _wantread_router      # Want to read: a list you build by hand, a row on On Deck
+app.include_router(_wantread_router)
 from kometa.readlists import router as _readlists_router    # reading lists: CBL import, resolved against the shelf
 app.include_router(_readlists_router)
 from kometa.listget import router as _listget_router        # 'Get' on a reading list: track without pulling, request what the list needs

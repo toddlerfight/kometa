@@ -13,7 +13,7 @@ def _open_alpha_issue_1(app):
 def test_read_button_opens_reader_turns_pages_and_saves_progress(app, app_server):
     app.set_viewport_size({"width": 820, "height": 1180})          # iPad portrait: one-up
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     reader = app.locator("#reader")
     expect(reader).to_be_visible()
     expect(app).to_have_url(re.compile(r"#read\?book=\d+"))
@@ -47,7 +47,7 @@ def test_read_button_opens_reader_turns_pages_and_saves_progress(app, app_server
 def test_landscape_pairs_pages_but_cover_and_spread_stand_alone(app):
     app.set_viewport_size({"width": 1180, "height": 820})          # iPad landscape: two-up
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     reader = app.locator("#reader")
     expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)            # cover alone
     app.keyboard.press("ArrowRight")
@@ -65,7 +65,7 @@ def test_read_shows_the_reader_at_once_while_a_slow_book_opens(app, app_server):
         route.continue_()
     app.route("**/api/series/*/issues/1/book", slow)
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     expect(app.locator("#reader .rd-loading .rd-load-fill")).to_be_visible(timeout=500)   # before the book answers
     expect(app.locator("#reader #rd-stage .rd-page")).to_be_visible(timeout=10000)
     expect(app.locator("#reader #rd-loading")).to_have_count(0, timeout=5000)            # gone once page 1 shows
@@ -76,7 +76,7 @@ def test_read_shows_the_reader_at_once_while_a_slow_book_opens(app, app_server):
 def test_a_trackpad_swipe_turns_one_page_per_gesture(app, app_server):
     app.set_viewport_size({"width": 820, "height": 1180})          # one-up
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     page = app.locator("#reader #rd-stage .rd-page")
     expect(page).to_have_count(1)
     start = int(page.get_attribute("alt").split()[-1])               # an earlier test may have saved a place
@@ -96,7 +96,7 @@ def test_a_trackpad_swipe_turns_one_page_per_gesture(app, app_server):
 def test_a_quick_second_trackpad_swipe_counts_and_a_diagonal_one_turns(app, app_server):
     app.set_viewport_size({"width": 820, "height": 1180})
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     page = app.locator("#reader #rd-stage .rd-page")
     expect(page).to_have_count(1)
     start = int(page.get_attribute("alt").split()[-1])               # an earlier test may have saved a place
@@ -128,7 +128,7 @@ def test_a_quick_second_trackpad_swipe_counts_and_a_diagonal_one_turns(app, app_
 def test_a_long_jittery_momentum_tail_turns_one_page(app, app_server):
     app.set_viewport_size({"width": 820, "height": 1180})
     _open_alpha_issue_1(app)
-    app.locator("#modal").get_by_role("button", name="Read").click()
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
     page = app.locator("#reader #rd-stage .rd-page")
     expect(page).to_have_count(1)
     start = int(page.get_attribute("alt").split()[-1])

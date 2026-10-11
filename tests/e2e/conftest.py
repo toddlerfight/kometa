@@ -104,26 +104,20 @@ def app_server(tmp_path_factory):
     # Every route module snapshots DB_PATH at import — patch them ALL or a
     # background thread quietly writes to /data/kometa.db (which doesn't exist
     # on a dev machine; that exact bug was the "pre-existing" test failures).
-    import kometa.main as main
-    import kometa.arcs as arcs
-    import kometa.thumbnails as thumbnails
-    import kometa.sync as sync
-    import kometa.sources as sources
-    import kometa.acquisition as acquisition
+    import importlib, pkgutil, sys
+    import kometa
+    import kometa.main as main  # noqa: F401  (imports the route modules)
     import kometa.reader as reader
-    import kometa.shelf as shelf
-    import kometa.trash as trash
-    import kometa.tidy as tidy
-    import kometa.singles as singles
-    import kometa.issue_meta as issue_meta
-    import kometa.filing as filing
-    import kometa.ondeck as ondeck
-    import kometa.komga_import as komga_import
-    import kometa.twins as twins
-    import kometa.combine as combine
-    for mod in (main, arcs, thumbnails, sync, sources, acquisition, reader, shelf, trash, tidy, singles, issue_meta, filing,
-                ondeck, komga_import, twins, combine):
-        mod.DB_PATH = dbfile
+    # ALL of them, found rather than listed: a hand-kept list missed marks /
+    # related / record, and /api/ondeck 500'd here on the real /data path
+    for info in pkgutil.iter_modules(kometa.__path__):
+        try:
+            importlib.import_module(f"kometa.{info.name}")
+        except Exception:
+            pass
+    for name, mod in list(sys.modules.items()):
+        if (name == "kometa" or name.startswith("kometa.")) and hasattr(mod, "DB_PATH"):
+            mod.DB_PATH = dbfile
     reader.PAGE_CACHE_DIR = os.path.join(os.path.dirname(dbfile), "page-cache")
     # The shelf importer matches new folders against LOCG from the SERVER — the
     # browser-side network quarantine can't see that. Never match; never wait.
