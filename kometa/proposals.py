@@ -84,7 +84,7 @@ def confirm(qid: int, path=None) -> dict:
     except Exception:
         pass
     db.set_queue_meta(qid, {"proposal": {**(meta.get("proposal") or {}), "placed": placed}}, path)
-    db.complete_trade(qid, path)
+    db.complete_trade(qid, path, placed=placed)
     try:
         from kometa.sync import rescan_owned
         rescan_owned(db.get_series_by_id(series["id"], path))

@@ -197,3 +197,62 @@ def test_trade_searches_use_the_name_releases_carry():
     assert t("Avengers Academy: The Complete Collection Vol. 2 TP", 2) == "Avengers Academy: The Complete Collection"
     assert t("Batman: Hush") == "Batman: Hush"
     assert t("Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition") == "Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition"
+
+
+# --- LOCG trades land and cover (2026-10-11: Avengers Academy #14.1 'Getting it in …' forever) ---
+_AA_CC = "Avengers Academy: The Complete Collection Vol. 2 TP"
+_AA_DESC = "The kids are back! Collecting Avengers Academy #13-20 and #14.1."
+
+
+def _aa(db_path, folder):
+    aa = db.add_series(title="Avengers Academy", publisher="Marvel", year_began=2010, folder_path=str(folder),
+                       on_pull_list=False, path=db_path)
+    _stuck(db_path, aa, [13, 14.1, 21], date="2011-06-01")
+    db.set_issue_details_cache("5484155", {"desc": _AA_DESC}, db_path)
+    return aa
+
+
+def test_a_locg_trade_landing_finishes_the_issues_it_was_fetched_for(db_path, tmp_path):
+    from tests.conftest import make_cbz
+    folder = tmp_path / "Avengers Academy"; folder.mkdir()
+    aa = _aa(db_path, folder)
+    db.set_trades(aa, [{"title": _AA_CC, "locg_id": "5484155", "vol": 2, "format": "TPB", "store_date": "2018-03-01"}], db_path)
+    nothing = dict(search=lambda q: [], issues=lambda sid: [], get=lambda iid: {})
+    out = tf.run_pass(db_path, locg_details=lambda lid: {"desc": _AA_DESC}, **nothing)
+    assert [p["fills"] for p in out["proposed"]] == ["#13, #14.1"]
+    qid = out["proposed"][0]["qid"]
+    tf.confirm(qid, db_path)
+    with db._connect(db_path) as c:
+        # confirming taught trade_record what the LOCG edition holds
+        rec = c.execute("SELECT collects_json FROM trade_record WHERE tracked_series_id = ? AND key = 'l:5484155'", (aa,)).fetchone()
+    assert 14.1 in [x["number"] for x in json.loads(rec[0])]
+    book = make_cbz(folder / "Avengers Academy - The Complete Collection Vol. 2 TP Vol 02.cbz")
+    db.complete_trade(qid, db_path, placed=[str(book)])
+    with db._connect(db_path) as c:
+        q = {r["issue_number"]: (r["state"], r["error"]) for r in c.execute(
+            "SELECT issue_number, state, error FROM download_queue WHERE kind = 'issue'")}
+        cov = {r[0]: r[1] for r in c.execute("SELECT number, covered_by FROM issue_status WHERE tracked_series_id = ?", (aa,))}
+        assert c.execute("SELECT state FROM download_queue WHERE id = ?", (qid,)).fetchone()[0] == "done"
+    assert q[14.1] == ("done", f"In {book.name}") and q[13.0][0] == "done"
+    assert q[21.0][0] == "not_found"                                   # not in the trade
+    assert cov[13.0] == str(book) and cov[14.1] == str(book) and cov[21.0] is None
+    # the 10-minute coverage pass keeps them covered (it clears and re-stamps everything)
+    assert tf.refresh_coverage(db_path) >= 2
+    with db._connect(db_path) as c:
+        cov = {r[0]: r[1] for r in c.execute("SELECT number, covered_by FROM issue_status WHERE tracked_series_id = ?", (aa,))}
+    assert cov[13.0] == str(book) and cov[14.1] == str(book) and cov[21.0] is None
+
+
+def test_refresh_coverage_reads_an_owned_locg_trades_collecting_line(db_path, tmp_path):
+    folder = tmp_path / "Avengers Academy"; folder.mkdir()
+    aa = _aa(db_path, folder)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE download_queue SET state = 'via_trade', error = 'Getting it in …' WHERE issue_number = 14.1")
+    f = "Avengers Academy - The Complete Collection Vol. 02 (2018).cbz"
+    db.set_trades(aa, [{"title": _AA_CC, "locg_id": "5484155", "vol": 2, "owned": True, "file": f, "metron_issue_id": None}], db_path)
+    assert tf.refresh_coverage(db_path) == 9                          # #13–20 + #14.1
+    with db._connect(db_path) as c:
+        cov = {r[0]: r[1] for r in c.execute("SELECT number, covered_by FROM issue_status WHERE tracked_series_id = ?", (aa,))}
+        q = {r[0]: (r[1], r[2]) for r in c.execute("SELECT issue_number, state, error FROM download_queue WHERE kind = 'issue'")}
+    assert cov[14.1] == os.path.join(str(folder), f) and cov[13.0] and cov[21.0] is None
+    assert q[14.1] == ("done", f"In {f}") and q[21.0][0] == "not_found"

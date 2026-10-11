@@ -631,7 +631,10 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
         if cached and cached["trades"]:
             return cached["trades"]
     from kometa.sync import enrich_trades
-    (enrich or enrich_trades)(series, trades, books=books)
+    if enrich:
+        enrich(series, trades, books=books)
+    else:
+        enrich_trades(series, trades, books=books, landed=db.landed_trade_files(series["id"], path))
     with db._connect(path) as conn:
         for t in trades:
             key = metron_key(t["metron_issue_id"]) if t.get("metron_issue_id") else f"l:{t.get('locg_id')}"

@@ -1290,13 +1290,78 @@ def set_queue_meta(qid, updates: dict, path=DB_PATH):
                      (json.dumps(meta), qid))
 
 
-def complete_trade(qid, path=DB_PATH):
-    """Mark a trade download done. Unlike complete_download there's no issue_status
-    to reconcile — ownership is read from the folder (the file we just placed)."""
+def _landed_book(placed, meta: dict) -> str | None:
+    """Of the file(s) a trade grab put on disk, the one that IS the edition: the
+    only one, else the one carrying the asked-for volume, else the first."""
+    from kometa.naming import OWNED_EXTS, parse_volume_number
+    if isinstance(placed, str):
+        placed = [placed]
+    books = [p for p in (placed or []) if p and os.path.splitext(p)[1].lower() in OWNED_EXTS]
+    if not books:
+        return None
+    if len(books) > 1 and meta.get("vol") is not None:
+        hit = next((p for p in books if parse_volume_number(os.path.basename(p)) == meta["vol"]), None)
+        if hit:
+            return hit
+    return books[0]
+
+
+def complete_trade(qid, path=DB_PATH, placed=None):
+    """Mark a trade download done. Ownership of the trade itself is read from the
+    folder (the file we just placed). The issues it was fetched FOR — meta.fills,
+    the via_trade rows — are done too, right now: nothing else ever moved them on
+    when the trade came from LOCG, and Avengers Academy #14.1 said 'Getting it in …'
+    with the book already on the shelf. Their issue_status rows get covered_by
+    stamped with the landed file, and the trade row keeps what it covered
+    (meta.covers + meta.landed_file) so the coverage pass can re-stamp it."""
     with _connect(path) as conn:
+        row = conn.execute("SELECT meta_json FROM download_queue WHERE id = ?", (qid,)).fetchone()
         conn.execute(
             "UPDATE download_queue SET state='done', error=NULL, updated_at=datetime('now') WHERE id=?",
             (qid,))
+        if not row:
+            return
+        try:
+            meta = json.loads(row["meta_json"] or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        book = _landed_book(placed, meta)
+        fills = meta.get("fills") or []
+        if not fills and not book:
+            return
+        label = os.path.basename(book) if book else (meta.get("edition_title") or meta.get("title") or "the trade")
+        covers = []
+        for fid in fills:
+            r = conn.execute("SELECT tracked_series_id, issue_number FROM download_queue WHERE id = ?", (fid,)).fetchone()
+            if not r or r["issue_number"] is None:
+                continue
+            covers.append([r["tracked_series_id"], float(r["issue_number"])])
+            conn.execute("UPDATE download_queue SET state = 'done', error = ?, updated_at = datetime('now') "
+                         "WHERE id = ? AND state IN ('via_trade', 'not_found', 'failed')", (f"In {label}", fid))
+            if book:
+                conn.execute("UPDATE issue_status SET covered_by = ? WHERE tracked_series_id = ? AND number = ? AND owned = 0",
+                             (book, r["tracked_series_id"], float(r["issue_number"])))
+        if covers:
+            meta["covers"] = covers
+        if book:
+            meta["landed_file"] = book
+        conn.execute("UPDATE download_queue SET meta_json = ? WHERE id = ?", (json.dumps(meta), qid))
+
+
+def landed_trade_files(series_id, path=DB_PATH) -> dict[str, str]:
+    """{lowercased file name: edition id (the queue row's locg_id, 'm…' for Metron)}
+    for the trades Kometa downloaded into this series — which edition a file IS."""
+    out = {}
+    with _connect(path) as conn:
+        for r in conn.execute("SELECT locg_id, meta_json FROM download_queue WHERE tracked_series_id = ? "
+                              "AND kind = 'trade' AND state = 'done' AND locg_id IS NOT NULL", (series_id,)):
+            try:
+                f = json.loads(r["meta_json"] or "{}").get("landed_file")
+            except (ValueError, TypeError):
+                continue
+            if f:
+                out[os.path.basename(f).lower()] = str(r["locg_id"])
+    return out
 
 
 def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):

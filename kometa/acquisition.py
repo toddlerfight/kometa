@@ -627,7 +627,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         if (vol is not None or vol_range) and os.path.isdir(dest_dir):
             placed = [os.path.join(dest_dir, f) for f in os.listdir(dest_dir)]
             if _trade_pack_delivered(placed, vol, vol_range, meta):
-                db.complete_trade(qid, path=DB_PATH)
+                db.complete_trade(qid, path=DB_PATH, placed=placed)
                 try:
                     from kometa.sync import refresh_trades_owned
                     refresh_trades_owned(item["tracked_series_id"])
@@ -677,7 +677,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
             return
         db.update_queue_state(qid, "failed", error=f"GetComics: pack didn't contain {label}", path=DB_PATH)
         return
-    db.complete_trade(qid, path=DB_PATH)
+    db.complete_trade(qid, path=DB_PATH, placed=placed)
     # Re-stamp owned on the cached trades now (folder scan), so the tile flips to
     # owned right away instead of waiting for the next sync.
     try:
@@ -1124,6 +1124,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         base = _safe(_trade_fallback_name(meta, title))
         os.makedirs(dest_dir, exist_ok=True)
         placed = 0
+        on_disk = []                     # every file that is this trade now — placed or already there
         for src in comics:
             ext = os.path.splitext(src)[1].lower()
             # One file → canonical trade name; a bundle → keep each file's own name.
@@ -1131,12 +1132,13 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             dst = os.path.join(dest_dir, name)
             if os.path.exists(dst):
                 logger.info(f"Trade: skipping {name} — already in library")
+                on_disk.append(dst)
                 continue
             # Same CBZ-on-arrival rule as the pack path — trades included.
-            ensure_cbz(_place(src, dst))
+            on_disk.append(ensure_cbz(_place(src, dst)) or dst)
             placed += 1
         logger.info(f"{label} trade: placed {placed}/{len(comics)} file(s) for {title!r} in {dest_dir}")
-        db.complete_trade(qid, path=DB_PATH)
+        db.complete_trade(qid, path=DB_PATH, placed=on_disk)
         if not item.get("folder_path") and placed:
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
         force_readable_tree(dest_dir)

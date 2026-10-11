@@ -467,3 +467,47 @@ def test_a_scene_tagged_one_word_trade_file_matches_its_run(tmp_path):
     other = [{"title": "Batman TP", "vol": None}]
     enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Lost"}, other, books=[])
     assert other[0]["owned"] is False
+
+
+def test_one_vol_file_makes_one_edition_owned_not_every_edition_with_that_vol(tmp_path):
+    """Avengers Academy: the Complete Collection Vol. 2 TP and the Vol. 2 HC both
+    read 'owned' off the one Complete Collection file (volume number alone). The
+    file goes to the edition whose title fits it; the HC stays unowned."""
+    import kometa.sync as sync
+    (tmp_path / "Avengers Academy - The Complete Collection Vol. 02 (2018).cbz").write_bytes(b"x")
+    series = {"title": "Avengers Academy", "folder_path": str(tmp_path)}
+    hc = {"title": "Avengers Academy Vol. 2: Will We Use This in the Real World? HC", "vol": 2, "locg_id": "1485878"}
+    cc = {"title": "Avengers Academy: The Complete Collection Vol. 2 TP", "vol": 2, "locg_id": "5484155"}
+    sync.enrich_trades(series, [hc, cc], books=[])
+    assert (hc["owned"], hc["file"]) == (False, None)
+    assert cc["owned"] is True and cc["file"] == "Avengers Academy - The Complete Collection Vol. 02 (2018).cbz"
+    # a bare 'Vol 02' says nothing about the edition: the one Kometa downloaded it AS wins
+    for p in tmp_path.iterdir():
+        p.unlink()
+    (tmp_path / "Avengers Academy Vol 02.cbz").write_bytes(b"x")
+    sync.enrich_trades(series, [cc, hc], books=[], landed={"avengers academy vol 02.cbz": "1485878"})
+    assert hc["owned"] is True and cc["owned"] is False
+    # two files, two editions: each owns its own
+    (tmp_path / "Avengers Academy - The Complete Collection Vol. 02.cbz").write_bytes(b"x")
+    sync.enrich_trades(series, [hc, cc], books=[])
+    assert hc["file"] == "Avengers Academy Vol 02.cbz"
+    assert cc["file"] == "Avengers Academy - The Complete Collection Vol. 02.cbz"
+
+
+def test_refresh_trades_owned_hands_the_landed_file_to_its_edition(tmp_path, db_path, monkeypatch):
+    import json as _json
+    import kometa.sync as sync
+    monkeypatch.setattr(sync, "DB_PATH", db_path)
+    monkeypatch.setattr(sync, "_komga", lambda: None)
+    folder = tmp_path / "Avengers Academy"; folder.mkdir()
+    sid = db.add_series(title="Avengers Academy", publisher="Marvel", folder_path=str(folder), on_pull_list=False, path=db_path)
+    book = folder / "Avengers Academy Vol 02.cbz"; book.write_bytes(b"x")
+    db.set_trades(sid, [{"title": "Avengers Academy: The Complete Collection Vol. 2 TP", "vol": 2, "locg_id": "5484155"},
+                        {"title": "Avengers Academy Vol. 2: Will We Use This in the Real World? HC", "vol": 2, "locg_id": "1485878"}],
+                  db_path)
+    with db._connect(db_path) as c:
+        qid = c.execute("INSERT INTO download_queue (tracked_series_id, kind, locg_id, meta_json, state) "
+                        "VALUES (?, 'trade', '1485878', ?, 'queued')", (sid, _json.dumps({"vol": 2}))).lastrowid
+    db.complete_trade(qid, db_path, placed=[str(book)])
+    sync.refresh_trades_owned(sid)
+    assert [t["locg_id"] for t in db.get_trades(sid, db_path)["trades"] if t["owned"]] == ["1485878"]
