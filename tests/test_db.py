@@ -313,3 +313,12 @@ class TestFolderSpellings:
         b = db.add_series(title="B", publisher="X", folder_path=good, on_pull_list=False, locg_series_id=9, path=db_path)
         did = db.heal_folder_spellings(db_path)
         assert db.get_series_by_id(b, db_path) and did and did[0].startswith("left")
+
+
+def test_clear_history_takes_only_finished_downloads(db_path, series):
+    for n, state in ((1.0, "done"), (2.0, "failed"), (3.0, "not_found")):
+        db.queue_issue(series, n, db_path)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE download_queue SET state = ? WHERE issue_number = ?", (state, n))
+    assert db.clear_queue_history(db_path) == 1
+    assert sorted(q["state"] for q in db.get_queue(db_path)) == ["failed", "not_found"]

@@ -1603,9 +1603,11 @@ def remove_queue_item(queue_id, path=DB_PATH):
         conn.execute("DELETE FROM download_queue WHERE id = ?", (queue_id,))
 
 
-def clear_queue_history(path=DB_PATH):
+def clear_queue_history(path=DB_PATH) -> int:
+    """Clear History: the finished downloads only. It also wiped every failed and
+    not-found row — the ones still waiting on you, and trades issues were waiting on."""
     with _connect(path) as conn:
-        conn.execute("DELETE FROM download_queue WHERE state IN ('done', 'not_found', 'failed')")
+        return conn.execute("DELETE FROM download_queue WHERE state = 'done'").rowcount
 
 
 def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
