@@ -2383,11 +2383,11 @@ body.touch .od-menu { opacity: .85; }
 /* the shared cover-in animates filter to none and would snap these back; fade only */
 .stack-cover.loaded { animation: fade-in var(--t-slow) var(--ease-out) backwards; }
 .stack-card:hover .stack-cover { transform: var(--fan); }               /* no cover zoom on a stack */
-.stack-cover-0 { z-index: 3; --fan: scale(.88) translate(-5%, 0) rotate(-5deg); transform: var(--fan); }
+.stack-cover-0 { z-index: 3; --fan: scale(.88) translate(-5%, 0) rotate(-3deg); transform: var(--fan); }
 .stack-cover-1 { z-index: 2; --fan: scale(.88); transform: var(--fan); }
-.stack-cover-2 { z-index: 1; --fan: scale(.88) translate(5%, -1.6%) rotate(5deg); transform: var(--fan); }
-.stack-card:hover .stack-cover-0 { transform: scale(.9) translate(-7%, 0) rotate(-7deg); }
-.stack-card:hover .stack-cover-2 { transform: scale(.88) translate(7%, -2.4%) rotate(7deg); }
+.stack-cover-2 { z-index: 1; --fan: scale(.88) translate(5%, -1.6%) rotate(3deg); transform: var(--fan); }
+.stack-card:hover .stack-cover-0 { transform: scale(.9) translate(-7%, 0) rotate(-4.5deg); }
+.stack-card:hover .stack-cover-2 { transform: scale(.88) translate(7%, -2.4%) rotate(4.5deg); }
 .stack-badge { position: absolute; top: 6px; right: 6px; z-index: 4; background: var(--pri); color: #000; font-size: var(--fs-label);
   font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: var(--track-tight); }
 .stack-card .series-card-bar-track { visibility: hidden; }              /* keeps the row height, shows nothing */
