@@ -36,6 +36,7 @@ _ROLE_WEIGHT = {"writer": 3.0, "story": 3.0, "script": 3.0, "plot": 2.0, "artist
                 "inker": 1.0, "colorist": 0.5, "letterer": 0.25, "cover": 0.0}
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""

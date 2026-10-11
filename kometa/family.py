@@ -34,36 +34,35 @@ def _is_special(s: dict) -> bool:
     return 0 < n <= 12
 
 
-def _tail_after(parent: str, child: str) -> str | None:
-    """The part of the child's title after the parent's, or None if it isn't a prefix."""
-    p, c = norm_key(parent), norm_key(child)
-    if not p or c == p or not c.startswith(p):
-        return None
-    tail = c[len(p):]
-    if not tail.startswith(" "):
-        return None                               # 'Batman' vs 'Batmanx'
-    return tail.strip()
-
-
 def attach_families(series: list[dict]) -> list[dict]:
-    """Stamp family_parent (id) on children and family_children (ids) on parents."""
+    """Stamp family_parent (id) on children and family_children (ids) on parents.
+
+    Every series used to be tried as a parent of every special — 428k title
+    comparisons, 1.7M regex calls, 1.1 s of CPU on every Library and every series
+    page (single worker: everything else waited). A parent's key must be a
+    word-prefix of the child's key, so each child looks up its own few prefixes
+    in a dict instead: same rules, same tie-break (longest parent, then first in
+    the list), ~2 ms."""
     rows = [s for s in series if s.get("kind") != "arc"]
-    by_id = {s["id"]: s for s in rows}
     for s in rows:
         s["family_parent"] = None
         s["family_children"] = []
-    for child in rows:
+    base = [_base(s["title"]) for s in rows]
+    key = [norm_key(b) for b in base]
+    by_key: dict[str, list[int]] = {}
+    for i, s in enumerate(rows):
+        if key[i] and (s.get("metron_type") or "").lower() not in ("one-shot", "annual"):   # a one-shot never parents anything
+            by_key.setdefault(key[i], []).append(i)
+    for ci, child in enumerate(rows):
         if not _is_special(child):
             continue
-        ctitle = _base(child["title"])
+        ctitle, ckey = base[ci], key[ci]
+        cands = sorted(i for at in range(len(ckey)) if ckey[at] == " "
+                       for i in by_key.get(ckey[:at], ()) if i != ci)
         best = None
-        for parent in rows:
-            if parent is child or (parent.get("metron_type") or "").lower() in ("one-shot", "annual"):
-                continue                              # a one-shot never parents anything
-            ptitle = _base(parent["title"])
-            tail = _tail_after(ptitle, ctitle)
-            if tail is None:
-                continue
+        for pi in cands:
+            parent, ptitle = rows[pi], base[pi]
+            tail = ckey[len(key[pi]):].strip()
             # the separator in the ORIGINAL title tells a subtitle (':' / ' - ') from a plain word
             sep = ctitle[len(ptitle):len(ptitle) + 3]
             subtitle = sep.startswith(":") or sep.startswith(" -") or sep.startswith(" –")
@@ -78,11 +77,11 @@ def attach_families(series: list[dict]) -> list[dict]:
             cy, py = child.get("year_began"), parent.get("year_began")
             if cy and py and cy < py - 1:
                 continue
-            if best is None or len(ptitle) > len(_base(best["title"])):
-                best = parent
+            if best is None or len(ptitle) > len(base[best]):
+                best = pi
         if best is not None:
-            child["family_parent"] = best["id"]
-            best["family_children"].append(child["id"])
+            child["family_parent"] = rows[best]["id"]
+            rows[best]["family_children"].append(child["id"])
     return series
 
 

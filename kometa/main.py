@@ -144,6 +144,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Compress what's text — JSON, the JS and CSS, OPDS XML: /api/series went out as
+# 761 KB raw (65 KB gzipped), app.js 255 KB (72 KB). Covers, pages and comic
+# files are already compressed; gzipping them again only burns CPU, so they join
+# Starlette's exclusion list (checked per response; test_gzip pins this).
+import starlette.middleware.gzip as _gzip  # noqa: E402
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+_gzip.DEFAULT_EXCLUDED_CONTENT_TYPES = ("text/event-stream", "image/", "video/", "audio/", "font/",
+                                        "application/zip", "application/x-cbz", "application/x-cbr",
+                                        "application/vnd.comicbook", "application/octet-stream", "application/pdf")
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+
+@app.middleware("http")
+async def _static_cache(request, call_next):
+    """app.js?v=297, style.css?v=244: the version is in the URL and index.html
+    names the current one, so a versioned asset never changes — cache it for a
+    year instead of revalidating by heuristic on every load."""
+    resp = await call_next(request)
+    if request.query_params.get("v") and request.url.path.endswith((".js", ".css")):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
 # Cover-art pipeline (thumbnail routes + disk cache) lives in kometa/thumbnails —
 # fully self-contained; nothing else in the app imports from it.
 from kometa.thumbnails import router as _thumbnails_router  # noqa: E402
@@ -576,8 +598,13 @@ def _newest_file_at() -> dict[int, str]:
 def _family_for(series_id: int) -> dict:
     """The series' family for its page: the parent (if it is a special) and its
     specials (if it is a run), as light rows the cards can draw."""
+    # what families need — series and their counts — not the whole Library build
+    # (marks, ratings, newest files, franchises) the page threw away
+    from kometa.family import attach_families
     try:
-        rows = {r["id"]: r for r in list_series()}
+        summaries = db.get_all_series_summaries(DB_PATH)
+        rows = [dict(s, **summaries.get(s["id"], {})) for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
+        rows = {r["id"]: r for r in attach_families(rows)}
     except Exception:
         return {"family_parent": None, "family_children": []}
     me = rows.get(series_id)

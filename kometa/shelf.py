@@ -204,10 +204,11 @@ def shelf_detail(shelf_id: int):
     if s.get("tracked_series_id"):
         cached = db.get_trades(s["tracked_series_id"], DB_PATH)
         trade_files = {t["file"] for t in (cached or {}).get("trades", []) if t.get("file")}
+    # the index is the truth here: the shelf scan prunes rows whose file went,
+    # and a file that vanished since says so when it's opened. A check per row
+    # was 544 round trips to the share for one Uncanny X-Men page view.
     books = []
     for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"]):
-        if not os.path.exists(b["path"]):
-            continue
         books.append({
             "id": b["id"],
             "number": b["number"],
@@ -224,9 +225,9 @@ def _first_book(shelf_id: int) -> dict | None:
     s = db.get_shelf_series(shelf_id, DB_PATH)
     if not s:
         return None
-    books = [b for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"])
-             if os.path.exists(b["path"])]
-    return books[0] if books else None
+    # the first one still on disk — asked lazily, so it's one check, not one per book
+    return next((b for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"])
+                 if os.path.exists(b["path"])), None)
 
 
 @router.get("/api/shelf/{shelf_id}/cover")

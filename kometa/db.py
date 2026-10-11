@@ -120,6 +120,32 @@ def init_db(path=DB_PATH):
     _seed_defaults(path)
 
 
+def once_per_db(fn):
+    """For a module's ensure_tables / ensure_columns: run the CREATE/ALTER checks
+    once per database file per process, not on every call. ~45 call sites ran
+    them per request — a connection plus DDL parsing (~1 ms) each time, several
+    per cover tile. Keyed by path, so each test's fresh DB still gets its tables;
+    the module's own DB_PATH (patched by tests) is read at call time."""
+    import functools
+    import threading
+    done: set = set()
+    lock = threading.Lock()
+
+    @functools.wraps(fn)
+    def wrapper(path=None, *a, **k):
+        key = path or fn.__globals__.get("DB_PATH") or DB_PATH
+        if key in done:
+            return None
+        with lock:
+            if key in done:
+                return None
+            out = fn(path, *a, **k)
+            done.add(key)
+            return out
+    wrapper.reset = done.clear
+    return wrapper
+
+
 @contextmanager
 def _connect(path=DB_PATH):
     conn = sqlite3.connect(path, timeout=30)
@@ -432,6 +458,14 @@ def _migrate(path=DB_PATH):
             CREATE INDEX IF NOT EXISTS idx_is_series_date ON issue_status(tracked_series_id, store_date);
             CREATE INDEX IF NOT EXISTS idx_ts_cv_volume ON tracked_series(cv_volume_id);
         """)
+        # books by run: On Deck, reading lists, shelf pages, next-in-series and
+        # covers all look books up by series — every one a full scan of 7k rows
+        # (523 lookups per On Deck load: 94 ms → 7 ms with these)
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'books'").fetchone():
+            conn.executescript("""
+                CREATE INDEX IF NOT EXISTS idx_books_tracked ON books(tracked_series_id, number);
+                CREATE INDEX IF NOT EXISTS idx_books_shelf ON books(shelf_series_id, number);
+            """)
 
 
 # config key -> env var for first-boot provisioning. Lets a deployer configure

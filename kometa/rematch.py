@@ -18,6 +18,7 @@ RECHECK_DAYS = 30
 PER_TICK = 8
 
 
+@db.once_per_db
 def ensure_columns(path=None):
     with db._connect(path or DB_PATH) as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]

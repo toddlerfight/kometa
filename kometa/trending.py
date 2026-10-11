@@ -35,6 +35,7 @@ _VOL_RE = re.compile(r"^(?P<series>.+?)\s+(?:Vol\.?|Volume|Book)\s*(?P<vol>\d+)\
 _TAIL_RE = re.compile(r"\s*\((?:one-shot|regular edition cover|[^)]*edition[^)]*|[^)]*cover[^)]*)\)\s*$", re.I)
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS trending_cache (

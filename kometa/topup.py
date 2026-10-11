@@ -23,6 +23,7 @@ DRAIN_GAP_S = (1.5, 3.0)
 _draining = {"on": False}
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS locg_topup (

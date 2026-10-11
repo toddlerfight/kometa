@@ -23,6 +23,7 @@ READER_ID = "me"
 KINDS = ("book", "series")
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS marks (
@@ -117,7 +118,7 @@ def favourites(path=None, reader_id=READER_ID) -> list[dict]:
                     out.append({"kind": "series", "series_id": s["id"], "series": s["title"], "label": s["title"]})
             else:
                 b = conn.execute("SELECT * FROM books WHERE id = ?", (m["target_id"],)).fetchone()
-                if b and os.path.exists(b["path"]):
+                if b:
                     p = conn.execute("SELECT page, completed, updated_at FROM read_progress WHERE reader_id = ? AND book_id = ?",
                                      (reader_id, b["id"])).fetchone()
                     out.append(dict(_card(conn, b, dict(p) if p else None), kind="book"))

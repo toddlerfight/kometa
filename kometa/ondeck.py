@@ -71,7 +71,7 @@ def continue_reading(reader_id=READER_ID, now=None, path=None) -> list[dict]:
             SELECT b.*, p.page, p.updated_at FROM read_progress p JOIN books b ON b.id = p.book_id
             WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ?
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
-        return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows if os.path.exists(r["path"])]
+        return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
 
 
 def _series_groups(conn, reader_id):
@@ -89,11 +89,11 @@ def _series_groups(conn, reader_id):
     return groups
 
 
-def up_next(reader_id=READER_ID, path=None) -> list[dict]:
+def up_next(reader_id=READER_ID, path=None, groups=None) -> list[dict]:
     path = path or DB_PATH
     out = []
     with db._connect(path) as conn:
-        for key, books in _series_groups(conn, reader_id).items():
+        for key, books in (groups if groups is not None else _series_groups(conn, reader_id)).items():
             numbered = [b for b in books if b["number"] is not None]
             if any(b["completed"] == 0 and b["updated_at"] for b in books):
                 continue                                           # something in progress → Continue row
@@ -102,14 +102,14 @@ def up_next(reader_id=READER_ID, path=None) -> list[dict]:
                 continue
             last_done = max(b["number"] for b in done)
             last_read_at = max(b["updated_at"] for b in done)
-            nxt = next((b for b in numbered if b["number"] > last_done and not b["completed"] and os.path.exists(b["path"])), None)
+            nxt = next((b for b in numbered if b["number"] > last_done and not b["completed"]), None)
             if nxt:
                 out.append(_card(conn, nxt, None, last_read_at=last_read_at, finished=len(done)))
     out.sort(key=lambda c: c["last_read_at"], reverse=True)
     return out[:ROW_LIMIT]
 
 
-def coming_soon(reader_id=READER_ID, path=None) -> list[dict]:
+def coming_soon(reader_id=READER_ID, path=None, groups=None) -> list[dict]:
     """Series you're reading and caught up on (every numbered owned book
     finished) whose issue list has something you don't own yet."""
     path = path or DB_PATH
@@ -118,7 +118,7 @@ def coming_soon(reader_id=READER_ID, path=None) -> list[dict]:
     with db._connect(path) as conn:
         queue = {(q["tracked_series_id"], q["issue_number"]): q["state"] for q in conn.execute(
             "SELECT tracked_series_id, issue_number, state FROM download_queue WHERE state NOT IN ('done','failed','not_found','cancelled')")}
-        for key, books in _series_groups(conn, reader_id).items():
+        for key, books in (groups if groups is not None else _series_groups(conn, reader_id)).items():
             if key[0] != "t":
                 continue
             tid = key[1]
@@ -156,7 +156,7 @@ def _one_per_series(conn, rows, **field) -> list[dict]:
     out, seen = [], set()
     for r in rows:
         key = ("t", r["tracked_series_id"]) if r["tracked_series_id"] else ("s", r["shelf_series_id"])
-        if key[1] is None or key in seen or not os.path.exists(r["path"]):
+        if key[1] is None or key in seen:
             continue
         seen.add(key)
         out.append(_card(conn, r, None, **{k: r[v] for k, v in field.items()}))
@@ -235,7 +235,7 @@ def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None)
                                   "cover": e.get("cover"), "position": e["position"], "list_id": lst["id"]})
                 elif not (b["progress"] and b["progress"]["completed"]) and b["id"] not in shown:
                     row = conn.execute("SELECT * FROM books WHERE id = ?", (b["id"],)).fetchone()
-                    if row and os.path.exists(row["path"]):
+                    if row:
                         c = _card(conn, row, {"page": b["progress"]["page"]} if b["progress"] else None,
                                   kind="book", position=e["position"], list_id=lst["id"])
                         c["label"] = f"{c['series']} {c['label']}"
@@ -249,7 +249,7 @@ def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None)
     return rows
 
 
-def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None) -> list[dict]:
+def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None, groups=None) -> list[dict]:
     """Series you read and then left: last touched 180+ days ago, unread books
     still here. The card is where you'd pick up — the stalled book, else the
     one after the last you finished. Most recently abandoned first."""
@@ -259,7 +259,7 @@ def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None
     seen = seen if seen is not None else set()
     out = []
     with db._connect(path) as conn:
-        for key, books in _series_groups(conn, reader_id).items():
+        for key, books in (groups if groups is not None else _series_groups(conn, reader_id)).items():
             if key in seen:
                 continue
             touched = [b for b in books if b["updated_at"]]
@@ -268,14 +268,13 @@ def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None
             last = max(b["updated_at"] for b in touched)
             if last >= before:
                 continue
-            stalled = next((b for b in touched if b["completed"] == 0 and os.path.exists(b["path"])), None)
+            stalled = next((b for b in touched if b["completed"] == 0), None)
             pick = stalled
             if not pick:
                 numbered = [b for b in books if b["number"] is not None]
                 done = [b["number"] for b in numbered if b["completed"] == 1]
                 after = max(done) if done else None
-                pick = next((b for b in numbered if not b["completed"] and (after is None or b["number"] > after)
-                             and os.path.exists(b["path"])), None)
+                pick = next((b for b in numbered if not b["completed"] and (after is None or b["number"] > after)), None)
             if pick:
                 prog = {"page": pick["page"] or 0} if stalled else None
                 out.append(_card(conn, pick, prog, last_read_at=last))
@@ -302,15 +301,20 @@ def quick_reads(reader_id=READER_ID, path=None, seen: set | None = None) -> list
             WHERE i.ignored = 0 AND COALESCE(t.kind, 'series') != 'arc'
             GROUP BY i.tracked_series_id
             HAVING n_issues BETWEEN 1 AND ? AND n_owned = n_issues""", (QUICK_MAX_ISSUES,)).fetchall()   # aliases NOT named like columns: SQLite's HAVING prefers the column
-        for r in runs:
-            if ("t", r["tid"]) in seen or (r["last_date"] and r["last_date"] > today):
-                continue
-            books = conn.execute("""
+        runs = [r for r in runs if ("t", r["tid"]) not in seen and not (r["last_date"] and r["last_date"] > today)]
+        # every candidate run's books in ONE query (was one per run: 523 a load)
+        by_run: dict[int, list] = {}
+        for i in range(0, len(runs), 500):
+            chunk = [r["tid"] for r in runs[i:i + 500]]
+            for b in conn.execute(f"""
                 SELECT b.*, p.updated_at FROM books b
                 LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-                WHERE b.tracked_series_id = ? AND b.number IS NOT NULL
-                ORDER BY b.number, b.path""", (reader_id, r["tid"])).fetchall()
-            if not books or any(b["updated_at"] for b in books) or not os.path.exists(books[0]["path"]):
+                WHERE b.tracked_series_id IN ({",".join("?" * len(chunk))}) AND b.number IS NOT NULL
+                ORDER BY b.number, b.path""", (reader_id, *chunk)):
+                by_run.setdefault(b["tracked_series_id"], []).append(b)
+        for r in runs:
+            books = by_run.get(r["tid"])
+            if not books or any(b["updated_at"] for b in books):
                 continue
             out.append(_card(conn, books[0], None, issues=r["n_issues"],
                              newest=max(b["mtime"] or 0 for b in books)))
@@ -334,12 +338,15 @@ def dismiss_book(book_id: int, undo: int = 0):
 @router.get("/api/ondeck")
 def on_deck():
     from kometa.marks import favourites
-    d = {"continue": continue_reading(), "next": up_next(), "soon": coming_soon(),
+    # the whole shelf with progress, read once and shared (it was read three times)
+    with db._connect(DB_PATH) as conn:
+        groups = _series_groups(conn, READER_ID)
+    d = {"continue": continue_reading(), "next": up_next(groups=groups), "soon": coming_soon(groups=groups),
          "released": recent_released(), "added": recent_added(), "favourites": favourites()}
     # a series shows in one row only: the task rows claim theirs first
     seen = {_skey(c.get("series_id"), c.get("shelf_id")) for k in ("continue", "next", "soon", "released", "added")
             for c in d[k]}
     d["lists"] = list_rows(seen=seen)
-    d["rediscover"] = rediscover(seen=seen)
+    d["rediscover"] = rediscover(seen=seen, groups=groups)
     d["quick"] = quick_reads(seen=seen)
     return d

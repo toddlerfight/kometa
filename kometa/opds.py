@@ -143,7 +143,7 @@ def _books_sql(path, where: str, params: tuple, order: str, limit: int | None = 
 def _entries(books: list[dict], path) -> list[str]:
     prog = _progress_for([b["id"] for b in books], path)
     return [book_entry(b, b.get("series_title") or _YEAR.sub("", os.path.basename(os.path.dirname(b["path"]))),
-                       prog.get(b["id"]), path) for b in books if os.path.exists(b["path"])]
+                       prog.get(b["id"]), path) for b in books]
 
 
 # --- feeds ------------------------------------------------------------------------

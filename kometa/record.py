@@ -32,6 +32,7 @@ TRICKLE_MINUTES = 10
 _relabelled: dict = {}
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS issue_record (

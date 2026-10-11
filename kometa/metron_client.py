@@ -54,10 +54,46 @@ def configured() -> bool:
     return _creds() is not None
 
 
+# Metron's fail2ban: 3 refused logins in 5 minutes = a 24-hour IP ban (it
+# happened, 2026-10-10). A 401/403 means THESE credentials are bad, so nothing
+# asks again with them — not the next trickle, not a restart — until they change
+# or AUTH_REFUSED_HOLD_S passes. Stored in config: survives restarts.
+AUTH_REFUSED_KEY = "metron_auth_refused"
+AUTH_REFUSED_HOLD_S = 6 * 3600
+SERVER_ERROR_PAUSE_S = 300
+
+
+def _creds_fp(creds) -> str:
+    import hashlib
+    return hashlib.sha256(repr(creds).encode()).hexdigest()[:16]
+
+
+def _refused(creds) -> bool:
+    from kometa import db
+    try:
+        mark = db.get_config(db.DB_PATH).get(AUTH_REFUSED_KEY) or ""
+    except Exception:
+        return False
+    fp, _, at = mark.partition("|")
+    return fp == _creds_fp(creds) and at and time.time() - float(at) < AUTH_REFUSED_HOLD_S
+
+
+def _note_refused(creds, code: int):
+    from kometa import db
+    try:
+        db.set_config({AUTH_REFUSED_KEY: f"{_creds_fp(creds)}|{time.time():.0f}"}, db.DB_PATH)
+    except Exception as e:
+        logger.warning(f"Metron: couldn't record the refusal: {e}")
+    logger.error(f"Metron refused our login ({code}) — not asking again until the credentials change "
+                 f"(or {AUTH_REFUSED_HOLD_S // 3600} h): three refusals is a 24-hour ban")
+
+
 def _get(path: str, **params) -> dict:
     creds = _creds()
     if not creds:
         raise MetronUnavailable("Metron isn't configured")
+    if _refused(creds):
+        raise MetronUnavailable("Metron refused these credentials — fix them in Settings")
     auth = f"Bearer {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     with _lock:                                    # one request at a time, spaced
@@ -91,6 +127,11 @@ def _get(path: str, **params) -> dict:
                 retry = float(e.headers.get("Retry-After") or 60)
                 _state["paused_until"] = time.time() + retry
                 logger.warning(f"Metron rate-limited us — waiting {int(retry)}s")
+            elif e.code in (401, 403):
+                _note_refused(creds, e.code)
+            elif e.code >= 500:
+                _state["paused_until"] = time.time() + SERVER_ERROR_PAUSE_S
+                logger.warning(f"Metron answered {e.code} — not asking again for {SERVER_ERROR_PAUSE_S}s")
             raise MetronUnavailable(f"Metron answered {e.code}") from e
         except (urllib.error.URLError, TimeoutError) as e:
             # Circuit breaker. With Metron dropping our packets (2026-10-10) every

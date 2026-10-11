@@ -36,6 +36,7 @@ READER_ID = "me"
 
 
 # --- storage ----------------------------------------------------------------------
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""

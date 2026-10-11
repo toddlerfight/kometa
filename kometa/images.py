@@ -32,6 +32,7 @@ EXT_HOSTS = ("static.metron.cloud", "metron.cloud", "s3.amazonaws.com", "comicvi
 _KEY_RE = re.compile(r"^[A-Za-z0-9_.:\-]+(?:/[A-Za-z0-9_.:\-]+)*$")
 
 
+@db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS image_record (

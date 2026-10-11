@@ -30,6 +30,38 @@ class TestClient:
         with pytest.raises(mc.MetronUnavailable, match="wait"):
             mc.search_series("Saga")                    # paused: doesn't even call out
 
+    def test_a_refused_login_is_never_sent_again_until_the_credentials_change(self, monkeypatch, db_path):
+        monkeypatch.setattr(db, "DB_PATH", db_path)
+        creds = {"v": ("token", "bad")}
+        monkeypatch.setattr(mc, "_creds", lambda: creds["v"])
+        monkeypatch.setattr(mc, "_state", {"last": 0.0, "paused_until": 0.0})
+        monkeypatch.setattr(mc, "MIN_INTERVAL_S", 0)
+        calls = []
+        def refuse(*a, **k):
+            calls.append(1)
+            raise urllib.error.HTTPError("u", 401, "no", {}, io.BytesIO(b""))
+        monkeypatch.setattr(mc.urllib.request, "urlopen", refuse)
+        for _ in range(3):                                   # three jobs in a row: ONE login attempt
+            with pytest.raises(mc.MetronUnavailable):
+                mc.search_series("Saga")
+        assert len(calls) == 1
+        creds["v"] = ("token", "fixed")                      # new credentials: allowed to try
+        with pytest.raises(mc.MetronUnavailable):
+            mc.search_series("Saga")
+        assert len(calls) == 2
+
+    def test_a_server_error_pauses_everyone_briefly(self, monkeypatch, db_path):
+        monkeypatch.setattr(db, "DB_PATH", db_path)
+        monkeypatch.setattr(mc, "_creds", lambda: ("u", "p"))
+        monkeypatch.setattr(mc, "_state", {"last": 0.0, "paused_until": 0.0})
+        monkeypatch.setattr(mc, "MIN_INTERVAL_S", 0)
+        monkeypatch.setattr(mc.urllib.request, "urlopen",
+                            lambda *a, **k: (_ for _ in ()).throw(urllib.error.HTTPError("u", 502, "bad gateway", {}, io.BytesIO(b""))))
+        with pytest.raises(mc.MetronUnavailable):
+            mc.search_series("Saga")
+        with pytest.raises(mc.MetronUnavailable, match="wait"):
+            mc.search_series("Saga")
+
     def test_daily_floor_pauses_until_reset(self, monkeypatch):
         monkeypatch.setattr(mc, "_creds", lambda: ("u", "p"))
         monkeypatch.setattr(mc, "_state", {"last": 0.0, "paused_until": 0.0})
