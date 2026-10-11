@@ -774,6 +774,13 @@ def _sweep_missing():
         if row["tracked_series_id"] in checked and row["tracked_series_id"] not in pack_submitted:
             db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
 
+    # Bury the dead packs. A failed whole-run pack whose issues all showed up
+    # anyway (one at a time, the hard way) is just a tombstone cluttering
+    # Activity — and it kept the usenet pack gate slammed shut for nothing.
+    retired = db.retire_completed_packs(DB_PATH)
+    if retired:
+        logger.info(f"Retired {retired} failed pack row(s): every issue landed")
+
 
 def _gc_rescue(item, qid) -> bool:
     """Last-ditch GetComics swing for a usenet corpse the torrent net also missed.
