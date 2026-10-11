@@ -762,6 +762,8 @@ def _teach_owner(series_id: int, key: str, meta: dict, path):
     """A cross-series edition ('Fear Itself: Secret Avengers' for Secret Avengers
     #12.1) isn't in the run's own trade list, so the ownership stamp would never
     look for it. Add it — to trade_record and the cached list — before it lands."""
+    if str(key).isdigit():
+        return _teach_owner_locg(series_id, str(key), meta, path)
     if not str(key).startswith("m"):
         return
     mid = int(str(key)[1:])
@@ -783,6 +785,39 @@ def _teach_owner(series_id: int, key: str, meta: dict, path):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'metron', ?)""",
                      (series_id, key, t["title"], t["vol"], t["format"], t["edition_title"], t["cover"], t["store_date"],
                       json.dumps(t["collects"]), t["metron_series_id"], mid, _now()))
+
+
+def _locg_collects(lid: str, path) -> list[dict]:
+    """What an LOCG edition collects, from its cached description's 'Collecting …'
+    line (read when the edition was chosen — no LOCG request here)."""
+    d = db.get_issue_details_cache(lid, path) or {}
+    return parse_collects(d.get("desc") or "")
+
+
+def _teach_owner_locg(series_id: int, lid: str, meta: dict, path):
+    """_teach_owner for an LOCG edition: its contents (the cached 'Collecting'
+    line) into trade_record under the l:<id> key fill_trades uses, and the edition
+    into the cached list if the run's own list doesn't carry it (the cross-series
+    case). Without this the coverage pass never knew what an LOCG trade held."""
+    collects = _locg_collects(lid, path)
+    cached = db.get_trades(series_id, path)
+    trades = list(cached["trades"]) if cached else []
+    title = meta.get("title") or meta.get("edition_title")
+    if not any(str(x.get("locg_id") or "") == lid for x in trades):
+        trades.append({"title": title, "edition_title": meta.get("edition_title"), "vol": meta.get("vol"),
+                       "vol_range": None, "format": meta.get("format") or "TPB", "cover": meta.get("cover"),
+                       "metron_issue_id": None, "locg_id": lid, "store_date": None, "source": "locg"})
+        db.set_trades(series_id, trades, path)
+    from kometa import record
+    record.ensure_tables(path)
+    with db._connect(path) as conn:
+        conn.execute("""INSERT INTO trade_record (tracked_series_id, key, title, vol, format, edition_title, cover,
+            collects_json, locg_id, source, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'locg', ?)
+            ON CONFLICT(tracked_series_id, key) DO UPDATE SET collects_json = CASE
+                WHEN COALESCE(trade_record.collects_json, '[]') IN ('', '[]') THEN excluded.collects_json
+                ELSE trade_record.collects_json END""",
+                     (series_id, f"l:{lid}", title, meta.get("vol"), meta.get("format") or "TPB",
+                      meta.get("edition_title"), meta.get("cover"), json.dumps(collects), lid, _now()))
 
 
 def decline(qid: int, path=None) -> dict:
@@ -811,9 +846,12 @@ def decline(qid: int, path=None) -> dict:
 def refresh_coverage(path=None) -> int:
     """Stamp issue_status.covered_by = the owned trade's file for every issue an
     owned trade collects (exact reprint matches only); clear stale stamps.
+    Metron editions read their reprints, LOCG ones their 'Collecting …' line.
     Returns the number of issues covered."""
     path = path or DB_PATH
     ensure_tables(path)
+    from kometa import record
+    record.ensure_tables(path)
     with db._connect(path) as conn:
         series = {r["id"]: dict(r) for r in conn.execute("SELECT id, title, year_began, folder_path FROM tracked_series")}
         by_metron = {r["metron_issue_id"]: (r["tracked_series_id"], r["number"]) for r in conn.execute(
@@ -821,19 +859,36 @@ def refresh_coverage(path=None) -> int:
         trades = [dict(r) for r in conn.execute("SELECT tracked_series_id, data_json FROM trades_cache")]
         reprints = {r["metron_issue_id"]: json.loads(r["reprints_json"] or "[]") for r in conn.execute(
             "SELECT metron_issue_id, reprints_json FROM trade_reprints")}
+        locg_record = {(r["tracked_series_id"], r["key"][2:]): json.loads(r["collects_json"] or "[]") for r in conn.execute(
+            "SELECT tracked_series_id, key, collects_json FROM trade_record WHERE key LIKE 'l:%'")}
+        landed = [json.loads(r["meta_json"] or "{}") for r in conn.execute(
+            "SELECT meta_json FROM download_queue WHERE kind = 'trade' AND state = 'done' AND meta_json LIKE '%landed_file%'")]
     names: dict[str, list[dict]] = {}
     for s in series.values():
         names.setdefault(norm_key(_base(s["title"])), []).append(s)
+
+    def contents(sid: int, tr: dict) -> list[dict]:
+        """What an owned trade reprints: Metron's reprints for a Metron edition
+        (unchanged); for an LOCG one (numeric locg_id), trade_record's collects,
+        else its cached LOCG description's 'Collecting …' line."""
+        if tr.get("metron_issue_id"):
+            return reprints.get(int(tr["metron_issue_id"]), [])
+        lid = str(tr.get("locg_id") or "")
+        if not lid.isdigit():
+            return []
+        got = [c for c in locg_record.get((sid, lid)) or [] if isinstance(c, dict) and c.get("series")]
+        return got or _locg_collects(lid, path)
+
     covered: dict[tuple, str] = {}
     for t in trades:
         owner = series.get(t["tracked_series_id"])
         if not owner or not owner.get("folder_path"):
             continue
         for tr in json.loads(t["data_json"] or "[]"):
-            if not tr.get("owned") or not tr.get("file") or not tr.get("metron_issue_id"):
+            if not tr.get("owned") or not tr.get("file"):
                 continue
             book = os.path.join(owner["folder_path"], tr["file"])
-            for rp in reprints.get(int(tr["metron_issue_id"]), []):
+            for rp in contents(t["tracked_series_id"], tr):
                 hit = by_metron.get(rp.get("metron_issue_id")) if rp.get("metron_issue_id") else None
                 if not hit:
                     for s in names.get(norm_key(rp.get("series") or ""), []):
@@ -842,6 +897,13 @@ def refresh_coverage(path=None) -> int:
                             break
                 if hit:
                     covered[(hit[0], float(hit[1]))] = book
+    # a trade Kometa fetched FOR some issues (complete_trade kept which, and the
+    # file) covers them while that file is on disk — whatever the catalogue says
+    for m in landed:
+        book = m.get("landed_file")
+        if book and os.path.exists(book):
+            for sid, n in m.get("covers") or []:
+                covered.setdefault((sid, float(n)), book)
     with db._connect(path) as conn:
         conn.execute("UPDATE issue_status SET covered_by = NULL WHERE covered_by IS NOT NULL")
         for (sid, n), book in covered.items():

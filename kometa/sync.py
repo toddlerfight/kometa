@@ -341,7 +341,8 @@ def _scan_folder_edition_names(folder_path: str) -> dict[str, str]:
     return names
 
 
-def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = None) -> list[dict]:
+def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = None,
+                  landed: dict[str, str] | None = None) -> list[dict]:
     """Stamp the two stored facts onto each trade: `owned` (file in the folder) and
     `komga_book_id` (the matching Komga book, for the read link). Computed at sync
     time and cached so request handlers never fold-scan. The two are independent —
@@ -349,7 +350,10 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     an ownership source.
 
     books: pass the series' Komga book list if already fetched (sync_one pulls it
-    for the issue book map) to avoid a second full paginated get_books."""
+    for the issue book map) to avoid a second full paginated get_books.
+
+    landed: {lowercased file name: edition id} for the trades Kometa downloaded
+    itself (db.landed_trade_files) — the surest word on which edition a file IS."""
     folder = series.get("folder_path")
     vol_entries = _scan_folder_volume_entries(folder) if folder else []
     owned_names = _scan_folder_edition_names(folder) if folder else {}
@@ -369,9 +373,8 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     except OSError:
         pass
 
-    def _vol_file(vol, kws):
-        low = next((name for v, name in vol_entries if v == vol and _edition_keywords(name) == kws), None)
-        return real_names.get(low, low) if low else None
+    def _vol_files(vol, kws):
+        return [real_names.get(name, name) for v, name in vol_entries if v == vol and _edition_keywords(name) == kws]
 
     # `books`: a Komga book list, only when a caller hands one over (nothing does
     # since 2026-10-10 — the reader opens the file by name; komga_book_id is legacy)
@@ -383,15 +386,16 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
             kbook_by_volkey[(v, _edition_keywords(name))] = b["id"]
         kbook_by_name[_norm_name(name)] = b["id"]
 
-    for t in trades:
+    vol_bids: list[tuple] = []        # (fit, order, trade, file): settled below, one file per edition
+    for i, t in enumerate(trades):
         kws = _edition_keywords(t.get("title", ""))
         # `file`: the file on disk this edition IS — the series page keeps it off
         # 'Also on the shelf' and the Trades tab reads it
         t["file"] = None
         if t.get("vol") is not None:
-            t["owned"] = _vol_owned(t["vol"], kws)
-            t["file"] = _vol_file(t["vol"], kws) if t["owned"] else None
-            t["komga_book_id"] = kbook_by_volkey.get((t["vol"], kws))
+            t["owned"], t["komga_book_id"] = False, None
+            for f in _vol_files(t["vol"], kws):
+                vol_bids.append((_trade_file_fit(t, f, landed), -i, t, f))
         elif t.get("vol_range"):
             lo, hi = t["vol_range"]
             t["owned"] = all(_vol_owned(v, kws) for v in range(lo, hi + 1))
@@ -405,6 +409,19 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
             t["owned"] = bool(key) and key in owned_names
             t["file"] = owned_names.get(key) if t["owned"] else None
             t["komga_book_id"] = kbook_by_name.get(key)
+    # Volume ownership, settled. (vol, edition words) alone let 'Avengers Academy:
+    # The Complete Collection Vol. 2 TP' AND 'Vol. 2: Will We Use This in the Real
+    # World? HC' both grab the one Vol 2 file — two editions "owned", one book on
+    # the disk, and the HC's issues covered by a book that isn't it. Best fit picks
+    # first (the edition Kometa downloaded the file AS, then the title that looks
+    # most like the file's name, then TP/HC agreeing); a file, once taken, is gone.
+    taken: set = set()
+    for _fit, _order, t, f in sorted(vol_bids, key=lambda b: (b[0], b[1]), reverse=True):
+        if t["owned"] or f in taken:
+            continue
+        t["owned"], t["file"] = True, f
+        t["komga_book_id"] = kbook_by_volkey.get((t["vol"], _edition_keywords(t.get("title", ""))))
+        taken.add(f)
     # Second pass, loose: the catalogue says 'Batman Year 100 Deluxe Edition HC',
     # the file says 'Batman - Year 100 and Other Tales Deluxe Edition (2015)'. Same
     # book, different words around it. A no-volume trade still unowned claims an
@@ -423,6 +440,32 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
             t["komga_book_id"] = t.get("komga_book_id") or kbook_by_name.get(
                 _norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", os.path.splitext(f)[0])))
     return trades
+
+
+def _format_of(name: str) -> str | None:
+    w = set(_norm_name(re.sub(r"\([^)]*\)", " ", name or "")).split())
+    if w & {"hc", "hardcover"}:
+        return "hc"
+    if w & {"tp", "tpb", "paperback", "sc"}:
+        return "tp"
+    return None
+
+
+def _trade_file_fit(t: dict, fname: str, landed: dict[str, str] | None) -> tuple:
+    """How well a file on disk fits a catalogue edition, best first: downloaded AS
+    this edition; share of significant title words (Jaccard, 'Vol 02' == 'Vol. 2');
+    TP/HC agreeing (+1), disagreeing (-1), unknown (0)."""
+    ids = {str(t.get("locg_id") or "")} | ({f"m{t['metron_issue_id']}"} if t.get("metron_issue_id") else set())
+    was = 1 if landed and landed.get(fname.lower()) in ids - {""} else 0
+    def words(s):
+        return {w.lstrip("0") or "0" if w.isdigit() else w for w in _sig_words(s)}
+    tw, fw = words(t.get("title") or ""), words(os.path.splitext(fname)[0])
+    share = round(len(tw & fw) / len(tw | fw), 6) if tw | fw else 0.0
+    a, b = _format_of(t.get("title") or ""), _format_of(os.path.splitext(fname)[0])
+    if not a and t.get("format"):
+        a = {"HC": "hc", "TPB": "tp", "TP": "tp"}.get(str(t["format"]).upper())
+    fmt = 0 if not a or not b else (1 if a == b else -1)
+    return (was, share, fmt)
 
 
 _FORMAT_WORDS = frozenset({"tp", "tpb", "hc", "gn", "ogn", "sc", "edition", "collected", "collection", "hardcover",
@@ -464,7 +507,7 @@ def refresh_trades_owned(series_id: int) -> None:
     series = db.get_series_by_id(series_id, DB_PATH)
     if not series:
         return
-    enrich_trades(series, cached["trades"])
+    enrich_trades(series, cached["trades"], landed=db.landed_trade_files(series_id, DB_PATH))
     db.set_trades(series_id, cached["trades"], DB_PATH)
     # A complete-run PACK lands as single issues, not a volume: the trade row
     # completes, the trades re-stamp sees nothing, and the issues sat at 0/6
