@@ -418,19 +418,40 @@ function _rdBindInput() {
     if (_rdZoomed()) return;
     _rdOnTap(e.clientX);
   });
+  // on the bar (the thumbnail strip scrolls sideways, the scrubber drags) a swipe is the bar's
+  const onBar = e => e.target.closest && e.target.closest('.rd-chrome .rd-top, .rd-chrome .rd-bottom');
   el.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1) { _rd.touch = null; return; }
+    if (e.touches.length !== 1 || onBar(e)) { _rd.touch = null; return; }
     _rd.touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
   }, { passive: true });
   el.addEventListener('touchend', e => {
     const t = _rd.touch; _rd.touch = null;
-    if (!t || _rdZoomed() || _rd.chrome) return;
+    if (!t || _rdZoomed() || _rd.ended) return;     // the bar being open no longer stops a swipe
     const dx = e.changedTouches[0].clientX - t.x, dy = e.changedTouches[0].clientY - t.y;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - t.t < 600) {
       e.preventDefault();               // a swipe, not a tap — don't let click fire
       _rdStep(dx < 0 ? 1 : -1, 'swipe');
     }
   });
+  // A two-finger sideways swipe on a trackpad arrives as horizontal wheel events,
+  // not touches — one page per gesture: the turn fires once the sideways travel
+  // passes WHEEL_TURN_PX, then waits for the gesture (and macOS's momentum) to
+  // go quiet before it can fire again.
+  const WHEEL_TURN_PX = 60, WHEEL_QUIET_MS = 260;
+  let wheelX = 0, wheelSpent = false, wheelTimer = null;
+  el.addEventListener('wheel', e => {
+    if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
+    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;          // vertical scroll: not a page turn
+    e.preventDefault();                                              // and not the browser's back/forward swipe
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(() => { wheelX = 0; wheelSpent = false; }, WHEEL_QUIET_MS);
+    if (wheelSpent) return;
+    wheelX += e.deltaX;
+    if (Math.abs(wheelX) >= WHEEL_TURN_PX) {
+      wheelSpent = true;
+      _rdStep(wheelX > 0 ? 1 : -1, 'swipe');
+    }
+  }, { passive: false });
   document.addEventListener('keydown', e => {
     if (currentView !== 'read' || !_rd.book) return;
     if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); _rdStep(1); }

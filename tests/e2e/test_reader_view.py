@@ -71,3 +71,21 @@ def test_read_shows_the_reader_at_once_while_a_slow_book_opens(app, app_server):
     expect(app.locator("#reader #rd-loading")).to_have_count(0, timeout=5000)            # gone once page 1 shows
     assert "coming off" not in app.locator("#reader").inner_text()
     app.unroute("**/api/series/*/issues/1/book")
+
+
+def test_a_trackpad_swipe_turns_one_page_per_gesture(app, app_server):
+    app.set_viewport_size({"width": 820, "height": 1180})          # one-up
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read").click()
+    page = app.locator("#reader #rd-stage .rd-page")
+    expect(page).to_have_attribute("alt", "Page 1")
+    app.mouse.move(410, 590)
+    for _ in range(8):                                               # one gesture, momentum and all
+        app.mouse.wheel(30, 0)
+    expect(page).to_have_attribute("alt", "Page 2")
+    app.wait_for_timeout(400)                                        # the gesture goes quiet
+    app.mouse.wheel(0, 200)                                          # vertical: not a page turn
+    app.wait_for_timeout(100)
+    expect(page).to_have_attribute("alt", "Page 2")
+    app.mouse.wheel(-90, 0)                                          # the other way: back a page
+    expect(page).to_have_attribute("alt", "Page 1")
