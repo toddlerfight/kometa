@@ -2,10 +2,6 @@
 
 Kept here so they don't live in a chat. Newest at the top of each section.
 
-## Do first (you)
-
-- [ ] **Revoke the Gitea `claude-code` token** and make a new one (Gitea → Settings → Applications). The old one is in this repo's public history (commit 3058eff, Apr 29, `deploy.sh`), reachable from `origin/main` and all tags. Then the new token moves out of plain text.
-
 ## From the 2026-10-11 second review — security still to do
 
 Bugs from today's waves — **fixed 2026-10-11** (kept for the record):
@@ -49,6 +45,8 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 - [ ] Two failed trade downloads: *Fantastic Four: Unthinkable* (stalled in SABnzbd), *Avengers Academy Vol. 2* (GetComics cut off) — retry or drop.
 
 ## Parked
+
+- [ ] Gitea `claude-code` token in public history (commit 3058eff) — your call: not revoking for now (Gitea is LAN/tailnet only).
 
 - [ ] YondeB fixes and checks — `~/code/yondeb/LATER.md`.
 - [ ] Tidy the older loose files in `/downloads` (Transmetropolitan, Die, Avengers Vol 5; the `.mkv`s aren't Kometa's).
