@@ -436,30 +436,14 @@ function _rdBindInput() {
   // A two-finger sideways swipe on a trackpad arrives as a stream of wheel events plus
   // macOS's momentum tail. One page per swipe — the rules live in _rdWheelGesture.
   const turnFor = _rdWheelGesture();
-  // TEMPORARY flight recorder: each gesture's raw stream + where it turned, posted
-  // once the wheel goes quiet. Remove with /api/debug/wheel.
-  const rec = { ev: [], t: 0 };
-  const recFlush = () => {
-    if (rec.ev.length && rec.ev.some(r => r[4])) {
-      fetch('/api/debug/wheel', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ua: navigator.userAgent, at: Date.now(), ev: rec.ev }) }).catch(() => {});
-    }
-    rec.ev = [];
-  };
   el.addEventListener('wheel', e => {
     if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
     const dx = e.deltaX * k, dy = e.deltaY * k;
     const now = e.timeStamp || performance.now();
-    if (rec.ev.length > 600) recFlush();
-    rec.ev.push([Math.round(now), +dx.toFixed(1), +dy.toFixed(1), e.deltaMode, 0]);
-    clearTimeout(rec.t); rec.t = setTimeout(recFlush, 1200);
     const turn = turnFor(now, dx, dy);
     if (Math.abs(dx) > Math.abs(dy) || turn) e.preventDefault();   // ours, not the browser's back/forward swipe
-    if (turn) {
-      rec.ev[rec.ev.length - 1][4] = turn;
-      _rdStep(turn, 'swipe');
-    }
+    if (turn) _rdStep(turn, 'swipe');
   }, { passive: false });
   document.addEventListener('keydown', e => {
     if (currentView !== 'read' || !_rd.book) return;
