@@ -174,3 +174,18 @@ def test_a_point_one_finds_its_event_trade_on_locg_across_series(db_path):
                       locg_search=lambda q: hits, locg_trades=lambda lid: lists.get(lid, []), **nothing)
     assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fear Itself: Secret Avengers TP", "#12.1")]
     assert asked == ["9977"]                       # only the related series' trade was read
+
+
+def test_an_interrupted_look_comes_back_in_an_hour_a_dead_end_in_a_week(db_path):
+    ff = db.add_series(title="Fantastic Four", publisher="Marvel", year_began=1998, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, ff, [67, 68])
+    tf.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        ids = [r["id"] for r in c.execute("SELECT id FROM download_queue WHERE tracked_series_id = ? ORDER BY issue_number", (ff,))]
+    tf._mark(ids[0], "looking", db_path)
+    tf._mark(ids[1], "none", db_path)
+    assert tf.stuck_rows(db_path, 50) == []                     # both just checked
+    two_hours_ago = (tf.datetime.now(tf.timezone.utc) - tf.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(db_path) as c:
+        c.execute("UPDATE trade_fallback SET checked_at = ?", (two_hours_ago,))
+    assert [r["id"] for r in tf.stuck_rows(db_path, 50)] == [ids[0]]

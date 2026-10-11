@@ -511,14 +511,19 @@ def stuck_rows(path=None, limit: int = ROWS_PER_TICK) -> list[dict]:
     """not_found single issues with no live proposal, oldest look first."""
     path = path or DB_PATH
     ensure_tables(path)
+    now = datetime.now(timezone.utc)
     with db._connect(path) as conn:
         return [dict(r) for r in conn.execute("""
             SELECT q.* FROM download_queue q LEFT JOIN trade_fallback f ON f.queue_id = q.id
             WHERE q.state = 'not_found' AND COALESCE(q.kind, 'issue') = 'issue' AND q.issue_number IS NOT NULL
               AND q.issue_number >= 0
-              AND (f.queue_id IS NULL OR (f.state IN ('none', 'looking') AND f.checked_at < ?))
+              AND (f.queue_id IS NULL OR (f.state = 'none' AND f.checked_at < ?)
+                   OR (f.state = 'looking' AND f.checked_at < ?))
             ORDER BY COALESCE(f.checked_at, ''), q.id LIMIT ?""",
-                                                     ((datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d"), limit))]
+            # 'none' = nobody collects it: ask again in a week. 'looking' = a source was
+            # shut or the budget ran dry mid-look: back in an hour, not a bloody week
+            ((now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"),
+             (now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"), limit))]
 
 
 def _target(series_id: int, number: float, path) -> dict:
