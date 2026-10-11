@@ -1414,7 +1414,7 @@ select.settings-input {
 
 @media (prefers-reduced-motion: reduce) {
   #modal, #modal-backdrop, #modal-backdrop.closing, #modal-backdrop.closing #modal { animation: none; }
-  img.loaded, .issue-tile-img.ignored img.loaded { animation: none; }
+  img.loaded, .issue-tile-img.ignored img.loaded, .stack-cover.loaded { animation: none; }
   img:not(.loaded) { opacity: 1; }
   .v-card { opacity: 1; }
   #issue-modal-details { animation: none !important; }
@@ -2375,7 +2375,13 @@ body.touch .od-menu { opacity: .85; }
    darkened — the front one tipped left, the back one right and up, all soft-shadowed. */
 .stack-fan { background: transparent; overflow: visible; }
 .stack-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-sm);
-  box-shadow: 0 2px 8px rgba(0,0,0,.6); transition: transform var(--t-mid) var(--ease-out); }
+  box-shadow: 0 3px 6px rgba(0,0,0,.45), 0 10px 22px rgba(0,0,0,.55);   /* each layer casts onto the one behind */
+  transition: transform var(--t-mid) var(--ease-out); }
+/* depth: the further back, the darker and softer */
+.stack-cover-1 { filter: brightness(.78) blur(.5px); }
+.stack-cover-2 { filter: brightness(.58) blur(1.1px); }
+/* the shared cover-in animates filter to none and would snap these back; fade only */
+.stack-cover.loaded { animation: fade-in var(--t-slow) var(--ease-out) backwards; }
 .stack-card:hover .stack-cover { transform: var(--fan); }               /* no cover zoom on a stack */
 .stack-cover-0 { z-index: 3; --fan: scale(.88) translate(-5%, 0) rotate(-5deg); transform: var(--fan); }
 .stack-cover-1 { z-index: 2; --fan: scale(.88); transform: var(--fan); }
