@@ -268,3 +268,11 @@ def test_a_leading_the_doesnt_stop_a_confident_match():
     assert _confident_row(rows, {"title": "Infinity War (1992)", "publisher": None, "folder_path": None})["id"] == 8922
     rows = [{"id": 1, "title": "Saga", "publisher": "Image", "year": 2012}]
     assert _confident_row(rows, {"title": "The Saga (2012)", "publisher": None, "folder_path": None})["id"] == 1
+
+
+def test_a_new_run_is_never_matched_to_an_old_one_of_the_same_name():
+    from kometa.shelf_import import _confident_row
+    rows = [{"id": 2172, "title": "Batman: Shadow of the Bat", "publisher": "DC Comics", "year": 1992}]
+    new = {"title": "Batman: Shadow of the Bat", "publisher": "DC Comics", "year_began": 2027, "folder_path": "/comics/DC Comics/Batman- Shadow of the Bat"}
+    assert _confident_row(rows, new) is None
+    assert _confident_row(rows, dict(new, year_began=1992))["id"] == 2172

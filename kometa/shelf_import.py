@@ -113,7 +113,10 @@ def _confident_row(rows, series: dict) -> dict | None:
     wants = {the(norm_key(t)) for t in title_variants(title)}
     pub = _pub_key(series.get("publisher") or "")
     years = _file_years(series.get("folder_path") or "")
-    first_year = folder_year or (years[0] if years else None)
+    # the year you tracked it with counts as evidence too: a new run with an empty
+    # folder ('Batman: Shadow of the Bat', 2027) otherwise matched the 1992 run of
+    # the same name — and on the pull list that's 96 old issues queued
+    first_year = folder_year or series.get("year_began") or (years[0] if years else None)
     passing = []
     for r in rows:
         if r.get("comic"):
