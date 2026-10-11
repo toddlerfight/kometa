@@ -28,20 +28,14 @@ Efficiency leftovers:
 
 Personal details (low, current tree): machine/drive names (ginbako, Voot II, emoji shares), ports, Brisbane in docs/scripts — genericise if wanted. YondeB has the tailnet/LAN address and Apple Team ID hard-coded (fine while private).
 
-## Waiting on a check (after the 2026-10-11 efficiency waves)
+## Checks
 
-- [ ] Library: open, go into a series, Back — instant, scroll kept.
-- [ ] Activity: updates during a download; badge counts right.
-- [ ] A download end to end: downloading → processing → done; in its folder; opens.
-- [ ] Trades tab on a series not opened lately: spinner, then trades.
-- [ ] Remove a series; Undo restores it.
-- [ ] Reader: a new book shows the progress bar, then crossfades into page 1.
+- No checklist: bugs get found by using it day to day (agreed 2026-10-12).
 
 ## Decisions
 
-- [ ] Two broken partial downloads in `/downloads` (Avengers Academy Vol. 2 — 252 MB of 673; FF 001–023 — 160 MB): delete or keep.
 - [ ] `komga_import.py` — has the one-time Komga reading-history import run? If yes, delete it.
-- [ ] Trades belong to a series: how folders like *Batman: Hush* / *Year One Deluxe* get filed under their parent run. Proposal: Kometa suggests the parent from the folder name, you confirm each; it becomes a trade on that run's Trades tab, readable, counted toward what it collects, never needs matching.
+- [x] Trades belong to a series (2026-10-12: the Collected editions report — wiki, else 'by name' for edition-named books; one click files each): how folders like *Batman: Hush* / *Year One Deluxe* get filed under their parent run. Proposal: Kometa suggests the parent from the folder name, you confirm each; it becomes a trade on that run's Trades tab, readable, counted toward what it collects, never needs matching.
 - [ ] Two failed trade downloads: *Fantastic Four: Unthinkable* (stalled in SABnzbd), *Avengers Academy Vol. 2* (GetComics cut off) — retry or drop.
 
 ## Parked
