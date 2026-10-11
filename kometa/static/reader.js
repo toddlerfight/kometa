@@ -443,11 +443,24 @@ function _rdBindInput() {
   //    second swipe used to be swallowed by the first one's momentum).
   const WHEEL_TURN_PX = 40, WHEEL_GAP_MS = 140, WHEEL_COOLDOWN_MS = 450;
   const g = { x: 0, y: 0, last: 0, low: 0, at: 0, spent: false, turnedAt: 0 };
+  // TEMPORARY flight recorder: each gesture's raw stream + where it turned, posted
+  // once the wheel goes quiet. Remove with /api/debug/wheel.
+  const rec = { ev: [], t: 0 };
+  const recFlush = () => {
+    if (rec.ev.length && rec.ev.some(r => r[4])) {
+      fetch('/api/debug/wheel', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ua: navigator.userAgent, at: Date.now(), ev: rec.ev }) }).catch(() => {});
+    }
+    rec.ev = [];
+  };
   el.addEventListener('wheel', e => {
     if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
     const dx = e.deltaX * k, dy = e.deltaY * k, mag = Math.abs(dx);
     const now = e.timeStamp || performance.now();
+    if (rec.ev.length > 600) recFlush();
+    rec.ev.push([Math.round(now), +dx.toFixed(1), +dy.toFixed(1), e.deltaMode, 0]);
+    clearTimeout(rec.t); rec.t = setTimeout(recFlush, 1200);
     // a fresh push inside the momentum tail: well above the tail's lowest point, not a
     // wobble in it (the tail jitters — reading every uptick as a new swipe turned
     // several pages per swipe)
@@ -461,6 +474,7 @@ function _rdBindInput() {
     e.preventDefault();                                              // and not the browser's back/forward swipe
     if (!g.spent && Math.abs(g.x) >= WHEEL_TURN_PX && now - g.turnedAt > WHEEL_COOLDOWN_MS) {
       g.spent = true; g.turnedAt = now; g.low = mag;
+      rec.ev[rec.ev.length - 1][4] = g.x > 0 ? 1 : -1;
       _rdStep(g.x > 0 ? 1 : -1, 'swipe');
     }
   }, { passive: false });

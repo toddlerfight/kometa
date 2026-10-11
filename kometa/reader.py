@@ -603,3 +603,20 @@ def put_progress(book_id: int, req: ProgressRequest):
     if not ok:
         raise HTTPException(409, detail={"error": "stale", "progress": stored})
     return {"progress": stored}
+
+
+# TEMPORARY wheel flight recorder — the trackpad keeps double-turning and two rounds
+# of guessing didn't nail it. The reader posts each gesture's raw wheel stream here;
+# read /data/wheel-log.jsonl, fix the handler, then rip this out.
+@router.post("/api/debug/wheel")
+def debug_wheel(body: dict):
+    import json as _json
+    path = os.path.join(os.path.dirname(os.environ.get("KOMETA_DB", "/data/kometa.db")), "wheel-log.jsonl")
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 2_000_000:
+            return {"ok": False}                                      # plenty, stop writing
+        with open(path, "a") as f:
+            f.write(_json.dumps(body)[:200_000] + "\n")
+    except OSError:
+        return {"ok": False}
+    return {"ok": True}
