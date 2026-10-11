@@ -78,14 +78,37 @@ def test_a_trackpad_swipe_turns_one_page_per_gesture(app, app_server):
     _open_alpha_issue_1(app)
     app.locator("#modal").get_by_role("button", name="Read").click()
     page = app.locator("#reader #rd-stage .rd-page")
-    expect(page).to_have_attribute("alt", "Page 1")
+    expect(page).to_have_count(1)
+    start = int(page.get_attribute("alt").split()[-1])               # an earlier test may have saved a place
+    at = lambda n: expect(page).to_have_attribute("alt", f"Page {n}")
     app.mouse.move(410, 590)
     for _ in range(8):                                               # one gesture, momentum and all
         app.mouse.wheel(30, 0)
-    expect(page).to_have_attribute("alt", "Page 2")
+    at(start + 1)
     app.wait_for_timeout(400)                                        # the gesture goes quiet
     app.mouse.wheel(0, 200)                                          # vertical: not a page turn
     app.wait_for_timeout(100)
-    expect(page).to_have_attribute("alt", "Page 2")
+    at(start + 1)
     app.mouse.wheel(-90, 0)                                          # the other way: back a page
-    expect(page).to_have_attribute("alt", "Page 1")
+    at(start)
+
+
+def test_a_quick_second_trackpad_swipe_counts_and_a_diagonal_one_turns(app, app_server):
+    app.set_viewport_size({"width": 820, "height": 1180})
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read").click()
+    page = app.locator("#reader #rd-stage .rd-page")
+    expect(page).to_have_count(1)
+    start = int(page.get_attribute("alt").split()[-1])               # an earlier test may have saved a place
+    at = lambda n: expect(page).to_have_attribute("alt", f"Page {n}")
+    app.mouse.move(410, 590)
+    for d in (30, 26, 20, 14, 9, 6, 4):                              # a swipe and its decaying momentum
+        app.mouse.wheel(d, 0)
+    at(start + 1)
+    for d in (28, 30, 22):                                           # a fresh push inside the tail
+        app.mouse.wheel(d, 0)
+    at(start + 2)
+    app.wait_for_timeout(300)
+    for _ in range(6):                                               # wobbly: sideways wins over the whole swipe
+        app.mouse.wheel(-12, 9)
+    at(start + 1)

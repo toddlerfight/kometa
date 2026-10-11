@@ -433,23 +433,31 @@ function _rdBindInput() {
       _rdStep(dx < 0 ? 1 : -1, 'swipe');
     }
   });
-  // A two-finger sideways swipe on a trackpad arrives as horizontal wheel events,
-  // not touches — one page per gesture: the turn fires once the sideways travel
-  // passes WHEEL_TURN_PX, then waits for the gesture (and macOS's momentum) to
-  // go quiet before it can fire again.
-  const WHEEL_TURN_PX = 60, WHEEL_QUIET_MS = 260;
-  let wheelX = 0, wheelSpent = false, wheelTimer = null;
+  // A two-finger sideways swipe on a trackpad arrives as a stream of wheel events,
+  // then macOS keeps sending a decaying momentum tail. One page per swipe:
+  //  - a swipe is judged on its whole travel (sideways beats up-down overall), not
+  //    event by event — a slightly diagonal swipe used to fall short;
+  //  - it turns once its sideways travel passes WHEEL_TURN_PX;
+  //  - a NEW swipe starts after a pause, or when the speed rises again — momentum
+  //    only ever decays, so a fresh push inside the tail is a fresh swipe (a quick
+  //    second swipe used to be swallowed by the first one's momentum).
+  const WHEEL_TURN_PX = 40, WHEEL_GAP_MS = 140;
+  const g = { x: 0, y: 0, last: 0, at: 0, spent: false };
   el.addEventListener('wheel', e => {
     if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
-    if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;          // vertical scroll: not a page turn
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
+    const dx = e.deltaX * k, dy = e.deltaY * k, mag = Math.abs(dx);
+    const now = e.timeStamp || performance.now();
+    const rising = g.spent && mag > 4 && mag > g.last * 1.6;
+    const turnedSideways = mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x);   // a scroll, then a swipe
+    if (now - g.at > WHEEL_GAP_MS || rising || turnedSideways) Object.assign(g, { x: 0, y: 0, spent: false });
+    g.at = now; g.last = mag;
+    g.x += dx; g.y += dy;
+    if (Math.abs(g.x) <= Math.abs(g.y)) return;                    // an up-down scroll: leave it alone
     e.preventDefault();                                              // and not the browser's back/forward swipe
-    clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(() => { wheelX = 0; wheelSpent = false; }, WHEEL_QUIET_MS);
-    if (wheelSpent) return;
-    wheelX += e.deltaX;
-    if (Math.abs(wheelX) >= WHEEL_TURN_PX) {
-      wheelSpent = true;
-      _rdStep(wheelX > 0 ? 1 : -1, 'swipe');
+    if (!g.spent && Math.abs(g.x) >= WHEEL_TURN_PX) {
+      g.spent = true;
+      _rdStep(g.x > 0 ? 1 : -1, 'swipe');
     }
   }, { passive: false });
   document.addEventListener('keydown', e => {

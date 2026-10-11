@@ -739,7 +739,9 @@ function _renderBrowseResults(quiet = false) {
   let filtered = all.filter(s => {
     if (stack && s.franchise?.key !== stack) return false;               // a stack's page: its members only
     if (q && !s.title.toLowerCase().includes(q) && !(s.kind !== 'shelf' && why[s.id])) return false;
-    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list)) return false;
+    // Pull list = what you're pulling that has something still to come, like the
+    // Pull list section — not every pulled run whether or not anything's out
+    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && (s.upcoming ?? 0) > 0)) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
     // folded under its run — unless you searched, or asked for what you're pulling:
