@@ -122,3 +122,21 @@ def test_unknown_shelf_series_404s(shelf):
     with pytest.raises(HTTPException) as e:
         sh.shelf_detail(999)
     assert e.value.status_code == 404
+
+
+def test_a_restart_skips_the_shelf_walk_when_one_ran_lately(monkeypatch, tmp_path):
+    import kometa.shelf as sh
+    import kometa.db as db
+    p = str(tmp_path / "k.db"); db.init_db(p)
+    monkeypatch.setattr(sh, "DB_PATH", p)
+    walks = []
+    monkeypatch.setattr(sh, "scan_shelf", lambda *a, **k: walks.append(1))
+    import kometa.shelf_import as si, kometa.trash as tr
+    monkeypatch.setattr(si, "import_in_background", lambda: None)
+    monkeypatch.setattr(tr, "purge_safe", lambda: None)
+    sh.scan_shelf_safe(skip_if_fresh=True)                       # never scanned: walks
+    from datetime import datetime, timezone
+    db.set_config({sh.SCANNED_KEY: datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}, p)
+    sh.scan_shelf_safe(skip_if_fresh=True)                       # fresh: skipped
+    sh.scan_shelf_safe()                                         # a sync's walk always runs
+    assert walks == [1, 1]

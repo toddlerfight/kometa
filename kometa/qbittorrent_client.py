@@ -125,7 +125,14 @@ class QBittorrentClient:
         logger.warning("qBittorrent: .torrent url added but new hash never appeared")
         return None
 
-    def poll_job(self, infohash: str) -> dict:
+    def snapshot(self, infohashes) -> dict:
+        """Every pending torrent in one /torrents/info call (was one per torrent)."""
+        r = self._req("GET", "/api/v2/torrents/info", params={"hashes": "|".join(infohashes)})
+        if r is None:
+            raise RuntimeError("qBittorrent didn't answer")
+        return {(t.get("hash") or "").lower(): t for t in r.json()}
+
+    def poll_job(self, infohash: str, snap: dict | None = None) -> dict:
         """Poll a torrent. Same contract shape as SABnzbdClient.poll_job:
           {"status": "downloading", "pct": float, "seeders": int, "state": str}
           {"status": "completed",   "content_path": str}
@@ -134,13 +141,18 @@ class QBittorrentClient:
         Completion keys off the seeding states (files settled + in place), not bare
         progress>=1.0, so we never import mid-move/mid-recheck.
         """
-        r = self._req("GET", "/api/v2/torrents/info", params={"hashes": infohash})
-        if r is None:
-            return {"status": "unknown"}
-        arr = r.json()
-        if not arr:
-            return {"status": "unknown"}
-        t = arr[0]
+        if snap is not None:
+            t = snap.get((infohash or "").lower())
+            if not t:
+                return {"status": "unknown"}
+        else:
+            r = self._req("GET", "/api/v2/torrents/info", params={"hashes": infohash})
+            if r is None:
+                return {"status": "unknown"}
+            arr = r.json()
+            if not arr:
+                return {"status": "unknown"}
+            t = arr[0]
         state = t.get("state", "")
         if state in _FAIL_STATES:
             return {"status": "failed", "error": f"qBittorrent state: {state}"}

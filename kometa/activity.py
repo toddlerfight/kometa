@@ -11,6 +11,9 @@ import time
 READING_WINDOW_S = 90
 _last_page = {"at": 0.0}
 _lock = threading.Lock()
+# set when the app is shutting down: a loop waiting on a reader gives up at once
+# instead of holding the process open (a deploy waited out the 10-minute yields)
+STOPPING = threading.Event()
 
 
 def note_reading() -> None:
@@ -26,7 +29,10 @@ def yield_to_reader(sleep=time.sleep, max_wait: float = 600.0) -> bool:
     """Block (in small sleeps) while a reader is active; True if we waited."""
     waited = False
     start = time.time()
-    while reading_recently() and time.time() - start < max_wait:
-        sleep(5)
+    while reading_recently() and time.time() - start < max_wait and not STOPPING.is_set():
+        if sleep is time.sleep:
+            STOPPING.wait(5)
+        else:
+            sleep(5)
         waited = True
     return waited

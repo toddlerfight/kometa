@@ -166,6 +166,10 @@ class LocgPaused(RuntimeError):
     pass
 
 
+class LocgBusy(LocgPaused):
+    """Background work holds LOCG's pace; a request someone is waiting on doesn't queue."""
+
+
 def _paused_until() -> float:
     if _pause["until"] is None:
         try:
@@ -201,10 +205,18 @@ PACE_MAX = 20
 _recent: list[float] = []
 
 
-def _pace(sleep=time.sleep, now=time.time):
+def _pace(sleep=time.sleep, now=time.time, max_wait: float | None = None):
     global _recent
     t = now()
     _recent = [x for x in _recent if t - x < PACE_WINDOW_S]
+    if max_wait is not None:
+        need = 0.0
+        if len(_recent) >= PACE_MAX:
+            need = PACE_WINDOW_S - (t - _recent[0])
+        elif _recent:
+            need = PACE_GAP_S - (t - _recent[-1])
+        if need > max_wait:
+            raise LocgBusy(f"LOCG is busy with background work (next slot in {int(need)} s)")
     if len(_recent) >= PACE_MAX:
         sleep(PACE_WINDOW_S - (t - _recent[0]) + 0.5)
         t = now()
@@ -334,10 +346,16 @@ def _anon_get_fn():
             def _get(url, **kw):
                 kw.setdefault("timeout", 25)
                 _check_paused()
-                with _anon_lock:
-                    _pace()                      # ONE pace for every caller, under the same lock
+                from kometa.interactive import is_interactive, MAX_WAIT_S
+                interactive = is_interactive()
+                if not _anon_lock.acquire(timeout=MAX_WAIT_S if interactive else -1):
+                    raise LocgBusy("LOCG is busy with background work")
+                try:
+                    _pace(max_wait=MAX_WAIT_S if interactive else None)   # ONE pace for every caller, under the same lock
                     _check_paused()              # the wait may have outlasted a pause someone else hit
                     r = _anon_session["session"].get(url, **kw)
+                finally:
+                    _anon_lock.release()
                 _note_refusal(r)
                 return r
             _anon_session["get"] = _get

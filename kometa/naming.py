@@ -160,12 +160,42 @@ def _archive_entry_names(path: str) -> list[str] | None:
     return [] if ext in _ZIP_OR_RAR_EXTS else None
 
 
-@functools.lru_cache(maxsize=4096)
-def _entry_names_cached(path: str, size: int, mtime: float) -> tuple | None:
-    # Keyed on identity-plus-fingerprint so a re-download of the same path is
-    # re-probed, but a full library sync doesn't re-crack every archive it owns.
+_VERDICT_TABLE = """CREATE TABLE IF NOT EXISTS archive_verdict (
+    path TEXT PRIMARY KEY, size INTEGER, mtime REAL, has_pages INTEGER, season INTEGER)"""
+_verdict_ready: set = set()
+
+
+@functools.lru_cache(maxsize=16384)
+def _archive_verdict(path: str, size: int, mtime: float) -> tuple | None:
+    """(has_pages, season) for an archive, or None if it couldn't be looked into.
+
+    Kept in the DB by (path, size, mtime): every restart used to reopen every
+    owned archive on the share to answer this again (~2,000 after a restart, an
+    lsar per CBR), and a 4,096-entry memory cache couldn't hold 7k books anyway.
+    A re-download changes size/mtime and is looked at fresh."""
+    from kometa import db
+    try:
+        with db._connect(db.DB_PATH) as conn:
+            if db.DB_PATH not in _verdict_ready:
+                conn.execute(_VERDICT_TABLE)
+                _verdict_ready.add(db.DB_PATH)
+            r = conn.execute("SELECT has_pages, season FROM archive_verdict WHERE path = ? AND size = ? AND mtime = ?",
+                             (path, size, mtime)).fetchone()
+        if r:
+            return bool(r[0]), r[1]
+    except Exception:
+        pass                                    # no DB (a script, a test without one): just look
     names = _archive_entry_names(path)
-    return None if names is None else tuple(names)
+    if names is None:
+        return None                             # couldn't look — not remembered, asked again next time
+    verdict = (any(n.lower().endswith(_IMAGE_EXTS) for n in names), _season_from_entries_names(names))
+    try:
+        with db._connect(db.DB_PATH) as conn:
+            conn.execute("INSERT OR REPLACE INTO archive_verdict (path, size, mtime, has_pages, season) VALUES (?, ?, ?, ?, ?)",
+                         (path, size, mtime, int(verdict[0]), verdict[1]))
+    except Exception:
+        pass
+    return verdict
 
 
 def counts_as_owned(path: str, series_title: str = "") -> bool:
@@ -183,12 +213,12 @@ def counts_as_owned(path: str, series_title: str = "") -> bool:
         st = os.stat(path)
     except OSError:
         return False
-    names = _entry_names_cached(path, st.st_size, st.st_mtime)
-    if names is None:
+    verdict = _archive_verdict(path, st.st_size, st.st_mtime)
+    if verdict is None:
         return True                                  # couldn't look; innocent
-    if not any(n.lower().endswith(_IMAGE_EXTS) for n in names):
+    has_pages, got = verdict
+    if not has_pages:
         return False                                 # no pages: not a comic
-    got = _season_from_entries_names(names)
     return got is None or got == (_season_from_title(series_title) or 1)
 
 

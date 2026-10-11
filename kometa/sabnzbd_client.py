@@ -88,7 +88,19 @@ class SABnzbdClient:
             logger.warning(f"SABnzbd history check failed: {e}")
         return None
 
-    def poll_job(self, nzo_id: str) -> dict:
+    def snapshot(self, nzo_ids=None) -> dict:
+        """The queue and the history in two calls, for a whole poll tick — it was
+        two calls per job. nzo_ids narrows the history to these jobs, so a busy
+        day can't push a finished one past the last 100 and read as 'unknown'.
+        Raises if SAB doesn't answer (the tick is skipped, nothing is guessed)."""
+        q = self._api(mode="queue").get("queue", {}).get("slots", [])
+        params = {"mode": "history", "limit": 100}
+        if nzo_ids:
+            params["nzo_ids"] = ",".join(nzo_ids)
+        h = self._api(**params).get("history", {}).get("slots", [])
+        return {"queue": {s.get("nzo_id"): s for s in q}, "history": {s.get("nzo_id"): s for s in h}}
+
+    def poll_job(self, nzo_id: str, snap: dict | None = None) -> dict:
         """
         Poll a job. Returns:
           {"status": "queued",     "pct": float}           — in SABnzbd queue
@@ -96,7 +108,7 @@ class SABnzbdClient:
           {"status": "failed",     "error": str}            — failed in SABnzbd
           {"status": "unknown"}                             — not found in queue or history
         """
-        slot = self.get_queue_slot(nzo_id)
+        slot = snap["queue"].get(nzo_id) if snap else self.get_queue_slot(nzo_id)
         if slot:
             try:
                 pct = float(slot.get("percentage", 0))
@@ -108,7 +120,7 @@ class SABnzbdClient:
                 mbleft = None
             return {"status": "queued", "pct": pct, "mbleft": mbleft, "sab_status": slot.get("status") or ""}
 
-        slot = self.get_history_slot(nzo_id)
+        slot = snap["history"].get(nzo_id) if snap else self.get_history_slot(nzo_id)
         if slot:
             status = (slot.get("status") or "").lower()
             if status == "completed":

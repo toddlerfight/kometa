@@ -38,3 +38,11 @@ def series(db_path):
         publisher="Image", year_began=2012, folder_path=None,
         on_pull_list=True, path=db_path,
     )
+
+
+@pytest.fixture(autouse=True)
+def _finalize_inline(monkeypatch):
+    """Pollers hand finished downloads to a worker thread in the app; tests run
+    that work inline so a poll call's effects are visible when it returns."""
+    import kometa.acquisition as acquisition
+    monkeypatch.setattr(acquisition, "FINALIZE_INLINE", True)

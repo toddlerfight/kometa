@@ -185,7 +185,13 @@ def _komga_covers_on() -> bool:
         return False
 
 
-def _store_response(key: str, source: str, max_age: int = 2592000) -> Response | None:
+# Covers in the browser: a day, then refetched in the background while the old
+# one still shows. It was 30 days, so a cover fixed on the server (City of
+# Madness's half-grey page 1) stayed broken in the browser for a month.
+COVER_MAX_AGE = 86400
+
+
+def _store_response(key: str, source: str, max_age: int = COVER_MAX_AGE) -> Response | None:
     """Bytes the record's store holds for a key — file covers, Komga posters —
     with the source named in the headers so a tile can say where it came from."""
     from kometa import images
@@ -199,7 +205,7 @@ def _store_response(key: str, source: str, max_age: int = 2592000) -> Response |
     if not data:
         return None
     return Response(content=data, media_type=_img_ct(data),
-                    headers={"Cache-Control": f"public, max-age={max_age}", "X-Kometa-Image": "disk", "X-Kometa-Source": source})
+                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk", "X-Kometa-Source": source})
 
 
 def _tag(resp, source: str):

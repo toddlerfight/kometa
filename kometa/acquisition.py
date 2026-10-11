@@ -26,6 +26,7 @@ from kometa.prowlarr_client import search_usenet, search_usenet_pack
 from kometa.getcomics_client import GetComicsClient, GCRateLimitError
 from kometa.downloader import DuplicateIssueError, UnreadableArchiveError
 from kometa.sabnzbd_client import find_comics_in_dir
+from kometa.naming import PIPELINE_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -922,6 +923,45 @@ def try_getcomics_now(qid: int, background: bool = True) -> dict:
     return {"ok": True, "qid": qid}
 
 
+# --- the finalize worker -------------------------------------------------------------
+# A poll tick only asks SAB/qBit what's done. Placing a finished download (unpack,
+# verify, copy to the shelf, CBR→CBZ) and the fallback road for a dead one
+# (torrent search, GetComics) used to run INSIDE the 5-second tick: minutes, during
+# which every other download's progress froze and the next ticks were skipped.
+# Now the row flips to 'processing' (the pending queries stop returning it) and
+# one worker does the work, one download at a time.
+FINALIZE_INLINE = False          # tests run the work on the poller's own thread
+_finalize_pool = None
+_finalizing: set = set()
+_finalizing_lock = threading.Lock()
+
+
+def _hand_off(qid: int, label: str, fn, *args) -> None:
+    global _finalize_pool
+    with _finalizing_lock:
+        if qid in _finalizing:
+            return
+        _finalizing.add(qid)
+    db.update_queue_state(qid, "processing", path=DB_PATH)
+
+    def run():
+        try:
+            fn(*args)
+        except Exception as e:
+            logger.warning(f"{label}: qid {qid} raised while placing: {e}", exc_info=True)
+            db.update_queue_state(qid, "failed", error=f"{label}: placing failed — {e}", path=DB_PATH)
+        finally:
+            with _finalizing_lock:
+                _finalizing.discard(qid)
+    if FINALIZE_INLINE:
+        run()
+        return
+    if _finalize_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _finalize_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="finalize")
+    _finalize_pool.submit(run)
+
+
 def _poll_usenet_jobs():
     """Check SABnzbd for completed pending_usenet queue items and finalize them."""
     from datetime import datetime, timedelta
@@ -931,6 +971,13 @@ def _poll_usenet_jobs():
     items = db.get_pending_usenet_items(DB_PATH)
     if not items:
         return
+    snap = None
+    if hasattr(sab, "snapshot"):
+        try:
+            snap = sab.snapshot([i["sab_nzo_id"] for i in items])
+        except Exception as e:
+            logger.info(f"Usenet poll: SABnzbd didn't answer — skipping this tick: {e}")
+            return
 
     queued = []
     for item in items:
@@ -940,7 +987,7 @@ def _poll_usenet_jobs():
         # tripping on disk) must NOT starve every job behind it in the loop —
         # log it, leave its row for the next tick, keep walking.
         try:
-            result = sab.poll_job(nzo_id)
+            result = sab.poll_job(nzo_id, snap) if snap is not None else sab.poll_job(nzo_id)
             status = result["status"]
 
             if status == "queued":
@@ -954,7 +1001,7 @@ def _poll_usenet_jobs():
                 clear_progress(qid)
                 storage = result.get("storage", "")
                 logger.info(f"Usenet job {nzo_id} completed — storage: {storage}")
-                _finalize_usenet_download(item, qid, storage)
+                _hand_off(qid, "Usenet", _finalize_usenet_download, item, qid, storage)
 
             elif status in ("failed", "unknown"):
                 age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")
@@ -971,7 +1018,7 @@ def _poll_usenet_jobs():
                 # Usenet couldn't DELIVER (retention/repair) — fall to torrent before
                 # giving up. This is what makes vintage land: the old NZB repair-fails,
                 # the healthy torrent catches it.
-                _usenet_cascade(item, qid, nzo_id, err)
+                _hand_off(qid, "Usenet", _usenet_cascade, item, qid, nzo_id, err)
         except Exception as e:
             logger.warning(f"Usenet poll: job {nzo_id} (qid {qid}) raised — skipping this tick: {e}")
 
@@ -992,9 +1039,19 @@ def _poll_usenet_jobs():
                 deleter(nzo_id)
             _usenet_seen.pop(qid, None)
             clear_progress(qid)
-            _usenet_cascade(item, qid, nzo_id, f"stalled {STALL_MIN} min in SABnzbd")
+            _hand_off(qid, "Usenet", _usenet_cascade, item, qid, nzo_id, f"stalled {STALL_MIN} min in SABnzbd")
         except Exception as e:
             logger.warning(f"Usenet stall: qid {qid} raised: {e}")
+
+
+def _downloaded_comics(content_path: str) -> list[str]:
+    """The comic files a finished download holds: a directory's comics, or the
+    one file itself — never the folder a single file happens to sit in."""
+    if os.path.isdir(content_path):
+        return find_comics_in_dir(content_path)
+    if os.path.splitext(content_path)[1].lower() in PIPELINE_EXTS and os.path.isfile(content_path):
+        return [content_path]
+    return []
 
 
 def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, keep_source: bool):
@@ -1034,10 +1091,10 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     dest_dir = item.get("folder_path") or _resolve_dir(_comics_root(), publisher or "Unknown", title)
 
     # The downloader reports a completed FILE for a single-file job, or the job
-    # DIRECTORY for multi-file. find_comics_in_dir walks a directory, so a file
-    # path would walk to nothing — scan the parent dir when it's a file.
-    scan_dir = content_path if os.path.isdir(content_path) else os.path.dirname(content_path)
-    comics = find_comics_in_dir(scan_dir)
+    # DIRECTORY for multi-file. A file is the download: use it alone. (Its parent
+    # is qBittorrent's shared save folder — walking that picked up every other
+    # torrent's files, and a trade or pack would have placed them all.)
+    comics = _downloaded_comics(content_path)
     if not comics:
         db.update_queue_state(qid, "failed", error=f"{label}: no comic files in completed download", path=DB_PATH)
         return
@@ -1304,6 +1361,13 @@ def _poll_torrent_jobs():
     items = db.get_pending_torrent_items(DB_PATH)
     if not items:
         return
+    snap = None
+    if hasattr(qbit, "snapshot"):
+        try:
+            snap = qbit.snapshot([i["torrent_hash"] for i in items])
+        except Exception as e:
+            logger.info(f"Torrent poll: qBittorrent didn't answer — skipping this tick: {e}")
+            return
 
     for item in items:
         qid = item["id"]
@@ -1312,7 +1376,7 @@ def _poll_torrent_jobs():
         # mid-poll, finalize choking on disk) doesn't take the rest of the
         # queue hostage — log, skip, next tick retries it.
         try:
-            result = qbit.poll_job(ih)
+            result = qbit.poll_job(ih, snap) if snap is not None else qbit.poll_job(ih)
             status = result["status"]
 
             if status == "downloading":
@@ -1337,7 +1401,7 @@ def _poll_torrent_jobs():
                 clear_progress(qid)
                 content_path = result.get("content_path", "")
                 logger.info(f"Torrent {ih} completed — content_path: {content_path}")
-                _finalize_torrent_download(item, qid, content_path)
+                _hand_off(qid, "Torrent", _finalize_torrent_download, item, qid, content_path)
 
             elif status in ("failed", "unknown"):
                 age = _utcnow() - datetime.strptime(item["updated_at"], "%Y-%m-%d %H:%M:%S")

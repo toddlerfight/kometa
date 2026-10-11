@@ -134,7 +134,7 @@ def _ct(data: bytes) -> str:
     return _img_ct(data)
 
 
-def serve(key: str, url: str | None, source: str, path=None, max_age: int = 2592000) -> Response | None:
+def serve(key: str, url: str | None, source: str, path=None, max_age: int = 86400) -> Response | None:
     """A Response from the store: disk first, else fetch-and-store, else None so
     the caller falls through to its old chain. X-Kometa-Image says which."""
     row = get(key, path)
@@ -150,7 +150,7 @@ def serve(key: str, url: str | None, source: str, path=None, max_age: int = 2592
     if not data:
         return None
     return Response(content=data, media_type=_ct(data),
-                    headers={"Cache-Control": f"public, max-age={max_age}", "X-Kometa-Image": "disk" if hit else "fetched"})
+                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk" if hit else "fetched"})
 
 
 # --- catalogue covers: a day on disk, then gone ----------------------------------------

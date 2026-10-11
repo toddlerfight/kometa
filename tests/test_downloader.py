@@ -605,3 +605,16 @@ def test_the_pages_own_name_outranks_the_release_title():
     assert _series_from_page_names([f"{i:03d}.jpg" for i in range(30)]) is None
     assert _series_from_page_names([f"page {i:03d}.jpg" for i in range(30)]) is None
     assert _series_from_page_names(["ComicInfo.xml"] + [f"Die 001-{i:03d}.jpg" for i in range(5)]) == "Die"
+
+
+def test_a_broken_download_leaves_no_half_file(tmp_path):
+    import pytest
+    import kometa.downloader as dl
+    class R:
+        def iter_content(self, chunk_size):
+            yield b"x" * 10
+            raise ConnectionError("IncompleteRead(10 bytes read, 90 more expected)")
+    dest = tmp_path / "Trade Vol 02.cbz"
+    with pytest.raises(ConnectionError):
+        dl._stream_to(R(), str(dest), 100)
+    assert not dest.exists()

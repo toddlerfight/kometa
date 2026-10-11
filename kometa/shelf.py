@@ -55,21 +55,24 @@ def _comic_files(folder: str) -> list[tuple]:
     return out
 
 
-def _series_folders(ser) -> list[tuple[str, str]]:
-    """(folder, title) for a series dir: itself, plus any sub-folder holding
-    comics. 'Batman (2016)' keeps its name (it says which run it is); 'Volume
-    07 (2016)' or 'Variants' becomes 'Batman Beyond - Volume 07 (2016)'."""
-    out = [(ser.path, ser.name)]
+def _series_folders(ser) -> list[tuple[str, str, list]]:
+    """(folder, title, files) for a series dir: itself, plus any sub-folder
+    holding comics. 'Batman (2016)' keeps its name (it says which run it is);
+    'Volume 07 (2016)' or 'Variants' becomes 'Batman Beyond - Volume 07 (2016)'.
+    Each folder is listed once — its files ride along (the scan used to list
+    every sub-folder twice: once to see if it held comics, once to index them)."""
+    out = [(ser.path, ser.name, _comic_files(ser.path))]
     try:
         subs = [d for d in os.scandir(ser.path) if d.is_dir() and not _skip(d.name)]
     except OSError:
         return out
     parent = ser.name.lower()
     for d in sorted(subs, key=lambda e: e.name.lower()):
-        if not _comic_files(d.path):
+        files = _comic_files(d.path)
+        if not files:
             continue
         stands_alone = d.name.lower().startswith(parent)
-        out.append((d.path, d.name if stands_alone else f"{ser.name} - {d.name}"))
+        out.append((d.path, d.name if stands_alone else f"{ser.name} - {d.name}", files))
     return out
 
 
@@ -103,8 +106,7 @@ def scan_shelf(root: str | None = None) -> dict:
                 # (2026-10-08, found by the Komga history import's unmatched list).
                 # A sub-folder is its own series, titled by its own name when that
                 # name stands alone ('Batman (2016)'), else 'Parent - Sub'.
-                for folder, title in _series_folders(ser):
-                    files = _comic_files(folder)
+                for folder, title, files in _series_folders(ser):
                     if not files:
                         continue
                     tid = tracked.get(os.path.realpath(folder))
@@ -118,6 +120,7 @@ def scan_shelf(root: str | None = None) -> dict:
         if healed:
             logger.info(f"Shelf scan: {healed} book(s) given the number their name now carries")
         result = {"series": n_series, "books": n_books, "pruned": pruned, "scanned_at": stamp}
+        db.set_config({SCANNED_KEY: stamp}, DB_PATH)
         _last_scan.clear()
         _last_scan.update(result)
         logger.info(f"Shelf scan: {n_series} series, {n_books} books, {pruned} gone")
@@ -148,7 +151,26 @@ def index_series_folder(series_id: int, path=None) -> int:
     return len(files)
 
 
-def scan_shelf_safe():
+SCANNED_KEY = "shelf_scanned_at"
+STARTUP_FRESH_S = 6 * 3600
+
+
+def _scanned_recently(within_s: float) -> bool:
+    at = db.get_config(DB_PATH).get(SCANNED_KEY) or ""
+    try:
+        t = datetime.strptime(at[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - t).total_seconds() < within_s
+
+
+def scan_shelf_safe(skip_if_fresh: bool = False):
+    # A restart doesn't walk the whole shelf again if a walk finished lately:
+    # deploys came in bursts, each re-listing every folder and stat'ing ~7k files.
+    # Downloads index their own folder as they land; every full sync still walks.
+    if skip_if_fresh and _scanned_recently(STARTUP_FRESH_S):
+        logger.info("Shelf scan: skipped at startup — the last one is under 6 hours old")
+        return
     try:
         scan_shelf()
     except Exception as e:
@@ -164,8 +186,9 @@ def scan_shelf_safe():
     purge_safe()
 
 
-def scan_in_background():
-    threading.Thread(target=scan_shelf_safe, name="shelf-scan", daemon=True).start()
+def scan_in_background(skip_if_fresh: bool = False):
+    threading.Thread(target=scan_shelf_safe, kwargs={"skip_if_fresh": skip_if_fresh},
+                     name="shelf-scan", daemon=True).start()
 
 
 # --- routes ------------------------------------------------------------------------

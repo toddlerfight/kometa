@@ -1243,3 +1243,40 @@ class TestTryGetComicsNow:
         import pytest
         with pytest.raises(ValueError):
             acq.try_getcomics_now(_qid_for(db_path, series, -1.0), background=False)
+
+
+def test_a_finished_download_is_placed_off_the_poll_tick(db_path, monkeypatch):
+    """The poller flips the row to processing and returns; the worker places it."""
+    import threading
+    import kometa.acquisition as acq
+    monkeypatch.setattr(acq, "FINALIZE_INLINE", False)
+    monkeypatch.setattr(acq, "_finalize_pool", None)
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 1.0, db_path)
+    with db._connect(db_path) as c:
+        qid = c.execute("SELECT id FROM download_queue").fetchone()[0]
+        c.execute("UPDATE download_queue SET state = 'pending_usenet', sab_nzo_id = 'nzo1' WHERE id = ?", (qid,))
+    gate, placed = threading.Event(), []
+    class Sab:
+        def snapshot(self, ids): return {"queue": {}, "history": {"nzo1": {"nzo_id": "nzo1", "status": "Completed", "storage": "/d/x"}}}
+        def poll_job(self, nzo, snap=None): return {"status": "completed", "storage": "/d/x"}
+        def queue_paused(self): return False
+    monkeypatch.setattr(acq, "_sabnzbd", lambda: Sab())
+    monkeypatch.setattr(acq, "_finalize_usenet_download", lambda item, q, storage: (gate.wait(5), placed.append(q)))
+    acq._poll_usenet_jobs()                                           # returns while the worker is still placing
+    assert next(q for q in db.get_queue(db_path) if q["id"] == qid)["state"] == "processing"
+    acq._poll_usenet_jobs()                                           # a second tick doesn't hand it off twice
+    gate.set()
+    acq._finalize_pool.submit(lambda: None).result(5)
+    assert placed == [qid]
+
+
+def test_a_single_file_torrent_is_just_that_file(tmp_path):
+    import kometa.acquisition as acq
+    shared = tmp_path / "torrents"; shared.mkdir()
+    for n in ("Saga 001.cbz", "Someone Else's Pack 001.cbz", "Other 002.cbr"):
+        (shared / n).write_bytes(b"PK")
+    assert acq._downloaded_comics(str(shared / "Saga 001.cbz")) == [str(shared / "Saga 001.cbz")]
+    assert len(acq._downloaded_comics(str(shared))) == 3                 # a multi-file job is its directory
+    assert acq._downloaded_comics(str(shared / "readme.txt")) == []

@@ -2190,7 +2190,7 @@ async function openDiscoveredArc(i, row) {
   }
 }
 
-async function _loadTradesPanel(id) {
+async function _loadTradesPanel(id, attempt = 0) {
   let data;
   try {
     data = await api.get(`/api/series/${id}/trades`);
@@ -2203,6 +2203,12 @@ async function _loadTradesPanel(id) {
   // Bail if the user switched tabs / left while LOCG was answering.
   if (!body || detailTab !== 'trades' || currentParams.id !== id) return;
   const trades = data.trades || [];
+  if (data.pending && attempt < 30) {       // being looked up in the background: ask again shortly
+    if (!body.querySelector('.trades-wait'))
+      body.innerHTML = `<div class="state-msg trades-wait" style="padding:20px 0;font-size:11px;display:flex;gap:10px;align-items:center"><span class="act-job-spin" aria-hidden="true"></span>Looking up…</div>`;
+    setTimeout(() => _loadTradesPanel(id, attempt + 1), 4000);
+    return;
+  }
   if (!trades.length) {
     body.innerHTML = `<div class="state-msg" style="padding:20px 0;font-size:11px">${
       data.reason === 'locg_paused' ? 'Trades come from LOCG, and LOCG is pausing us right now — try again later.'

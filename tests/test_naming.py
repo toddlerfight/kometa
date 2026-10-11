@@ -395,3 +395,18 @@ def test_a_collected_edition_without_a_hash_is_not_an_issue():
     # a '#' still wins — 'Youngblood - Vol. 1 #009' is issue 9 of volume 1
     assert naming.parse_issue_number("Youngblood - Vol. 1 #009 (1996).cbz", "Youngblood") == 9.0
     assert naming.parse_issue_number("Saga 2012 005.cbz", "Saga") == 5.0
+
+
+def test_an_archive_verdict_survives_a_restart_without_reopening_it(tmp_path, db_path, monkeypatch):
+    import zipfile
+    import kometa.db as db
+    import kometa.naming as naming
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    f = tmp_path / "Saga #001.cbz"
+    with zipfile.ZipFile(f, "w") as z:
+        z.writestr("001.jpg", b"x")
+    naming._archive_verdict.cache_clear()
+    assert naming.counts_as_owned(str(f), "Saga")
+    naming._archive_verdict.cache_clear()                                 # a restart: memory gone
+    monkeypatch.setattr(naming, "_archive_entry_names", lambda p: (_ for _ in ()).throw(AssertionError("reopened")))
+    assert naming.counts_as_owned(str(f), "Saga")                          # answered from the DB

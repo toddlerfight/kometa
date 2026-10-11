@@ -126,8 +126,8 @@ async def lifespan(app: FastAPI):
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
     from kometa.shelf_import import trickle_tick
-    start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs,
-                    trickle_fn=trickle_tick)
+    scheduler = start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs,
+                                trickle_fn=trickle_tick)
     # Missed-sync catch-up. The scheduler's jobstore is in-memory, so a restart
     # (i.e. every deploy) that straddles a cron fire produces a process that has
     # NO IDEA the fire was missed — apscheduler's misfire grace can't help across
@@ -138,8 +138,18 @@ async def lifespan(app: FastAPI):
     if missed_slot and db.get_config(DB_PATH).get("last_full_sync", "") < missed_slot:
         logger.info(f"Startup catch-up: missed scheduled sync at {missed_slot} UTC — running now")
         threading.Thread(target=_sync_all_job, daemon=True).start()
-    _shelf_scan()   # whole-shelf index for the reader; listing only, so it's cheap
+    _shelf_scan(skip_if_fresh=True)   # whole-shelf index for the reader — skipped if one ran lately
     yield
+    # Stop cleanly. The scheduler was never shut down: its job threads aren't
+    # daemons, so a stop waited for whatever was running (a sync, a placement, a
+    # trickle yielding to a reader for minutes) until Docker killed the process —
+    # the stuck restarts. Nothing new starts; waiting loops wake and give up.
+    from kometa.activity import STOPPING
+    STOPPING.set()
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception as e:
+        logger.warning(f"Scheduler shutdown: {e}")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -154,6 +164,20 @@ _gzip.DEFAULT_EXCLUDED_CONTENT_TYPES = ("text/event-stream", "image/", "video/",
                                         "application/zip", "application/x-cbz", "application/x-cbr",
                                         "application/vnd.comicbook", "application/octet-stream", "application/pdf")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+
+@app.middleware("http")
+async def _interactive(request, call_next):
+    """Everything a web request does is interactive (kometa/interactive.py): the
+    rate-limited sources make it fail fast instead of queueing behind background
+    jobs. The flag rides contextvars into the threadpool; scheduler jobs and
+    threads a handler starts don't carry it."""
+    from kometa.interactive import INTERACTIVE
+    token = INTERACTIVE.set(True)
+    try:
+        return await call_next(request)
+    finally:
+        INTERACTIVE.reset(token)
 
 
 @app.middleware("http")
@@ -765,15 +789,37 @@ def get_series_trades(series_id: int):
     cached = db.get_trades(series_id, DB_PATH)
     if cached and cached["age"] < 24 * 3600:
         return {"trades": _cached_trades(s), "cached": True}
-    # Cold/stale — fetch, enrich (owned + komga) once, store. The enrich here is the
-    # periodic scan, not a per-request one; warm reads above never touch the disk.
-    from kometa.record import fill_trades
-    try:
-        trades = fill_trades(s, force=True)
-    except Exception as e:
-        logger.info(f"Trades: fill failed for {s['title']!r}: {e}")
-        trades = (cached or {}).get("trades") or []
-    return {"trades": _with_book_ids(s, trades), "cached": False}
+    # Stale or missing: rebuilt in the background (~25 Metron calls plus LOCG —
+    # over a minute inside the request before). A stale list shows now; a missing
+    # one says pending and the tab asks again.
+    _refresh_trades_bg(s)
+    if cached:
+        return {"trades": _cached_trades(s), "cached": True, "refreshing": True}
+    return {"trades": [], "pending": True}
+
+
+_trades_refreshing: set = set()
+_trades_refreshing_lock = threading.Lock()
+
+
+def _refresh_trades_bg(s: dict) -> None:
+    with _trades_refreshing_lock:
+        if s["id"] in _trades_refreshing:
+            return
+        _trades_refreshing.add(s["id"])
+
+    def run():
+        from kometa.record import fill_trades
+        try:
+            fill_trades(s, force=True)
+        except Exception as e:
+            logger.info(f"Trades: fill failed for {s['title']!r}: {e}")
+            if not db.get_trades(s["id"], DB_PATH):
+                db.set_trades(s["id"], [], DB_PATH)        # an answer, even if empty: the tab stops waiting
+        finally:
+            with _trades_refreshing_lock:
+                _trades_refreshing.discard(s["id"])
+    threading.Thread(target=run, name=f"trades-{s['id']}", daemon=True).start()
 
 
 @app.get("/api/trade/{locg_id}/details")

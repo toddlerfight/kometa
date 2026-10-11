@@ -43,6 +43,26 @@ def _patch_comic_info(xml_bytes: bytes, added_covers: int) -> bytes:
         return xml_bytes
 
 
+def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
+    """Write a download to staging; if the stream breaks, take the half-file with
+    it. A cut connection left 252 MB of a 673 MB Avengers Academy trade sitting
+    in /downloads, looking like a download that had landed."""
+    done = 0
+    try:
+        with open(staging_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=65536):
+                f.write(chunk)
+                done += len(chunk)
+                if progress_fn:
+                    progress_fn(done, total)
+    except BaseException:
+        try:
+            os.remove(staging_path)
+        except OSError:
+            pass
+        raise
+
+
 def _download_cover(cover) -> bytes | None:
     """Plain requests, no scraper — the covers sit on public S3 (LOCG) or
     static.metron.cloud, and neither has a Cloudflare bouncer. `cover` is a
@@ -1061,13 +1081,7 @@ def download_issue(
         filename = _safe(os.path.basename(filename))
         staging_path = os.path.join(sources.staging_dir(), filename)
         total = int(r.headers.get("content-length", 0))
-        done = 0
-        with open(staging_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-                done += len(chunk)
-                if progress_fn:
-                    progress_fn(done, total)
+        _stream_to(r, staging_path, total, progress_fn)
 
     # Bytes complete — extract/verify/inject below is finalize, not downloading.
     if on_bytes_done:
@@ -1236,13 +1250,7 @@ def download_trade(
         filename = _safe(os.path.basename(filename))
         staging_path = os.path.join(sources.staging_dir(), filename)
         total = int(r.headers.get("content-length", 0))
-        done = 0
-        with open(staging_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-                done += len(chunk)
-                if progress_fn:
-                    progress_fn(done, total)
+        _stream_to(r, staging_path, total, progress_fn)
 
     # Bytes are all here — everything below is finalize (extract, CBZ rebuild),
     # which on a 1GB pack grinds for minutes. Let the caller flip the queue row

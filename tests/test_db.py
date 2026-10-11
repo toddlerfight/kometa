@@ -244,3 +244,15 @@ class TestConnectionReuse:
         t = threading.Thread(target=lambda: got.append(db.get_series_by_id(series, db_path)["title"]))
         t.start(); t.join()
         assert got == ["Seen"]
+
+
+class TestRestartMidPlacing:
+    def test_an_issue_cut_off_mid_placing_goes_back_to_its_download(self, db_path, series):
+        db.queue_issue(series, 1.0, db_path)
+        db.queue_issue(series, 2.0, db_path)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE download_queue SET state = 'processing', sab_nzo_id = 'nzo' WHERE issue_number = 1")
+            c.execute("UPDATE download_queue SET state = 'processing' WHERE issue_number = 2")
+        db.reset_stuck_queue_items(db_path)
+        states = {q["issue_number"]: q["state"] for q in db.get_queue(db_path)}
+        assert states == {1.0: "pending_usenet", 2.0: "queued"}       # no handle: nothing to go back to

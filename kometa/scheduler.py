@@ -57,7 +57,11 @@ def last_scheduled_sync_utc() -> str:
 
 def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None,
                     trickle_fn=None):
-    scheduler = BackgroundScheduler(timezone=TZ)
+    # Pollers and the queue get a pool of their own: with ~19 jobs on 10 threads,
+    # a long sync plus the trickles sleeping on a reader left the 5-second pollers
+    # nowhere to run ("maximum number of running instances reached", all day).
+    from apscheduler.executors.pool import ThreadPoolExecutor as _Pool
+    scheduler = BackgroundScheduler(timezone=TZ, executors={"default": _Pool(10), "fast": _Pool(3)})
 
     # misfire_grace_time: apscheduler's default is 1 SECOND — a container
     # restart (i.e. every deploy) straddling a fire time silently DROPS that
@@ -84,7 +88,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         queue_fn,
         IntervalTrigger(minutes=5),
         id="queue_processor",
-        replace_existing=True,
+        replace_existing=True, executor="fast", coalesce=True,
     )
 
     # Poll SABnzbd for pending usenet jobs (interval configurable — default 5s)
@@ -93,7 +97,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             poll_usenet_fn,
             IntervalTrigger(seconds=USENET_POLL_SECONDS),
             id="usenet_poller",
-            replace_existing=True,
+            replace_existing=True, executor="fast", coalesce=True,
         )
 
     # Poll qBittorrent for pending torrent jobs (same cadence as usenet)
@@ -102,7 +106,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
             poll_torrent_fn,
             IntervalTrigger(seconds=USENET_POLL_SECONDS),
             id="torrent_poller",
-            replace_existing=True,
+            replace_existing=True, executor="fast", coalesce=True,
         )
 
     # Release-day retry: 3PM–11PM AEST every 2h on any day with releases

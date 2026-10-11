@@ -96,7 +96,11 @@ def _get(path: str, **params) -> dict:
         raise MetronUnavailable("Metron refused these credentials — fix them in Settings")
     auth = f"Bearer {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    with _lock:                                    # one request at a time, spaced
+    from kometa.interactive import is_interactive, MAX_WAIT_S
+    interactive = is_interactive()
+    if not _lock.acquire(timeout=MAX_WAIT_S if interactive else -1):
+        raise MetronUnavailable("Metron is busy with background work — try again in a moment")
+    try:                                           # one request at a time, spaced
         now = time.time()
         if now < _state["paused_until"]:
             raise MetronUnavailable("Metron asked us to wait")
@@ -142,6 +146,8 @@ def _get(path: str, **params) -> dict:
             _state["paused_until"] = time.time() + UNREACHABLE_PAUSE_S
             logger.warning(f"Metron unreachable ({e}) — not asking again for {UNREACHABLE_PAUSE_S}s")
             raise MetronUnavailable(f"Metron unreachable: {e}") from e
+    finally:
+        _lock.release()
 
 
 def _all_pages(path: str, max_pages: int = 10, **params) -> list[dict]:
