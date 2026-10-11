@@ -111,7 +111,7 @@ function _rdRender() {
   const loader = _rd.opening ? document.getElementById('rd-loading') : null;
   el.innerHTML = `
     <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}${loader ? ' rd-opening' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
-    <div class="rd-progress" style="width:${(last / b.page_count) * 100}%"></div>
+    <div class="rd-progress" style="transform:scaleX(${last / b.page_count})"></div>
     <div class="rd-count" aria-hidden="true">${label} / ${b.page_count}</div>
     <div class="rd-chrome${_rd.chrome ? ' on' : ''}" id="rd-chrome">
       <div class="rd-top">
@@ -655,7 +655,7 @@ async function _loadMatchCandidates(seriesId, q) {
   // already have shows as yours ("File under"), not as a thing to match twice;
   // shelf series whose title matches the words show too, for the deluxe whose
   // catalogue entry Metron simply doesn't have.
-  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
+  if (!_fileUnderAll) { try { _fileUnderAll = await seriesRows(); } catch { _fileUnderAll = []; } }
   const mine = (_fileUnderAll || []).filter(s => s.id !== seriesId && s.kind !== 'arc' && s.folder_path
     && s.match_status !== 'pending' && s.match_status !== 'needs_match');
   const byMetron = new Map(mine.filter(s => s.metron_series_id).map(s => [s.metron_series_id, s]));
@@ -703,7 +703,7 @@ async function _pickMatch(seriesId, runId, btn, source = 'locg') {
   // — a deluxe, a trade, a split — and matching would mint a duplicate series
   // with the collection reading as issue #1. Offer to file it under the one you
   // have instead. (Year 100 and Other Tales Deluxe → Batman - Year 100.)
-  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch {} }
+  if (!_fileUnderAll) { try { _fileUnderAll = await seriesRows(); } catch {} }
   const have = (_fileUnderAll || []).find(s => s.id !== seriesId && s.folder_path
     && (source === 'metron' ? s.metron_series_id === runId : s.locg_series_id === runId));
   if (have) { _fileUnder(seriesId, have.id, r); return; }
@@ -752,7 +752,7 @@ async function _pickMatch(seriesId, runId, btn, source = 'locg') {
 let _fileUnderAll = null;
 
 async function _fileUnder(seriesId, parentId, run = null, opts = {}) {
-  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
+  if (!_fileUnderAll) { try { _fileUnderAll = await seriesRows(); } catch { _fileUnderAll = []; } }
   const parent = (_fileUnderAll || []).find(s => s.id === parentId) || { title: 'that series' };
   const me = (_detailSeries && _detailSeries.id === seriesId) ? _detailSeries
     : (_fileUnderAll || []).find(s => s.id === seriesId) || { title: 'this' };
@@ -824,7 +824,7 @@ async function _noRun(seriesId) {
 // Thailand'. Number defaults to the series' highest + 1; change it if the book
 // belongs elsewhere in the order (Combine's numbering is yours to fix later).
 async function _addAsIssue(seriesId, targetId) {
-  if (!_fileUnderAll) { try { _fileUnderAll = await api.get('/api/series'); } catch { _fileUnderAll = []; } }
+  if (!_fileUnderAll) { try { _fileUnderAll = await seriesRows(); } catch { _fileUnderAll = []; } }
   const target = (_fileUnderAll || []).find(s => s.id === targetId) || { title: 'that series' };
   const me = (_detailSeries && _detailSeries.id === seriesId) ? _detailSeries : (_fileUnderAll || []).find(s => s.id === seriesId) || { title: 'this' };
   let next = 1;
@@ -860,13 +860,13 @@ async function _addAsIssue(seriesId, targetId) {
 // the issues had their details — up to a minute, then give up quietly.
 async function _awaitSync(seriesId) {
   let before = null;
-  try { before = (await api.get(`/api/series/${seriesId}`)).last_synced || null; } catch {}
+  try { before = (await api.get(`/api/series/${seriesId}/status`)).last_synced || null; } catch {}
   renderSeriesDetail(seriesId);
   const stop = Date.now() + 60000;
   const tick = async () => {
     if (currentView !== 'series-detail' || currentParams.id !== seriesId) return;
     let fresh = null;
-    try { fresh = await api.get(`/api/series/${seriesId}`); } catch {}
+    try { fresh = await api.get(`/api/series/${seriesId}/status`); } catch {}
     if (fresh && fresh.last_synced && fresh.last_synced !== before) {
       renderSeriesDetail(seriesId);
       showToast('Issues and covers are in');

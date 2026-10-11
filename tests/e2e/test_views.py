@@ -51,14 +51,14 @@ def test_activity_reconciles_rows_in_place(app):
       return Object.assign(morph, {
         count: document.querySelectorAll('.act-row[data-qid]').length,
         hopped: !!document.querySelector('.act-section[data-sec="progress"] .act-row[data-qid="' + a + '"]'),
-        pct: (document.getElementById('actfill-' + a) || {style:{}}).style.width,
+        pct: (document.getElementById('actfill-' + a) || {style:{}}).style.transform,
       });
     }"""
     )
     assert result["sameNode"] and result["sameImg"], "morph must not recreate the row/img"
     assert result["qstate"] == "done" and result["dimmed"]
     assert result["count"] == 1 and result["hopped"]
-    assert result["pct"] == "50%"
+    assert result["pct"] == "scaleX(0.5)"                       # transform, not width (no layout per tick)
 
 
 def test_settings_renders_and_autosaves(app):

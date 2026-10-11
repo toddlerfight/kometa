@@ -1499,9 +1499,11 @@ select.settings-input {
 
 .act-progress-fill {
   height: 100%;
+  width: 100%;
   background: var(--pri);
   border-radius: var(--r-sm);
-  transition: width var(--t-scrim) var(--ease-in-out);
+  transform-origin: left;
+  transition: transform var(--t-scrim) var(--ease-in-out);   /* transform, not width: no layout every tick */
 }
 
 .act-progress-text {
@@ -2018,8 +2020,8 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .rd-two .rd-left  { object-position: right center; }
 .rd-two .rd-right { object-position: left center; }
 
-.rd-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--pri);
-  transition: width .2s var(--ease-out, ease); }
+.rd-progress { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: var(--pri);
+  transform-origin: left; transition: transform .2s var(--ease-out, ease); }
 .rd-count { position: absolute; right: 12px; bottom: calc(8px + env(safe-area-inset-bottom));
   font-size: 9px; letter-spacing: var(--track); color: var(--td); pointer-events: none; }
 
@@ -2385,3 +2387,10 @@ body.touch .od-menu { opacity: .85; }
   animation: act-spin .9s linear infinite; flex-shrink: 0; }
 @keyframes act-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .act-job-spin { animation: none; border-color: var(--pri); } }
+
+/* Reduced motion, everywhere: the per-component overrides above missed a few
+   (activity progress, settings heads, spinners' fades). This catches the rest. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

@@ -102,3 +102,16 @@ def test_alphabetical_sort_gets_letter_headers_and_a_rail(app_server, page):
     page.locator("#sort-date").click()
     expect(page.locator(".letter-head")).to_have_count(0)
     expect(page.locator("#letter-rail")).to_have_count(0)
+
+
+def test_boot_fetches_the_library_once_and_back_paints_without_waiting(app_server, page):
+    seen = []
+    page.on("request", lambda r: seen.append(r.url) if r.url.split("?")[0].endswith("/api/series") else None)
+    page.goto(f"{app_server['base']}/#library")
+    expect(page.locator(".series-card")).to_have_count(3)
+    assert len(seen) == 1, seen                         # the badge and the Library share one fetch
+    page.locator(".series-card").first.click()
+    expect(page.locator(".issue-tile").first).to_be_visible()
+    page.route("**/api/series", lambda r: (__import__("time").sleep(2), r.continue_()))
+    page.go_back()
+    expect(page.locator(".series-card")).to_have_count(3, timeout=1000)   # painted from what it had

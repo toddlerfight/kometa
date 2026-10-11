@@ -287,7 +287,7 @@ async function syncSeries(id, btn, pre = null, force = false) {
   const deadline = Date.now() + 90_000;
   const poll = setInterval(async () => {
     try {
-      const s = await api.get(`/api/series/${id}`);
+      const s = await api.get(`/api/series/${id}/status`);
       if (s.last_synced !== preSynced || Date.now() > deadline) {
         clearInterval(poll);
         _syncInFlight.delete(id);
@@ -301,7 +301,7 @@ async function syncSeries(id, btn, pre = null, force = false) {
             || s.owned !== before.owned || s.missing !== before.missing
             || s.upcoming !== before.upcoming || s.next_release !== before.next_release
             || s.calendar_date !== before.calendar_date
-            || (s.issues || []).length !== (before.issues || []).length;
+            || s.issue_count !== (before.issue_count ?? (before.issues || []).length);
           if (changed) await renderSeriesDetail(id);
         }
         _resetBtn();
@@ -316,6 +316,50 @@ async function syncSeries(id, btn, pre = null, force = false) {
 
 // --- Library Browse ---
 
+// The Library's data — /api/series plus the shelf — fetched once and shared by
+// every view (Library, stacks, Needs matching, the boot badge, File under):
+// boot used to fetch the 719 KB list twice at once, and every visit refetched it.
+const _lib = { series: null, shelf: null, at: 0, inflight: null };
+
+function _libFetch() {
+  if (_lib.inflight) return _lib.inflight;
+  _lib.inflight = Promise.all([
+    api.get('/api/series'),
+    api.get('/api/shelf').catch(() => ({ series: [], tracked_reading: {} })),
+  ]).then(([series, shelf]) => {
+    Object.assign(_lib, { series, shelf, at: Date.now(), inflight: null });
+    _updateNeedsBadge(series.filter(_needsMatch).length);
+    return _lib;
+  }).catch(e => { _lib.inflight = null; throw e; });
+  return _lib.inflight;
+}
+
+// the tracked list, reusing one that's a few seconds old
+async function seriesRows(maxAgeMs = 15000) {
+  if (_lib.series && Date.now() - _lib.at < maxAgeMs) return _lib.series;
+  return (await _libFetch()).series;
+}
+
+// what a repaint would change — so a background refresh that brings nothing new doesn't rebuild the grid
+function _libSig() {
+  const r = _lib.series || [], sh = (_lib.shelf && _lib.shelf.series) || [];
+  return r.map(s => `${s.id}:${s.owned}:${s.missing}:${s.upcoming}:${s.calendar_date}:${s.favourite}:${s.rating}:${s.match_status}:${s.title}`).join('|')
+    + '#' + sh.map(s => `${s.id}:${s.count || s.book_count || ''}`).join('|') + '#' + JSON.stringify(_lib.shelf?.tracked_reading || {}).length;
+}
+
+function _paintLibrary(quiet = false) {
+  // The library is the whole shelf: tracked series (acquisition) + every other
+  // series folder (reader-only). Shelf failing must not cost the tracked grid.
+  const tracked = _lib.series || [], shelf = _lib.shelf || { series: [], tracked_reading: {} };
+  const tr = shelf.tracked_reading || {};
+  browseState._trackedCount = tracked.length;
+  // Unmatched series live in their own section (Needs matching) until you've
+  // picked the run — the Library is the matched shelf.
+  browseState._cache = tracked.filter(s => !_needsMatch(s)).map(s => ({ ...s, kind: 'series', ...(tr[s.id] || {}) }))
+    .concat((shelf.series || []).map(s => ({ ...s, kind: 'shelf' })));
+  _renderBrowseResults(quiet);
+}
+
 let browseState = { search: '', searchTimer: null, toggles: { upcoming: false, missing: false, pulling: false, stacks: true }, _cache: null, sortKey: 'date', sortDir: { date: 'asc' }, stack: null };
 
 async function renderLibraryBrowse() {
@@ -328,6 +372,7 @@ async function renderLibraryBrowse() {
     <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
   `;
   browseState.search  = '';
+  browseState._animate = true;          // a fresh visit: the first cards cascade in
   browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
   browseState._cache  = null;
   browseState.stack   = null;
@@ -453,6 +498,7 @@ async function renderStackPage(key) {
   setTopbar();
   document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-ghost btn-sm" onclick="navigate('library')">‹ Library</button>`;
   browseState.search  = '';
+  browseState._animate = true;          // a fresh visit: the first cards cascade in
   browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
   browseState._cache  = null;
   browseState.stack   = key;
@@ -482,20 +528,18 @@ async function _loadBrowsePage() {
     document.getElementById('browse-search')?.focus();
   }
 
-  // The library is the whole shelf: tracked series (acquisition) + every other
-  // series folder (reader-only). Shelf failing must not cost the tracked grid.
-  const [tracked, shelf] = await Promise.all([
-    api.get('/api/series'),
-    api.get('/api/shelf').catch(() => ({ series: [], tracked_reading: {} })),
-  ]);
-  const tr = shelf.tracked_reading || {};
-  browseState._trackedCount = tracked.length;
-  // Unmatched series live in their own section (Needs matching) until you've
-  // picked the run — the Library is the matched shelf.
-  _updateNeedsBadge(tracked.filter(_needsMatch).length);
-  browseState._cache = tracked.filter(s => !_needsMatch(s)).map(s => ({ ...s, kind: 'series', ...(tr[s.id] || {}) }))
-    .concat((shelf.series || []).map(s => ({ ...s, kind: 'shelf' })));
-  _renderBrowseResults();
+  // Paint from what we already have, then check with the server: Back to the
+  // Library re-downloaded and rebuilt everything before showing a card.
+  const fresh = _libFetch();
+  const had = _lib.series ? _libSig() : null;
+  if (!had) await fresh;                     // nothing to show yet: a failure is the view's error + Retry
+  _paintLibrary();
+  if (had) fresh.then(() => {
+    if (_libSig() === had || !['library', 'stack'].includes(currentView)) return;
+    const box = document.getElementById('app'), top = box?.scrollTop;
+    _paintLibrary(true);
+    if (box) box.scrollTop = top;
+  }).catch(() => {});
   // Nothing tracked yet on a configured install? Open the one door they'd open
   // anyway — but give them ~5s to read the empty state and reach for it themselves
   // first. Re-check everything when the timer fires: they may have navigated off,
@@ -514,9 +558,17 @@ async function _loadBrowsePage() {
 }
 let _autoWizardTimer = null;
 
-function _renderBrowseResults() {
+// The cascade plays on a fresh Library's first cards only. It was on every card
+// (~900: everything past #15 started at once) and replayed on every filter tap
+// and keystroke, each time recreating the covers' blur-in too.
+function _casc(i) {
+  return browseState._animate && i < 15 ? ` card-cascade" style="animation-delay:${i * STAGGER_MS}ms` : '';
+}
+
+function _renderBrowseResults(quiet = false) {
   const { toggles, search, sortKey, sortDir, _cache: all, stack } = browseState;
   if (!all) return;
+  if (quiet) browseState._animate = false;
 
   const q = search.toLowerCase();
   const anyToggleOn = toggles.upcoming || toggles.missing;
@@ -623,7 +675,7 @@ function _renderBrowseResults() {
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
     const thumbFall = s.card_image  ? `this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${s.id}/thumbnail'` : `this.onerror=null;this.style.opacity='0.15'`;
     return head + `
-      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
+      <div class="series-card${_casc(i)}" tabindex="0" role="button"
         onclick="navigate('series-detail', {id: ${s.id}})"
         onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.id}})">
         <div class="series-card-img-wrap">
@@ -645,6 +697,7 @@ function _renderBrowseResults() {
   }).join('');
 
   document.getElementById('browse-results').innerHTML = peopleRow + `<div class="series-grid${letters ? ' with-letters' : ''}">${cards}</div>`;
+  browseState._animate = false;              // filters, sorts and refreshes after this don't replay it
   _paintLetterRail(letters ? seen : []);
 }
 
@@ -673,7 +726,7 @@ function _stackCardHtml(g, i) {
   const go = `navigate('stack', {key: ${JSON.stringify(g.key)}})`;
   const owned = g.members.reduce((n, m) => n + (m.owned ?? m.book_count ?? 0), 0);
   return `
-      <div class="series-card stack-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
+      <div class="series-card stack-card${_casc(i)}" tabindex="0" role="button"
         data-stack="${esc(g.key)}" onclick="${go.replace(/"/g, '&quot;')}" onkeydown="if(event.key==='Enter'||event.key===' ')${go.replace(/"/g, '&quot;')}">
         <div class="series-card-img-wrap stack-fan">
           ${covers.map((u, k) => `<img class="series-card-cover stack-cover stack-cover-${k}" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`).reverse().join('')}
@@ -708,7 +761,7 @@ function _shelfCardHtml(s, i, pub) {
   const count = _isReading(s) ? `${s.read_count}/${s.book_count} read` : `${s.book_count}`;
   const pct = _isReading(s) ? Math.round((s.read_count / s.book_count) * 100) : 0;
   return `
-      <div class="series-card card-cascade" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms" tabindex="0" role="button"
+      <div class="series-card${_casc(i)}" tabindex="0" role="button"
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="/api/shelf/${s.id}/cover" alt="${esc(s.title)}"
@@ -1199,7 +1252,7 @@ async function renderNeedsMatch() {
   document.getElementById('topbar-title').textContent = 'Needs matching';
   document.getElementById('topbar-actions').innerHTML = '';
   setApp('<div class="state-msg">Loading...</div>');
-  const all = await api.get('/api/series');
+  const all = (await _libFetch()).series;
   const rows = all.filter(_needsMatch).sort((a, b) =>
     (a.match_status === 'needs_match' ? 0 : 1) - (b.match_status === 'needs_match' ? 0 : 1)
     || a.title.localeCompare(b.title));
@@ -1911,7 +1964,9 @@ async function renderSeriesDetail(id) {
   // not blank the page: keep what's there until the new paint lands, and put
   // the scroll back where it was. Only a NEW series shows the loading state.
   const sameSeries = _detailSeries?.id === id && currentView === 'series-detail';
-  const keepScroll = sameSeries ? window.scrollY : 0;
+  // #app is the scroll container (body doesn't scroll): window.scrollY was always 0,
+  // so every same-series re-render (a tab, a toggle, a rating) jumped to the top
+  const keepScroll = sameSeries ? (document.getElementById('app')?.scrollTop || 0) : 0;
   if (!sameSeries) setApp('<div class="state-msg">Loading...</div>');
 
   const s = await api.get(`/api/series/${id}`);
@@ -2071,7 +2126,7 @@ async function renderSeriesDetail(id) {
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
-  if (keepScroll) requestAnimationFrame(() => window.scrollTo(0, keepScroll));
+  if (keepScroll) requestAnimationFrame(() => { const a = document.getElementById('app'); if (a) a.scrollTop = keepScroll; });
   if (detailTab === 'arcs') _loadArcsPanel(id);
   if (s.match_status === 'needs_match' || s.match_status === 'pending') _loadMatchCandidates(id, s.title);
   if (s.match_status === 'pending' || s.match_status === 'needs_match') _showLocgPause(id);
@@ -2105,7 +2160,8 @@ async function renderSeriesDetail(id) {
     const _stopAt = Date.now() + 90000;
     const _pollId = _detailPollId = setInterval(async () => {
       if (currentView !== 'series-detail' || currentParams.id !== id) { clearInterval(_pollId); return; }
-      const fresh = await api.get(`/api/series/${id}`).catch(() => null);
+      if (_syncInFlight.has(id)) return;          // the sync's own poller is watching this series already
+      const fresh = await api.get(`/api/series/${id}/status`).catch(() => null);
       if (!fresh) { clearInterval(_pollId); return; }
       const freshTotal = fresh.owned + fresh.missing + fresh.upcoming;
       if (freshTotal > 0 || (fresh.last_synced && fresh.last_synced !== _syncedAt) || Date.now() > _stopAt) {
@@ -3186,6 +3242,10 @@ let _activityPollTimer = null;
 // transition — the click looks dead. This timestamp keeps the poll loop alive
 // for a short window so we actually follow the search to its grave.
 let _activityPumpUntil = 0;
+let _activityWaitVisible = false;
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _activityWaitVisible) { _activityWaitVisible = false; _refreshActivity(); }
+});
 
 // --- activity nav badge ---
 // "What happened since you last looked": counts terminal outcomes NEWER than
@@ -3200,9 +3260,14 @@ function _applyBadge(queue) {
   if (!el) return;
   const seen = _actSeen();
   const fresh = q => (q.updated_at || '') > seen;
-  const failed = queue.filter(q => q.state === 'failed' && fresh(q)).length;
-  const warn   = queue.filter(q => q.state === 'not_found' && fresh(q)).length;
-  const done   = queue.filter(q => q.state === 'done' && fresh(q)).length;
+  _paintBadge(queue.filter(q => q.state === 'failed' && fresh(q)).length,
+              queue.filter(q => q.state === 'not_found' && fresh(q)).length,
+              queue.filter(q => q.state === 'done' && fresh(q)).length);
+}
+
+function _paintBadge(failed, warn, done) {
+  const el = document.getElementById('activity-badge');
+  if (!el) return;
   const [n, cls] = failed ? [failed, 'red'] : warn ? [warn, 'amber'] : done ? [done, 'green'] : [0, ''];
   el.textContent = n || '';
   el.className = `nav-badge${n ? ' ' + cls : ''}`;
@@ -3215,8 +3280,14 @@ function _ackActivity(queue) {
   _applyBadge(queue);   // recompute → badge clears
 }
 
+// The badge asks for its three numbers, not the whole queue; it rests while the
+// tab is hidden and while Activity (which keeps it current itself) is open.
 async function _updateActivityBadge() {
-  try { _applyBadge(await api.get('/api/queue')); } catch {}
+  if (document.hidden || currentView === 'activity') return;
+  try {
+    const c = await api.get(`/api/queue/summary?since=${encodeURIComponent(_actSeen())}`);
+    _paintBadge(c.failed, c.not_found, c.done);
+  } catch {}
 }
 
 function _startBadgePolling() {
@@ -3224,6 +3295,7 @@ function _startBadgePolling() {
   _updateActivityBadge();
   _badgeTimer = setInterval(_updateActivityBadge, 25000);
 }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _updateActivityBadge(); });
 
 function _fmtBytes(n) {
   if (!n) return '';
@@ -3263,6 +3335,8 @@ function _toggleActHistory() {
 
 async function _refreshActivity() {
   if (currentView !== 'activity') return;
+  // a hidden tab doesn't poll; coming back picks up where it left off
+  if (document.hidden) { _activityWaitVisible = true; return; }
   // A removal animation is mid-flight — don't rebuild the list out from under it
   // (a full rebuild here is the flash we're trying to kill). The remover re-polls
   // when it's finished collapsing.
@@ -3288,7 +3362,7 @@ async function _refreshActivity() {
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
       const fill = document.getElementById(`actfill-${q.id}`);
       const text = document.getElementById(`acttext-${q.id}`);
-      if (fill) fill.style.width = `${pct}%`;
+      if (fill) fill.style.transform = `scaleX(${pct / 100})`;
       if (text) text.textContent = `${pct}%${_actProgressDetail(q)}`;
       // The engine name flips mid-search (GetComics → Usenet → torrent); a bare
       // textContent swap reads as a flash, so crossfade it instead.
@@ -3412,7 +3486,7 @@ function _actSubHtml(q) {
     const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
     return `
         <div class="act-row-progress">
-          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="width:${pct}%"></div></div>
+          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="transform:scaleX(${pct / 100})"></div></div>
           <div class="act-progress-text" id="acttext-${q.id}">${pct}%${esc(_actProgressDetail(q))}</div>
         </div>`;
   }
@@ -4915,8 +4989,8 @@ async function boot() {
   const { view, params } = _parseHash();
   navigate(view, params);
   _startBadgePolling();
-  // the Needs matching item's count, without waiting for the Library to load
-  api.get('/api/series').then(rows => _updateNeedsBadge(rows.filter(_needsMatch).length)).catch(() => {});
+  // the Needs matching item's count: the same fetch the Library makes, shared — not a second one
+  _libFetch().catch(() => {});
 }
 
 boot();

@@ -605,7 +605,15 @@ def list_series():
     newest = _newest_file_at()
     rows = [dict(s, **summaries.get(s["id"], empty), favourite=fav.get(s["id"], {}).get("favourite", False),
                  rating=rated.get(s["id"]), newest_file_at=newest.get(s["id"])) for s in series]
-    return attach_franchises(attach_families(rows))
+    rows = attach_franchises(attach_families(rows))
+    for r in rows:                     # bookkeeping no screen reads: ~23% of the payload
+        for k in _SERIES_LIST_UNUSED:
+            r.pop(k, None)
+    return rows
+
+
+_SERIES_LIST_UNUSED = ("metron_fetched_at", "komga_series_id", "added_at", "metron_checked_at",
+                       "monitor_status", "locg_fetched_at", "metron_link", "locg_link")
 
 
 def _newest_file_at() -> dict[int, str]:
@@ -672,6 +680,21 @@ def _series_marks(series_id: int) -> dict:
         return {"favourite": False, "rating": None, "rating_derived": None, "rated_issues": 0}
 
 
+@app.get("/api/series/{series_id}/status")
+def series_status(series_id: int):
+    """What the sync pollers watch — last sync and the counts — without the full
+    page payload (issues, trades, family, marks) they fetched every 2–3 s."""
+    s = db.get_series_by_id(series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404)
+    summ = db.get_all_series_summaries(DB_PATH).get(series_id, {})
+    with db._connect(DB_PATH) as conn:
+        n = conn.execute("SELECT COUNT(*) FROM issue_status WHERE tracked_series_id = ?", (series_id,)).fetchone()[0]
+    return {"id": series_id, "last_synced": s.get("last_synced"), "issue_count": n,
+            **{k: summ.get(k) or 0 for k in ("owned", "missing", "upcoming")},
+            **{k: summ.get(k) for k in ("next_release", "calendar_date")}}
+
+
 @app.get("/api/series/{series_id}")
 def get_series(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
@@ -719,6 +742,9 @@ def get_series(series_id: int):
         from kometa.arc import arc_includes_series
         arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
                         if arc_includes_series(a["source_titles"], s["title"])) or None
+    for i in issues:                       # Komga-era fields no screen reads (Komga is retired)
+        i.pop("komga_book_id", None)
+        i.pop("komga_book_v", None)
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id), **_family_for(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
                 **_summary(issues))
@@ -1620,10 +1646,29 @@ def set_folder(series_id: int, req: FolderRequest):
 
 # --- download queue ---
 
+# what no screen reads: indexer URLs with API keys in them (56 KB of the 171 KB
+# queue) and the per-row blacklists the acquisition side keeps for itself
+_QUEUE_PRIVATE = ("source_url", "failed_sources", "failed_channels", "sab_nzo_id", "torrent_hash", "komga_series_id")
+
+
+@app.get("/api/queue/summary")
+def queue_summary(since: str = ""):
+    """The activity badge's three numbers — failed, not found, done since you
+    last looked — without the whole queue (it polled all of it every 25 s)."""
+    with db._connect(DB_PATH) as conn:
+        rows = conn.execute("""SELECT q.state, COUNT(*) AS n FROM download_queue q
+            JOIN tracked_series s ON s.id = q.tracked_series_id
+            WHERE q.state IN ('failed', 'not_found', 'done') AND q.updated_at > ? GROUP BY q.state""", (since or "",)).fetchall()
+    got = {r["state"]: r["n"] for r in rows}
+    return {"failed": got.get("failed", 0), "not_found": got.get("not_found", 0), "done": got.get("done", 0)}
+
+
 @app.get("/api/queue")
 def get_queue():
     items = db.get_queue(DB_PATH)
     for item in items:
+        for k in _QUEUE_PRIVATE:
+            item.pop(k, None)
         prog = get_progress(item["id"])
         if prog:
             item["progress"] = prog
