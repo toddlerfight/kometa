@@ -122,7 +122,7 @@ def test_the_pull_list_filter_shows_every_pulled_series_flat(app_server, page):
     their own cards while Pull list is on — the Pull list section showed 5 for next
     week while the filtered Library showed 2."""
     fr = {"key": "batman", "name": "Batman", "count": 5}
-    soon = {"on_pull_list": True, "calendar_date": "2099-10-14", "upcoming": 1}
+    soon = {"on_pull_list": True, "calendar_date": "2099-10-14", "next_upcoming": "2099-10-14", "upcoming": 1}
     rows = ([_row(1, "100 Bullets"), _row(2, "100 Bullets: The US of Anger", family_parent=1, **soon)]
             + [_row(10 + i, f"Batman: Part {i}", franchise=fr) for i in range(4)]
             + [_row(20, "Batman: Bad Seeds – Gotham Central", franchise=fr, **soon)]
@@ -132,3 +132,15 @@ def test_the_pull_list_filter_shows_every_pulled_series_flat(app_server, page):
     titles = page.locator(".series-card .series-card-title").all_inner_texts()
     assert sorted(titles) == sorted(["100 Bullets: The US of Anger", "Batman: Bad Seeds – Gotham Central", "The Seasons"]), titles
     expect(page.locator(".stack-card")).to_have_count(0)
+
+
+def test_the_pull_list_dates_a_series_by_its_next_issue_not_last_weeks(app_server, page):
+    rows = [_row(1, "Just Out", on_pull_list=True, upcoming=1, calendar_date="2020-01-01", next_upcoming="2099-11-04"),
+            _row(2, "Nothing Coming", on_pull_list=True, upcoming=0, calendar_date="2020-01-01", next_upcoming=None),
+            _row(3, "Out Sooner", on_pull_list=True, upcoming=1, calendar_date="2099-10-21", next_upcoming="2099-10-21")]
+    _canned_series(page, app_server["base"], rows)
+    page.locator('.browse-filter-tab[data-key="pulling"]').click()
+    titles = page.locator(".series-card .series-card-title").all_inner_texts()
+    assert titles == ["Out Sooner", "Just Out"], titles             # by next issue, soonest first; nothing coming is gone
+    pill = page.locator(".series-card", has_text="Just Out").locator(".series-card-next-release")
+    assert "2020" not in pill.inner_text()

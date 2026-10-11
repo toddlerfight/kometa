@@ -818,6 +818,7 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
                 MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
+                MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date >= ? AND store_date < '9999' THEN store_date END) as next_upcoming,
                 (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
                    AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
                    ORDER BY i2.store_date ASC LIMIT 1) as up_number,
@@ -836,7 +837,7 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
             FROM issue_status
             {"WHERE tracked_series_id = ?" if series_id is not None else ""}
             GROUP BY tracked_series_id
-        """, (week_ago, today, today, today, today, today, cutoff, today, cutoff, today, cutoff, today, today, today)
+        """, (week_ago, today, today, today, today, today, cutoff, today, today, cutoff, today, cutoff, today, today, today)
             + ((series_id,) if series_id is not None else ()))
         rows = [dict(r) for r in rows]
 
@@ -870,6 +871,10 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
         out[sid] = {
             "owned": r["owned"], "missing": r["missing"], "upcoming": r["upcoming"],
             "next_release": r["next_release"], "card_image": card_image,
+            # the next issue still to come, however far off (TBA '9999' dates aside):
+            # what the Pull list filter dates and groups by — calendar_date prefers
+            # this week's release, so a just-out series sat under a past week
+            "next_upcoming": r["next_upcoming"],
             "calendar_date": calendar_date(r["recent_release"], r["next_release"]),
             # Library card only: released today, not on the shelf yet. Still counted
             # as upcoming everywhere else — the card just shouldn't read 'complete'.

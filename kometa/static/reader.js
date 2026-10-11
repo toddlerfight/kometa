@@ -441,22 +441,26 @@ function _rdBindInput() {
   //  - a NEW swipe starts after a pause, or when the speed rises again — momentum
   //    only ever decays, so a fresh push inside the tail is a fresh swipe (a quick
   //    second swipe used to be swallowed by the first one's momentum).
-  const WHEEL_TURN_PX = 40, WHEEL_GAP_MS = 140;
-  const g = { x: 0, y: 0, last: 0, at: 0, spent: false };
+  const WHEEL_TURN_PX = 40, WHEEL_GAP_MS = 140, WHEEL_COOLDOWN_MS = 450;
+  const g = { x: 0, y: 0, last: 0, low: 0, at: 0, spent: false, turnedAt: 0 };
   el.addEventListener('wheel', e => {
     if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
     const dx = e.deltaX * k, dy = e.deltaY * k, mag = Math.abs(dx);
     const now = e.timeStamp || performance.now();
-    const rising = g.spent && mag > 4 && mag > g.last * 1.6;
+    // a fresh push inside the momentum tail: well above the tail's lowest point, not a
+    // wobble in it (the tail jitters — reading every uptick as a new swipe turned
+    // several pages per swipe)
+    const rising = g.spent && mag > 12 && mag > Math.max(g.low, 1) * 3;
     const turnedSideways = mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x);   // a scroll, then a swipe
-    if (now - g.at > WHEEL_GAP_MS || rising || turnedSideways) Object.assign(g, { x: 0, y: 0, spent: false });
-    g.at = now; g.last = mag;
+    if (now - g.at > WHEEL_GAP_MS) g.turnedAt = 0;                 // fingers lifted and came back: a new swipe, no cooldown
+    if (now - g.at > WHEEL_GAP_MS || rising || turnedSideways) Object.assign(g, { x: 0, y: 0, spent: false, low: mag });
+    g.at = now; g.last = mag; g.low = Math.min(g.low || mag, mag);
     g.x += dx; g.y += dy;
     if (Math.abs(g.x) <= Math.abs(g.y)) return;                    // an up-down scroll: leave it alone
     e.preventDefault();                                              // and not the browser's back/forward swipe
-    if (!g.spent && Math.abs(g.x) >= WHEEL_TURN_PX) {
-      g.spent = true;
+    if (!g.spent && Math.abs(g.x) >= WHEEL_TURN_PX && now - g.turnedAt > WHEEL_COOLDOWN_MS) {
+      g.spent = true; g.turnedAt = now; g.low = mag;
       _rdStep(g.x > 0 ? 1 : -1, 'swipe');
     }
   }, { passive: false });

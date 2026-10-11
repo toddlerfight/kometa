@@ -741,7 +741,7 @@ function _renderBrowseResults(quiet = false) {
     if (q && !s.title.toLowerCase().includes(q) && !(s.kind !== 'shelf' && why[s.id])) return false;
     // Pull list = what you're pulling that has something still to come, like the
     // Pull list section — not every pulled run whether or not anything's out
-    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && (s.upcoming ?? 0) > 0)) return false;
+    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && s.next_upcoming)) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
     // folded under its run — unless you searched, or asked for what you're pulling:
@@ -776,11 +776,16 @@ function _renderBrowseResults(quiet = false) {
   // Runs: hide the one-shots and single-issue series; a stack keeps its members
   if (toggles.runs) items = items.filter(s => s.kind === 'stack' || !_isSingle(s));
 
+  // the date a card shows and sorts by: the calendar (this week's release, else the
+  // next) — except on the Pull list, where it's the NEXT issue still to come: a
+  // series that came out last Wednesday and has #25 next month is next month's
+  const dateOf = s => toggles.pulling ? s.next_upcoming : s.calendar_date;
+  browseState._dateOf = dateOf;
   const latest = (list, f) => list.reduce((m, x) => { const v = f(x); return v && (!m || v > m) ? v : m; }, null);
   const soonest = list => list.reduce((m, x) => x.calendar_date && (!m || x.calendar_date < m) ? x.calendar_date : m, null);
   const val = {
     alpha: s => _sortTitle(s.title),
-    date:  s => s.kind === 'stack' ? soonest(s.members) : s.calendar_date,
+    date:  s => s.kind === 'stack' ? soonest(s.members) : dateOf(s),
     read:  s => s.kind === 'stack' ? latest(s.members, m => m.last_read) : s.last_read,
     added: s => s.kind === 'stack' ? latest(s.members, m => m.newest_file_at) : s.newest_file_at,
   }[sortKey] || (() => null);
@@ -837,8 +842,9 @@ function _renderBrowseResults(quiet = false) {
     // the series. Not pulling = grey count, still honest about what you own.
     const color = gap > 0 ? (s.on_pull_list ? 'var(--amb)' : 'var(--tq)')
                           : (total > 0 ? 'var(--pri)' : 'var(--tq)');
-    const nextRelease = s.calendar_date
-      ? `<div class="series-card-next-release">${_fmtReleaseDate(s.calendar_date)}</div>` : '';
+    const shownDate = (browseState._dateOf || (x => x.calendar_date))(s);
+    const nextRelease = shownDate
+      ? `<div class="series-card-next-release">${_fmtReleaseDate(shownDate)}</div>` : '';
     const thumbSrc  = s.card_image || `/api/series/${s.id}/thumbnail`;
     const thumbFall = s.card_image  ? `this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${s.id}/thumbnail'` : `this.onerror=null;this.style.opacity='0.15'`;
     return head + `

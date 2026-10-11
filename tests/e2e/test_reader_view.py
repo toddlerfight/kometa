@@ -105,10 +105,36 @@ def test_a_quick_second_trackpad_swipe_counts_and_a_diagonal_one_turns(app, app_
     for d in (30, 26, 20, 14, 9, 6, 4):                              # a swipe and its decaying momentum
         app.mouse.wheel(d, 0)
     at(start + 1)
-    for d in (28, 30, 22):                                           # a fresh push inside the tail
+    for d in (5, 9, 4, 7, 3, 6, 2):                                  # the tail jitters: still one page
+        app.mouse.wheel(d, 0)
+    app.wait_for_timeout(150)
+    at(start + 1)
+    for _ in range(8):                                               # tail keeps going past the cooldown...
+        app.wait_for_timeout(60)
+        app.mouse.wheel(2, 0)
+    for d in (28, 30, 22):                                           # ...then a fresh push inside it
         app.mouse.wheel(d, 0)
     at(start + 2)
+    app.wait_for_timeout(200)                                        # lift, swipe again straight away
+    for d in (30, 26, 20):
+        app.mouse.wheel(d, 0)
+    at(start + 3)
     app.wait_for_timeout(300)
     for _ in range(6):                                               # wobbly: sideways wins over the whole swipe
         app.mouse.wheel(-12, 9)
-    at(start + 1)
+    at(start + 2)
+
+
+def test_a_long_jittery_momentum_tail_turns_one_page(app, app_server):
+    app.set_viewport_size({"width": 820, "height": 1180})
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read").click()
+    page = app.locator("#reader #rd-stage .rd-page")
+    expect(page).to_have_count(1)
+    start = int(page.get_attribute("alt").split()[-1])
+    app.mouse.move(410, 590)
+    for d in (40, 55, 48, 38, 30, 34, 22, 26, 15, 19, 11, 14, 8, 10, 6, 7, 4, 5, 3, 2, 2, 1):
+        app.wait_for_timeout(16)
+        app.mouse.wheel(d, 0)
+    app.wait_for_timeout(300)
+    expect(page).to_have_attribute("alt", f"Page {start + 1}")
