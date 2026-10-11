@@ -4502,6 +4502,7 @@ async function disconnectIntegration(integ, btn) {
 function showModal(html) {
   const modal = document.getElementById('modal');
   modal.innerHTML = html;
+  modal._openedAt = performance.now();
   modal.classList.remove('hidden');
   document.getElementById('modal-backdrop').classList.remove('hidden', 'closing');
   const first = modal.querySelector('button, input, [tabindex]');
@@ -4542,6 +4543,10 @@ let _issueVariantOwned    = false;  // cached at modal-open — don't re-derive 
 function _animateModalHeight(mutate) {
   const modal = document.getElementById('modal');
   if (!modal || modal.classList.contains('hidden')) { mutate(); return; }
+  // Still on its way in: content that lands now just rides the entrance. Tweening the
+  // height on top of the rise grew the modal around its centre while it slid —
+  // a stretch, not a fade-up (details got fast enough to land mid-entrance).
+  if (performance.now() - (modal._openedAt || 0) < 360) { mutate(); return; }
   const from = modal.getBoundingClientRect().height;
   mutate();
   const to = modal.getBoundingClientRect().height;
