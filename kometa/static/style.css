@@ -926,8 +926,8 @@ select.settings-input {
 .issue-tile-img.today::after    { border: 2px solid var(--blu); }
 
 /* Ignored: told to stop chasing it. Dimmed and quiet — present, but not asking for anything. */
-.issue-tile-img.ignored { background: var(--su2); }
-.issue-tile-img.ignored img { opacity: 0.4; filter: blur(2px) brightness(0.55) saturate(0.6); }
+.issue-tile-img.ignored { background: transparent; }   /* the page shows through */
+.issue-tile-img.ignored img { opacity: 0.45; filter: blur(1px) brightness(0.45) saturate(0.6); }
 
 .issue-tile-num {
   font-size: var(--fs-label);
