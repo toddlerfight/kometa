@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 import kometa.db as db
 import kometa.downloader as downloader
 from kometa.sources import (
-    komga as _komga, sabnzbd as _sabnzbd,
+    sabnzbd as _sabnzbd,
     comics_root as _comics_root, qbittorrent as _qbittorrent, prowlarr as _prowlarr,
 )
 from kometa.usenet_client import PACK_THRESHOLD
@@ -133,22 +133,6 @@ def _trade_fallback_name(meta: dict, default_title: str) -> str:
     if vol is not None:
         return f"{title} Vol {vol:02d}"
     return meta.get("edition_title") or title
-
-
-# Legacy: no placement path asks Komga to scan any more (2026-10-10). Kept as
-# seams the tests still monkeypatch; nothing in this module calls them.
-def _komga_scan(deep=False):
-    komga = _komga()
-    if komga:
-        komga.scan_library(deep=deep)
-
-
-def _komga_scan_safe(deep=False):
-    """_komga_scan() that never lets a scan hiccup break a finalize."""
-    try:
-        _komga_scan(deep=deep)
-    except Exception as e:
-        logger.warning(f"Komga scan failed: {e}")
 
 
 # After a file lands: the cover from the file itself and the shelf row for the

@@ -253,13 +253,6 @@ def parse_volume_number(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def scan_folder_volumes(folder_path: str) -> set[int]:
-    """Volume numbers of collected editions present on disk — same folder-is-truth
-    model as scan_folder_numbers, just for trades. A trade counts as owned when its
-    volume turns up here."""
-    return {v for v, _ in scan_folder_volume_entries(folder_path)}
-
-
 def scan_folder_volume_entries(folder_path: str) -> list[tuple[int, str]]:
     """(volume, lowercased filename) pairs for the collected editions on disk.
     The name rides along so callers can tell EDITIONS apart — an Absolute Vol 1

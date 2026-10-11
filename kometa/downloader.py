@@ -646,22 +646,6 @@ def _comicinfo_xml_from_dir(d: str) -> str | None:
     return None
 
 
-def _comicinfo_number_from_dir(d: str) -> float | None:
-    """<Number> from an already-extracted archive dir. Root-level ComicInfo.xml
-    only — same rule as _read_archive_comicinfo, where a nested one never
-    matched the archive readers either."""
-    try:
-        for f in os.listdir(d):
-            if f.lower() == 'comicinfo.xml':
-                with open(os.path.join(d, f), 'rb') as fh:
-                    xml = fh.read().decode('utf-8', errors='replace')
-                m = _COMICINFO_NUM_RE.search(xml)
-                return float(m.group(1)) if m else None
-    except Exception:
-        pass
-    return None
-
-
 # A single issue rarely exceeds this many image pages. A trade, an omnibus, or a
 # vertical/webtoon edition (each panel is its own "page") blows well past it — which
 # is exactly how an 80-panel webtoon release slipped in mislabeled as a print issue.

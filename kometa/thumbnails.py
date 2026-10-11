@@ -412,7 +412,7 @@ def _issue_thumbnail(series_id: int, number: float, request: Request = None):
             resp = _komga_thumb(
                 komga,
                 f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-                _book_cache_key(book_id, issue.get("komga_book_v") if issue else None),
+                _book_cache_key(book_id, None),
             )
             if resp:
                 return _tag(resp, "komga")
@@ -432,22 +432,3 @@ def _book_cache_key(book_id: str, v: str | None) -> str:
     # existing cache entries stay warm for callers that don't know a version.
     return f"komga:book:{book_id}:{v}" if v else f"komga:book:{book_id}"
 
-
-@router.get("/api/book/{book_id}/thumbnail")
-def book_thumbnail(book_id: str, v: str | None = None):
-    komga = _komga()
-    if not komga:
-        raise HTTPException(404)
-    try:
-        resp = _komga_thumb(
-            komga,
-            f"{komga.base_url}/api/v1/books/{book_id}/thumbnail",
-            _book_cache_key(book_id, v),
-        )
-        if resp:
-            return resp
-        raise HTTPException(404)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(504) from e

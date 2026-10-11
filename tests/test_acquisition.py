@@ -51,7 +51,6 @@ def wired(db_path, series, monkeypatch):
     dev machine, so without these two lines those paths die on 'unable to open
     database file' and mark items failed instead of not_found."""
     monkeypatch.setattr(acq, "DB_PATH", db_path)
-    monkeypatch.setattr(acq, "_komga_scan", lambda: None)
     # The post-placement resync spawns a thread that would poll a Komga that
     # isn't there and then run a REAL sync (LOCG, network) against the temp DB.
     monkeypatch.setattr(acq, "_resync_after_placement", lambda *a, **k: None)

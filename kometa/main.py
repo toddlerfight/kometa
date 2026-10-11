@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from kometa.komga_client import KomgaClient
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, get_trades_anon as _locg_trades, select_editions as _select_editions, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
+from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
 from kometa.models import AddSeriesRequest
 from kometa.arcs import (
     router as _arcs_router, _owned_collection, _add_arc,
@@ -339,15 +339,6 @@ def test_qbit(req: TestQbitRequest):
 class TestProwlarrRequest(BaseModel):
     url: str | None = None
     apikey: str | None = None
-
-
-@app.post("/api/test/metron")
-def test_metron():
-    from kometa import metron_client
-    if not metron_client.configured():
-        return {"ok": False, "error": "Not configured"}
-    ok, detail = metron_client.test()
-    return {"ok": ok, "detail" if ok else "error": detail}
 
 
 @app.post("/api/test/prowlarr")
@@ -744,7 +735,6 @@ def get_series(series_id: int):
                         if arc_includes_series(a["source_titles"], s["title"])) or None
     for i in issues:                       # Komga-era fields no screen reads (Komga is retired)
         i.pop("komga_book_id", None)
-        i.pop("komga_book_v", None)
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id), **_family_for(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
                 **_summary(issues))
@@ -1106,17 +1096,6 @@ def delete_series(series_id: int):
     from kometa import trash
     if not db.get_series_by_id(series_id, DB_PATH):
         raise HTTPException(404)
-    try:
-        return trash.trash_series(series_id)
-    except trash.TrashError as e:
-        raise HTTPException(400, str(e))
-
-
-@app.post("/api/series/{series_id}/trash")
-def trash_series(series_id: int):
-    """Needs matching → Remove: the series goes, and its folder moves to _trash
-    under the comics root (purged after a week; Undo restores). kometa/trash.py."""
-    from kometa import trash
     try:
         return trash.trash_series(series_id)
     except trash.TrashError as e:

@@ -113,7 +113,6 @@ class TestUsenetFinalizeIncomplete:
         import kometa.acquisition as acq
         import kometa.db as db
         monkeypatch.setattr(acq, "DB_PATH", db_path)
-        monkeypatch.setattr(acq, "_komga_scan", lambda: None)
         storage, dest, qid, item = self._setup(db_path, series, tmp_path)
         calls = []
         monkeypatch.setattr(acq, "_try_torrent", lambda it, q: calls.append("torrent") or False)
@@ -132,7 +131,6 @@ class TestUsenetFinalizeIncomplete:
         import kometa.acquisition as acq
         import kometa.db as db
         monkeypatch.setattr(acq, "DB_PATH", db_path)
-        monkeypatch.setattr(acq, "_komga_scan", lambda: None)
         storage, dest, qid, item = self._setup(db_path, series, tmp_path)
         monkeypatch.setattr(acq, "_try_torrent", lambda it, q: False)
         monkeypatch.setattr(acq, "_gc_rescue", lambda it, q: False)

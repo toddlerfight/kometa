@@ -218,7 +218,7 @@ def _drop_season_mismatches(results: list[dict], title: str) -> list[dict]:
 
 def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> dict | None:
     """Best torrent pack/collection for a series. Returns the result dict (magnet,
-    seeders, title, size) or None. Twin of usenet_client.search_usenet_pack."""
+    seeders, title, size) or None. Twin of search_usenet_pack below."""
     results = []
     for q in (f"{title} complete", title):
         results = prowlarr.search(q, protocol="torrent")
@@ -283,7 +283,7 @@ def _drop_failed_sources(results: list[dict], exclude_urls) -> list[dict]:
 def search_torrent(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
                    store_date: str | None = None, exclude_urls=None) -> dict | None:
     """Best torrent for a single issue. Returns the result dict or None. Twin of
-    usenet_client.search_usenet.
+    search_usenet below.
 
     A single-issue result must carry BOTH the series name (+10) AND issue-number
     evidence (+5) BEFORE seeders count for anything — name-substring alone used
@@ -346,7 +346,7 @@ def _best_usenet(results: list[dict], score_fn, min_score: int,
 def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, series_year=None,
                   store_date: str | None = None, exclude_urls=None) -> str | None:
     """Best usenet NZB for a single issue. Returns the NZB download URL or None —
-    a drop-in for usenet_client.search_usenet, but sourced through Prowlarr so it
+    sourced through Prowlarr so it
     sees every usenet indexer Prowlarr aggregates. Same evidence bar as the
     torrent twin: series name (+10) AND issue-number evidence (+5) before we act.
     store_date demotes releases that predate the issue — see _is_stale."""
@@ -369,7 +369,7 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
 
 def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, missing: int | None = None) -> str | None:
     """Best usenet pack/collection for a series. Returns the NZB url or None.
-    Drop-in for usenet_client.search_usenet_pack, sourced through Prowlarr.
+    Sourced through Prowlarr.
     missing: how many issues the pack is for — caps the believable size."""
     results = []
     for q in (f"{title} complete", title):

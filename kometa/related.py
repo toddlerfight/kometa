@@ -261,42 +261,6 @@ def _recent_series(path, days: int = RECENT_DAYS) -> list[int]:
             GROUP BY b.tracked_series_id ORDER BY MAX(p.updated_at) DESC LIMIT 20""", (READER_ID, since))]
 
 
-def suggestions(limit: int = 16, path=None) -> list[dict]:
-    """Near what you've been reading lately, summed; series you already own but
-    haven't started rank first (they're one tap from reading)."""
-    path = path or DB_PATH
-    seeds = _recent_series(path)
-    if not seeds:
-        return []
-    sig = _signals(path)
-    nb = _list_neighbours(path)
-    agg: dict[int, dict] = {}
-    for seed in seeds:
-        for r in related(seed, limit=30, path=path, signals=sig, neighbours=nb):
-            if r["series_id"] in seeds:
-                continue
-            a = agg.setdefault(r["series_id"], {**r, "score": 0.0, "why": [], "because": []})
-            a["score"] += r["score"]
-            for w in r["why"]:
-                if w not in a["why"]:
-                    a["why"].append(w)
-            a["because"].append(seed)
-    with db._connect(path) as conn:
-        started = {r[0] for r in conn.execute(
-            "SELECT DISTINCT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id WHERE p.reader_id = ?", (READER_ID,))}
-    titles = {s["id"]: s["title"] for s in db.get_all_series(path)}
-    out = sorted(agg.values(), key=lambda r: (r["series_id"] in started, -(r["owned"] > 0), -r["score"]))
-    for r in out:
-        r["because"] = [titles.get(x, "") for x in r["because"][:2]]
-        r["why"] = r["why"][:3]
-        r["started"] = r["series_id"] in started
-        r["kind"] = "owned"
-    # Outward: entries you don't have on the lists you've been reading from —
-    # related by the list's own say-so, and one Get away.
-    gaps = _list_gaps_near(seeds, path, titles)
-    return (out + gaps)[:limit + len(gaps)]
-
-
 _lists_cache = {"at": 0.0, "path": None, "value": None}
 LISTS_TTL_S = 120
 
@@ -743,15 +707,3 @@ def api_because(exclude: str = ""):
     rows, pending = because_rows(path=DB_PATH, exclude=ids)
     return {"rows": rows, "pending": pending}
 
-
-@router.get("/api/ondeck/suggestions")
-def api_suggestions():
-    sug = suggestions()
-    out, pending = [], False
-    try:
-        out, pending = outward(_recent_series(DB_PATH), limit=10, cached_only=True)
-    except Exception as e:
-        logger.info(f"Suggestions: outward skipped: {e}")
-    for o in out:
-        o["because"] = []
-    return {"suggestions": sug + out, "pending": pending}

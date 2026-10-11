@@ -87,18 +87,6 @@ class ComicVineClient:
         logger.info(f"ComicVine: {len(out)} volume results for {query!r}")
         return out
 
-    def get_volume_issues(self, cv_volume_id) -> list[dict]:
-        """The issue list for a volume — used to populate a tracked series on add.
-        Returns CV issue stubs ({id, issue_number, name, ...})."""
-        try:
-            d = self._get(f"volume/{_VOLUME_PREFIX}{cv_volume_id}/", field_list="issues")
-        except Exception as e:
-            logger.warning(f"ComicVine volume {cv_volume_id} issues failed: {e}")
-            return []
-        return (d.get("results") or {}).get("issues") or []
-
-    # --- story arcs (the cross-title event layer) ---
-
     def search_arcs(self, query: str, limit: int = 10) -> list[dict]:
         """Search story arcs by name. Returns [{name, cv_arc_id, publisher}]. CV
         splits some events into multiple arcs ('Knightquest: The Crusade' + '…The

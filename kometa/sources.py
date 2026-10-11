@@ -132,16 +132,6 @@ def wikipedia():
     return _wikipedia_instance
 
 
-def usenet_indexers() -> list[dict]:
-    import json
-    cfg = db.get_config(DB_PATH)
-    raw = cfg.get("newznab_indexers", "")
-    if not raw:
-        return []
-    try:
-        return json.loads(raw)
-    except Exception:
-        return []
 # NB: no locg() accessor — LOCG is keyless. The login was fully redundant (the
 # search endpoint ignores auth), so callers use kometa.locg_client's anonymous
 # functions directly (search_series_anon, get_issues_anon, fetch_variants, …).

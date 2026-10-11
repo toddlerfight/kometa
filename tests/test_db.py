@@ -256,3 +256,16 @@ class TestRestartMidPlacing:
         db.reset_stuck_queue_items(db_path)
         states = {q["issue_number"]: q["state"] for q in db.get_queue(db_path)}
         assert states == {1.0: "pending_usenet", 2.0: "queued"}       # no handle: nothing to go back to
+
+
+class TestRemoveSeries:
+    def test_nothing_of_a_removed_series_is_left_behind(self, db_path, series):
+        db.queue_issue(series, 1.0, db_path)
+        db.set_trades(series, [{"locg_id": "1", "title": "Saga Vol. 1"}], db_path)
+        other = db.add_series(title="Paper Girls", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+        db.queue_issue(other, 1.0, db_path)
+        db.remove_series(series, db_path)
+        assert db.get_trades(series, db_path) is None
+        with db._connect(db_path) as c:
+            assert c.execute("SELECT COUNT(*) FROM download_queue WHERE tracked_series_id = ?", (series,)).fetchone()[0] == 0
+            assert c.execute("SELECT COUNT(*) FROM download_queue WHERE tracked_series_id = ?", (other,)).fetchone()[0] == 1

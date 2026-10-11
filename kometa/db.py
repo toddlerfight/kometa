@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import date, timedelta
 
@@ -146,8 +147,7 @@ def once_per_db(fn):
     return wrapper
 
 
-import threading as _threading
-_local = _threading.local()
+_local = threading.local()
 
 
 def _open(path):
@@ -661,10 +661,22 @@ def get_series_by_komga_id(komga_series_id, path=DB_PATH):
         return dict(r) if r else None
 
 
+# what hangs off a series: caches, the record, its queue history. remove_series
+# left all of it behind (the audit found 38 orphan trade records, 18 trade caches,
+# 13 queue rows …); none of it means anything without the series.
+_SERIES_ROWS = ("trade_record", "trades_cache", "download_queue", "series_record", "issue_record",
+                "series_signals", "arc_discovery_cache", "failed_releases", "variant_prefs")
+
+
 def remove_series(series_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("DELETE FROM issue_status WHERE tracked_series_id = ?", (series_id,))
         conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (series_id,))
+        for table in _SERIES_ROWS:
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE tracked_series_id = ?", (series_id,))
+            except sqlite3.OperationalError:
+                pass                                       # a table this install never made
         conn.execute("DELETE FROM tracked_series WHERE id = ?", (series_id,))
 
 
@@ -860,16 +872,6 @@ def get_series_by_id(series_id, path=DB_PATH):
         return dict(row) if row else None
 
 
-def set_owned(tracked_series_id, number, owned, path=DB_PATH):
-    """Flip just the owned flag on an existing issue — used by folder scanning,
-    which is the source of truth for ownership (no metadata touched)."""
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE issue_status SET owned = ? WHERE tracked_series_id = ? AND number = ?",
-            (int(owned), tracked_series_id, number),
-        )
-
-
 def set_owned_bulk(tracked_series_id, numbers, owned, path=DB_PATH):
     """set_owned for many issue numbers in ONE connection/transaction. The sync
     reconcile loops were opening a connection per flipped issue."""
@@ -914,28 +916,6 @@ def upsert_issue_status_many(rows, path=DB_PATH):
         conn.executemany(_UPSERT_ISSUE_SQL,
                          [(r[0], r[1], r[2], int(r[3]), r[4], r[5], r[6], r[7] if len(r) > 7 else None)
                           for r in rows])
-
-
-def set_komga_book_id(series_id, number, book_id, path=DB_PATH):
-    """Stamp just the komga_book_id on an existing issue (no-op if the row doesn't
-    exist). Used to apply the Komga book map to disk-derived owned issues without
-    clobbering their other fields the way a full upsert would."""
-    with _connect(path) as conn:
-        conn.execute(
-            "UPDATE issue_status SET komga_book_id = ? WHERE tracked_series_id = ? AND number = ?",
-            (book_id, series_id, number),
-        )
-
-
-def set_komga_book_ids_bulk(series_id, book_map, path=DB_PATH):
-    """set_komga_book_id for a whole {number: book_id} map in ONE transaction."""
-    if not book_map:
-        return
-    with _connect(path) as conn:
-        conn.executemany(
-            "UPDATE issue_status SET komga_book_id = ? WHERE tracked_series_id = ? AND number = ?",
-            [(bid, series_id, num) for num, bid in book_map.items()],
-        )
 
 
 def set_pull_list(series_id, on_pull_list, path=DB_PATH):
@@ -1012,28 +992,10 @@ def get_arc_discovery(tracked_series_id, path=DB_PATH):
     return {"arcs": json.loads(row["data_json"]), "age": row["age"]}
 
 
-def book_thumb_url(book_id: str, v: str | None = None) -> str:
-    """The one spelling of a Komga cover URL — versioned when we know the file."""
-    from urllib.parse import quote
-    return f"/api/book/{book_id}/thumbnail" + (f"?v={quote(v)}" if v else "")
-
-
-def set_komga_book_versions(versions: dict, path=DB_PATH):
-    """{book_id: v} from a Komga book list, in one transaction."""
-    if not versions:
-        return
-    with _connect(path) as conn:
-        conn.executemany(
-            "INSERT INTO komga_book_version (book_id, v) VALUES (?, ?) "
-            "ON CONFLICT(book_id) DO UPDATE SET v = excluded.v",
-            list(versions.items()))
-
-
 def get_issues_for_series(tracked_series_id, path=DB_PATH):
     with _connect(path) as conn:
         rows = [dict(r) for r in conn.execute("""
-            SELECT i.*, kv.v AS komga_book_v FROM issue_status i
-            LEFT JOIN komga_book_version kv ON kv.book_id = i.komga_book_id
+            SELECT i.* FROM issue_status i
             WHERE i.tracked_series_id = ? ORDER BY i.number
         """, (tracked_series_id,))]
         prefs = {r["number"]: r for r in conn.execute(
@@ -1111,18 +1073,6 @@ def move_folder_paths(series_id, old_folder, new_folder, path=DB_PATH) -> int:
         conn.execute("UPDATE shelf_series SET folder_path = ? WHERE folder_path = ?", (new_folder, old_folder))
         conn.execute("UPDATE tracked_series SET folder_path = ? WHERE id = ?", (new_folder, series_id))
         return n
-
-
-def move_books_to_series(old_folder, new_folder, parent_id, parent_shelf_id, path=DB_PATH) -> int:
-    """Files filed under another series (a trade into its run): book rows follow
-    the move AND change owner, so read progress lands on the right series page."""
-    old_prefix = old_folder.rstrip("/") + "/"
-    new_prefix = new_folder.rstrip("/") + "/"
-    with _connect(path) as conn:
-        return conn.execute(
-            "UPDATE books SET path = ? || substr(path, ?), tracked_series_id = ?, shelf_series_id = ? "
-            "WHERE substr(path, 1, ?) = ?",
-            (new_prefix, len(old_prefix) + 1, parent_id, parent_shelf_id, len(old_prefix), old_prefix)).rowcount
 
 
 def set_book_owner(book_path, tracked_series_id, shelf_series_id, number="keep", path=DB_PATH) -> int:

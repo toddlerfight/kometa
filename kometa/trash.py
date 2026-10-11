@@ -22,7 +22,6 @@ DB_PATH = db.DB_PATH
 TRASH_DIR = "_trash"
 TRASH_DAYS = 7
 ORIGIN_FILE = ".kometa-origin"     # inside a trashed folder: where it came from
-REMOVABLE = {"pending", "needs_match"}
 
 
 class TrashError(RuntimeError):

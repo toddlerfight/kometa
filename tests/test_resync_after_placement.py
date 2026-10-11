@@ -22,7 +22,6 @@ def test_placement_makes_the_cover_and_indexes_the_folder(tmp_path, monkeypatch)
     covers = []
     from kometa import covers as cv
     monkeypatch.setattr(cv, "generate_for_path", lambda path, series_id, dbp=None: covers.append((path, series_id)))
-    monkeypatch.setattr(acq, "_komga", lambda: (_ for _ in ()).throw(AssertionError("Komga was asked")))
 
     acq._resync_after_placement(sid, str(f))
 
@@ -38,22 +37,3 @@ def test_index_series_folder_without_a_folder_is_a_no_op(tmp_path):
     db.init_db(db_path)
     sid = db.add_series(komga_series_id=None, title="Saga", publisher="Image", folder_path=None, path=db_path)
     assert shelf.index_series_folder(sid, db_path) == 0
-
-
-def test_scan_library_passes_deep_flag():
-    from kometa.komga_client import KomgaClient
-    sent = []
-
-    class _S:
-        def post(self, url, params=None, timeout=None):
-            sent.append(params)
-
-            class R:
-                def raise_for_status(self):
-                    pass
-            return R()
-    c = KomgaClient.__new__(KomgaClient)
-    c.session, c.base_url, c.library_id = _S(), "http://k", "LIB"
-    c.scan_library()
-    c.scan_library(deep=True)
-    assert sent == [None, {"deep": "true"}]

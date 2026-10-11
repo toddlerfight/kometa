@@ -751,13 +751,6 @@ def refresh_coverage(path=None) -> int:
     return len(covered)
 
 
-def covered_book(series_id: int, number: float, path=None) -> str | None:
-    with db._connect(path or DB_PATH) as conn:
-        r = conn.execute("SELECT covered_by FROM issue_status WHERE tracked_series_id = ? AND number = ?",
-                         (series_id, number)).fetchone()
-    return r["covered_by"] if r and r["covered_by"] else None
-
-
 def trickle() -> dict:
     """Scheduler: collects for a few trades, the coverage stamps, then the pass."""
     from kometa import metron_client

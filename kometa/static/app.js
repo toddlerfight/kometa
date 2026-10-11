@@ -5011,14 +5011,6 @@ async function _toggleSeriesFav(id, btn) {
   catch { btn.classList.toggle('on', !on); btn.firstChild.textContent = on ? '♡' : '♥'; showToast('Couldn’t save that', 'error'); }
 }
 
-async function _toggleBookFav(bookId) {
-  try {
-    const cur = await api.get(`/api/books/${bookId}`);
-    const r = await api.put(`/api/books/${bookId}/mark`, { favourite: !cur.favourite });
-    showToast(r.favourite ? 'Favourited' : 'Removed from favourites');
-  } catch { showToast('Couldn’t save that', 'error'); }
-}
-
 function _markRowHtml(bk) {
   // Rating on the left, favourite (a heart) on the right, nothing in between —
   // six stars in a row read as one control. Tapping the lit star again clears.

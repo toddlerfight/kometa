@@ -48,15 +48,6 @@ full_sync_lock = threading.Lock()
 
 
 
-def komga_book_version(book: dict) -> str | None:
-    """A token that changes when the file behind a Komga book does. Komga keeps
-    the book id across an in-place replacement, so the id alone can't tell a
-    coverless #015 from the whole one that replaced it."""
-    mod, size = book.get("fileLastModified"), book.get("sizeBytes")
-    if not mod and size is None:
-        return None
-    return f"{mod or ''}:{size if size is not None else ''}"
-
 def _komga_all_series(komga):
     """The whole Komga library (cached), LIVE series only. Returns a list; [] on failure.
 

@@ -96,11 +96,6 @@ def import_new_folders() -> list[int]:
     return new_ids
 
 
-def _confident(rows, series: dict) -> int | None:
-    row = _confident_row(rows, series)
-    return int(row["id"]) if row else None
-
-
 def _confident_row(rows, series: dict) -> dict | None:
     """Exactly one candidate agreeing on title, publisher and (when there's any
     year evidence) year — that row, else None. Shared by Metron and LOCG matching."""

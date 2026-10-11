@@ -353,16 +353,6 @@ def api_get_entry(list_id: int, item_id: int):
     return r
 
 
-@router.get("/api/readlists/{list_id}/packs")
-def api_list_packs(list_id: int):
-    """Dry run: which packs hold this list's gaps, judged on their file lists. Queues nothing."""
-    from kometa import listpacks
-    try:
-        return listpacks.find_packs(list_id)
-    except KeyError:
-        raise HTTPException(404, "No such list")
-
-
 @router.get("/api/listget/jobs")
 def api_jobs():
     """Get missing runs still going — Activity shows them, so a click is never silent."""

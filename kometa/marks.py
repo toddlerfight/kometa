@@ -201,7 +201,3 @@ def api_mark_series(series_id: int, req: MarkRequest):
 def api_next(book_id: int):
     return next_in_series(book_id)
 
-
-@router.get("/api/ondeck/favourites")
-def api_favourites():
-    return {"favourites": favourites()}

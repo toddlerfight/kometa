@@ -282,23 +282,3 @@ def series_detail(series_id: int) -> dict:
         "type": st.get("name") if isinstance(st, dict) else st,
     }
 
-
-def releases_between(after: str, before: str) -> list[dict]:
-    """Every issue Metron has with a store date in [after, before] — the weekly
-    what's-new check in a handful of requests."""
-    out = []
-    for i in _all_pages("issue/", max_pages=20, store_date_range_after=after, store_date_range_before=before):
-        s = i.get("series") or {}
-        out.append({"metron_series_id": s.get("id") if isinstance(s, dict) else None,
-                    "number": _num(i.get("number")), "store_date": i.get("store_date")})
-    return out
-
-
-def test() -> tuple[bool, str]:
-    try:
-        _get("publisher/", name="Image")
-        c = _creds()
-        lim = _state.get("sustained_limit")
-        return True, ("Connected with your API token" if c and c[0] == "token" else "Connected") + (f" · {lim} requests a day" if lim else "")
-    except MetronUnavailable as e:
-        return False, str(e)

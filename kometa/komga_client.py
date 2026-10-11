@@ -66,11 +66,3 @@ class KomgaClient:
             page += 1
         return books
 
-    def scan_library(self, deep=False):
-        # deep=True makes Komga re-read every series folder instead of skipping
-        # the ones whose directory mtime hasn't moved. Over SMB a new file does
-        # NOT always bump the folder's mtime — a normal scan then walks right past it.
-        r = self.session.post(f"{self.base_url}/api/v1/libraries/{self.library_id}/scan",
-                              params={"deep": "true"} if deep else None,
-                              timeout=self.TIMEOUT)
-        r.raise_for_status()

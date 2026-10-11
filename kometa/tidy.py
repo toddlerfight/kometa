@@ -278,7 +278,7 @@ def apply(series_id: int, path=None) -> dict:
             os.makedirs(os.path.dirname(p["target_folder"]), exist_ok=True)
             os.rename(folder, p["target_folder"])
             db.move_folder_paths(series_id, folder, p["target_folder"], path)
-            if p.get("publisher") and (s_pub := (db.get_series_by_id(series_id, path) or {}).get("publisher") or "").lower() in ("", "unknown"):
+            if p.get("publisher") and ((db.get_series_by_id(series_id, path) or {}).get("publisher") or "").lower() in ("", "unknown"):
                 with db._connect(path) as c:
                     c.execute("UPDATE tracked_series SET publisher = ? WHERE id = ?", (p["publisher"], series_id))
                     c.execute("UPDATE shelf_series SET publisher = ? WHERE folder_path = ?", (p["publisher"], p["target_folder"]))
