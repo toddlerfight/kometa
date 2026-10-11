@@ -1407,6 +1407,18 @@ select.settings-input {
   padding-top: var(--sp-lg);
   border-top: 1px solid var(--bd);
 }
+/* The modal scrolls past 82vh, but its buttons don't: the footer pins to the
+   bottom edge, the content scrolls under it (a long description used to push
+   Close and Read off the bottom) */
+#modal > .modal-footer {
+  position: sticky;
+  bottom: calc(-1 * var(--sp-xl));
+  margin: 20px calc(-1 * var(--sp-xl)) calc(-1 * var(--sp-xl));
+  padding: var(--sp-lg) var(--sp-xl) var(--sp-xl);
+  background: var(--su1);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  z-index: 2;
+}
 
 .hidden { display: none !important; }
 
