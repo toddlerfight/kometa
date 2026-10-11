@@ -110,7 +110,7 @@ function _rdRender() {
   }).join('');
   const loader = _rd.opening ? document.getElementById('rd-loading') : null;
   el.innerHTML = `
-    <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
+    <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}${loader ? ' rd-opening' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
     <div class="rd-progress" style="width:${(last / b.page_count) * 100}%"></div>
     <div class="rd-count" aria-hidden="true">${label} / ${b.page_count}</div>
     <div class="rd-chrome${_rd.chrome ? ' on' : ''}" id="rd-chrome">
@@ -500,7 +500,7 @@ function _rdOpened() {
   if (!ov) return;
   _rdStage('done');
   ov.classList.add('rd-loading-out');
-  setTimeout(() => ov.remove(), 400);
+  setTimeout(() => ov.remove(), 500);
 }
 
 async function renderReader(params) {

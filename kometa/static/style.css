@@ -1992,8 +1992,12 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 #reader.hidden { display: none; }
 .rd-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
   font-size: var(--fs-label); letter-spacing: var(--track-wide); color: var(--tq); text-transform: uppercase; }
-.rd-loading { z-index: 5; background: var(--bg, #000); transition: opacity .35s var(--ease-out, ease-out); }
-.rd-loading-out { opacity: 0; pointer-events: none; }
+.rd-loading { z-index: 5; background: var(--bg, #000); transition: opacity .45s var(--ease-out), transform .45s var(--ease-out); }
+.rd-loading-out { opacity: 0; transform: scale(.96); pointer-events: none; }
+/* the crossfade out of the loader: page 1 settles in from slightly large while the loader shrinks away */
+.rd-stage.rd-opening .rd-page { opacity: 0; transform: scale(1.04); }
+.rd-stage.rd-opening.rd-loaded .rd-page { opacity: 1; transform: none;
+  transition: opacity .45s var(--ease-out), transform .6s var(--ease-out); }
 .rd-load-track { width: min(240px, 60vw); height: 2px; background: var(--su3); overflow: hidden; border-radius: 1px; }
 .rd-load-fill { height: 100%; background: var(--pri); transform: scaleX(0); transform-origin: left;
   transition: transform 12s cubic-bezier(.1, .7, .2, 1); }
@@ -2002,7 +2006,10 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
 .rd-stage > .rd-spin { position: absolute; top: 50%; left: 50%; margin: -14px 0 0 -14px; z-index: 0; }
 .rd-stage .rd-page { position: relative; z-index: 1; }
 .rd-stage.rd-loaded > .rd-spin { display: none; }
-@media (prefers-reduced-motion: reduce) { .rd-spin { animation: none; border-color: var(--pri); } .rd-load-fill { transition: none !important; } .rd-loading { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rd-spin { animation: none; border-color: var(--pri); } .rd-load-fill { transition: none !important; }
+  .rd-loading, .rd-loading-out { transform: none; transition: opacity .2s linear; }
+  .rd-stage.rd-opening .rd-page { transform: none; }
+  .rd-stage.rd-opening.rd-loaded .rd-page { transition: opacity .2s linear; } }
 
 .rd-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .rd-page { display: block; max-width: 100vw; max-height: 100vh; max-height: 100dvh; object-fit: contain;
