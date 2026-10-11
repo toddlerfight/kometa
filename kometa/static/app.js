@@ -908,9 +908,8 @@ function _stackCardHtml(g, i) {
         <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:100%;background:var(--su3)"></div></div>
         <div class="series-card-footer">
           <div class="series-card-title">${esc(g.title)}</div>
-          <div class="series-card-count" style="color:var(--tq)">${g.count} series</div>
         </div>
-        <div class="series-card-publisher u-truncate">${owned} issues on the shelf</div>
+        <div class="series-card-publisher u-truncate">${g.count} series · ${owned} issues</div>
       </div>`;
 }
 

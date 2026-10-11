@@ -2362,16 +2362,20 @@ body.touch .od-menu { opacity: .85; }
 .specials-row { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); margin-top: var(--sp-xl); }
 
 /* --- Library: stacks, letters, rail --- */
-.stack-fan { background: var(--su2); }
-.stack-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 110%; box-shadow: -6px 0 14px rgba(0,0,0,.55); }
-/* the front cover sits a little right and small so the two behind show at the left edge */
-.stack-cover-0 { z-index: 3; transform: translateX(9%) scale(.9); }
-.stack-cover-1 { z-index: 2; transform: translateX(-2%) rotate(-4deg) scale(.88); filter: brightness(.7); }
-.stack-cover-2 { z-index: 1; transform: translateX(-12%) rotate(-9deg) scale(.86); filter: brightness(.5); }
-.stack-card:hover .stack-cover-0 { transform: translateX(9%) scale(.93); }
-.stack-card:hover .stack-cover-1 { transform: translateX(-4%) rotate(-6deg) scale(.88); }
-.stack-card:hover .stack-cover-2 { transform: translateX(-16%) rotate(-12deg) scale(.86); }
-.stack-badge { position: absolute; top: 6px; right: 6px; z-index: 4; background: rgba(0,0,0,.8); color: var(--tp); font-size: var(--fs-label); font-weight: 700; padding: 2px 7px; border-radius: var(--r-sm); letter-spacing: var(--track-tight); }
+/* Stacks fan like YondeB's: three covers straight on the page — no backing, none
+   darkened — the front one tipped left, the back one right and up, all soft-shadowed. */
+.stack-fan { background: transparent; overflow: visible; }
+.stack-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-sm);
+  box-shadow: 0 2px 8px rgba(0,0,0,.6); transition: transform var(--t-mid) var(--ease-out); }
+.stack-card:hover .stack-cover { transform: var(--fan); }               /* no cover zoom on a stack */
+.stack-cover-0 { z-index: 3; --fan: scale(.88) translate(-5%, 0) rotate(-5deg); transform: var(--fan); }
+.stack-cover-1 { z-index: 2; --fan: scale(.88); transform: var(--fan); }
+.stack-cover-2 { z-index: 1; --fan: scale(.88) translate(5%, -1.6%) rotate(5deg); transform: var(--fan); }
+.stack-card:hover .stack-cover-0 { transform: scale(.9) translate(-7%, 0) rotate(-7deg); }
+.stack-card:hover .stack-cover-2 { transform: scale(.88) translate(7%, -2.4%) rotate(7deg); }
+.stack-badge { position: absolute; top: 6px; right: 6px; z-index: 4; background: var(--pri); color: #000; font-size: var(--fs-label);
+  font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: var(--track-tight); }
+.stack-card .series-card-bar-track { visibility: hidden; }              /* keeps the row height, shows nothing */
 .series-grid.with-letters { position: relative; }
 .letter-head { grid-column: 1 / -1; position: sticky; top: 0; z-index: 5; background: linear-gradient(var(--bg) 70%, transparent); padding: 6px 0 10px; font-size: 22px; font-weight: 700; color: var(--pri); letter-spacing: var(--track-tight); }
 .letter-rail { position: fixed; right: 6px; top: 50%; transform: translateY(-50%); z-index: 20; display: flex; flex-direction: column; gap: 1px; padding: 6px 2px; background: rgba(0,0,0,.55); border: 1px solid var(--bd); border-radius: 10px; backdrop-filter: blur(6px); }
