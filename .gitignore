@@ -9,3 +9,4 @@ local/
 
 .githooks/patterns.local
 .scratch/
+.claude/
