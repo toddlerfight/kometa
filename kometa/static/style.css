@@ -927,7 +927,16 @@ select.settings-input {
 
 /* Ignored: told to stop chasing it. Dimmed and quiet — present, but not asking for anything. */
 .issue-tile-img.ignored { background: transparent; }   /* the page shows through */
-.issue-tile-img.ignored img { opacity: 0.45; filter: blur(1px) brightness(0.45) saturate(0.6); }
+.issue-tile-img { --dim-o: 0.45; --dim-f: blur(1px) brightness(0.45) saturate(0.6); }
+.issue-tile-img img { transition: transform var(--t-slow) ease, opacity var(--t-slow) var(--ease-out), filter var(--t-slow) var(--ease-out); }
+.issue-tile-img.ignored img { opacity: var(--dim-o); filter: var(--dim-f); }
+/* the app-wide cover-in ends at full strength, so a dimmed cover flashed bright and
+   then snapped dim; this one lands on the dim look */
+.issue-tile-img.ignored img.loaded { animation: cover-in-dim var(--t-slow) var(--ease-out) backwards; }
+@keyframes cover-in-dim {
+  from { opacity: 0; filter: blur(var(--blur)) brightness(0.45) saturate(0.6); transform: scale(var(--zoom)); }
+  to   { opacity: var(--dim-o); filter: var(--dim-f); transform: scale(1); }
+}
 
 .issue-tile-num {
   font-size: var(--fs-label);
@@ -1405,7 +1414,7 @@ select.settings-input {
 
 @media (prefers-reduced-motion: reduce) {
   #modal, #modal-backdrop, #modal-backdrop.closing, #modal-backdrop.closing #modal { animation: none; }
-  img.loaded { animation: none; }
+  img.loaded, .issue-tile-img.ignored img.loaded { animation: none; }
   img:not(.loaded) { opacity: 1; }
   .v-card { opacity: 1; }
   #issue-modal-details { animation: none !important; }
