@@ -74,9 +74,49 @@ def lookup(series: dict, path=None) -> dict | None:
     return found
 
 
+# Edition words on the end of a collected edition's name: what's left is the
+# run it collects ('Batman - Year One - The Deluxe Edition Black and White').
+_EDITION_TAIL = re.compile(
+    r"(?:\s*[-:–]\s*|\s+)(?:the\s+)?(?:\d+(?:st|nd|rd|th)\s+anniversary(?:\s+edition)?|deluxe(?:\s+edition)?|"
+    r"absolute(?:\s+edition)?|omnibus|compendium|complete\s+collection|collection|black\s+(?:and|&)\s+white|"
+    r"tpb|hc|trade\s+paperback|hardcover|vol(?:ume)?\.?\s*\d+|book\s+\d+|\(\d{4}\)|"
+    r"\([^)]*\b(?:edition|anniversary|deluxe|omnibus)\b[^)]*\))\s*$", re.I)
+_PART_SPLIT = re.compile(r"\s*(?:\s-\s|-\s|:\s|\s–\s)\s*")
+
+
+def name_parent(series: dict, shelf: dict[str, dict]) -> dict | None:
+    """The wiki had nothing: going by the name. Edition words off the end, then the
+    longest leading run of the name's parts that is a run on your shelf —
+    'Batman - Year One - The Deluxe Edition' → 'Batman - Year One' if you have it.
+    A guess, so it's only ever a suggestion you confirm."""
+    t = series["title"]
+    edition = False
+    while True:
+        cut = _EDITION_TAIL.sub("", t).strip(" -:–")
+        if cut == t or not cut:
+            break
+        t, edition = cut, True
+    parts = [p for p in _PART_SPLIT.split(t) if p]
+    # Without an edition word the name IS the book: 'Batman: Bad Seeds', 'Deadpool:
+    # Samurai', 'Predator: Hunters II' are their own runs, and cutting them down to
+    # 'Batman' / 'Deadpool' / 'Predator' guessed wrong every time on the live shelf.
+    # Only a name that said 'Deluxe' / 'Compendium' / '30th Anniversary' may be
+    # shortened to the run it's an edition of.
+    for n in range(len(parts), 0 if edition else len(parts) - 1, -1):
+        name = " - ".join(parts[:n])
+        hit = next((shelf[k] for k in _title_keys(name) if k in shelf), None)
+        if hit and hit["id"] != series["id"]:
+            return hit
+    return None
+
+
 def row_for(series: dict, found: dict | None, shelf: dict[str, dict]) -> dict:
     out = {"id": series["id"], "title": series["title"], "publisher": series.get("publisher")}
     if not found:
+        guess = name_parent(series, shelf)
+        if guess:
+            return {**out, "status": "ready", "by_name": True, "parent_id": guess["id"], "parent_title": guess["title"],
+                    "why": "going by the name"}
         return {**out, "status": "not_found", "why": "no wiki for this publisher" if not fc.wiki_for(series.get("publisher"))
                 else "no collected-edition page found on the wiki"}
     parent_name, n, total = choose_parent(found["collects"])

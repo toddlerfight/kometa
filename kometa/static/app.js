@@ -1672,7 +1672,9 @@ async function _loadCollections() {
     const link = x.wiki_url ? ` <a class="btn-link" href="${esc(x.wiki_url)}" target="_blank" rel="noopener">wiki</a>` : '';
     if (x.status === 'pending') { pending++; line.textContent = 'looking up what it collects…'; continue; }
     if (x.status === 'ready') {
-      line.innerHTML = `collects <b>${esc(x.collects_summary)}</b>${x.year ? ` · ${x.year}` : ''}${link}`;
+      line.innerHTML = x.by_name
+        ? `<span style="color:var(--amb)">by name</span> · ${esc(x.parent_title)}`
+        : `collects <b>${esc(x.collects_summary)}</b>${x.year ? ` · ${x.year}` : ''}${link}`;
       if (acts) acts.innerHTML = `<button class="btn btn-primary btn-sm" onclick="_fileUnder(${x.id}, ${x.parent_id}, null, {stay: true})">File under ${esc(x.parent_title)}</button>`;
     } else if (x.status === 'no_parent') {
       line.innerHTML = `collects <b>${esc(x.collects_summary)}</b>${x.year ? ` · ${x.year}` : ''} — <span style="color:var(--amb)">${esc(x.why)}</span>${link}`;

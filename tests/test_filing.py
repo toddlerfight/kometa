@@ -127,3 +127,26 @@ class TestParseShapes:
 def test_every_word_of_the_shelf_title_must_be_on_the_page():
     assert fc._score("Batman: Curse of the White Knight Deluxe Edition", "Batman: White Knight: Deluxe Edition (Collected)") == 0.0
     assert fc._score("Batman: White Knight: The Deluxe Edition", "Batman: White Knight: Deluxe Edition (Collected)") >= fc.MIN_SCORE
+
+
+def test_by_name_only_when_the_name_carries_an_edition_word():
+    from kometa import filing
+    shelf_series = [{"id": i, "title": t, "folder_path": f"/c/{t}"} for i, t in enumerate(
+        ["Black Science", "Punk Rock Jesus", "Aliens vs. Predator (1990)", "Batman - Year One", "Batman (1940)",
+         "Deadpool", "Predator (2022)"], start=1)]
+    shelf = filing._shelf_index(shelf_series)
+    pick = lambda t: (filing.name_parent({"id": 99, "title": t}, shelf) or {}).get("title")
+    assert pick("Black Science Compendium") == "Black Science"
+    assert pick("Punk Rock Jesus Deluxe Edition") == "Punk Rock Jesus"
+    assert pick("Aliens Vs. Predator- the Original Comics Series (30th Anniversary Edition)") == "Aliens vs. Predator (1990)"
+    assert pick("Batman - Year One - The Deluxe Edition Black and White") == "Batman - Year One"
+    # no edition word: the name is its own book — never cut down to 'Batman' / 'Deadpool' / 'Predator'
+    for own in ("Batman: Bad Seeds", "Deadpool- Samurai", "Predator - Hunters II", "Batman- Knightquest- The Crusade"):
+        assert pick(own) is None, own
+
+
+def test_a_by_name_guess_is_a_ready_row_marked_as_a_guess():
+    from kometa import filing
+    shelf = filing._shelf_index([{"id": 1, "title": "Black Science", "folder_path": "/c/bs"}])
+    r = filing.row_for({"id": 9, "title": "Black Science Compendium", "publisher": "Image"}, None, shelf)
+    assert r["status"] == "ready" and r["by_name"] and r["parent_id"] == 1
