@@ -14,7 +14,10 @@ it in Activity. Nothing downloads until you say so.
      filter is a contains-match — 'Secret Avengers' answers 'Fear Itself: Secret
      Avengers' too — keep the collected types, keep the volumes published within
      a few years after the issue, read their reprints (budgeted, cached), keep
-     the ones that reprint it. Results cached in trade_lookup.
+     the ones that reprint it. Results cached in trade_lookup. The contains-match
+     isn't enough for every tie-in ('ghost rider' never returns 'Fear Itself:
+     Ghost Rider'): an issue that came up dry and sits in an event's reading list
+     (or carries an arc) also asks for '<Event>: <run>' by name — Metron and LOCG.
   3. The proposal. Smallest edition that covers the most of a series' stuck
      issues (one Unthinkable fills #67–70 and #500), a TPB before an omnibus.
      A download_queue row in state 'suggested' — the worker never picks that
@@ -46,6 +49,10 @@ DB_PATH = db.DB_PATH
 DETAIL_BUDGET = 15            # edition details read per pass (Metron's shared throttle paces them)
 ROWS_PER_TICK = 4             # stuck issues looked at per scheduled pass
 LOOKUP_TTL_DAYS = 14          # a reverse lookup is trusted this long
+STRATEGY = 2                  # bump when the search gets smarter: an EMPTY look made by an older
+                              # strategy is retried on the next pass instead of sulking for 14 days
+                              # (2 = event-aware: 'Fear Itself: Secret Avengers' for #12.1)
+EVENT_QUERIES = 2             # at most this many '<Event>: <run>' searches per issue, per source
 YEARS_AFTER = 5               # a trade paperback comes out within this many years of what it collects…
 YEARS_AFTER_BIG = 15          # …an omnibus or hardcover can be a decade or more later
 FORMAT_RANK = {"TPB": 0, "GN": 1, "HC": 2, "Omnibus": 3}
@@ -70,6 +77,11 @@ def ensure_tables(path=None):
             q TEXT PRIMARY KEY, rows_json TEXT, fetched_at TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS trade_fallback (
             queue_id INTEGER PRIMARY KEY, state TEXT, proposal_qid INTEGER, rejected_json TEXT, checked_at TEXT)""")
+        # which search strategy made the look: NULL = before STRATEGY existed (counts as 1)
+        for table in ("trade_lookup", "trade_fallback"):
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if "strategy" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN strategy INTEGER")
 
 
 # --- 1. what an edition collects ----------------------------------------------------
@@ -182,6 +194,65 @@ def reprints_issue(e: dict, target: dict) -> bool:
     return False
 
 
+_LIST_NOISE = re.compile(r"\s*(?:[-–:]\s*)?(?:the\s+)?(?:complete\s+|full\s+|main\s+)?"
+                         r"(?:reading\s+order|event|crossover|tie-?ins?)\s*$", re.I)
+
+
+def event_name(list_name: str) -> str:
+    """'Fear Itself (full event)' → 'Fear Itself'; 'Civil War - Reading Order' → 'Civil War'."""
+    t = re.sub(r"\s*[\(\[][^\)\]]*[\)\]]", " ", list_name or "")
+    for _ in range(2):
+        t = _LIST_NOISE.sub("", t.strip())
+    return re.sub(r"\s+", " ", t).strip(" -–:")
+
+
+def events_for(series_id: int, number: float, title: str, year=None, path=None) -> list[str]:
+    """The events an issue is a tie-in to, from what Kometa already holds: the
+    reading lists that carry it (list 'Fear Itself (full event)' → 'Fear Itself'),
+    then the story arcs on its issue record. Nothing fetched. At most EVENT_QUERIES."""
+    path = path or DB_PATH
+    from kometa import readlists
+    base = _base(title)
+    run_keys = readlists._keys(base)
+    run = norm_key(base)
+    names: list[str] = []
+    with db._connect(path) as conn:
+        try:
+            items = conn.execute(
+                "SELECT l.name, i.series, i.number, i.volume, i.year FROM reading_list_items i "
+                "JOIN reading_lists l ON l.id = i.list_id ORDER BY l.id").fetchall()
+        except Exception:                              # no reading lists table yet: no lists, no events
+            items = []
+        for it in items:
+            if readlists._num(it["number"]) != float(number) or not (readlists._keys(it["series"]) & run_keys):
+                continue
+            ys = [int(v) for v in (it["volume"], it["year"]) if v and re.fullmatch(r"\d{4}", str(v).strip())]
+            if year and ys and min(abs(y - int(year)) for y in ys) > 1:
+                continue                               # same name, another volume
+            names.append(event_name(it["name"]))
+        try:
+            r = conn.execute("SELECT arcs_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                             (series_id, float(number))).fetchone()
+        except Exception:
+            r = None
+        if r and r["arcs_json"]:
+            names.extend(a for a in json.loads(r["arcs_json"]) if isinstance(a, str))
+    out, seen = [], set()
+    for n in names:
+        k = norm_key(n)
+        # a list named after the run itself ('Secret Avengers Vol. 1') is no event
+        if not k or k in seen or run in k or k in run:
+            continue
+        seen.add(k)
+        out.append(n)
+    return out[:EVENT_QUERIES]
+
+
+def event_queries(target: dict) -> list[str]:
+    base = _base(target["title"])
+    return [f"{ev}: {base}" for ev in (target.get("events") or [])][:EVENT_QUERIES]
+
+
 def find_editions(target: dict, path=None, budget: int = DETAIL_BUDGET, search=None, issues=None, get=None) -> dict:
     """Editions that reprint target. → {candidates: [edition…], complete: bool}
     (complete=False when the budget ran out — the next pass carries on)."""
@@ -223,44 +294,53 @@ def find_editions(target: dict, path=None, budget: int = DETAIL_BUDGET, search=N
         if not since:
             return None
         return f"{int(since[:4]) + (YEARS_AFTER_BIG if fmt in ('Omnibus', 'HC') else YEARS_AFTER)}-12-31"
-    # the run's own name finds its collections AND every 'Event: <run>' one (contains-match)
-    seen, colls = set(), []
-    for q in metron_client.title_variants(base):
-        for r in cached_search(q):
-            fmt = _fmt(r.get("series_type"))
-            if not fmt or r["id"] in seen:
-                continue
-            seen.add(r["id"])
-            colls.append({"id": r["id"], "name": r.get("series") or r.get("name"), "format": fmt,
-                          "year": r.get("year_began")})
-    # collections that began around or after the issue first; an omnibus last
-    if target.get("year"):
-        colls = [c for c in colls if not c["year"] or c["year"] >= int(target["year"]) - 1]
-    colls.sort(key=lambda c: (abs((c["year"] or 9999) - int(target.get("year") or 0)), FORMAT_RANK.get(c["format"], 9)))
-    found, complete = [], True
-    for c in colls:
-        if spent[0] >= budget:
-            complete = False
-            break
-        vols = cached_vols(c["id"])
-        for v in vols:
-            sd = v.get("store_date")
-            if since and sd and (sd < since[:10] or sd > until(c["format"])):
-                continue                                   # published before the issue, or long after
-            if not v.get("metron_issue_id"):
-                continue
-            cached = _cached_edition(v["metron_issue_id"], path)
-            if cached is None:
-                if spent[0] >= budget:
-                    complete = False
-                    break
-                spent[0] += 1
-            e = cached or edition(v["metron_issue_id"], path, get)
-            if reprints_issue(e, target):
-                found.append(e)
-        if not complete:
-            break
-    return {"candidates": found, "complete": complete}
+    seen: set = set()
+    found: list[dict] = []
+
+    def scan(queries) -> bool:
+        """Search, keep the collected series, read their volumes. False = out of budget."""
+        colls = []
+        for q in queries:
+            if spent[0] >= budget:
+                return False
+            for r in cached_search(q):
+                fmt = _fmt(r.get("series_type"))
+                if not fmt or r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                colls.append({"id": r["id"], "name": r.get("series") or r.get("name"), "format": fmt,
+                              "year": r.get("year_began")})
+        # collections that began around or after the issue first; an omnibus last
+        if target.get("year"):
+            colls = [c for c in colls if not c["year"] or c["year"] >= int(target["year"]) - 1]
+        colls.sort(key=lambda c: (abs((c["year"] or 9999) - int(target.get("year") or 0)), FORMAT_RANK.get(c["format"], 9)))
+        for c in colls:
+            if spent[0] >= budget:
+                return False
+            for v in cached_vols(c["id"]):
+                sd = v.get("store_date")
+                if since and sd and (sd < since[:10] or sd > until(c["format"])):
+                    continue                               # published before the issue, or long after
+                if not v.get("metron_issue_id"):
+                    continue
+                cached = _cached_edition(v["metron_issue_id"], path)
+                if cached is None:
+                    if spent[0] >= budget:
+                        return False
+                    spent[0] += 1
+                e = cached or edition(v["metron_issue_id"], path, get)
+                if reprints_issue(e, target):
+                    found.append(e)
+        return True
+
+    # the run's own name finds its collections AND most 'Event: <run>' ones (contains-match)…
+    if not scan(metron_client.title_variants(base)):
+        return {"candidates": found, "complete": False}
+    # …but not all: 'ghost rider' never brought back 'Fear Itself: Ghost Rider'. A tie-in
+    # the plain search came up dry on asks for its event's edition by name — only then
+    if not found and event_queries(target) and not scan(event_queries(target)):
+        return {"candidates": found, "complete": False}
+    return {"candidates": found, "complete": True}
 
 
 def _cached_edition(metron_issue_id: int, path) -> dict | None:
@@ -279,22 +359,23 @@ def lookup(series_id: int, number: float, path=None, budget: int = DETAIL_BUDGET
     ensure_tables(path)
     key = issue_key(series_id, number)
     with db._connect(path) as conn:
-        r = conn.execute("SELECT candidates_json, fetched_at FROM trade_lookup WHERE issue_key = ?", (key,)).fetchone()
+        r = conn.execute("SELECT candidates_json, fetched_at, strategy FROM trade_lookup WHERE issue_key = ?", (key,)).fetchone()
         s = conn.execute("SELECT title, year_began FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
         i = conn.execute("SELECT store_date, metron_issue_id FROM issue_status WHERE tracked_series_id = ? AND number = ?",
                          (series_id, number)).fetchone()
     if r and r["fetched_at"] and r["fetched_at"] > (datetime.now(timezone.utc) - timedelta(days=LOOKUP_TTL_DAYS)).strftime("%Y-%m-%d"):
-        return {"candidates": json.loads(r["candidates_json"] or "[]"), "complete": True, "cached": True}
+        cands = json.loads(r["candidates_json"] or "[]")
+        # a hit stands; an empty answer only stands if today's strategy gave it
+        if cands or (r["strategy"] or 1) >= STRATEGY:
+            return {"candidates": cands, "complete": True, "cached": True}
     if not s:
         return {"candidates": [], "complete": True}
-    year = s["year_began"] or (int(i["store_date"][:4]) if i and i["store_date"] else None)
-    target = {"title": s["title"], "year": year, "number": float(number),
-              "store_date": i["store_date"] if i else None, "metron_issue_id": i["metron_issue_id"] if i else None}
+    target = _target(series_id, number, path)
     res = find_editions(target, path, budget, **kw)
     if res["complete"]:
         with db._connect(path) as conn:
-            conn.execute("INSERT OR REPLACE INTO trade_lookup (issue_key, candidates_json, fetched_at) VALUES (?, ?, ?)",
-                         (key, json.dumps(res["candidates"]), _now()))
+            conn.execute("INSERT OR REPLACE INTO trade_lookup (issue_key, candidates_json, fetched_at, strategy) "
+                         "VALUES (?, ?, ?, ?)", (key, json.dumps(res["candidates"]), _now(), STRATEGY))
     return res
 
 
@@ -411,34 +492,51 @@ def locg_editions(series_id: int, target: dict, path=None, budget: int = LOCG_PE
         return {"candidates": found, "complete": True}
     # 2. across series: what LOCG calls related to the run's name
     base = _base(target["title"])
-    key = f"locg_search:{norm_key(base)}"
-    with db._connect(path) as conn:
-        r = conn.execute("SELECT rows_json FROM collection_search WHERE q = ?", (key,)).fetchone()
-    if r:
-        hits = json.loads(r["rows_json"])
-    else:
-        if not spend():
-            return {"candidates": found, "complete": False}
-        try:
-            hits = (search or locg_client.search_series_strict)(base)
-        except Exception as e:
-            logger.info(f"Trade fill: LOCG search for {base!r} skipped: {e}")
-            return {"candidates": found, "complete": False}
-        hits = [{"id": h.get("id"), "title": h.get("title"), "comic": bool(h.get("comic")), "year": h.get("year")} for h in hits]
-        with db._connect(path) as conn:
-            conn.execute("INSERT OR REPLACE INTO collection_search (q, rows_json, fetched_at) VALUES (?, ?, ?)",
-                         (key, json.dumps(hits), _now()))
     want = norm_key(base)
-    related = [h for h in hits if want in norm_key(h.get("title") or "") and norm_key(h.get("title") or "") != want
-               and h.get("id") != run_lid]
-    # an edition LOCG hands back as a comic is a trade candidate itself
-    comics = [{"title": h["title"], "locg_id": str(h["id"]), "format": "TPB"} for h in related if h.get("comic")]
-    if not check(comics, found):
+    read: set = set()
+
+    def across(q: str) -> bool:
+        """Search q, read the related series' trades. False = LOCG shut or out of budget."""
+        key = f"locg_search:{norm_key(q)}"
+        with db._connect(path) as conn:
+            r = conn.execute("SELECT rows_json FROM collection_search WHERE q = ?", (key,)).fetchone()
+        if r:
+            hits = json.loads(r["rows_json"])
+        else:
+            if not spend():
+                return False
+            try:
+                hits = (search or locg_client.search_series_strict)(q)
+            except Exception as e:
+                logger.info(f"Trade fill: LOCG search for {q!r} skipped: {e}")
+                return False
+            hits = [{"id": h.get("id"), "title": h.get("title"), "comic": bool(h.get("comic")), "year": h.get("year")}
+                    for h in hits]
+            with db._connect(path) as conn:
+                conn.execute("INSERT OR REPLACE INTO collection_search (q, rows_json, fetched_at) VALUES (?, ?, ?)",
+                             (key, json.dumps(hits), _now()))
+        related = [h for h in hits if want in norm_key(h.get("title") or "") and norm_key(h.get("title") or "") != want
+                   and h.get("id") != run_lid and h.get("id") not in read]
+        read.update(h.get("id") for h in related)
+        # an edition LOCG hands back as a comic is a trade candidate itself
+        comics = [{"title": h["title"], "locg_id": str(h["id"]), "format": "TPB"} for h in related if h.get("comic")]
+        if not check(comics, found):
+            return False
+        for h in [h for h in related if not h.get("comic")][:LOCG_RELATED]:
+            got = list_of(int(h["id"]))
+            if got is None or not check(got, found):
+                return False
+        return True
+
+    if not across(base):
         return {"candidates": found, "complete": False}
-    for h in [h for h in related if not h.get("comic")][:LOCG_RELATED]:
-        got = list_of(int(h["id"]))
-        if got is None or not check(got, found):
+    # LOCG's search stops at ~11 hits — 'Fear Itself: Secret Avengers' can fall off the end
+    # of 'secret avengers'. A tie-in still empty-handed asks for its event's edition by name
+    for q in ([] if found else event_queries(target)):
+        if not across(q):
             return {"candidates": found, "complete": False}
+        if found:
+            break
     return {"candidates": found, "complete": True}
 
 
@@ -519,11 +617,13 @@ def stuck_rows(path=None, limit: int = ROWS_PER_TICK) -> list[dict]:
             WHERE q.state = 'not_found' AND COALESCE(q.kind, 'issue') = 'issue' AND q.issue_number IS NOT NULL
               AND q.issue_number >= 0
               AND (f.queue_id IS NULL OR (f.state = 'none' AND f.checked_at < ?)
+                   OR (f.state = 'none' AND COALESCE(f.strategy, 1) < ?)
                    OR (f.state = 'looking' AND f.checked_at < ?))
             ORDER BY COALESCE(f.checked_at, ''), q.id LIMIT ?""",
             # 'none' = nobody collects it: ask again in a week. 'looking' = a source was
             # shut or the budget ran dry mid-look: back in an hour, not a bloody week
-            ((now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"),
+            # a 'none' from an older STRATEGY: the search got smarter, look once more now
+            ((now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"), STRATEGY,
              (now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"), limit))]
 
 
@@ -533,8 +633,10 @@ def _target(series_id: int, number: float, path) -> dict:
         i = conn.execute("SELECT store_date, metron_issue_id FROM issue_status WHERE tracked_series_id = ? AND number = ?",
                          (series_id, number)).fetchone()
     year = (s["year_began"] if s else None) or (int(i["store_date"][:4]) if i and i["store_date"] else None)
-    return {"title": s["title"] if s else "", "year": year, "number": float(number),
-            "store_date": i["store_date"] if i else None, "metron_issue_id": i["metron_issue_id"] if i else None}
+    title = s["title"] if s else ""
+    return {"title": title, "year": year, "number": float(number),
+            "store_date": i["store_date"] if i else None, "metron_issue_id": i["metron_issue_id"] if i else None,
+            "events": events_for(series_id, number, title, year, path) if title else []}
 
 
 def run_pass(path=None, limit: int = ROWS_PER_TICK, budget: int = DETAIL_BUDGET, locg_details=None,
@@ -616,9 +718,10 @@ def _rejected(rows: list[dict], path) -> set[int]:
 
 def _mark(queue_id: int, state: str, path):
     with db._connect(path) as conn:
-        conn.execute("INSERT INTO trade_fallback (queue_id, state, rejected_json, checked_at) VALUES (?, ?, '[]', ?) "
-                     "ON CONFLICT(queue_id) DO UPDATE SET state = excluded.state, checked_at = excluded.checked_at",
-                     (queue_id, state, _now()))
+        conn.execute("INSERT INTO trade_fallback (queue_id, state, rejected_json, checked_at, strategy) "
+                     "VALUES (?, ?, '[]', ?, ?) ON CONFLICT(queue_id) DO UPDATE SET state = excluded.state, "
+                     "checked_at = excluded.checked_at, strategy = excluded.strategy",
+                     (queue_id, state, _now(), STRATEGY))
 
 
 def scheduled_pass() -> dict:

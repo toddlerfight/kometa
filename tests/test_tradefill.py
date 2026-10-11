@@ -197,3 +197,115 @@ def test_trade_searches_use_the_name_releases_carry():
     assert t("Avengers Academy: The Complete Collection Vol. 2 TP", 2) == "Avengers Academy: The Complete Collection"
     assert t("Batman: Hush") == "Batman: Hush"
     assert t("Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition") == "Batman by Brian Azzarello and Eduardo Risso - The Deluxe Edition"
+
+
+# --- event-aware searches: a tie-in whose event edition the plain search never returns ---
+def _fear_itself_metron():
+    """Metron as Secret Avengers #12.1 sees it: 'secret avengers' only answers the
+    run's own TPB; 'Fear Itself: Secret Avengers' has to be asked for by name."""
+    search = {"Secret Avengers": [
+                  {"id": 200, "series": "Secret Avengers TPB (2010)", "series_type": {"name": "Trade Paperback"}, "year_began": 2010}],
+              "Fear Itself: Secret Avengers": [
+                  {"id": 201, "series": "Fear Itself: Secret Avengers (2012)", "series_type": {"name": "Trade Paperback"}, "year_began": 2012}]}
+    vols = {200: [{"number": 2.0, "store_date": "2011-08-01", "metron_issue_id": 9200}],
+            201: [{"number": 1.0, "store_date": "2012-01-11", "metron_issue_id": 9201}]}
+    details = {9200: {"number": "2", "title": "Eyes of the Dragon", "reprints": [{"issue": "Secret Avengers (2010) #6"}],
+                      "series": {"id": 200, "name": "Secret Avengers TPB (2010)", "series_type": {"name": "Trade Paperback"}}},
+               9201: {"number": "1", "title": None, "store_date": "2012-01-11",
+                      "reprints": [{"issue": "Secret Avengers (2010) #12.1"}, {"issue": "Fear Itself: Black Widow (2011) #1"}],
+                      "series": {"id": 201, "name": "Fear Itself: Secret Avengers (2012)", "series_type": {"name": "Trade Paperback"}}}}
+    asked = []
+    world = dict(search=lambda q: asked.append(q) or search.get(q, []), issues=lambda sid: vols.get(sid, []),
+                 get=lambda iid: dict(details[iid], id=iid))
+    return world, asked
+
+
+def _fear_itself_list(path, series, number, volume):
+    rl.save_list("Fear Itself (full event)", [{"series": "Fear Itself", "number": "1", "volume": "2011"},
+                                              {"series": series, "number": number, "volume": volume}], "cbl", None, path)
+
+
+def test_event_name_from_a_reading_list_name():
+    assert tf.event_name("Fear Itself (full event)") == "Fear Itself"
+    assert tf.event_name("Civil War - Reading Order") == "Civil War"
+    assert tf.event_name("Secret Invasion") == "Secret Invasion"
+
+
+def test_a_tie_in_in_an_event_list_asks_metron_for_the_event_edition(db_path):
+    world, asked = _fear_itself_metron()
+    sa = db.add_series(title="Secret Avengers", publisher="Marvel", year_began=2010, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, sa, [12.1], date="2011-04-06")
+    _fear_itself_list(db_path, "Secret Avengers", "12.1", "2010")
+    out = tf.run_pass(db_path, **world)
+    assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fear Itself: Secret Avengers Vol. 1", "#12.1")]
+    assert asked == ["Secret Avengers", "Fear Itself: Secret Avengers"]
+
+
+def test_a_tie_in_asks_locg_for_the_event_edition_when_metron_has_nothing(db_path):
+    nothing = dict(search=lambda q: [], issues=lambda sid: [], get=lambda iid: {})
+    gr = db.add_series(title="Ghost Rider", publisher="Marvel", year_began=2011, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, gr, [0.1], date="2011-07-13")
+    _fear_itself_list(db_path, "Ghost Rider", "0.1", "2011")
+    # LOCG's 'ghost rider' tops out before any Fear Itself edition; by name it's there
+    hits = {"Ghost Rider": [{"id": 55, "title": "Ghost Rider"}, {"id": 56, "title": "Ghost Rider: Danny Ketch"}],
+            "Fear Itself: Ghost Rider": [{"id": 77, "title": "Fear Itself: Ghost Rider"}]}
+    lists = {56: [], 77: [{"title": "Fear Itself: Ghost Rider TP", "locg_id": "9977", "format": "TPB", "store_date": "2012-02-01"}]}
+    desc = {"9977": "Collecting Ghost Rider (2011) #0.1, 1-5."}
+    searched = []
+    out = tf.run_pass(db_path, locg_details=lambda lid: {"desc": desc[lid]},
+                      locg_search=lambda q: searched.append(q) or hits.get(q, []),
+                      locg_trades=lambda lid: lists.get(lid, []), **nothing)
+    assert [(p["title"], p["fills"]) for p in out["proposed"]] == [("Fear Itself: Ghost Rider TP", "#0.1")]
+    assert searched == ["Ghost Rider", "Fear Itself: Ghost Rider"]
+
+
+def test_no_event_search_when_the_plain_search_already_found_a_trade(db_path):
+    world, asked = _fear_itself_metron()
+    # the plain search turns the event edition up itself (Metron's contains-match)
+    plain = {"Secret Avengers": [{"id": 201, "series": "Fear Itself: Secret Avengers (2012)",
+                                  "series_type": {"name": "Trade Paperback"}, "year_began": 2012}]}
+    world["search"] = lambda q: asked.append(q) or plain.get(q, [])
+    sa = db.add_series(title="Secret Avengers", publisher="Marvel", year_began=2010, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, sa, [12.1], date="2011-04-06")
+    _fear_itself_list(db_path, "Secret Avengers", "12.1", "2010")
+    locg_asked = []
+    out = tf.run_pass(db_path, locg_search=lambda q: locg_asked.append(q) or [], **world)
+    assert [p["title"] for p in out["proposed"]] == ["Fear Itself: Secret Avengers Vol. 1"]
+    assert asked == ["Secret Avengers"] and locg_asked == []
+
+
+def test_an_empty_look_from_the_old_strategy_is_retried_once(db_path):
+    world, asked = _fear_itself_metron()
+    sa = db.add_series(title="Secret Avengers", publisher="Marvel", year_began=2010, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, sa, [12.1], date="2011-04-06")
+    _fear_itself_list(db_path, "Secret Avengers", "12.1", "2010")
+    tf.ensure_tables(db_path)
+    now = tf._now()
+    with db._connect(db_path) as c:
+        qid = c.execute("SELECT id FROM download_queue WHERE tracked_series_id = ?", (sa,)).fetchone()[0]
+        # what the live box holds: looked today by the old strategy, nothing found
+        c.execute("INSERT INTO trade_lookup (issue_key, candidates_json, fetched_at) VALUES (?, '[]', ?)",
+                  (tf.issue_key(sa, 12.1), now))
+        c.execute("INSERT INTO trade_fallback (queue_id, state, rejected_json, checked_at) VALUES (?, 'none', '[]', ?)", (qid, now))
+    assert [r["id"] for r in tf.stuck_rows(db_path, 50)] == [qid]
+    out = tf.run_pass(db_path, locg_search=lambda q: [], **world)
+    assert [p["title"] for p in out["proposed"]] == ["Fear Itself: Secret Avengers Vol. 1"]
+    assert "Fear Itself: Secret Avengers" in asked
+
+
+def test_a_miss_under_the_current_strategy_waits_the_week(db_path, monkeypatch):
+    import kometa.locg_client as lc
+    monkeypatch.setattr(lc, "locg_paused", lambda: None)       # LOCG open, whatever earlier tests left behind
+    asked = []
+    nothing = dict(search=lambda q: asked.append(q) or [], issues=lambda sid: [], get=lambda iid: {})
+    sa = db.add_series(title="Secret Avengers", publisher="Marvel", year_began=2010, folder_path=None, on_pull_list=False, path=db_path)
+    _stuck(db_path, sa, [12.1], date="2011-04-06")
+    _fear_itself_list(db_path, "Secret Avengers", "12.1", "2010")
+    locg = []
+    out = tf.run_pass(db_path, locg_search=lambda q: locg.append(q) or [], **nothing)
+    assert out["none"] == 1
+    assert asked == ["Secret Avengers", "Fear Itself: Secret Avengers"]
+    assert locg == ["Secret Avengers", "Fear Itself: Secret Avengers"]
+    assert tf.stuck_rows(db_path, 50) == []                     # not back next pass
+    tf.run_pass(db_path, locg_search=lambda q: locg.append(q) or [], **nothing)
+    assert len(asked) == 2 and len(locg) == 2
