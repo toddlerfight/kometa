@@ -146,15 +146,62 @@ def once_per_db(fn):
     return wrapper
 
 
-@contextmanager
-def _connect(path=DB_PATH):
+import threading as _threading
+_local = _threading.local()
+
+
+def _open(path):
     conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
+    # WAL + NORMAL: durable against crashes, one fsync per checkpoint instead of
+    # per commit — the DB lives on a host folder shared into the VM, where each
+    # flush is a round trip
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+@contextmanager
+def _connect(path=DB_PATH):
+    """One connection per thread per database, kept open and reused.
+
+    It was open-query-close on every call. On ginbako the DB sits in a macOS
+    folder shared into the Docker VM: opening costs ~50 ms and closing the last
+    connection checkpoints the WAL and flushes — 295 ms a cycle, measured, so a
+    page with a few dozen queries took seconds. Commit on success, roll back on
+    error, exactly as before; a `with _connect()` inside another on the same
+    thread shares the outer one's transaction (the outer block commits)."""
+    conns = getattr(_local, "conns", None)
+    if conns is None:
+        conns = _local.conns = {}
+        _local.depth = {}
+    conn = conns.get(path)
+    if conn is None:
+        conn = conns[path] = _open(path)
+    depth = _local.depth.get(path, 0)
+    _local.depth[path] = depth + 1
     try:
         yield conn
-        conn.commit()
+        if depth == 0:
+            conn.commit()
+    except BaseException:
+        if depth == 0:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+        raise
     finally:
-        conn.close()
+        _local.depth[path] = depth
+
+
+def forget_connections(path=None):
+    """Drop this thread's cached connection(s) — for a DB file that was replaced
+    on disk (a restore) and for tests that swap the file under the same path."""
+    conns = getattr(_local, "conns", None) or {}
+    for p in [path] if path else list(conns):
+        c = conns.pop(p, None)
+        if c is not None:
+            c.close()
 
 
 def _migrate(path=DB_PATH):

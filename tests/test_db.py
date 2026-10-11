@@ -218,3 +218,29 @@ def test_variant_cover_url_is_the_chosen_variants_image(db_path, series):
                   (series, json.dumps([{"id": "v1", "large": "https://x/v1.jpg"}, {"id": "v2", "large": "https://x/v2.jpg"}])))
     assert db.variant_cover_url(series, 2.0, db_path) == "https://x/v2.jpg"
     assert db.variant_cover_url(series, 3.0, db_path) is None
+
+
+class TestConnectionReuse:
+    def test_one_connection_per_thread_and_nested_blocks_share_the_transaction(self, db_path, series):
+        with db._connect(db_path) as a:
+            with db._connect(db_path) as b:
+                assert a is b
+        try:
+            with db._connect(db_path) as outer:
+                outer.execute("UPDATE tracked_series SET title = 'Changed' WHERE id = ?", (series,))
+                with db._connect(db_path) as inner:
+                    inner.execute("UPDATE tracked_series SET publisher = 'Changed' WHERE id = ?", (series,))
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        s = db.get_series_by_id(series, db_path)
+        assert (s["title"], s["publisher"]) == ("Saga", "Image")         # both rolled back together
+
+    def test_another_thread_sees_committed_writes(self, db_path, series):
+        import threading
+        with db._connect(db_path) as c:
+            c.execute("UPDATE tracked_series SET title = 'Seen' WHERE id = ?", (series,))
+        got = []
+        t = threading.Thread(target=lambda: got.append(db.get_series_by_id(series, db_path)["title"]))
+        t.start(); t.join()
+        assert got == ["Seen"]
