@@ -1642,6 +1642,38 @@ def pack_attempt_failed(series_id, path=DB_PATH) -> bool:
     return row is not None
 
 
+def retire_completed_packs(path=DB_PATH) -> int:
+    """Close out dead whole-run pack rows whose series no longer needs them.
+    A failed/not-found pack used to sit in Activity forever — The Sacrificers'
+    usenet pack stalled, then all 21 issues landed one by one, and the corpse
+    stayed pinned there like a parking ticket on a car that's already been sold.
+    Once nothing is missing (released, unowned, not ignored, not covered by a
+    trade) the pack has nothing left to deliver: state -> done.
+
+    Only failed/not_found rows — a pending or downloading pack is still working
+    and is never touched. The series must own at least one issue, so an empty or
+    never-scanned catalogue can't read as 'complete'. Retiring also lifts the
+    pack_attempt_failed gate (it only reads failed/not_found): if the series
+    later falls 5+ behind again, a fresh pack gets its one shot."""
+    with _connect(path) as conn:
+        return conn.execute("""
+            UPDATE download_queue
+            SET state = 'done', error = 'Every issue landed', updated_at = datetime('now')
+            WHERE issue_number = -1
+              AND COALESCE(kind, 'issue') = 'issue'
+              AND state IN ('failed', 'not_found')
+              AND EXISTS (SELECT 1 FROM issue_status i
+                          WHERE i.tracked_series_id = download_queue.tracked_series_id
+                            AND i.owned = 1)
+              AND NOT EXISTS (SELECT 1 FROM issue_status i
+                              WHERE i.tracked_series_id = download_queue.tracked_series_id
+                                AND i.owned = 0
+                                AND i.ignored = 0
+                                AND i.covered_by IS NULL
+                                AND (i.store_date IS NULL OR i.store_date <= date('now')))
+        """).rowcount
+
+
 def has_active_pack(series_id, path=DB_PATH) -> bool:
     """True if a pack queue entry exists for this series that isn't done or failed."""
     with _connect(path) as conn:

@@ -115,3 +115,89 @@ def test_failed_usenet_pack_hands_off_to_getcomics(monkeypatch, db_path, big_bac
         n = conn.execute("SELECT COUNT(*) FROM download_queue WHERE kind='trade'").fetchone()[0]
     assert n == 1, "GetComics fallback never ran"
     assert _FakeGC.calls == [("New Avengers", 33, 2013)]
+
+
+# --- dead packs retire once their series is whole -------------------------------
+# The Sacrificers: pack q4527 failed 'Usenet: stalled', then all 21 issues landed
+# one by one — and the failed pack sat in Activity forever, gate shut.
+
+def _pack_row(db_path, sid, state, error="Usenet: stalled"):
+    with db._connect(db_path) as conn:
+        return conn.execute(
+            """INSERT INTO download_queue (tracked_series_id, issue_number, kind, state, error)
+               VALUES (?, -1, 'issue', ?, ?)""", (sid, state, error)).lastrowid
+
+
+def _row(db_path, qid):
+    with db._connect(db_path) as conn:
+        return dict(conn.execute("SELECT * FROM download_queue WHERE id=?", (qid,)).fetchone())
+
+
+def _own_all(db_path, sid):
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE issue_status SET owned=1 WHERE tracked_series_id=?", (sid,))
+
+
+@pytest.mark.parametrize("state", ["failed", "not_found"])
+def test_dead_pack_closes_once_every_issue_landed(db_path, big_backlog, state):
+    qid = _pack_row(db_path, big_backlog, state)
+    _own_all(db_path, big_backlog)
+    assert db.pack_attempt_failed(big_backlog, db_path)
+
+    assert db.retire_completed_packs(db_path) == 1
+    row = _row(db_path, qid)
+    assert row["state"] == "done"
+    assert row["error"] == "Every issue landed"
+    # the gate lifts — a future backlog gets a fresh pack shot
+    assert not db.pack_attempt_failed(big_backlog, db_path)
+    assert not db.has_active_pack(big_backlog, db_path)
+
+
+def test_dead_pack_stays_while_issues_are_still_missing(db_path, big_backlog):
+    qid = _pack_row(db_path, big_backlog, "failed")
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE issue_status SET owned=1 WHERE tracked_series_id=? AND number < 33",
+                     (big_backlog,))
+    assert db.retire_completed_packs(db_path) == 0
+    assert _row(db_path, qid)["state"] == "failed"
+
+
+def test_ignored_covered_and_unreleased_issues_dont_hold_a_pack_open(db_path, big_backlog):
+    qid = _pack_row(db_path, big_backlog, "failed")
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE issue_status SET owned=1 WHERE tracked_series_id=? AND number <= 30",
+                     (big_backlog,))
+        conn.execute("UPDATE issue_status SET ignored=1 WHERE tracked_series_id=? AND number = 31",
+                     (big_backlog,))
+        conn.execute("UPDATE issue_status SET covered_by=1 WHERE tracked_series_id=? AND number = 32",
+                     (big_backlog,))
+        conn.execute("UPDATE issue_status SET store_date='2999-01-01' WHERE tracked_series_id=? AND number = 33",
+                     (big_backlog,))
+    assert db.retire_completed_packs(db_path) == 1
+    assert _row(db_path, qid)["state"] == "done"
+
+
+@pytest.mark.parametrize("state", ["pending_usenet", "downloading", "processing", "queued"])
+def test_live_pack_is_never_touched(db_path, big_backlog, state):
+    qid = _pack_row(db_path, big_backlog, state, error=None)
+    _own_all(db_path, big_backlog)
+    assert db.retire_completed_packs(db_path) == 0
+    assert _row(db_path, qid)["state"] == state
+
+
+def test_series_with_no_owned_issues_never_reads_complete(db_path, tmp_path):
+    """An empty catalogue isn't a finished one."""
+    sid = db.add_series(komga_series_id=None, title="Blank", publisher="Image",
+                        year_began=2020, folder_path=None, on_pull_list=True, path=db_path)
+    qid = _pack_row(db_path, sid, "failed")
+    assert db.retire_completed_packs(db_path) == 0
+    assert _row(db_path, qid)["state"] == "failed"
+
+
+def test_sweep_retires_the_dead_pack(monkeypatch, db_path, big_backlog):
+    qid = _pack_row(db_path, big_backlog, "failed")
+    _own_all(db_path, big_backlog)
+    _FakeGC.calls = []
+    _sweep(monkeypatch, db_path)
+    assert _row(db_path, qid)["state"] == "done"
+    assert _FakeGC.calls == [], "nothing missing — no pack search should run"
