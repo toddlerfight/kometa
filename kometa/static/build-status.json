@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 19:40 AEST",
-  "now": "Step 2 built and dry-run done (numbers in Your tasks). 1i (PRH, Open Library, ComicBookRoundup) and 3b–3d (the rewrite job) building in the background.",
+  "updated": "2026-10-12 20:05 AEST",
+  "now": "Fandom gallery lookup built (one request per issue, ~1300–1900px variant covers). Waiting on the two background builds (1i PRH/Open Library/ComicBookRoundup; 3b–3d rewrite job) to merge before wiring it in.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -102,7 +102,8 @@
         {
           "id": "1i-d",
           "label": "Fandom wikis (fullest variant galleries)",
-          "state": "todo"
+          "state": "building",
+          "note": "lookup done; downloads wait until the cover store is off ginbako's disk (2b/2d) — full-size galleries could be tens of GB"
         },
         {
           "id": "1i-e",

@@ -27,7 +27,9 @@ MIN_INTERVAL_S = 1.0
 WIKIS = {"dc": "dc.fandom.com", "marvel": "marvel.fandom.com"}
 _COLLECTED_MODES = {"tpb", "hc", "hardcover", "trade paperback", "omnibus", "graphic novel"}
 _lock = threading.Lock()
-_last = {"t": 0.0}
+_last = {"t": 0.0, "day": "", "count": 0, "paused_until": 0.0}
+DAILY_CAP = 3000              # every caller together: collected-edition lookups and cover galleries
+REFUSED_PAUSE_S = 3600        # a 403/429/503 from behind Cloudflare: an hour off for everyone
 
 
 class FandomUnavailable(RuntimeError):
@@ -44,17 +46,36 @@ def wiki_for(publisher: str | None) -> str | None:
 
 
 def _get(host: str, **params) -> dict:
+    """The one way to the wikis — one lock, one gap, one daily cap, one pause."""
     url = f"https://{host}/api.php?" + urllib.parse.urlencode({**params, "format": "json"})
     with _lock:
+        today = time.strftime("%Y-%m-%d")
+        if _last["day"] != today:
+            _last.update(day=today, count=0)
+        if _last["paused_until"] > time.time():
+            raise FandomUnavailable(f"{host}: paused after a refusal")
+        if _last["count"] >= DAILY_CAP:
+            raise FandomUnavailable(f"{host}: today's requests are spent")
         wait = _last["t"] + MIN_INTERVAL_S - time.time()
         if wait > 0:
             time.sleep(wait)
         _last["t"] = time.time()
+        _last["count"] += 1
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=25) as r:
                 return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429, 503):
+                _last["paused_until"] = time.time() + REFUSED_PAUSE_S
+            raise FandomUnavailable(f"{host}: {e}") from e
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
             raise FandomUnavailable(f"{host}: {e}") from e
+
+
+def budget() -> dict:
+    today = time.strftime("%Y-%m-%d")
+    used = _last["count"] if _last["day"] == today else 0
+    return {"used": used, "cap": DAILY_CAP, "left": max(0, DAILY_CAP - used), "paused": _last["paused_until"] > time.time()}
 
 
 def search(wiki: str, query: str, limit: int = 8) -> list[str]:
@@ -183,3 +204,58 @@ def lookup_collection(title: str, publisher: str | None) -> dict | None:
             return {"wiki": wiki, "page": page, "match": round(score, 2),
                     "url": f"https://{WIKIS[wiki]}/wiki/{urllib.parse.quote(page.replace(' ', '_'))}", **parsed}
     return None
+
+
+# --- cover galleries (enrichment 1i-d) ----------------------------------------------
+# Each issue's page ('Midnight Spider-Man Vol 1 1') names every cover in its gallery:
+# retailer and convention exclusives, virgins, printings — 58 for Midnight
+# Spider-Man #1 (2026-10-12), most 1300–1900px wide where LOCG stops at 600.
+# One request per issue returns every file with its size.
+GALLERY_MIN_WIDTH = 400       # logos, headshots and icons are smaller
+
+
+def page_title(series_title: str, volume: int | None, number) -> str:
+    """'Midnight Spider-Man', 1, 1.0 → 'Midnight Spider-Man Vol 1 1' — the wikis' naming."""
+    f = float(number)
+    n = str(int(f)) if f == int(f) else f"{f:g}"
+    name = re.sub(r"\s*\(\d{4}\)\s*$", "", series_title or "").strip()
+    name = re.sub(r"\s+-\s+", ": ", name)                   # 'Fear Itself - The Worthy' → 'Fear Itself: The Worthy'
+    return f"{name} Vol {int(volume or 1)} {n}"
+
+
+def parse_gallery(data: dict, title: str) -> list[dict] | None:
+    """API answer → [{name, url, width, height}] for the page's own covers, or
+    None when the page doesn't exist."""
+    q = (data or {}).get("query") or {}
+    for r in q.get("redirects") or []:
+        if r.get("from") == title:
+            title = r.get("to") or title
+    pages = q.get("pages") or {}
+    if any("missing" in p and p.get("title") == title for p in pages.values()):
+        return None
+    prefix = f"File:{title} "
+    out = []
+    for p in pages.values():
+        t = p.get("title") or ""
+        info = (p.get("imageinfo") or [{}])[0]
+        if not t.startswith(prefix) or not info.get("url"):
+            continue
+        if (info.get("mime") or "image/jpeg") not in ("image/jpeg", "image/png", "image/webp"):
+            continue
+        if (info.get("width") or 0) < GALLERY_MIN_WIDTH:
+            continue
+        name = re.sub(r"\.(jpe?g|png|webp)$", "", t[len(prefix):], flags=re.I).strip() or "Cover"
+        out.append({"name": name, "url": info["url"], "width": info.get("width"), "height": info.get("height")})
+    return sorted(out, key=lambda c: (c["name"].lower(), -(c["width"] or 0)))
+
+
+def gallery(wiki: str, title: str) -> list[dict] | None:
+    """Every cover on an issue's page, one request (two only when the page has
+    no images and we must tell 'empty' from 'missing'). None = no such page."""
+    d = _get(WIKIS[wiki], action="query", generator="images", titles=title, gimlimit="max",
+             prop="imageinfo", iiprop="url|size|mime", redirects="1")
+    if (d.get("query") or {}).get("pages"):
+        return parse_gallery(d, title)
+    probe = _get(WIKIS[wiki], action="query", titles=title, redirects="1")
+    pages = (probe.get("query") or {}).get("pages") or {}
+    return None if any("missing" in p for p in pages.values()) else []
