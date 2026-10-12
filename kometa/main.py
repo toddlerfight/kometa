@@ -247,6 +247,8 @@ from kometa.people import router as _people_router          # search by writer /
 app.include_router(_people_router)
 from kometa.search import router as _search_router          # universal search: series, people, lists, issue jumps
 app.include_router(_search_router)
+from kometa.retag import router as _retag_router            # read-only: the ComicInfo a retag would write
+app.include_router(_retag_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)

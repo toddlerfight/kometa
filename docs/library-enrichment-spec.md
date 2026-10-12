@@ -118,6 +118,7 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - 3d. Upload as a temp file, read back, swap, carry the page cache over.
 - 3e. A test batch of about 20 mixed files (CBZ, CBR, trade, injected covers), checked by the user in kometa and another reader.
 - 3f. The full run (about 10 h of network time), yielding to the reader, resumable, on the 1c progress view.
+- **Status 2026-10-12:** 3b–3d built in `kometa/retag.py`, tested on temporary copies only (never run against the library). Not yet: reading from the Voot II mirror (it reads the NAS file), parallel builds, a scheduler job.
 
 **4. On arrival**
 - 4a. ComicInfo goes into finalize's existing rebuild.

@@ -89,6 +89,11 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
   schema/migrations and atomic operations like `complete_download`.
 - **downloader.py** — download, archive extraction, filename/dir resolution, duplicate
   detection, cover injection into CBZ.
+- **retag.py** — the ComicInfo write-back job (enrichment 3b–3d): `retag_journal` table,
+  build in staging → verify → temp beside the original → read back → atomic swap; CBR → CBZ
+  with the .cbr moved to `_trash/<publisher>/retag-cbr-<date>/`; books row and page cache
+  follow (same book id). `run_batch` is called by hand; no scheduler job yet. Only route:
+  read-only `GET /api/books/{id}/comicinfo-preview`.
 - **scheduler.py** — APScheduler job registration.
 - **\*_client.py** — one module per external source, wrapping its API/scrape surface.
 

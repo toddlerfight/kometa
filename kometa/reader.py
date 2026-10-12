@@ -373,6 +373,13 @@ class TruncatedCover(ValueError):
     Madness #001's scan ends halfway down, and the half-grey tile stuck."""
 
 
+def _cover_cache_path(path: str, version: str) -> str:
+    """Page 1 at cover size, keyed on the file's path AND version — the retag
+    job (kometa/retag.py) carries it across a rewrite with this same name."""
+    key = re.sub(r"[^A-Za-z0-9]", "_", path)[-120:]
+    return os.path.join(PAGE_CACHE_DIR, "_covers", f"{key}-{version}-{COVER_WIDTH}.jpg")
+
+
 def get_cover_bytes(path: str) -> bytes:
     """Page 1 at cover size, WITHOUT registering the book. The full open reads
     every page's header (282 for a Knightfall omnibus — 17 s cold); a library
@@ -380,8 +387,7 @@ def get_cover_bytes(path: str) -> bytes:
     when page 1 is cut short, so callers fall through to the catalogue."""
     st = os.stat(path)
     ver = _version(st.st_size, st.st_mtime)
-    key = re.sub(r"[^A-Za-z0-9]", "_", path)[-120:]
-    cp = os.path.join(PAGE_CACHE_DIR, "_covers", f"{key}-{ver}-{COVER_WIDTH}.jpg")
+    cp = _cover_cache_path(path, ver)
     try:
         with open(cp, "rb") as fh:
             return fh.read()
