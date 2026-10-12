@@ -241,6 +241,8 @@ from kometa.coververify import router as _coververify_router  # which issue is t
 app.include_router(_coververify_router)
 from kometa.marveldc import router as _marveldc_router      # what the night's Marvel.com run brought back
 app.include_router(_marveldc_router)
+from kometa.cbr_people import router as _cbr_people_router  # readers like you: CBR's critics + readers, and what they rate
+app.include_router(_cbr_people_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
 app.include_router(_opds_router)
 from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series
@@ -673,6 +675,8 @@ class ConfigRequest(BaseModel):
     hardcover_enabled:  str | None = None   # "1"/"0" — Hardcover book ratings
     marveldc_enabled:   str | None = None   # "1"/"0" — Marvel.com print covers, overnight
     marveldc_hours:     str | None = None   # "23-7": the local hours it may run in (wraps midnight)
+    cbr_people_enabled: str | None = None   # "1"/"0" — ComicBookRoundup's critics + readers, overnight
+    cbr_people_hours:   str | None = None   # "23-7", same rules as marveldc_hours
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)
@@ -691,6 +695,11 @@ def update_config(req: ConfigRequest):
         if not valid_hours(updates["marveldc_hours"]):
             raise HTTPException(400, "hours are two numbers 0-23, e.g. 23-7")
         updates["marveldc_hours"] = updates["marveldc_hours"].replace(" ", "")
+    if "cbr_people_hours" in updates:
+        from kometa.marveldc import valid_hours
+        if not valid_hours(updates["cbr_people_hours"]):
+            raise HTTPException(400, "hours are two numbers 0-23, e.g. 23-7")
+        updates["cbr_people_hours"] = updates["cbr_people_hours"].replace(" ", "")
     if "locg_cf_clearance" in updates:
         updates["locg_cf_clearance"] = updates["locg_cf_clearance"].strip().removeprefix("cf_clearance=")
         updates["locg_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
