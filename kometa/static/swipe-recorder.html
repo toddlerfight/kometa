@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>コメタ · swipe recorder</title>
+  <link rel="stylesheet" href="/style.css?v=271">
+  <style>
+    /* Records a real trackpad's wheel stream so the reader's one-page-per-swipe rule
+       (_rdWheelGesture, loaded from reader.js — the very same function) is tuned to
+       what the hardware sends. Swipe here exactly as you would in the reader. */
+    html, body { height: auto; overflow: hidden; }
+    body { margin: 0; background: var(--bg); color: var(--tp); }
+    .pad { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+           gap: 18px; user-select: none; }
+    .big { font-size: 64px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .row { display: flex; gap: 32px; color: var(--tq); }
+    .row b { color: var(--tp); font-weight: inherit; font-variant-numeric: tabular-nums; }
+    .flash { animation: fl .25s var(--ease-out, ease); }
+    @keyframes fl { from { color: var(--pri); transform: scale(1.08); } to { color: var(--tp); transform: none; } }
+    .btns { display: flex; gap: 10px; }
+    .note { color: var(--tq); max-width: 520px; text-align: center; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="pad" id="pad">
+    <div class="note">Swipe sideways with two fingers, <b>one swipe at a time</b>, the way you'd turn a page in the reader.
+      Do <b>10 single swipes</b> (mix them: gentle, brisk, a long flick), pausing between each. Then Save.</div>
+    <div class="big" id="turns">0</div>
+    <div class="row"><span>turns the reader would make</span></div>
+    <div class="row"><span>events <b id="events">0</b></span><span>last turn <b id="last">—</b></span></div>
+    <div class="btns">
+      <button class="btn btn-primary" id="save">Save recording</button>
+      <button class="btn btn-ghost" id="reset">Start over</button>
+    </div>
+    <div class="note" id="status"></div>
+  </div>
+  <script src="/reader.js?v=63"></script>
+  <script>
+    let events = [], turns = 0, gesture = _rdWheelGesture(), t0 = null;
+    const $ = id => document.getElementById(id);
+    document.addEventListener('wheel', e => {
+      e.preventDefault();
+      const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+      const now = e.timeStamp || performance.now();
+      if (t0 == null) t0 = now;
+      const dx = e.deltaX * k, dy = e.deltaY * k;
+      events.push([Math.round((now - t0) * 10) / 10, dx, dy]);
+      const turn = gesture(now, dx, dy);
+      if (turn) {
+        turns++; $('turns').textContent = turns;
+        $('turns').classList.remove('flash'); void $('turns').offsetWidth; $('turns').classList.add('flash');
+        $('last').textContent = turn > 0 ? 'forward' : 'back';
+      }
+      $('events').textContent = events.length;
+    }, { passive: false });
+    $('reset').onclick = () => { events = []; turns = 0; t0 = null; gesture = _rdWheelGesture();
+      $('turns').textContent = 0; $('events').textContent = 0; $('last').textContent = '—'; $('status').textContent = ''; };
+    $('save').onclick = async () => {
+      if (!events.length) { $('status').textContent = 'Nothing recorded yet.'; return; }
+      $('status').textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/debug/wheel-recording', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ events, ua: navigator.userAgent, swipes_intended: 10,
+                                 note: `rule counted ${turns} turns` }) });
+        const j = await r.json();
+        $('status').textContent = j.ok ? `Saved (${j.events} events) — thanks. Tell Claude it's done.` : 'Save failed.';
+      } catch { $('status').textContent = 'Save failed.'; }
+    };
+  </script>
+</body>
+</html>

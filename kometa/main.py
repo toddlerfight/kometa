@@ -1558,6 +1558,27 @@ def search_comicvine(q: str):
 
 # --- sync ---
 
+class WheelRecording(BaseModel):
+    note: str | None = None
+    ua: str | None = None
+    swipes_intended: int | None = None
+    events: list[list[float]]          # [timestamp_ms, deltaX, deltaY], as the browser delivered them
+
+
+@app.post("/api/debug/wheel-recording")
+def save_wheel_recording(rec: WheelRecording):
+    """The swipe recorder (/swipe-recorder.html): a real trackpad's wheel stream, kept
+    so the reader's one-page-per-swipe rule (_rdWheelGesture) is tuned to — and
+    tested against — what the hardware actually sends."""
+    import json as _json
+    folder = os.path.join(os.path.dirname(DB_PATH) or ".", "wheel-recordings")
+    os.makedirs(folder, exist_ok=True)
+    name = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + ".json"
+    with open(os.path.join(folder, name), "w") as fh:
+        _json.dump(rec.model_dump(), fh)
+    return {"ok": True, "file": name, "events": len(rec.events)}
+
+
 @app.post("/api/sync")
 def sync_all():
     # daemon=True or a container stop hangs waiting on a mid-flight sweep — the
