@@ -59,3 +59,108 @@ def test_trickle_stops_after_a_run_of_failures(db_path, tmp_path, monkeypatch):
     calls = []
     assert im.images_trickle(limit=10, path=db_path, http=lambda u: (calls.append(u) or None), sleep=lambda s: None) == 0
     assert len(calls) == 2
+
+
+# --- the largest URL, and upgrading what's already stored small ---------------------
+S3 = "https://s3.amazonaws.com/comicgeeks/comics/covers/"
+
+
+def _variants(db_path, sid, number, covers):
+    import json
+    import kometa.record as record
+    record.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO issue_record (tracked_series_id, number, covers_json) VALUES (?, ?, ?)",
+                  (sid, number, json.dumps(covers)))
+
+
+def test_best_url_rewrites_locg_s3_small_and_medium_only():
+    assert im.best_url(S3 + "medium-555.jpg") == S3 + "large-555.jpg"
+    assert im.best_url(S3 + "small-555.jpg?1700000000") == S3 + "large-555.jpg?1700000000"
+    assert im.best_url(S3 + "large-555.jpg") == S3 + "large-555.jpg"
+    assert im.best_url("https://static.metron.cloud/media/issue/medium-1.jpg") == "https://static.metron.cloud/media/issue/medium-1.jpg"
+    assert im.best_url(None) is None and im.best_url("") == ""
+    assert im.best_cover_url({"thumb": S3 + "medium-9.jpg", "large": S3 + "large-9.jpg"}) == S3 + "large-9.jpg"
+    assert im.best_cover_url({"thumb": S3 + "medium-9.jpg"}) == S3 + "large-9.jpg"          # no large given: rewritten
+    assert im.best_cover_url({"thumb": "https://static.metron.cloud/v.jpg", "large": "https://static.metron.cloud/v.jpg"}) \
+        == "https://static.metron.cloud/v.jpg"
+
+
+def test_pending_picks_the_largest_url_for_locg_mains_and_variants(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=True, path=db_path)
+    db.upsert_issue_status(sid, 1.0, "2012-03-14", 1, metron_image=S3 + "medium-100.jpg", path=db_path)
+    _variants(db_path, sid, 1.0, [{"id": "v1", "thumb": S3 + "medium-101.jpg", "large": S3 + "large-101.jpg", "source": "locg"},
+                                  {"id": "v2", "thumb": "https://static.metron.cloud/v2.jpg",
+                                   "large": "https://static.metron.cloud/v2.jpg", "source": "metron"}])
+    db.set_trades(sid, [{"locg_id": 7, "cover": S3 + "medium-700.jpg"}], path=db_path)
+    got = {k: u for k, u, _ in im.pending(db_path)}
+    assert got[im.issue_key(sid, 1.0)] == S3 + "large-100.jpg"
+    assert got[im.series_key(sid)] == S3 + "large-100.jpg"
+    assert got[im.variant_key(sid, 1.0, "v1")] == S3 + "large-101.jpg"
+    assert got[im.variant_key(sid, 1.0, "v2")] == "https://static.metron.cloud/v2.jpg"
+    assert got[im.trade_key(f"{sid}-7")] == S3 + "large-700.jpg"
+
+
+def test_a_stored_thumbnail_is_requeued_with_the_large_url_and_replaced(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=True, path=db_path)
+    db.upsert_issue_status(sid, 1.0, "2012-03-14", 1, metron_image=S3 + "medium-100.jpg", path=db_path)
+    _variants(db_path, sid, 1.0, [{"id": "v1", "thumb": S3 + "medium-101.jpg", "large": S3 + "large-101.jpg"}])
+    key, vkey = im.issue_key(sid, 1.0), im.variant_key(sid, 1.0, "v1")
+    im.fetch_image(key, S3 + "medium-100.jpg", "locg", db_path, http=lambda u: b"small")     # yesterday's 170px
+    im.fetch_image(vkey, S3 + "medium-101.jpg", "locg", db_path, http=lambda u: b"small")    # thumb-first variant
+    queued = im.pending(db_path)
+    assert (key, S3 + "large-100.jpg", "metron") in queued and (vkey, S3 + "large-101.jpg", "catalogue") in queued
+    calls = []
+    n = im.images_trickle(limit=10, path=db_path, http=lambda u: (calls.append(u) or b"big"), sleep=lambda s: None)
+    assert n == 3 and not any("medium-" in u for u in calls)
+    for k in (key, vkey):
+        assert open(im.local_path(k, db_path), "rb").read() == b"big" and "large-" in im.get(k, db_path)["url"]
+    assert im.pending(db_path) == []
+    # a tile still asking with the catalogue's medium- URL gets the upgrade from
+    # disk, not a re-download of the small one
+    resp = im.serve(key, S3 + "medium-100.jpg", "metron", db_path)
+    assert resp.headers["X-Kometa-Image"] == "disk" and resp.body == b"big"
+
+
+def test_a_failed_upgrade_keeps_the_old_file_and_isnt_hammered(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 1.0, "2012-03-14", 1, metron_image=S3 + "medium-100.jpg", path=db_path)
+    key = im.issue_key(sid, 1.0)
+    im.fetch_image(key, S3 + "medium-100.jpg", "locg", db_path, http=lambda u: b"small")
+    im.fetch_image(im.series_key(sid), S3 + "large-100.jpg", "metron", db_path, http=lambda u: b"big")
+    calls = []
+    dead = lambda u: (calls.append(u) or None)                                           # large- 403s
+    assert im.images_trickle(limit=10, path=db_path, http=dead, sleep=lambda s: None) == 0
+    assert calls == [S3 + "large-100.jpg"]
+    assert open(im.local_path(key, db_path), "rb").read() == b"small"                    # never lost to the upgrade
+    assert im.pending(db_path) == []                                                     # remembered for a day
+    im.images_trickle(limit=10, path=db_path, http=dead, sleep=lambda s: None)
+    assert im.fetch_image(key, S3 + "large-100.jpg", "metron", db_path, http=dead)["path"]  # old row back, no fetch
+    assert len(calls) == 1
+    resp = im.serve(key, S3 + "medium-100.jpg", "metron", db_path)                       # the small one still serves
+    assert resp.body == b"small"
+    # a day on it's tried again, and when it lands it replaces the small file
+    with db._connect(db_path) as c:
+        c.execute("UPDATE image_record SET failed_at = datetime('now', '-25 hours') WHERE key = ?", (key,))
+    assert [k for k, _, _ in im.pending(db_path)] == [key]
+    assert im.images_trickle(limit=10, path=db_path, http=lambda u: b"big", sleep=lambda s: None) == 1
+    assert open(im.local_path(key, db_path), "rb").read() == b"big" and not im.get(key, db_path)["failed_at"]
+
+
+def test_nothing_already_at_its_best_url_is_requeued(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=True, path=db_path)
+    db.upsert_issue_status(sid, 1.0, "2012-03-14", 1, metron_image="https://static.metron.cloud/1.jpg", path=db_path)
+    db.upsert_issue_status(sid, 2.0, "2012-04-11", 0, metron_image=S3 + "large-200.jpg", path=db_path)
+    _variants(db_path, sid, 1.0, [{"id": "v1", "thumb": S3 + "medium-101.jpg", "large": S3 + "large-101.jpg"}])
+    db.set_trades(sid, [{"locg_id": 7, "cover": S3 + "medium-700.jpg"}], path=db_path)
+    calls = []
+    assert im.images_trickle(limit=50, path=db_path, http=lambda u: (calls.append(u) or b"img"), sleep=lambda s: None) == 5
+    assert not any("medium-" in u for u in calls)
+    assert im.pending(db_path) == []
+    calls.clear()
+    assert im.images_trickle(limit=50, path=db_path, http=lambda u: (calls.append(u) or b"img"), sleep=lambda s: None) == 0
+    assert calls == []

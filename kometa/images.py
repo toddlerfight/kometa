@@ -30,6 +30,26 @@ EXT_TTL_HOURS = 24
 # is a cover proxy, not an open one.
 EXT_HOSTS = ("static.metron.cloud", "metron.cloud", "s3.amazonaws.com", "comicvine.gamespot.com")
 _KEY_RE = re.compile(r"^[A-Za-z0-9_.:\-]+(?:/[A-Za-z0-9_.:\-]+)*$")
+# LOCG's S3 covers come in small-/medium-/large-; large- (600px) is the top of
+# the ladder (original-/xlarge- are 403). The store was keeping 170px medium-
+# because that's what the catalogue happened to hand over.
+_LOCG_S3_SMALL = re.compile(r"^(https?://s3\.amazonaws\.com/comicgeeks/comics/covers/)(?:small|medium)-")
+
+
+def best_url(url: str | None) -> str | None:
+    """The biggest version of a cover URL the host will hand out. One rule, so
+    the trickle, the serve path and the re-fetch check never disagree about
+    which URL a key should hold (a disagreement = the same cover downloaded
+    twice a day, forever)."""
+    if not url:
+        return url
+    return _LOCG_S3_SMALL.sub(r"\1large-", url)
+
+
+def best_cover_url(cover: dict) -> str | None:
+    """A catalogue cover dict ({thumb, large, ...}): large first. Thumb used to
+    win, which is how variants ended up stored at thumbnail size."""
+    return best_url(cover.get("large") or cover.get("thumb"))
 
 
 @db.once_per_db
@@ -93,18 +113,23 @@ def fetch_image(key: str, url: str | None, source: str, path=None, root: str | N
                 force: bool = False) -> dict | None:
     """Download once, keep forever; re-fetch only when the URL for the key
     changes (or `force`). A failure is remembered for a day so a dead URL isn't
-    hammered. Returns the row, or None when there's nothing on disk for the key."""
+    hammered. Returns the row, or None when there's nothing on disk for the key.
+
+    A failed re-fetch never costs the file already on disk: the row keeps its
+    path, takes the new URL plus a failed_at, and comes back with failed_at set
+    so the caller can tell. The old cover keeps serving until the new URL works."""
     path = path or DB_PATH
     if not url or not url.startswith("http"):
         return None
     row = get(key, path)
-    if row and not force and row.get("url") == url and row.get("path") and os.path.exists(row["path"]):
+    on_disk = bool(row and row.get("path") and os.path.exists(row["path"]))
+    if row and not force and row.get("url") == url and on_disk and not row.get("failed_at"):
         return row
     if row and row.get("failed_at") and row.get("url") == url:
         try:
             failed = datetime.strptime(row["failed_at"], "%Y-%m-%d %H:%M:%S")
             if datetime.utcnow() - failed < timedelta(hours=FAIL_TTL_HOURS):
-                return None
+                return row if on_disk else None
         except ValueError:
             pass
     dest = file_for(key, root)
@@ -118,7 +143,7 @@ def fetch_image(key: str, url: str | None, source: str, path=None, root: str | N
             conn.execute("""INSERT INTO image_record (key, path, url, bytes, fetched_at, source, failed_at) VALUES (?, NULL, ?, 0, NULL, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET url = excluded.url, source = excluded.source, failed_at = excluded.failed_at""",
                          (key, url, source, _now()))
-            return None
+            return get(key, path) if on_disk else None
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = f"{dest}.{os.getpid()}.tmp"
         with open(tmp, "wb") as f:
@@ -136,7 +161,10 @@ def _ct(data: bytes) -> str:
 
 def serve(key: str, url: str | None, source: str, path=None, max_age: int = 86400) -> Response | None:
     """A Response from the store: disk first, else fetch-and-store, else None so
-    the caller falls through to its old chain. X-Kometa-Image says which."""
+    the caller falls through to its old chain. X-Kometa-Image says which.
+    The URL goes through best_url first, or a tile asking with the catalogue's
+    medium- URL would undo the trickle's large- upgrade on every view."""
+    url = best_url(url)
     row = get(key, path)
     hit = row and row.get("url") == url and row.get("path") and os.path.exists(row["path"])
     if not hit:
@@ -220,27 +248,49 @@ def prune_external(path=None, hours: int = EXT_TTL_HOURS) -> int:
 
 
 # --- the trickle: everything tracked, owned or listed, ahead of time ------------------
+def _wants(rows: dict, key: str, url: str) -> bool:
+    """Does the trickle owe this key a fetch? Yes when nothing's stored, or the
+    stored URL isn't today's best (the 170px LOCG covers, thumb-first variants),
+    unless that best URL failed within the day: a dead large- isn't hammered,
+    and the small file it failed to replace keeps serving meanwhile."""
+    r = rows.get(key)
+    if not r:
+        return True
+    if r["recent_fail"] and r["url"] == url:
+        return False
+    return not (r["path"] and r["url"] == url and not r["failed_at"])
+
+
 def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
-    """(key, url, source) the store doesn't hold yet, owned and pull-list first:
-    issue mains, series covers, variants the record knows, trade covers."""
+    """(key, url, source) the store doesn't hold at its best URL yet, owned and
+    pull-list first: issue mains, series covers, variants the record knows,
+    trade covers. A key held at a smaller URL comes back for the upgrade."""
     path = path or DB_PATH
     ensure_tables(path)
     out: list[tuple[str, str, str]] = []
     with db._connect(path) as conn:
-        have = {r[0] for r in conn.execute("SELECT key FROM image_record WHERE path IS NOT NULL OR failed_at > datetime('now', '-1 day')")}
+        # every row, not just the held keys: a row existing no longer means
+        # done, its url has to be the best one too
+        have = {r["key"]: r for r in conn.execute(
+            """SELECT key, url, path, failed_at, COALESCE(failed_at > datetime('now', '-1 day'), 0) AS recent_fail
+               FROM image_record WHERE key LIKE 'issue/%' OR key LIKE 'series/%' OR key LIKE 'trade/%'""")}
         rows = conn.execute("""SELECT i.tracked_series_id AS sid, i.number, i.metron_image
             FROM issue_status i JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.metron_image LIKE 'http%' AND (s.kind IS NULL OR s.kind != 'arc')
             ORDER BY s.on_pull_list DESC, i.owned DESC, i.tracked_series_id, i.number""").fetchall()
         series_done = set()
         for r in rows:
+            url = best_url(r["metron_image"])
             k = issue_key(r["sid"], r["number"])
-            if k not in have:
-                out.append((k, r["metron_image"], "metron"))
-            sk = series_key(r["sid"])
-            if sk not in have and r["sid"] not in series_done:
+            if _wants(have, k, url):
+                out.append((k, url, "metron"))
+            # the series card is its first issue's cover: judged once per series,
+            # on that first URL, or every later issue would re-queue it
+            if r["sid"] not in series_done:
                 series_done.add(r["sid"])
-                out.append((sk, r["metron_image"], "metron"))
+                sk = series_key(r["sid"])
+                if _wants(have, sk, url):
+                    out.append((sk, url, "metron"))
             if len(out) >= limit:
                 return out[:limit]
         try:
@@ -249,20 +299,21 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                 JOIN tracked_series s ON s.id = r.tracked_series_id WHERE r.covers_json IS NOT NULL AND r.covers_json != '[]'
                 ORDER BY s.on_pull_list DESC, r.tracked_series_id, r.number"""):
                 for c in json.loads(r["covers_json"] or "[]"):
-                    url = c.get("thumb") or c.get("large")
+                    url = best_cover_url(c)
                     if not url or not c.get("id"):
                         continue
                     k = variant_key(r["sid"], r["number"], c["id"])
-                    if k not in have:
+                    if _wants(have, k, url):
                         out.append((k, url, c.get("source") or "catalogue"))
                         if len(out) >= limit:
                             return out[:limit]
             for r in conn.execute("SELECT tracked_series_id AS sid, data_json FROM trades_cache"):
                 for t in json.loads(r["data_json"] or "[]"):
                     if t.get("cover") and t.get("locg_id") is not None:
+                        url = best_url(t["cover"])
                         k = trade_key(f"{r['sid']}-{t['locg_id']}")
-                        if k not in have:
-                            out.append((k, t["cover"], "trade"))
+                        if _wants(have, k, url):
+                            out.append((k, url, "trade"))
                             if len(out) >= limit:
                                 return out[:limit]
         except Exception as e:
@@ -285,7 +336,9 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
     for key, url, source in pending(path, limit=limit):
         yield_to_reader(sleep)
         row = fetch_image(key, url, source, path, http=http)
-        if row:
+        # a failed upgrade hands back the old row (file kept): still a failure
+        # as far as "is the CDN down" goes
+        if row and not row.get("failed_at"):
             done += 1
             fails = 0
         else:
