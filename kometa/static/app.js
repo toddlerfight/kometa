@@ -302,7 +302,11 @@ function renderView() {
   // The reader is a full-screen layer over whatever view you came from — the
   // view underneath stays painted, so Back is instant.
   if (view === 'read') return renderReader(currentParams);
-  closeReader();
+  // Back from the reader: refresh the view BEHIND it while the reader still covers
+  // the screen, and only then fade — one clean crossfade onto a finished page, not
+  // a fade onto a page still rebuilding itself.
+  const fromReader = !!(_vt.quiet && _vt.quiet.gen === gen);
+  if (!fromReader) closeReader();
   const paint = (() => {
     switch (view) {
       case 'library':       return renderLibraryBrowse();
@@ -330,7 +334,24 @@ function renderView() {
       setApp(`<div class="state-msg">Couldn't load this view. ${esc(String(e && e.message || e))}<br><br>
         <button class="btn btn-sm" onclick="renderView()">Retry</button></div>`);
     }
-  }).finally(() => _navSettled(gen));
+  }).then(() => fromReader && _underReady()).finally(() => {
+    if (fromReader) closeReader();
+    _navSettled(gen);
+  });
+}
+
+// The refreshed view is in the DOM; give the covers on screen a moment to decode so
+// the fade lands on pictures, not grey boxes. Capped — a slow cover never holds you.
+function _underReady(capMs = 450) {
+  const app = document.getElementById('app');
+  const h = window.innerHeight;
+  const imgs = [...(app?.querySelectorAll('img') || [])].filter(i => {
+    const r = i.getBoundingClientRect();
+    return r.bottom > 0 && r.top < h;
+  }).slice(0, 24);
+  const decoded = Promise.all(imgs.map(i => i.decode ? i.decode().catch(() => {}) : Promise.resolve()));
+  return Promise.race([decoded, new Promise(r => setTimeout(r, capMs))])
+    .then(() => new Promise(r => requestAnimationFrame(() => r())));
 }
 
 // --- Helpers ---
