@@ -57,3 +57,34 @@ def test_backfill_links_old_stand_ins_once(store, monkeypatch):
 
 def test_no_table_yet_means_no_upgrade(db_path):
     assert coverupgrade.better_path("issue/1/1/main", db_path) is None
+
+
+def test_a_textless_or_redressed_printing_is_not_the_same_image(store):
+    from PIL import Image, ImageDraw
+    import io
+
+    def cover(logo: bool, size):
+        im = Image.open(io.BytesIO(_jpeg(4, (600, 900)))).convert("RGB")
+        if logo:
+            ImageDraw.Draw(im).rectangle([40, 20, 560, 150], fill=(200, 20, 20))   # the trade dress
+        im = im.resize(size)
+        b = io.BytesIO(); im.save(b, "JPEG", quality=90); return b.getvalue()
+    logo_small, textless_big, logo_big = cover(True, (300, 450)), cover(False, (1200, 1800)), cover(True, (1200, 1800))
+    _put(store, "issue/10/1/main", logo_small, "metron")
+    _put(store, "issue/10/1/marveldc/virgin", textless_big, "marveldc")
+    assert coverupgrade.link(10, 1.0, "issue/10/1/marveldc/virgin", textless_big, store) == []
+    _put(store, "issue/10/1/marveldc", logo_big, "marveldc")
+    assert coverupgrade.link(10, 1.0, "issue/10/1/marveldc", logo_big, store) == ["issue/10/1/main"]
+
+
+def test_marvel_rejudges_old_not_bigger_skips_once(db_path):
+    import kometa.record as rec
+    from kometa import marveldc
+    sid = db.add_series(title="X", publisher="Marvel", folder_path=None, path=db_path)
+    db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
+    rec.write_issue(sid, 1.0, {"desc": "d", "extra": {"marveldc": {"images": [
+        {"url": "u1", "status": "smaller"}, {"url": "u2", "status": "kept"}]}}}, "metron", "full", {"metron_issue_id": 1}, db_path)
+    assert marveldc.rejudge_once(db_path) == 1
+    imgs = rec.get_issue(sid, 1.0, db_path)["extra"]["marveldc"]["images"]
+    assert [i["status"] for i in imgs] == ["pending", "kept"]
+    assert marveldc.rejudge_once(db_path) == 0

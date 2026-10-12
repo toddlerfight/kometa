@@ -383,7 +383,7 @@ def held_covers(series_id: int, number: float, path=None) -> list[dict]:
             continue
         dh = coververify.dhash(data)
         if dh is not None:
-            out.append({"key": k, "dhash": dh, "width": w, "height": h})
+            out.append({"key": k, "dhash": dh, "fine": coververify.fine(data), "width": w, "height": h})
     return out
 
 
@@ -397,7 +397,10 @@ def judge(series_id: int, number: float, data: bytes, path=None) -> dict:
     if not size or h is None:
         return {"keep": False, "why": "not an image"}
     w, ht = size
-    same = [c for c in held_covers(series_id, number, path) if coververify.hamming(h, c["dhash"]) <= coververify.CLOSE]
+    f = coververify.fine(data)
+    # the SAME image only (coververify.same_image): a textless virgin or another
+    # printing of this art is a different cover — kept as new, never as "not bigger"
+    same = [c for c in held_covers(series_id, number, path) if coververify.same_image(f, c["fine"])]
     if not same:
         return {"keep": True, "width": w, "height": ht, "upgrade_of": None, "old_size": None, "why": "new cover"}
     best = max(same, key=lambda c: c["width"] * c["height"])
@@ -406,6 +409,35 @@ def judge(series_id: int, number: float, data: bytes, path=None) -> dict:
         return {"keep": True, "width": w, "height": ht, "upgrade_of": best["key"], "old_size": old, "why": "bigger"}
     return {"keep": False, "width": w, "height": ht, "upgrade_of": None, "same_as": best["key"], "old_size": old,
             "why": "not bigger than the copy we hold"}
+
+
+REJUDGE_FLAG = "marveldc_rejudged_fine"
+
+
+def rejudge_once(path=None) -> int:
+    """Once: images skipped as 'not bigger' under the old loose 8×8 test (before
+    coververify.same_image) go back in the download line — a textless virgin was
+    being called the same cover as its logo printing. Returns how many."""
+    path = path or DB_PATH
+    if db.get_config(path).get(REJUDGE_FLAG) == "1":
+        return 0
+    n = 0
+    from kometa import record
+    with db._connect(path) as conn:
+        rows = conn.execute("""SELECT tracked_series_id AS sid, number, extra_json FROM issue_record
+            WHERE extra_json LIKE '%"marveldc": {%' AND extra_json LIKE '%"status": "smaller"%'""").fetchall()
+    for r in rows:
+        entry = json.loads(r["extra_json"] or "{}").get("marveldc") or {}
+        again = [i for i in entry.get("images") or [] if i.get("status") == "smaller"]
+        for img in again:
+            img.update(status="pending", why="re-judged with the strict same-image test")
+        if again:
+            record.merge_extra(r["sid"], r["number"], {"marveldc": entry}, path)
+            n += len(again)
+    db.set_config({REJUDGE_FLAG: "1"}, path)
+    if n:
+        logger.info(f"Marvel.com: {n} skipped images back in line for the strict same-image test")
+    return n
 
 
 def _pending_rows(path) -> list:
@@ -510,6 +542,10 @@ def tick(path=None, now: datetime | None = None, budget: int = PAGES_PER_TICK,
         except SourceUnavailable as e:
             logger.info(f"Marvel.com stopped this tick: {e}")
     kept = 0
+    try:
+        rejudge_once(path)
+    except Exception as e:
+        logger.info(f"Marvel.com re-judge skipped: {e}")
     if not cdn.spent() and not STOPPING.is_set():
         kept = download_pending(path, night, downloads, get=cdn_get)
     if asked or kept:

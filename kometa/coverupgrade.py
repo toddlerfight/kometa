@@ -4,7 +4,8 @@ The Marvel.com worker (1i-e) keeps print-size covers beside the 600–768px ones
 the catalogues gave us — same picture, three or four times the width. Kept is
 not shown: the tiles and the issue sheet read the original keys. This is the
 bridge: for every stored cover, which bigger stored copy shows the same picture
-(dHash within coververify.CLOSE), and the cover routes ask here first.
+(coververify.same_image: the same image, only bigger — a textless or
+re-dressed printing of the art is NOT the same cover), and the cover routes ask here first.
 
 Linked when a bigger copy lands (marveldc.download_pending) and, for copies that
 landed before this existed, by backfill() — idempotent, cheap once done.
@@ -21,11 +22,13 @@ SOURCES = ("marveldc",)          # whose bigger copies stand in for the original
 
 
 def ensure_tables(path=None):
+    # cover_upgrade, not image_upgrade: the first links (2026-10-13 01:47) used the loose
+    # 8×8 test and paired textless virgins with logo covers; that table is left unread
     with db._connect(path or DB_PATH) as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS image_upgrade (
+        conn.execute("""CREATE TABLE IF NOT EXISTS cover_upgrade (
             key TEXT PRIMARY KEY, better TEXT NOT NULL, pixels INTEGER, at TEXT DEFAULT (datetime('now')))""")
         # every stand-in looked at, linked or not — so backfill never hashes one twice
-        conn.execute("CREATE TABLE IF NOT EXISTS image_upgrade_seen (better TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE IF NOT EXISTS cover_upgrade_seen (better TEXT PRIMARY KEY)")
 
 
 def _size(data: bytes) -> tuple[int, int] | None:
@@ -45,26 +48,26 @@ def link(series_id: int, number: float, better_key: str, data: bytes, path=None)
     from kometa.marveldc import held_covers
     path = path or DB_PATH
     ensure_tables(path)
-    size, h = _size(data), coververify.dhash(data)
-    if not size or h is None:
+    size, f = _size(data), coververify.fine(data)
+    if not size or f is None:
         with db._connect(path) as conn:
-            conn.execute("INSERT OR IGNORE INTO image_upgrade_seen (better) VALUES (?)", (better_key,))
+            conn.execute("INSERT OR IGNORE INTO cover_upgrade_seen (better) VALUES (?)", (better_key,))
         return []
     px = size[0] * size[1]
     linked = []
     with db._connect(path) as conn:
         for c in held_covers(series_id, number, path):
-            if c["key"] == better_key or coververify.hamming(h, c["dhash"]) > coververify.CLOSE:
+            if c["key"] == better_key or not coververify.same_image(f, c["fine"]):
                 continue
             if c["width"] * c["height"] >= px:
                 continue
-            cur = conn.execute("SELECT pixels FROM image_upgrade WHERE key = ?", (c["key"],)).fetchone()
+            cur = conn.execute("SELECT pixels FROM cover_upgrade WHERE key = ?", (c["key"],)).fetchone()
             if cur and (cur["pixels"] or 0) >= px:
                 continue
-            conn.execute("INSERT OR REPLACE INTO image_upgrade (key, better, pixels) VALUES (?, ?, ?)",
+            conn.execute("INSERT OR REPLACE INTO cover_upgrade (key, better, pixels) VALUES (?, ?, ?)",
                          (c["key"], better_key, px))
             linked.append(c["key"])
-        conn.execute("INSERT OR IGNORE INTO image_upgrade_seen (better) VALUES (?)", (better_key,))
+        conn.execute("INSERT OR IGNORE INTO cover_upgrade_seen (better) VALUES (?)", (better_key,))
     return linked
 
 
@@ -73,7 +76,7 @@ def better_path(key: str, path=None) -> str | None:
     path = path or DB_PATH
     try:
         with db._connect(path) as conn:
-            r = conn.execute("""SELECT i.path FROM image_upgrade u JOIN image_record i ON i.key = u.better
+            r = conn.execute("""SELECT i.path FROM cover_upgrade u JOIN image_record i ON i.key = u.better
                 WHERE u.key = ? AND i.path IS NOT NULL""", (key,)).fetchone()
     except Exception:            # table not made yet (first start) — nothing linked
         return None
@@ -90,7 +93,7 @@ def backfill(path=None, limit: int = 200) -> int:
     with db._connect(path) as conn:
         rows = conn.execute(f"""SELECT key, path FROM image_record
             WHERE ({' OR '.join("key LIKE ?" for _ in SOURCES)}) AND path IS NOT NULL
-              AND key NOT IN (SELECT better FROM image_upgrade_seen) LIMIT ?""",
+              AND key NOT IN (SELECT better FROM cover_upgrade_seen) LIMIT ?""",
                             (*[f"issue/%/{s}%" for s in SOURCES], limit)).fetchall()
     n = 0
     for r in rows:

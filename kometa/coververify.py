@@ -53,6 +53,38 @@ def hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
+# "The same image, only bigger" — stricter than CLOSE, which only says "this file is
+# that issue". Measured 2026-10-13 on 38 Marvel.com pairs: a true resize scores 0–3
+# on a 16×16 hash of the whole cover AND of its top band (where the logo sits); a
+# textless virgin vs its logo cover, a quote-and-credits printing vs the clean
+# solicit, or a neighbouring variant all scored 20+ on one or the other.
+FINE = 16
+FINE_SAME = 8
+TOP_BAND = 0.22
+
+
+def fine(data: bytes) -> tuple[int, int] | None:
+    """(whole-cover, top-band) 16×16 hashes."""
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            g = im.convert("L")
+            w, h = g.size
+            top = g.crop((0, 0, w, max(1, int(h * TOP_BAND))))
+            out = []
+            for part in (g, top):
+                buf = io.BytesIO()
+                part.save(buf, "PNG")
+                out.append(dhash(buf.getvalue(), FINE))
+    except Exception:
+        return None
+    return None if None in out else (out[0], out[1])
+
+
+def same_image(a: tuple[int, int] | None, b: tuple[int, int] | None) -> bool:
+    return bool(a and b) and hamming(a[0], b[0]) <= FINE_SAME and hamming(a[1], b[1]) <= FINE_SAME
+
+
 def _report_path(series_id: int, path=None) -> str:
     return os.path.join(os.path.dirname(path or DB_PATH) or ".", "verify", f"covers-{series_id}.json")
 
