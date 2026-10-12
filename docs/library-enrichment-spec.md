@@ -35,6 +35,8 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 
 ## Phases
 
+**Build order:** 1 → 2 → 3 → 4 (bulk pass done) → on-arrival tagging → reading order last. The reading order (local first, online fallback, retag) only makes sense once the local data and the XML exist. Built earlier, every comic opened would go to the network and queue a file rewrite. Until then, the detail view keeps today's behaviour: it fetches online into the DB and never writes to files.
+
 ### 1. LOCG harvest (do first; the browser pass is the scarce resource)
 - For every issue on the shelf (then every tracked issue): fetch the LOCG variant list and details, store every variant's name and image URL in the record, and download each image at `large-`.
 - Re-fetch the 1,933 stored LOCG covers that are 170px `medium-` thumbnails at `large-`.
@@ -75,7 +77,7 @@ Network cost: about 5 hours of writes plus about 5 hours of read-back. Afterward
 - **Enrich the issue on arrival:** variants from every source, the CV original, the record filled, and covers written to the series' `.kometa/covers/`.
 - **Re-enrich new releases on a schedule** (for example +7, +30 and +90 days), because exclusives land on LOCG for weeks after release and CV originals arrive late. Retag the file only when the rendered XML's hash changes.
 
-### Reading order (when a comic is opened or shown)
+### Reading order (when a comic is opened or shown) — BUILT LAST
 
 1. **The DB record**: local, milliseconds. Always first; it's the index.
 2. **The file's ComicInfo**: only when the DB has no row (a rebuilt DB, or a file dropped in by hand). Harvest it into the DB.
