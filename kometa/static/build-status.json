@@ -1,6 +1,6 @@
 {
- "updated": "2026-10-12 23:58 AEST",
- "now": "Marvel.com cover worker live tonight (UPC-matched, bigger-only). Still building: trade ratings, harvest health check, read-local-first (off).",
+ "updated": "2026-10-13 00:05 AEST",
+ "now": "Live: Marvel.com covers overnight; trade ratings on the book sheet; read-local-first built (off). Building: harvest health dot on the Settings badge.",
  "groups": [
   {
    "title": "Komga retirement",
@@ -112,7 +112,7 @@
      "id": "1i-e",
      "label": "Marvel.com / DC.com covers (slowest pace)",
      "state": "running",
-     "note": "Marvel.com only (DC pages carry no barcode to check). Runs 23:00–07:00, ~1 issue per 10 min; morning report in Settings"
+     "note": "Marvel.com only. First issue tonight: Midnight Spider-Man #1, main cover 768px → 2750px wide, variants 600 → 1821px"
     },
     {
      "id": "1i-f",
@@ -230,17 +230,20 @@
     {
      "id": "5a",
      "label": "Database → file's ComicInfo → online",
-     "state": "todo"
+     "state": "done",
+     "note": "built, switched off until after the full rewrite"
     },
     {
      "id": "5b",
      "label": "Online answers saved; file update after the book closes",
-     "state": "todo"
+     "state": "done",
+     "note": "built, switched off until after the full rewrite"
     },
     {
      "id": "5c",
      "label": "Every online fallback logged as a miss",
-     "state": "todo"
+     "state": "done",
+     "note": "built, switched off until after the full rewrite"
     }
    ]
   },
@@ -286,6 +289,16 @@
      "id": "x8",
      "label": "Reader: one page per swipe (slow + quick, tuned on 6 recordings), no Safari Back on swipe, spreads fill + slide in as one",
      "state": "done"
+    },
+    {
+     "id": "x9",
+     "label": "Community ratings on the book/trade sheet (Hardcover, Open Library)",
+     "state": "done"
+    },
+    {
+     "id": "x10",
+     "label": "Harvest health: red dot when a source is stuck, resting over a day, or erroring",
+     "state": "building"
     }
    ]
   }
