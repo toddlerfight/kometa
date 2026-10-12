@@ -135,7 +135,10 @@ function _navBegin(view, params, dir) {
   }
   _navBarStart();
   const fromView = currentView, fromParams = currentParams || {};
-  if (fromView === 'read') return;                       // closing the reader: it fades off the view underneath
+  if (fromView === 'read') {                             // closing the reader: it fades off the view underneath
+    _vt.quiet = { gen, y: document.getElementById('app')?.scrollTop || 0 };
+    return;
+  }
   const sameThing = fromView === view && (fromParams.id ?? fromParams.key) === (params?.id ?? params?.key);
   if (sameThing || !_motionOK()) return;                 // reduced motion = an honest instant swap
   _vtLeave(dir, gen);
@@ -277,7 +280,20 @@ function setTopbar() {
 }
 
 function setApp(html) {
-  document.getElementById('app').innerHTML = html;
+  const app = document.getElementById('app');
+  // Back from the reader: the view underneath is still painted. Its refresh keeps
+  // it there through 'Loading...' and lands at the same scroll — no flash to an
+  // empty page and a lurch back to the top while the reader is still fading off.
+  const q = _vt.quiet;
+  if (q && q.gen === _vt.gen) {
+    if (/^<div class="state-msg">Loading/.test(html)) return;
+    _vt.quiet = null;
+    app.innerHTML = html;
+    app.scrollTop = q.y;
+    requestAnimationFrame(() => { app.scrollTop = q.y; });   // rows that paint a beat later
+    return;
+  }
+  app.innerHTML = html;
 }
 
 function renderView() {

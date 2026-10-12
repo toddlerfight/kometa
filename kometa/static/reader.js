@@ -220,9 +220,20 @@ async function _rdSeriesNext(bookId, secondary = false) {
   const note = document.getElementById('rd-end-note');
   const host = document.getElementById('rd-end-next');
   if (!n || n.status !== 'book') {
-    if (note && !secondary) note.textContent = n ? n.label : '';
+    // Not on the shelf yet: say so where Up next would sit — the cover and when —
+    // not in the grey footnote under the buttons, where nobody looks
+    if (n && n.number != null && host && !secondary && _rd.book.series_id) {
+      if (note) note.textContent = '';
+      host.innerHTML = `
+        <div class="rd-next-card" style="cursor:default">
+          <img class="rd-next-cover" src="/api/series/${_rd.book.series_id}/issues/${n.number}/thumbnail" alt="" onerror="this.style.opacity='0.15'">
+          <div class="rd-next-text"><div class="u-label" style="color:var(--tq)">Next issue</div>
+            <div class="rd-next-title">${esc(_rd.book.title || '')} ${esc(n.label)}</div>
+            <div class="rd-next-count" id="rd-next-count"></div></div>
+        </div>`;
+    } else if (note && !secondary) note.textContent = n ? n.label : '';
     else if (note && secondary && !note.textContent && n) note.textContent = `In the series: ${n.label}`;
-    _rdNothingNext();
+    _rdNothingNext(!!n);
     return;
   }
   if (secondary) {
@@ -241,13 +252,15 @@ async function _rdSeriesNext(bookId, secondary = false) {
   _rdStartCountdown(n.book_id);
 }
 
-// The end of what's on the shelf: nothing to open, so the reader goes. Marked as
-// read, at once; read to the last page, after the same countdown 'Up next' gets —
-// a tap stays.
-function _rdNothingNext() {
-  if (_rd.markedRead) return _rdExit();
+// The end of what's on the shelf: nothing to open, so the reader goes — after the
+// same countdown 'Up next' gets (a tap stays), or at once when you marked it read
+// and there's no word on a next issue either.
+function _rdNothingNext(news = false) {
+  if (_rd.markedRead && !news) return _rdExit();          // nothing to say about what's next: just go
   const host = document.getElementById('rd-end-next');
-  if (host) host.innerHTML = `<div class="rd-next-count" id="rd-next-count">Closing in ${RD_COUNTDOWN_S}…</div>`;
+  const c = document.getElementById('rd-next-count');
+  if (c) c.textContent = `Closing in ${RD_COUNTDOWN_S}…`;          // under the next issue's card
+  else if (host) host.innerHTML = `<div class="rd-next-count" id="rd-next-count">Closing in ${RD_COUNTDOWN_S}…</div>`;
   _rdStartCountdown(null, 'Closing in', () => _rdExit());
 }
 
