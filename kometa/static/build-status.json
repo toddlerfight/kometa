@@ -1,337 +1,337 @@
 {
-  "updated": "2026-10-12 23:25 AEST",
-  "now": "Building 1i-e: Marvel.com/DC.com print-size covers, a night-only job (23:00–07:00, 1 request/min, UPC-matched, bigger-only). Morning report to follow.",
-  "groups": [
+ "updated": "2026-10-12 23:58 AEST",
+ "now": "Marvel.com cover worker live tonight (UPC-matched, bigger-only). Still building: trade ratings, harvest health check, read-local-first (off).",
+ "groups": [
+  {
+   "title": "Komga retirement",
+   "items": [
     {
-      "title": "Komga retirement",
-      "items": [
-        {
-          "id": "K1",
-          "label": "Read history copied from Komga",
-          "state": "done",
-          "note": "89 written, 10 renamed books recovered"
-        },
-        {
-          "id": "K2",
-          "label": "Missing reading lists imported",
-          "state": "done",
-          "note": "Fear Itself"
-        },
-        {
-          "id": "K3",
-          "label": "Final metadata harvest from Komga",
-          "state": "done",
-          "note": "253 issues"
-        },
-        {
-          "id": "K4",
-          "label": "Komga removed from kometa's code",
-          "state": "done"
-        },
-        {
-          "id": "K5",
-          "label": "Komga container stopped, boot script fixed",
-          "state": "done"
-        },
-        {
-          "id": "K6",
-          "label": "Delete Komga container + config",
-          "state": "waiting-you",
-          "note": "after a few days — see Your tasks"
-        }
-      ]
+     "id": "K1",
+     "label": "Read history copied from Komga",
+     "state": "done",
+     "note": "89 written, 10 renamed books recovered"
     },
     {
-      "title": "1 · Harvest (background, one job per source)",
-      "items": [
-        {
-          "id": "1a",
-          "label": "Biggest image everywhere; small covers re-fetched",
-          "state": "done"
-        },
-        {
-          "id": "1b",
-          "label": "Owned issues first; Metron harvest share (1,000 kept back daily)",
-          "state": "done"
-        },
-        {
-          "id": "1c",
-          "label": "Library harvest card + Settings attention badge",
-          "state": "done"
-        },
-        {
-          "id": "1d",
-          "label": "Metron: every extra field; issue ids for never-synced series",
-          "state": "done"
-        },
-        {
-          "id": "1e",
-          "label": "LOCG: full variant lists + community ratings",
-          "state": "done"
-        },
-        {
-          "id": "1f",
-          "label": "ComicVine: full-size original covers",
-          "state": "done"
-        },
-        {
-          "id": "1g",
-          "label": "GCD: older and international series; LOCG linking without Metron",
-          "state": "done",
-          "note": "first results: 4 linked, 4 not on GCD, 1 ambiguous; ties now broken from your shelf"
-        },
-        {
-          "id": "1h",
-          "label": "Image downloader at full size",
-          "state": "done"
-        },
-        {
-          "id": "1i-a",
-          "label": "PRH print-quality covers (by barcode)",
-          "state": "done",
-          "note": "≤300/day; TIFF → full-size JPEG; placeholder detected first"
-        },
-        {
-          "id": "1i-b",
-          "label": "Open Library (trade ratings + covers)",
-          "state": "done"
-        },
-        {
-          "id": "1i-c",
-          "label": "ComicBookRoundup (critic + user scores)",
-          "state": "done",
-          "note": "one page per series lists every issue's critic + user score"
-        },
-        {
-          "id": "1i-d",
-          "label": "Fandom wikis (fullest variant galleries)",
-          "state": "done",
-          "note": "gallery lists saved; image downloads OFF until the covers move (2b/2d)"
-        },
-        {
-          "id": "1i-e",
-          "label": "Marvel.com / DC.com covers (slowest pace)",
-          "state": "building",
-          "note": "night-only (23–07), 1 req/min, barcode-matched, keeps only bigger covers — you asked to see what it brings back"
-        },
-        {
-          "id": "1i-f",
-          "label": "Hardcover (trade ratings)",
-          "state": "done",
-          "note": "live, token verified"
-        }
-      ]
+     "id": "K2",
+     "label": "Missing reading lists imported",
+     "state": "done",
+     "note": "Fear Itself"
     },
     {
-      "title": "2 · Covers stored with the comics",
-      "items": [
-        {
-          "id": "2a",
-          "label": "Folder layout: <Series>/.kometa/covers/",
-          "state": "done",
-          "note": "<series>/.kometa/covers/ + index.json; the library scan skips it"
-        },
-        {
-          "id": "2b",
-          "label": "Copy the cover store to the NAS, verified",
-          "state": "done",
-          "note": "18,683 covers, 3.9 GB, in 686 series folders; 25 owner-only folders opened (777) first"
-        },
-        {
-          "id": "2c",
-          "label": "The NAS copy becomes the permanent one",
-          "state": "todo",
-          "note": "next — kometa rebuilding its store from the NAS copy"
-        },
-        {
-          "id": "2d",
-          "label": "Kometa's local copy moves to Catbus",
-          "state": "todo",
-          "note": "your go — short restart"
-        },
-        {
-          "id": "2e",
-          "label": "New covers written to both",
-          "state": "todo"
-        }
-      ]
+     "id": "K3",
+     "label": "Final metadata harvest from Komga",
+     "state": "done",
+     "note": "253 issues"
     },
     {
-      "title": "3 · Clean ComicInfo in every file",
-      "items": [
-        {
-          "id": "3a",
-          "label": "ComicInfo generator (record → clean XML)",
-          "state": "done",
-          "note": "verified on a real record (Midnight Spider-Man #1); writes no files"
-        },
-        {
-          "id": "3a+",
-          "label": "Trades get ComicInfo too (from the trade records)",
-          "state": "done",
-          "note": "series, volume, format, ISBN, date, what it collects"
-        },
-        {
-          "id": "3b",
-          "label": "Per-file journal",
-          "state": "done"
-        },
-        {
-          "id": "3c",
-          "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)",
-          "state": "done"
-        },
-        {
-          "id": "3d",
-          "label": "Temp upload → read back → swap; reader cache kept",
-          "state": "done",
-          "note": "dry run on 17 real files: all built + verified, every page identical"
-        },
-        {
-          "id": "3e",
-          "label": "Test batch of ~20 files",
-          "state": "done",
-          "note": "17 files checked by you — ok"
-        },
-        {
-          "id": "3f",
-          "label": "Full run (~10 h network)",
-          "state": "todo",
-          "note": "your go — at 10 files per 10 min it would take ~5 days; can run faster at night"
-        }
-      ]
+     "id": "K4",
+     "label": "Komga removed from kometa's code",
+     "state": "done"
     },
     {
-      "title": "4 · New arrivals",
-      "items": [
-        {
-          "id": "4a",
-          "label": "ComicInfo written in finalize's rebuild",
-          "state": "done",
-          "note": "ON since 2026-10-12: new downloads tagged once a catalogue fills their details (or after 7 days)"
-        },
-        {
-          "id": "4b",
-          "label": "Enriched on arrival from every source",
-          "state": "done",
-          "note": "the harvest jobs already take new owned issues first"
-        },
-        {
-          "id": "4c",
-          "label": "Re-checked at +7 / +30 / +90 days",
-          "state": "done",
-          "note": "tagged files are re-queued when what their record would write changes"
-        }
-      ]
+     "id": "K5",
+     "label": "Komga container stopped, boot script fixed",
+     "state": "done"
     },
     {
-      "title": "5 · Read local first (last)",
-      "items": [
-        {
-          "id": "5a",
-          "label": "Database → file's ComicInfo → online",
-          "state": "todo"
-        },
-        {
-          "id": "5b",
-          "label": "Online answers saved; file update after the book closes",
-          "state": "todo"
-        },
-        {
-          "id": "5c",
-          "label": "Every online fallback logged as a miss",
-          "state": "todo"
-        }
-      ]
-    },
-    {
-      "title": "Built along the way",
-      "items": [
-        {
-          "id": "x1",
-          "label": "Settings cards: Metron, GCD; LOCG toggle",
-          "state": "done"
-        },
-        {
-          "id": "x2",
-          "label": "One series → several Metron series (Uncanny X-Men, Fables, Fantastic Four)",
-          "state": "done"
-        },
-        {
-          "id": "x3",
-          "label": "Split-series finder + 6 series relinked",
-          "state": "done"
-        },
-        {
-          "id": "x4",
-          "label": "Cover check tool (is this file really that issue?)",
-          "state": "done"
-        },
-        {
-          "id": "x5",
-          "label": "Web reader: spreads fill the screen",
-          "state": "done"
-        },
-        {
-          "id": "x6",
-          "label": "Reader caches on Catbus (21 GB freed)",
-          "state": "done"
-        },
-        {
-          "id": "x7",
-          "label": "Community ratings on the issue sheet (v1)",
-          "state": "done"
-        },
-        {
-          "id": "x8",
-          "label": "Reader: one page per swipe (slow + quick, tuned on 6 recordings), no Safari Back on swipe, spreads fill + slide in as one",
-          "state": "done"
-        }
-      ]
+     "id": "K6",
+     "label": "Delete Komga container + config",
+     "state": "waiting-you",
+     "note": "after a few days — see Your tasks"
     }
-  ],
-  "your_tasks": [
+   ]
+  },
+  {
+   "title": "1 · Harvest (background, one job per source)",
+   "items": [
     {
-      "title": "Community ratings: v1 is live on the issue sheet — dial it in when you like",
-      "why": "LOCG, ComicBookRoundup, Hardcover and Open Library ratings are being collected per issue (dated snapshots) but nothing in kometa shows them yet — only the files' ComicInfo will carry LOCG's rating.",
-      "how": "Open any issue; the Community line sits under your stars. Tell me what to change (and whether trades' book sheet should get it).",
-      "blocking": "No."
+     "id": "1a",
+     "label": "Biggest image everywhere; small covers re-fetched",
+     "state": "done"
     },
     {
-      "title": "Pick the right GCD series for the ones it couldn't match",
-      "why": "GCD (the Grand Comics Database) fills details for series Metron doesn't have. When several GCD series share a name (Tintin has 145), kometa won't guess.",
-      "how": "I'll list each one with its candidates when the first batch is done (about 7 hours for all ~130 series). You pick one per series, or 'none of these'.",
-      "blocking": "No — only those series wait."
+     "id": "1b",
+     "label": "Owned issues first; Metron harvest share (1,000 kept back daily)",
+     "state": "done"
     },
     {
-      "title": "Say go for moving kometa's cover store to Catbus",
-      "why": "Frees ~4–9 GB on ginbako. Same kind of move as this morning's caches, same guard if Catbus isn't mounted.",
-      "how": "A yes. About a minute of downtime.",
-      "blocking": "Yes — 2d stops here."
+     "id": "1c",
+     "label": "Library harvest card + Settings attention badge",
+     "state": "done"
     },
     {
-      "title": "Say go for the full ComicInfo rewrite (step 3f)",
-      "why": "Every file in the library gets a clean ComicInfo, the way the test batch did. Best once more of the library has real catalogue data — 48% today (rising daily) — otherwise many files get stand-in details now and a second rewrite later. Voot II keeps every original for 30 days; CBRs' originals go to _trash for 7.",
-      "how": "Say 'go full rewrite' when you're ready (I'd suggest at ~80% coverage). It pauses while you read.",
-      "blocking": "Yes."
+     "id": "1d",
+     "label": "Metron: every extra field; issue ids for never-synced series",
+     "state": "done"
     },
     {
-      "title": "OK deleting the Komga container and its config",
-      "why": "Komga is stopped and nothing uses it. Its config is also in the Voot II backup.",
-      "how": "A yes, any time after a few days with no problems.",
-      "blocking": "No."
+     "id": "1e",
+     "label": "LOCG: full variant lists + community ratings",
+     "state": "done"
     },
     {
-      "title": "OK deleting today's 6 safety copies of the database",
-      "why": "Taken before each schema change today (~200 MB). All changes went fine and the nightly backups cover the database.",
-      "how": "A yes.",
-      "blocking": "No."
+     "id": "1f",
+     "label": "ComicVine: full-size original covers",
+     "state": "done"
     },
     {
-      "title": "Push the arr-stack commit",
-      "why": "The boot script change (no longer restarts Komga) is committed locally in ~/code/arr-stack but not pushed.",
-      "how": "git -C ~/code/arr-stack push, when convenient.",
-      "blocking": "No."
+     "id": "1g",
+     "label": "GCD: older and international series; LOCG linking without Metron",
+     "state": "done",
+     "note": "first results: 4 linked, 4 not on GCD, 1 ambiguous; ties now broken from your shelf"
+    },
+    {
+     "id": "1h",
+     "label": "Image downloader at full size",
+     "state": "done"
+    },
+    {
+     "id": "1i-a",
+     "label": "PRH print-quality covers (by barcode)",
+     "state": "done",
+     "note": "≤300/day; TIFF → full-size JPEG; placeholder detected first"
+    },
+    {
+     "id": "1i-b",
+     "label": "Open Library (trade ratings + covers)",
+     "state": "done"
+    },
+    {
+     "id": "1i-c",
+     "label": "ComicBookRoundup (critic + user scores)",
+     "state": "done",
+     "note": "one page per series lists every issue's critic + user score"
+    },
+    {
+     "id": "1i-d",
+     "label": "Fandom wikis (fullest variant galleries)",
+     "state": "done",
+     "note": "gallery lists saved; image downloads OFF until the covers move (2b/2d)"
+    },
+    {
+     "id": "1i-e",
+     "label": "Marvel.com / DC.com covers (slowest pace)",
+     "state": "running",
+     "note": "Marvel.com only (DC pages carry no barcode to check). Runs 23:00–07:00, ~1 issue per 10 min; morning report in Settings"
+    },
+    {
+     "id": "1i-f",
+     "label": "Hardcover (trade ratings)",
+     "state": "done",
+     "note": "live, token verified"
     }
-  ]
+   ]
+  },
+  {
+   "title": "2 · Covers stored with the comics",
+   "items": [
+    {
+     "id": "2a",
+     "label": "Folder layout: <Series>/.kometa/covers/",
+     "state": "done",
+     "note": "<series>/.kometa/covers/ + index.json; the library scan skips it"
+    },
+    {
+     "id": "2b",
+     "label": "Copy the cover store to the NAS, verified",
+     "state": "done",
+     "note": "18,683 covers, 3.9 GB, in 686 series folders; 25 owner-only folders opened (777) first"
+    },
+    {
+     "id": "2c",
+     "label": "The NAS copy becomes the permanent one",
+     "state": "todo",
+     "note": "next — kometa rebuilding its store from the NAS copy"
+    },
+    {
+     "id": "2d",
+     "label": "Kometa's local copy moves to Catbus",
+     "state": "todo",
+     "note": "your go — short restart"
+    },
+    {
+     "id": "2e",
+     "label": "New covers written to both",
+     "state": "todo"
+    }
+   ]
+  },
+  {
+   "title": "3 · Clean ComicInfo in every file",
+   "items": [
+    {
+     "id": "3a",
+     "label": "ComicInfo generator (record → clean XML)",
+     "state": "done",
+     "note": "verified on a real record (Midnight Spider-Man #1); writes no files"
+    },
+    {
+     "id": "3a+",
+     "label": "Trades get ComicInfo too (from the trade records)",
+     "state": "done",
+     "note": "series, volume, format, ISBN, date, what it collects"
+    },
+    {
+     "id": "3b",
+     "label": "Per-file journal",
+     "state": "done"
+    },
+    {
+     "id": "3c",
+     "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)",
+     "state": "done"
+    },
+    {
+     "id": "3d",
+     "label": "Temp upload → read back → swap; reader cache kept",
+     "state": "done",
+     "note": "dry run on 17 real files: all built + verified, every page identical"
+    },
+    {
+     "id": "3e",
+     "label": "Test batch of ~20 files",
+     "state": "done",
+     "note": "17 files checked by you — ok"
+    },
+    {
+     "id": "3f",
+     "label": "Full run (~10 h network)",
+     "state": "todo",
+     "note": "your go — at 10 files per 10 min it would take ~5 days; can run faster at night"
+    }
+   ]
+  },
+  {
+   "title": "4 · New arrivals",
+   "items": [
+    {
+     "id": "4a",
+     "label": "ComicInfo written in finalize's rebuild",
+     "state": "done",
+     "note": "ON since 2026-10-12: new downloads tagged once a catalogue fills their details (or after 7 days)"
+    },
+    {
+     "id": "4b",
+     "label": "Enriched on arrival from every source",
+     "state": "done",
+     "note": "the harvest jobs already take new owned issues first"
+    },
+    {
+     "id": "4c",
+     "label": "Re-checked at +7 / +30 / +90 days",
+     "state": "done",
+     "note": "tagged files are re-queued when what their record would write changes"
+    }
+   ]
+  },
+  {
+   "title": "5 · Read local first (last)",
+   "items": [
+    {
+     "id": "5a",
+     "label": "Database → file's ComicInfo → online",
+     "state": "todo"
+    },
+    {
+     "id": "5b",
+     "label": "Online answers saved; file update after the book closes",
+     "state": "todo"
+    },
+    {
+     "id": "5c",
+     "label": "Every online fallback logged as a miss",
+     "state": "todo"
+    }
+   ]
+  },
+  {
+   "title": "Built along the way",
+   "items": [
+    {
+     "id": "x1",
+     "label": "Settings cards: Metron, GCD; LOCG toggle",
+     "state": "done"
+    },
+    {
+     "id": "x2",
+     "label": "One series → several Metron series (Uncanny X-Men, Fables, Fantastic Four)",
+     "state": "done"
+    },
+    {
+     "id": "x3",
+     "label": "Split-series finder + 6 series relinked",
+     "state": "done"
+    },
+    {
+     "id": "x4",
+     "label": "Cover check tool (is this file really that issue?)",
+     "state": "done"
+    },
+    {
+     "id": "x5",
+     "label": "Web reader: spreads fill the screen",
+     "state": "done"
+    },
+    {
+     "id": "x6",
+     "label": "Reader caches on Catbus (21 GB freed)",
+     "state": "done"
+    },
+    {
+     "id": "x7",
+     "label": "Community ratings on the issue sheet (v1)",
+     "state": "done"
+    },
+    {
+     "id": "x8",
+     "label": "Reader: one page per swipe (slow + quick, tuned on 6 recordings), no Safari Back on swipe, spreads fill + slide in as one",
+     "state": "done"
+    }
+   ]
+  }
+ ],
+ "your_tasks": [
+  {
+   "title": "Community ratings: v1 is live on the issue sheet — dial it in when you like",
+   "why": "LOCG, ComicBookRoundup, Hardcover and Open Library ratings are being collected per issue (dated snapshots) but nothing in kometa shows them yet — only the files' ComicInfo will carry LOCG's rating.",
+   "how": "Open any issue; the Community line sits under your stars. Tell me what to change (and whether trades' book sheet should get it).",
+   "blocking": "No."
+  },
+  {
+   "title": "Pick the right GCD series for the ones it couldn't match",
+   "why": "GCD (the Grand Comics Database) fills details for series Metron doesn't have. When several GCD series share a name (Tintin has 145), kometa won't guess.",
+   "how": "I'll list each one with its candidates when the first batch is done (about 7 hours for all ~130 series). You pick one per series, or 'none of these'.",
+   "blocking": "No — only those series wait."
+  },
+  {
+   "title": "Say go for moving kometa's cover store to Catbus",
+   "why": "Frees ~4–9 GB on ginbako. Same kind of move as this morning's caches, same guard if Catbus isn't mounted.",
+   "how": "A yes. About a minute of downtime.",
+   "blocking": "Yes — 2d stops here."
+  },
+  {
+   "title": "Say go for the full ComicInfo rewrite (step 3f)",
+   "why": "Every file in the library gets a clean ComicInfo, the way the test batch did. Best once more of the library has real catalogue data — 48% today (rising daily) — otherwise many files get stand-in details now and a second rewrite later. Voot II keeps every original for 30 days; CBRs' originals go to _trash for 7.",
+   "how": "Say 'go full rewrite' when you're ready (I'd suggest at ~80% coverage). It pauses while you read.",
+   "blocking": "Yes."
+  },
+  {
+   "title": "OK deleting the Komga container and its config",
+   "why": "Komga is stopped and nothing uses it. Its config is also in the Voot II backup.",
+   "how": "A yes, any time after a few days with no problems.",
+   "blocking": "No."
+  },
+  {
+   "title": "OK deleting today's 6 safety copies of the database",
+   "why": "Taken before each schema change today (~200 MB). All changes went fine and the nightly backups cover the database.",
+   "how": "A yes.",
+   "blocking": "No."
+  },
+  {
+   "title": "Push the arr-stack commit",
+   "why": "The boot script change (no longer restarts Komga) is committed locally in ~/code/arr-stack but not pushed.",
+   "how": "git -C ~/code/arr-stack push, when convenient.",
+   "blocking": "No."
+  }
+ ]
 }
