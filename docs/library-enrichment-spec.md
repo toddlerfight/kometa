@@ -62,7 +62,12 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 
 **1. Harvest (parallel workers, one per source)**
 - 1a. Prefer the largest URL (`large` over `thumb`) for mains and variants; re-fetch stored images whose best URL changed (includes the 1,933 LOCG 170px covers). Image hosts only.
-- 1b. The worker framework: a per-source worker, a per-item journal (pending, done, failed and why), resumable, the merge policy, yield to the reader.
+- 1b. **Re-scoped 2026-10-12: the workers already exist** as scheduler trickles: `record.trickle` (Metron issue fill, 25 per 10 min, merges LOCG when open), `locg_sweep` (LOCG-only owned issues), `topup` (a LOCG queue that already has a `community` kind), `trades_trickle`/`tradefill`, `images_trickle`, `covers_trickle`, `metron_rematch`. The record is the journal (`fill_state`, `source`, `fetched_at`) and `write_issue`/`_fresh` are the merge policy. Live diagnosis (2026-10-12): the record trickle filled 996 from Metron + 522 from LOCG in 24 h, but `pending_issues` orders "no record yet" ahead of "owned". 1,956 record-less issues (all but one **unowned**) sit in front of **2,528 owned stopgap issues that have a Metron id**. 1b is therefore:
+  - owned first in every trickle (pull list still leads);
+  - the harvest's Metron share: background trickles stop for the day at **1,000 sustained remaining** (read from `X-RateLimit-Sustained-Remaining`); interactive requests keep the existing floor of 200;
+  - more per tick within the burst limit (Metron's 3.5 s gap allows about 17/min shared by every job);
+  - one progress summary across the trickles (feeds 1c).
+  - The 1,066 owned issues with no catalogue id at all are a matching problem: second half of 1d.
 - 1c. The progress view (per source: done, queued, failed, today's budget left) and **the Settings badge** (red dot, no copy) when LOCG work is waiting with no working pass.
 - 1d. **Metron worker**: full issue detail for every owned issue with a Metron id (4,853), keeping what `issue_detail` currently drops (cv_id, gcd_id, UPC/ISBN, page count, price, characters, teams, universes, arcs, reprints). Then match the ~2,300 owned issues with no Metron id (series first). That's about 7k requests ≈ 2 days within the budget.
 - 1e. **LOCG worker**: link the 360 untried series, then the variant list and details for every owned issue (404 of ~7k done), then series and trade data. Fix the duplicated combined-role credits. About 8–10k requests ≈ 1.5–2 days at 240/h; stops when the pass is refused (badge on).
