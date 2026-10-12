@@ -25,7 +25,7 @@ RECORD_MISS_TTL_DAYS = 7      # a row with nothing to ask is asked again after t
 # what the file's own tags or Komga said: a stopgap, shown until a catalogue answers,
 # never a reason not to ask one — and never thrown away for a miss
 STOPGAP_SOURCES = ("comicinfo", "komga")
-TRICKLE_LIMIT = 25            # per tick, under Metron's 30/min with the other jobs
+TRICKLE_LIMIT = 60            # per tick (10 min) — Metron's 3.5 s gap paces it; the harvest floor caps the day
 TRICKLE_MINUTES = 10
 
 
@@ -263,7 +263,8 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
                    -- else look again in a week in case one has been matched since
                    OR (r.source IN ('comicinfo', 'komga')
                        AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?)))
-            ORDER BY s.on_pull_list DESC, (r.tracked_series_id IS NOT NULL), i.owned DESC, i.tracked_series_id, i.number
+            -- what you OWN first: 2,528 owned issues sat behind 1,956 unowned record-less ones (2026-10-12)
+            ORDER BY s.on_pull_list DESC, i.owned DESC, (r.tracked_series_id IS NOT NULL), i.tracked_series_id, i.number
             LIMIT ?""", (cutoff, cutoff, limit))]
 
 

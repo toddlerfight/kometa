@@ -55,6 +55,19 @@ def last_scheduled_sync_utc() -> str:
     return max(candidates).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _as_harvest(fn):
+    """The job, run inside interactive.harvesting() — Metron's harvest floor applies
+    (kometa/metron_client.py). functools.wraps keeps the name APScheduler logs."""
+    import functools
+    from kometa.interactive import harvesting
+
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with harvesting():
+            return fn(*a, **k)
+    return run
+
+
 def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None, poll_torrent_fn=None,
                     trickle_fn=None):
     # Pollers and the queue get a pool of their own: with ~19 jobs on 10 threads,
@@ -147,17 +160,19 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     except Exception as e:
         logger.warning(f"Related signals trickle not scheduled: {e}")
     # The local catalogue record (kometa/record.py): the backlog fills a few
-    # issues per tick, Metron first, stopping at its first refusal.
+    # issues per tick, Metron first, stopping at its first refusal. Backfill jobs
+    # run as harvest traffic: they stop for the day at Metron's harvest floor,
+    # leaving the rest of the allowance to syncs and whatever you're looking at.
     try:
         from kometa.record import trickle as record_trickle, TRICKLE_MINUTES as RECORD_MINUTES
-        scheduler.add_job(record_trickle, IntervalTrigger(minutes=RECORD_MINUTES), id="record_trickle",
+        scheduler.add_job(_as_harvest(record_trickle), IntervalTrigger(minutes=RECORD_MINUTES), id="record_trickle",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=2))
     except Exception as e:
         logger.warning(f"Record trickle not scheduled: {e}")
     try:
         from kometa.record import trades_trickle
-        scheduler.add_job(trades_trickle, IntervalTrigger(minutes=10), id="trades_trickle",
+        scheduler.add_job(_as_harvest(trades_trickle), IntervalTrigger(minutes=10), id="trades_trickle",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=5))
     except Exception as e:
@@ -183,7 +198,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # tick, on the one throttle (kometa/rematch.py). Never a second process.
     try:
         from kometa.rematch import rematch_tick
-        scheduler.add_job(rematch_tick, IntervalTrigger(minutes=10), id="metron_rematch",
+        scheduler.add_job(_as_harvest(rematch_tick), IntervalTrigger(minutes=10), id="metron_rematch",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=6))
     except Exception as e:
@@ -192,7 +207,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # stamps, then a few stuck issues looked up — proposals wait in Activity.
     try:
         from kometa.tradefill import trickle as _tradefill_trickle
-        scheduler.add_job(_tradefill_trickle, IntervalTrigger(minutes=10), id="trade_fill",
+        scheduler.add_job(_as_harvest(_tradefill_trickle), IntervalTrigger(minutes=10), id="trade_fill",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:

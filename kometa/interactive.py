@@ -15,3 +15,25 @@ MAX_WAIT_S = 5.0
 
 def is_interactive() -> bool:
     return INTERACTIVE.get()
+
+
+# The library harvest (docs/library-enrichment-spec.md): background trickles
+# that would happily spend a whole day's Metron allowance filling the back
+# catalogue. They run inside `harvesting()`; metron_client stops THEM — not
+# syncs, not a page you're looking at — once the day is down to its reserve.
+HARVEST = contextvars.ContextVar("kometa_harvest", default=False)
+
+
+def is_harvest() -> bool:
+    return HARVEST.get()
+
+
+class harvesting:
+    """with harvesting(): ... — mark the calls inside as harvest traffic."""
+    def __enter__(self):
+        self._tok = HARVEST.set(True)
+        return self
+
+    def __exit__(self, *exc):
+        HARVEST.reset(self._tok)
+        return False

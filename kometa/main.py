@@ -233,6 +233,8 @@ from kometa.related import router as _related_router        # related to this se
 app.include_router(_related_router)
 from kometa.trending import router as _trending_router      # what shops sold most (ICv2)
 app.include_router(_trending_router)
+from kometa.harvest import router as _harvest_router        # the library harvest, all trickles at a glance
+app.include_router(_harvest_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
 app.include_router(_opds_router)
 from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series

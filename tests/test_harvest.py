@@ -1,0 +1,99 @@
+"""The library harvest (enrichment spec 1b): owned issues first, the harvest's
+share of Metron's day, and the progress summary. No network."""
+import io
+import json
+import time
+import urllib.error
+
+import pytest
+
+import kometa.db as db
+import kometa.record as rec
+from kometa import harvest, metron_client as mc
+from kometa.interactive import harvesting, is_harvest
+
+
+def test_owned_stopgap_issues_come_before_unowned_recordless_ones(db_path):
+    """2026-10-12 live: 2,528 owned issues with a Metron id waited behind 1,956
+    unowned issues that simply had no record yet."""
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 1.0, None, 0, metron_issue_id=1, path=db_path)       # unowned, no record
+    db.upsert_issue_status(sid, 2.0, None, 1, metron_issue_id=2, path=db_path)       # owned, stopgap record
+    rec.write_issue(sid, 2.0, {"desc": "from the file", "credits": [], "covers": []}, "comicinfo", "partial", {}, db_path)
+    order = [c["number"] for c in rec.pending_issues(db_path)]
+    assert order == [2.0, 1.0]
+
+
+def test_harvesting_marks_only_the_calls_inside():
+    assert not is_harvest()
+    with harvesting():
+        assert is_harvest()
+    assert not is_harvest()
+
+
+@pytest.fixture
+def metron(db_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    db.set_config({"metron_token": "good"}, db_path)
+    monkeypatch.setattr(mc, "MIN_INTERVAL_S", 0)
+    monkeypatch.setattr(mc, "_state", {"last": 0.0, "paused_until": 0.0, "sustained_remaining": None, "sustained_reset": 0.0})
+    calls = []
+    left = {"n": 1001}
+
+    def urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        left["n"] -= 1
+
+        class R(io.BytesIO):
+            headers = {"X-Ratelimit-Sustained-Remaining": str(left["n"]),
+                       "X-Ratelimit-Sustained-Reset": str(time.time() + 3600)}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return R(json.dumps({"results": []}).encode())
+
+    monkeypatch.setattr(mc.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+def test_harvest_stops_at_its_floor_but_the_app_keeps_going(metron):
+    with harvesting():
+        mc._get("publisher/")                         # remaining 1000 after this one
+        with pytest.raises(mc.MetronUnavailable, match="share"):
+            mc._get("publisher/")                     # the harvest's share is spent
+    assert len(metron) == 1
+    mc._get("publisher/")                             # a sync / a page: still served
+    assert len(metron) == 2
+    assert mc.budget()["harvest_paused"] is True
+
+
+def test_the_floor_lifts_after_the_reset(metron, monkeypatch):
+    with harvesting():
+        mc._get("publisher/")
+    assert mc.harvest_share_spent()
+    real = time.time
+    monkeypatch.setattr(mc.time, "time", lambda: real() + 7200)
+    assert not mc.harvest_share_spent()
+
+
+def test_reset_as_seconds_to_go_reads_right(metron, monkeypatch):
+    def urlopen(req, timeout=None):
+        class R(io.BytesIO):
+            headers = {"X-Ratelimit-Sustained-Remaining": "900", "X-Ratelimit-Sustained-Reset": "3600"}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        return R(b"{}")
+    monkeypatch.setattr(mc.urllib.request, "urlopen", urlopen)
+    mc._get("publisher/")
+    assert mc._state["sustained_reset"] > time.time() + 3000
+    assert mc.harvest_share_spent()
+
+
+def test_progress_adds_up_owned_issues(db_path, monkeypatch):
+    monkeypatch.setattr(harvest, "_images_pending", lambda path: 0)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
+    db.upsert_issue_status(sid, 2.0, None, 1, path=db_path)
+    rec.write_issue(sid, 1.0, {"desc": "x", "credits": [], "covers": []}, "metron", "full", {}, db_path)
+    rec.write_issue(sid, 2.0, {"desc": "y", "credits": [], "covers": []}, "comicinfo", "partial", {}, db_path)
+    p = harvest.progress(db_path)["owned_issues"]
+    assert (p["owned"], p["catalogue"], p["stopgap"], p["no_catalogue_id"]) == (2, 1, 1, 1)

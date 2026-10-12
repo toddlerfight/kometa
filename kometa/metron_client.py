@@ -21,11 +21,12 @@ BASE = "https://metron.cloud/api/"
 USER_AGENT = "Kometa/1.0 (personal pull-list tool)"
 MIN_INTERVAL_S = 3.5            # ~17/min, under the burst limit of 20
 DAILY_FLOOR = 200               # stop for the day with this many left of the 5,000
+HARVEST_FLOOR = 1000            # ...but the library harvest stops here: the rest is the app's
 UNREACHABLE_PAUSE_S = 300       # after a connection failure, everyone fails fast this long
 REQUEST_TIMEOUT_S = 15
 
 _lock = threading.Lock()
-_state = {"last": 0.0, "paused_until": 0.0}
+_state = {"last": 0.0, "paused_until": 0.0, "sustained_remaining": None, "sustained_reset": 0.0}
 
 
 class MetronUnavailable(RuntimeError):
@@ -48,6 +49,25 @@ def _creds():
         return ("token", tok)
     u, p = cfg.get("metron_user"), cfg.get("metron_pass")
     return (u, p) if u and p else None
+
+
+def harvest_share_spent() -> bool:
+    """True once today's remaining Metron allowance is down to HARVEST_FLOOR.
+    Unknown (no response seen yet) or past the reset = not spent."""
+    left = _state.get("sustained_remaining")
+    if left is None:
+        return False
+    reset = _state.get("sustained_reset") or 0
+    if reset and time.time() >= reset:
+        _state["sustained_remaining"] = None
+        return False
+    return left <= HARVEST_FLOOR
+
+
+def budget() -> dict:
+    """Today's Metron allowance as last reported — for the harvest progress view."""
+    return {"limit": _state.get("sustained_limit"), "remaining": _state.get("sustained_remaining"),
+            "harvest_floor": HARVEST_FLOOR, "harvest_paused": harvest_share_spent()}
 
 
 def configured() -> bool:
@@ -131,8 +151,11 @@ def _get(path: str, **params) -> dict:
                                 f"try again in {gap // 60 + 1} min (three refusals is a 24-hour ban)")
     auth = f"Bearer {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    from kometa.interactive import is_interactive, MAX_WAIT_S
+    from kometa.interactive import is_interactive, is_harvest, MAX_WAIT_S
     interactive = is_interactive()
+    if is_harvest() and harvest_share_spent():
+        raise MetronUnavailable(f"Harvest's share of today's Metron allowance is spent "
+                                f"({HARVEST_FLOOR} kept for the app) — back after the reset")
     if not _lock.acquire(timeout=MAX_WAIT_S if interactive else -1):
         raise MetronUnavailable("Metron is busy with background work — try again in a moment")
     try:                                           # one request at a time, spaced
@@ -154,6 +177,12 @@ def _get(path: str, **params) -> dict:
                 # Their RATELIMIT.md, verbatim: read BOTH counters on every response and
                 # pause until the window resets once a Remaining hits zero — never wait
                 # to be told 429. Sustained first: running out for the day costs most.
+                left = r.headers.get("X-Ratelimit-Sustained-Remaining")
+                if left is not None:
+                    _state["sustained_remaining"] = int(left)
+                    raw = float(r.headers.get("X-Ratelimit-Sustained-Reset") or 0)
+                    # an epoch, or seconds-to-go? Either reads right: nothing real is under 1e9
+                    _state["sustained_reset"] = raw if raw > 1e9 else (time.time() + raw if raw else 0.0)
                 for scope, floor in (("Sustained", DAILY_FLOOR), ("Burst", 0)):
                     left = r.headers.get(f"X-Ratelimit-{scope}-Remaining")
                     if left is not None and int(left) <= floor:
