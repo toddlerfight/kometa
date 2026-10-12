@@ -248,6 +248,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                               next_run_time=datetime.now(TZ) + timedelta(minutes=offset))
         except Exception as e:
             logger.warning(f"{mod_name} harvest not scheduled: {e}")
+    # ComicInfo into the files (kometa/retag.py): the full run, new arrivals and
+    # re-checks — a few files per tick, and nothing at all unless retag_enabled = '1'.
+    try:
+        from kometa.retag import retag_tick
+        scheduler.add_job(retag_tick, IntervalTrigger(minutes=10), id="retag",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=7))
+    except Exception as e:
+        logger.warning(f"Retag job not scheduled: {e}")
     # Trades fill what singles can't: collects for a few trades, the coverage
     # stamps, then a few stuck issues looked up — proposals wait in Activity.
     try:

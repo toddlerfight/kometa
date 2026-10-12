@@ -101,6 +101,11 @@ def ensure_tables(path=None):
             trashed_to TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT DEFAULT (datetime('now')))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_retag_journal_state ON retag_journal(state)")
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(retag_journal)")]
+        if "queued_for" not in cols:
+            # why a book is on the list: 'run' (the full pass), 'arrival' (a new download),
+            # 'changed' (its record now says something different) — step 4, 2026-10-12
+            conn.execute("ALTER TABLE retag_journal ADD COLUMN queued_for TEXT")
 
 
 def journal(book_id: int, path=None) -> dict | None:
@@ -746,3 +751,109 @@ def comicinfo_preview(book_id: int):
     return Response(xml, media_type="application/xml", headers={"X-Comicinfo-Digest": comicinfo.digest(xml)})
 
 
+
+
+# --- the standing job: full run, new arrivals, re-checks (steps 3f, 4a, 4c) ----------
+# ONE switch (config retag_enabled, absent = off) and one queue — the journal. Nothing
+# below writes to a file unless the switch is on; queueing is a database row.
+ARRIVAL_GRACE_DAYS = 7          # a new download waits for its catalogue data this long at most
+TICK_BUDGET = 10                # files per scheduler tick
+RECHECK_PER_TICK = 300          # finished rows compared against today's record per tick
+_CATALOGUE = ("metron", "locg", "gcd")
+
+
+def enabled(path=None) -> bool:
+    return db.get_config(path or DB_PATH).get("retag_enabled", "0") == "1"
+
+
+def enqueue(book_ids, queued_for: str, path=None) -> int:
+    """Put books on the list. A row already in flight is left alone; a finished one
+    is restarted (fresh size/mtime, so the safety checks compare against now)."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    n = 0
+    for bid in book_ids:
+        row = journal(bid, path)
+        if row and row["state"] in ("pending", "built", "verified"):
+            continue
+        book = db.get_book(bid, path)
+        if not book or not os.path.exists(book["path"]):
+            continue
+        _start(book, path)
+        _set(bid, path, queued_for=queued_for)
+        n += 1
+    return n
+
+
+def enqueue_all(path=None) -> int:
+    """Step 3f — only on the user's go: every book in a tracked series."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        ids = [r[0] for r in conn.execute("SELECT id FROM books WHERE tracked_series_id IS NOT NULL ORDER BY id")]
+    return enqueue(ids, "run", path)
+
+
+def _record_ready(book: dict, path) -> bool:
+    """A new arrival is worth tagging once a catalogue has filled its record."""
+    if book.get("number") is None:
+        return True                               # trades: tagged from the trade list as it stands
+    from kometa import record
+    row = record.get_issue(book["tracked_series_id"], float(book["number"]), path)
+    return bool(row and row.get("source") in _CATALOGUE and row.get("fill_state") != "miss")
+
+
+def _due(row: dict, book: dict, path) -> bool:
+    if row.get("queued_for") != "arrival":
+        return True
+    if _record_ready(book, path):
+        return True
+    try:
+        age = (datetime.now(timezone.utc) - datetime.strptime(row["updated_at"], "%Y-%m-%d %H:%M:%S")
+               .replace(tzinfo=timezone.utc)).days
+    except (TypeError, ValueError):
+        age = ARRIVAL_GRACE_DAYS
+    return age >= ARRIVAL_GRACE_DAYS
+
+
+def requeue_changed(limit: int = RECHECK_PER_TICK, path=None) -> int:
+    """Step 4c: a tagged (or skipped) file goes back on the list when what its record
+    would write today differs from what was written — a new description, credits,
+    ratings, a catalogue reaching an issue that only had stand-in data. Cheapest
+    rows first: the longest since they were looked at."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM retag_journal WHERE state IN ('swapped', 'skipped') ORDER BY updated_at LIMIT ?", (limit,))]
+    n = 0
+    for row in rows:
+        book = db.get_book(row["book_id"], path)
+        if not book:
+            continue
+        xml = comicinfo.for_book(book, path, row.get("page_count"))
+        if xml is not None and comicinfo.digest(xml) != row.get("xml_digest"):
+            n += enqueue([row["book_id"]], "changed", path)
+        else:
+            _set(row["book_id"], path)                    # looked at: to the back of the line
+    return n
+
+
+def retag_tick(budget: int = TICK_BUDGET, path=None, runner=None) -> dict:
+    """Scheduler tick. Off unless retag_enabled = '1'."""
+    path = path or DB_PATH
+    if not enabled(path):
+        return {"enabled": False}
+    requeued = requeue_changed(path=path)
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM retag_journal WHERE state IN ('pending', 'built', 'verified') ORDER BY updated_at")]
+    ids = []
+    for row in rows:
+        book = db.get_book(row["book_id"], path)
+        if book and _due(row, book, path):
+            ids.append(row["book_id"])
+        if len(ids) >= budget:
+            break
+    out = (runner or run_batch)(ids) if ids else {"counts": {}, "stopped": None}
+    out.update(enabled=True, requeued=requeued)
+    return out

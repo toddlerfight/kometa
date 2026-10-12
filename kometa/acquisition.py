@@ -155,6 +155,16 @@ def _resync_after_placement(series_id: int, placed_path: str | None = None) -> N
         shelf.index_series_folder(series_id, DB_PATH)
     except Exception as e:
         logger.info(f"Shelf index after placement skipped: {e}")
+    if placed_path:
+        # step 4a: on the retag list — a database row; the file is only rewritten once
+        # its record has catalogue data and the retag switch is on (kometa/retag.py)
+        try:
+            from kometa import retag
+            book = db.get_book_by_path(placed_path, DB_PATH)
+            if book:
+                retag.enqueue([book["id"]], "arrival", DB_PATH)
+        except Exception as e:
+            logger.info(f"Retag queue after placement skipped: {e}")
 
 
 # Five call sites spawn this in threads (scheduler tick, manual retries, bulk

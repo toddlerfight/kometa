@@ -394,3 +394,47 @@ def test_a_running_shelf_scan_holds_the_swap_back(lib):
     assert retag.journal(lib["book_id"], lib["db"])["state"] == "verified"           # resumes, not failed
     assert _sha(lib["file"]) == orig and _no_tmp_left(lib["folder"])
     assert _run(lib)["counts"] == {"swapped": 1}
+
+
+# --- the standing job (steps 3f, 4a, 4c) ---------------------------------------------
+def test_the_switch_is_off_by_default_and_nothing_is_written(lib):
+    retag.enqueue([lib["book_id"]], "run", lib["db"])
+    before = _sha(lib["file"])
+    out = retag.retag_tick(path=lib["db"], runner=lambda ids: 1 / 0)
+    assert out == {"enabled": False} and _sha(lib["file"]) == before
+
+
+def test_enqueue_then_tick_rewrites_and_a_changed_record_requeues(lib):
+    db.set_config({"retag_enabled": "1"}, lib["db"])
+    assert retag.enqueue([lib["book_id"]], "run", lib["db"]) == 1
+    run = lambda ids: _run(lib, ids)
+    out = retag.retag_tick(path=lib["db"], runner=run)
+    assert out["counts"] == {"swapped": 1}
+    assert retag.requeue_changed(path=lib["db"]) == 0                               # same record, same XML: nothing to do
+    record.write_issue(lib["series"], 1.0, {"desc": "A new description.", "credits": [], "cover_date": "2012-03-01"},
+                       "metron", "full", path=lib["db"])
+    assert retag.requeue_changed(path=lib["db"]) == 1
+    assert retag.journal(lib["book_id"], lib["db"])["queued_for"] == "changed"
+    out = retag.retag_tick(path=lib["db"], runner=run)
+    assert out["counts"] == {"swapped": 1}
+    with zipfile.ZipFile(lib["file"]) as zf:
+        assert b"A new description." in zf.read("ComicInfo.xml")
+
+
+def test_an_arrival_waits_for_catalogue_data(lib):
+    db.set_config({"retag_enabled": "1"}, lib["db"])
+    record.write_issue(lib["series"], 1.0, {"desc": "from the file"}, "comicinfo", "partial", path=lib["db"])
+    retag.enqueue([lib["book_id"]], "arrival", lib["db"])
+    seen = []
+    retag.retag_tick(path=lib["db"], runner=lambda ids: seen.append(ids) or {"counts": {}, "stopped": None})
+    assert seen == []                                                                # stand-in data only: wait
+    record.write_issue(lib["series"], 1.0, {"desc": "Metron's."}, "metron", "full", path=lib["db"])
+    retag.retag_tick(path=lib["db"], runner=lambda ids: seen.append(ids) or {"counts": {}, "stopped": None})
+    assert seen == [[lib["book_id"]]]
+
+
+def test_in_flight_rows_are_not_restarted(lib):
+    retag.enqueue([lib["book_id"]], "run", lib["db"])
+    retag._set(lib["book_id"], lib["db"], state="verified")
+    assert retag.enqueue([lib["book_id"]], "arrival", lib["db"]) == 0
+    assert retag.journal(lib["book_id"], lib["db"])["state"] == "verified"
