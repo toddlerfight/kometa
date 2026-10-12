@@ -113,7 +113,7 @@ def _route_found(routes, title="Test Run", n=1, page=None, year=2026, url=PAGE):
 
 # --- the night window -------------------------------------------------------------------
 def test_window_wraps_midnight():
-    assert marveldc.parse_hours("23-7") == (23, 7) and marveldc.parse_hours("junk") == (23, 7)
+    assert marveldc.parse_hours("23-7") == (23, 7) and marveldc.parse_hours("junk") == (0, 0)
     assert [h for h in range(24) if marveldc.in_window(h, 23, 7)] == [0, 1, 2, 3, 4, 5, 6, 23]
     assert [h for h in range(24) if marveldc.in_window(h, 1, 4)] == [1, 2, 3]
     assert marveldc.night_of(datetime(2026, 10, 13, 2, 0, tzinfo=TZ), 23, 7) == "2026-10-12"
@@ -123,6 +123,7 @@ def test_window_wraps_midnight():
 def test_outside_the_window_nothing_is_sent(db_path, web):
     _issue(db_path)
     _, calls = web
+    db.set_config({"marveldc_hours": "23-7"}, db_path)                   # a window set by hand (default is all day)
     assert marveldc.tick(db_path, now=DAY) == 0
     assert marveldc.tick(db_path, now=datetime(2026, 10, 13, 7, 0, tzinfo=TZ)) == 0     # 7 is the end, exclusive
     assert calls == []

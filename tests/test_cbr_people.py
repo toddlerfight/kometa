@@ -128,6 +128,7 @@ def test_pass_a_is_number_one_plus_most_reviewed_seeds_first(db_path):
 def test_window_toggle_and_spent_day_send_nothing(db_path, web):
     _run(db_path, "Alpha", "alpha")
     routes, calls, get = web
+    db.set_config({"cbr_people_hours": "23-7"}, db_path)                 # a window set by hand (default is all day)
     assert cp.tick(db_path, now=DAY, get=get) == 0
     assert cp.tick(db_path, now=datetime(2026, 10, 13, 7, 0, tzinfo=TZ), get=get) == 0     # 7 is the end, exclusive
     db.set_config({"cbr_people_enabled": "0"}, db_path)
@@ -143,7 +144,7 @@ def test_window_toggle_and_spent_day_send_nothing(db_path, web):
     assert cp.tick(db_path, now=NIGHT, get=get) == 1 and len(calls) == 1      # one page a tick
     db.set_config({"cbr_people_hours": "13-15"}, db_path)                      # the configured window is honoured
     assert cp.tick(db_path, now=DAY, get=get) == 0 and len(calls) == 1        # nothing left to ask
-    assert cp.limiter.min_interval_s == 60 and cp.limiter.daily_cap == 480 and cp.limiter is not cbr.limiter
+    assert cp.limiter.min_interval_s == 60 and cp.limiter.daily_cap == 1440 and cp.limiter is not cbr.limiter
 
 
 def test_harvest_order_issue_pages_then_profiles_by_overlap(db_path, web):

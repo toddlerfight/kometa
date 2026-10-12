@@ -56,7 +56,7 @@ DB_PATH = db.DB_PATH
 
 SITE = "https://comicbookroundup.com"
 REVIEWS = "/comic-books/reviews/"
-DEFAULT_HOURS = "23-7"
+DEFAULT_HOURS = "0-0"                      # all day: a website, not a fish and chip shop (start == end)
 TOP_ISSUES = 3                # most-reviewed issues per run, beside #1
 MIN_OVERLAP = 2               # linked runs a person must have scored before their profile is worth a request
 PROFILE_DAYS = 30
@@ -64,7 +64,7 @@ MAX_TRIES = 2                 # a page that won't read gets one more go, then it
 SHAPE_STREAK = 3              # this many unreadable pages in a row = the site changed, not the page
 SHAPE_REST_S = 6 * 3600
 
-limiter = Limiter("ComicBookRoundup people", min_interval_s=60.0, daily_cap=480,
+limiter = Limiter("ComicBookRoundup people", min_interval_s=60.0, daily_cap=1440,
                   refused_pause_s=3 * 3600, timeout_s=30)
 
 

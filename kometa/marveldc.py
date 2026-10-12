@@ -58,7 +58,7 @@ MARVEL = "https://www.marvel.com"
 CDN_PREFIX = "https://cdn.marvel.com/u/prod/marvel/i/mg/"
 # CloudFront 403s a bare 'Kometa/1.0 (…)' (probed 2026-10-12); this names us just as plainly
 USER_AGENT = "Mozilla/5.0 (compatible; Kometa/1.0; personal comic library, nightly cover lookup)"
-DEFAULT_HOURS = "23-7"
+DEFAULT_HOURS = "0-0"                      # all day: a website, not a fish and chip shop (start == end)
 PAGES_PER_TICK = 3            # site requests per 10-min tick: one search + one or two issue pages
 MAX_PAGES_PER_ISSUE = 2       # same-name runs a year apart: the UPC decides which, if either
 DOWNLOADS_PER_TICK = 4        # CDN images per tick
@@ -90,7 +90,7 @@ def parse_hours(spec: str | None) -> tuple[int, int]:
     m = re.fullmatch(r"\s*(\d{1,2})\s*-\s*(\d{1,2})\s*", str(spec or ""))
     if m and 0 <= int(m[1]) <= 23 and 0 <= int(m[2]) <= 23:
         return int(m[1]), int(m[2])
-    return 23, 7                              # DEFAULT_HOURS
+    return 0, 0                               # DEFAULT_HOURS: all day
 
 
 def valid_hours(spec: str | None) -> bool:
