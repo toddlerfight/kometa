@@ -178,3 +178,68 @@ def copy(p: dict | None = None, path=None, limit_series: int | None = None, slee
     logger.info(f"Covers home: {done['files']} files, {done['bytes'] / 1e9:.2f} GB into {done['series']} series folders"
                 + (f", {len(done['errors'])} errors" if done["errors"] else ""))
     return done
+
+
+# --- the standing copy (2e) and the way back (2c) --------------------------------------
+def sync_tick(path=None) -> dict:
+    """Scheduler (every 30 min): new covers in the store go home too — only what
+    isn't there yet, so a quiet half-hour costs one plan (seconds). Off with
+    config coverhome_enabled = '0'."""
+    path = path or DB_PATH
+    if db.get_config(path).get("coverhome_enabled", "1") == "0":
+        return {"enabled": False}
+    p = plan(path)
+    if not p["files"]:
+        return {"enabled": True, "files": 0}
+    import time
+    return copy(p, path, sleep=time.sleep)
+
+
+def restore(path=None, root: str | None = None, dry_run: bool = False) -> dict:
+    """2c: the NAS copy is the permanent one. Every series folder's index.json says
+    which store key each file is; a key whose local file is missing (or a store that
+    was wiped) gets the NAS file copied back and its image_record row pointed at it.
+    A local file that's present is left alone."""
+    from kometa import images, sources
+    path = path or DB_PATH
+    root = root or sources.comics_root()
+    images.ensure_tables(path)
+    out = {"indexes": 0, "keys": 0, "restored": 0, "already": 0, "missing_on_nas": 0, "errors": []}
+    for dirpath, dirnames, filenames in os.walk(root):
+        # only descend into series folders and their .kometa/covers; skip trash/quarantine
+        dirnames[:] = [d for d in dirnames if not d.startswith(("_", "@", "#")) and (d == ".kometa" or d == "covers" or not d.startswith("."))]
+        if INDEX not in filenames or not dirpath.endswith(HOME):
+            continue
+        out["indexes"] += 1
+        try:
+            with open(os.path.join(dirpath, INDEX)) as fh:
+                idx = json.load(fh)
+        except (OSError, ValueError) as e:
+            out["errors"].append(f"{dirpath}: {e}")
+            continue
+        for key, meta in idx.items():
+            out["keys"] += 1
+            src = os.path.join(dirpath, meta.get("file") or "")
+            row = images.get(key, path)
+            if row and row.get("path") and os.path.exists(row["path"]):
+                out["already"] += 1
+                continue
+            if not os.path.isfile(src):
+                out["missing_on_nas"] += 1
+                continue
+            if dry_run:
+                out["restored"] += 1
+                continue
+            dest = images.file_for(key)
+            try:
+                _write_atomic(src, dest)
+                with db._connect(path) as conn:
+                    conn.execute("""INSERT OR REPLACE INTO image_record (key, path, url, bytes, fetched_at, source, failed_at)
+                        VALUES (?, ?, ?, ?, datetime('now'), ?, NULL)""",
+                                 (key, dest, meta.get("url"), os.path.getsize(dest), meta.get("source") or "nas"))
+                out["restored"] += 1
+            except OSError as e:
+                out["errors"].append(f"{key}: {e}")
+    logger.info(f"Covers restore: {out['restored']} restored from the NAS, {out['already']} already local, "
+                f"{out['missing_on_nas']} listed but missing on the NAS")
+    return out

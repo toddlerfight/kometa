@@ -61,3 +61,36 @@ def test_copy_writes_files_and_index_and_is_idempotent(tmp_path, db_path):
 def test_the_shelf_scan_never_sees_the_covers_home(tmp_path):
     from kometa import shelf
     assert shelf._skip(".kometa")
+
+
+def test_sync_tick_only_writes_whats_new(tmp_path, db_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    folder = tmp_path / "comics" / "Image Comics" / "Saga"
+    folder.mkdir(parents=True)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=str(folder), on_pull_list=False, path=db_path)
+    _store(db_path, tmp_path, f"issue/{sid}/1/main")
+    assert ch.sync_tick(db_path)["files"] == 1
+    assert ch.sync_tick(db_path) == {"enabled": True, "files": 0}           # nothing new: nothing written
+    _store(db_path, tmp_path, f"issue/{sid}/2/main")
+    assert ch.sync_tick(db_path)["files"] == 1
+    db.set_config({"coverhome_enabled": "0"}, db_path)
+    assert ch.sync_tick(db_path) == {"enabled": False}
+
+
+def test_a_lost_store_comes_back_from_the_nas(tmp_path, db_path, monkeypatch):
+    monkeypatch.setattr(images, "COVERS_DIR", str(tmp_path / "new-store"))
+    root = tmp_path / "comics"
+    folder = root / "Image Comics" / "Saga"
+    folder.mkdir(parents=True)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=str(folder), on_pull_list=False, path=db_path)
+    _store(db_path, tmp_path, f"issue/{sid}/1/main", data=b"THE COVER", url="https://m/1.jpg")
+    ch.copy(path=db_path)
+    old = images.get(f"issue/{sid}/1/main", db_path)["path"]
+    os.remove(old)                                                            # the local store is gone
+    assert ch.restore(db_path, root=str(root), dry_run=True)["restored"] == 1
+    r = ch.restore(db_path, root=str(root))
+    assert r["restored"] == 1 and not r["errors"]
+    row = images.get(f"issue/{sid}/1/main", db_path)
+    assert row["path"].startswith(str(tmp_path / "new-store")) and open(row["path"], "rb").read() == b"THE COVER"
+    assert row["url"] == "https://m/1.jpg"
+    assert ch.restore(db_path, root=str(root))["already"] == 1               # a second run has nothing to do

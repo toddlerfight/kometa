@@ -260,6 +260,14 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=7))
     except Exception as e:
         logger.warning(f"Retag job not scheduled: {e}")
+    # Covers go home to the series folders on the NAS as they arrive (kometa/coverhome.py, 2e).
+    try:
+        from kometa.coverhome import sync_tick as coverhome_tick
+        scheduler.add_job(coverhome_tick, IntervalTrigger(minutes=30), id="coverhome_sync",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=9))
+    except Exception as e:
+        logger.warning(f"Covers home sync not scheduled: {e}")
     # Trades fill what singles can't: collects for a few trades, the coverage
     # stamps, then a few stuck issues looked up — proposals wait in Activity.
     try:
