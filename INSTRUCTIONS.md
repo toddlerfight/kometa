@@ -337,3 +337,10 @@ Three copies of everything Kometa needs:
 - What stays on the internal disk: `kometa.db`, and `covers/`. That's the record's own cover store, kept for good, not regenerable, and mirrored to Voot II nightly.
 - Both caches rebuild themselves, so if Catbus dies, kometa runs again once the two folders exist on a mounted drive.
 - Speed check: `ops/bench-cache.py` (run in the container, see its docstring). Drop the VM cache first: `docker run --rm --privileged alpine sh -c "sync; echo 3 > /proc/sys/vm/drop_caches"`. The 2026-10-12 before/after results are in `data/bench/`.
+
+## Build progress page (2026-10-12)
+
+`/progress.html` shows the library-enrichment build: live harvest numbers (from `/api/harvest/progress`), the checklist, and the user's task list. The checklist and tasks come from `kometa/static/build-status.json`.
+- Update `build-status.json` at every milestone: an item changes state (`todo` → `building` → `done`, or `waiting-you`), a task for the user is added or answered, or the "now" line changes. Bump `updated`.
+- It's a static file: sync it (deploy) and it's live; no restart needed.
+- The user reads this page instead of asking for status. Keep tasks self-contained: what, why, how, blocking or not.
