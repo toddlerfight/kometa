@@ -18,7 +18,8 @@ def _series(db_path, title="Saga", pull=False):
 METRON = {"desc": "A space opera.", "credits": [{"role": "Writer", "name": "Brian K. Vaughan", "metron_creator_id": 7},
                                                 {"role": "Artist", "name": "Fiona Staples", "metron_creator_id": 8}],
           "covers": [{"id": "m101", "name": "Cover A", "thumb": "https://m/1.jpg", "large": "https://m/1.jpg"}],
-          "arcs": ["Chapter One"], "store_date": "2012-03-14", "page_count": 44, "price": "2.99", "isbn": None, "cover_date": "2012-03-01"}
+          "arcs": ["Chapter One"], "store_date": "2012-03-14", "page_count": 44, "price": "2.99", "isbn": None, "cover_date": "2012-03-01",
+          "extra": {}}
 LOCG = {"desc": "From LOCG.", "credits": [{"role": "Writer", "name": "Brian K. Vaughan", "people_id": None}]}
 
 

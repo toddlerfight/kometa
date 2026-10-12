@@ -64,7 +64,7 @@ class TestResolver:
 
     def test_metron_down_falls_back_to_stale_cache_then_locg(self, lib, monkeypatch):
         import kometa.locg_client as lc
-        db.set_issue_details_cache("metron:5", {"desc": "old", "credits": [], "covers": []}, lib)
+        db.set_issue_details_cache("metron2:5", {"desc": "old", "credits": [], "covers": []}, lib)
         def down(mid):
             raise mc.MetronUnavailable("paused")
         monkeypatch.setattr(mc, "issue_detail", down)

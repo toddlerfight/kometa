@@ -22,7 +22,7 @@ def _metron(issue: dict, path) -> dict | None:
     mid = issue.get("metron_issue_id")
     if not mid or not metron_client.configured():
         return None
-    key = f"metron:{mid}"
+    key = f"metron2:{mid}"     # v2 = with 'extra' (ids, barcode, cast) — 2026-10-12; v1 entries lack it
     cached = db.get_issue_details_cache(key, path, max_age_days=METRON_CACHE_DAYS)
     if cached is not None:
         return cached

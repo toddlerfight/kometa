@@ -327,8 +327,38 @@ def issue_detail(metron_issue_id: int) -> dict:
         "isbn": d.get("isbn"),
         "foc_date": d.get("foc_date"),
         "arcs": [a.get("name") for a in d.get("arcs") or [] if isinstance(a, dict)],
+        "extra": _extra(d),
         "source": "metron",
     }
+
+
+def _names(items) -> list[str]:
+    return [x.get("name") for x in items or [] if isinstance(x, dict) and x.get("name")]
+
+
+def _extra(d: dict) -> dict:
+    """Everything else Metron says about the issue. Kept since 2026-10-12: the ids
+    that join other catalogues (ComicVine, GCD), the barcode, and the cast — what
+    a clean ComicInfo.xml is made of (docs/library-enrichment-spec.md, 1d/3a).
+    Tolerant by design: a missing field is just absent."""
+    series = d.get("series") if isinstance(d.get("series"), dict) else {}
+    stype = series.get("series_type")
+    out = {
+        "cv_id": d.get("cv_id"), "gcd_id": d.get("gcd_id"),
+        "upc": d.get("upc") or None, "sku": d.get("sku") or None,
+        "title": (d.get("title") or "").strip() or None,
+        "story_titles": [n for n in (d.get("name") or []) if n],
+        "characters": _names(d.get("characters")), "teams": _names(d.get("teams")),
+        "universes": _names(d.get("universes")),
+        "reprints": [r.get("issue") for r in d.get("reprints") or [] if isinstance(r, dict) and r.get("issue")],
+        "imprint": (d.get("imprint") or {}).get("name") if isinstance(d.get("imprint"), dict) else None,
+        "publisher": (d.get("publisher") or {}).get("name") if isinstance(d.get("publisher"), dict) else None,
+        "age_rating": (d.get("rating") or {}).get("name") if isinstance(d.get("rating"), dict) else None,
+        "series_type": stype.get("name") if isinstance(stype, dict) else stype,
+        "series_volume": series.get("volume"), "alt_number": d.get("alt_number") or None,
+        "cover_hash": d.get("cover_hash") or None, "modified": d.get("modified"),
+    }
+    return {k: v for k, v in out.items() if v not in (None, [], "")}
 
 
 def series_detail(series_id: int) -> dict:

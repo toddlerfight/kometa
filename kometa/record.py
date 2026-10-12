@@ -49,6 +49,10 @@ def ensure_tables(path=None):
             source TEXT, fetched_at TEXT, fill_state TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_issue_record_state ON issue_record(fill_state, fetched_at)")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_record)")]
+        if "extra_json" not in cols:
+            # everything else Metron says (ComicVine/GCD ids, barcode, cast, imprint…)
+            # — what a clean ComicInfo.xml is made of; added 2026-10-12, additive only
+            conn.execute("ALTER TABLE issue_record ADD COLUMN extra_json TEXT")
         if "variants_at" not in cols:
             # when the cover list was last asked for — separate from the details'
             # clock, since variants keep landing for weeks after release
@@ -91,6 +95,10 @@ def _row(r) -> dict | None:
     if not r:
         return None
     d = dict(r)
+    try:
+        d["extra"] = json.loads(d.pop("extra_json", None) or "null")
+    except (TypeError, ValueError):
+        d["extra"] = None
     for k in ("credits", "arcs", "covers"):
         try:
             d[k] = json.loads(d.pop(f"{k}_json") or "[]")
@@ -134,17 +142,23 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
     with db._connect(path) as conn:
         # a variant list already fetched outlives a details write: REPLACE used to
         # wipe it and its stamp, and the LOCG sweep then fetched it all over again
-        kept = conn.execute("SELECT covers_json, variants_at FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+        kept = conn.execute("SELECT covers_json, variants_at, extra_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
                             (series_id, number)).fetchone()
+        extra = data.get("extra")
+        # a write that brings no extra (LOCG, a stopgap) never wipes what Metron said;
+        # Metron's {} — asked, nothing beyond the basics — is stored as {}, not as
+        # "never asked", or that issue would be asked again on every tick forever
+        extra_json = json.dumps(extra) if extra is not None else (kept["extra_json"] if kept else None)
+        cv_id = issue.get("cv_issue_id") or ((extra or {}).get("cv_id"))
         conn.execute("""INSERT OR REPLACE INTO issue_record
             (tracked_series_id, number, desc, credits_json, arcs_json, covers_json, store_date, cover_date, page_count,
-             price, isbn, metron_issue_id, locg_issue_id, cv_issue_id, source, fetched_at, fill_state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             price, isbn, metron_issue_id, locg_issue_id, cv_issue_id, source, fetched_at, fill_state, extra_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                      (series_id, number, data.get("desc") or "", json.dumps(data.get("credits") or []),
                       json.dumps(data.get("arcs") or []), json.dumps(data.get("covers") or []),
                       data.get("store_date") or issue.get("store_date"), data.get("cover_date"), data.get("page_count"),
                       data.get("price"), data.get("isbn"), issue.get("metron_issue_id"), issue.get("locg_issue_id"),
-                      issue.get("cv_issue_id"), source, _now(), state))
+                      str(cv_id) if cv_id else None, source, _now(), state, extra_json))
         if kept and kept["variants_at"]:
             conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
                          (kept["covers_json"], kept["variants_at"], series_id, number))
@@ -163,6 +177,8 @@ def _fresh(row: dict | None) -> bool:
         return age < RECORD_MISS_TTL_DAYS
     if row.get("fill_state") == "variants":
         return False                                            # covers only: the details are still owed
+    if row.get("source") == "metron" and row.get("extra") is None:
+        return False                                            # filled before 'extra' was kept (2026-10-12): ask once more
     return age < RECORD_TTL_DAYS
 
 
@@ -262,7 +278,9 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
                    -- a stopgap row (file tags / Komga): ask now when there's a catalogue id to ask,
                    -- else look again in a week in case one has been matched since
                    OR (r.source IN ('comicinfo', 'komga')
-                       AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?)))
+                       AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?))
+                   -- owned issues Metron filled before its extra fields were kept: once more each
+                   OR (r.source = 'metron' AND r.extra_json IS NULL AND i.owned = 1 AND i.metron_issue_id IS NOT NULL))
             -- what you OWN first: 2,528 owned issues sat behind 1,956 unowned record-less ones (2026-10-12)
             ORDER BY s.on_pull_list DESC, i.owned DESC, (r.tracked_series_id IS NOT NULL), i.tracked_series_id, i.number
             LIMIT ?""", (cutoff, cutoff, limit))]
