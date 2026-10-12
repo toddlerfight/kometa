@@ -315,11 +315,15 @@ Example: the reader — `docs/reader-research.md`, `docs/reader-spec.md`.
 
 ## Backups (2026-10-11)
 
+**Never open the live database from the Mac side.** No `sqlite3 ~/docker/apps/kometa/data/kometa.db …` on ginbako — not even a read, not even `.backup`. macOS sqlite and the container share the WAL lock files (`-shm`) through OrbStack and don't agree on them: on 2026-10-13 a host-side `.backup` left every container read failing with `disk I/O error`, surviving a restart. Copies (pre-deploy safety copies included) are made inside the container:
+`docker exec kometa python -c "import sqlite3; s=sqlite3.connect('/data/kometa.db'); d=sqlite3.connect('/data/kometa.db.pre-<what>-<date>'); s.backup(d)"`. The host may open a finished copy freely.
+Recovery if it happens again (WAL must be 0 bytes, else stop and ask): `docker compose stop kometa`, move `kometa.db-shm` + `kometa.db-wal` aside, `docker compose start kometa`, then `pragma quick_check` from inside.
+
 Three copies of everything Kometa needs:
 
 1. **Kometa's own nightly** (03:30, `kometa/backup.py`): the database and a cover mirror into `_kometa-backup/` inside the comics folder on the NAS. Keeps 7 nights.
 2. **Voot II** (02:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
-   - `db/` — a sqlite `.backup` of the live DB, integrity-checked, 14 kept
+   - `db/` — a copy of the live DB made inside the container (`docker exec kometa python … backup()`), integrity-checked on the host, 14 kept
    - `covers/`, `docker/` (all of `~/docker` except the page cache — which now lives on Catbus anyway), `comics/` (mirror of `/Volumes/🧳/Comics`)
    - `deleted/YYYY-mm-dd/` — whatever the mirrors removed or replaced, kept 30 days (a bad delete in the library can't wipe the backup)
    - `status.json` (last run) and `backup.log` (every run)

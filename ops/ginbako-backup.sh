@@ -4,7 +4,7 @@
 # own 03:30 copy to the NAS (the first full comics copy may run into it; later nights take minutes).
 #
 #   Voot II/Kometa-Backup/
-#     db/kometa-YYYYmmdd-HHMM.db   a consistent copy of the live DB (sqlite .backup), 14 kept
+#     db/kometa-YYYYmmdd-HHMM.db   a consistent copy of the live DB (made inside the container), 14 kept
 #     covers/                      mirror of Kometa's cover store
 #     docker/                      mirror of ~/docker (compose, .env, app code, Komga config) — no page cache
 #     comics/                      mirror of the comics library (🧳/Comics on the NAS)
@@ -38,8 +38,18 @@ fi
 mkdir -p "$DEST/db" "$DEST/covers" "$DEST/docker" "$DEST/comics" "$DEST/deleted/$DAY"
 say "--- start (comics=${COMICS:-1})"
 
-# 1. database: an online-safe copy, then prove it opens and is whole
-if /usr/bin/sqlite3 "$DB" ".backup '$DEST/db/kometa-$STAMP.db'"; then
+# 1. database: an online-safe copy, then prove it opens and is whole.
+# The copy is made INSIDE the container. macOS sqlite opening the live file through
+# OrbStack's share fights the container's WAL locks — 2026-10-13 a host-side .backup
+# left every container read failing with "disk I/O error" until a stop + fresh -shm.
+# The host only ever touches the finished copy.
+TMPDB="$HOME/docker/apps/kometa/data/.voot-backup.db"
+rm -f "$TMPDB"
+if /usr/local/bin/docker exec kometa python -c "
+import sqlite3
+src = sqlite3.connect('/data/kometa.db'); dst = sqlite3.connect('/data/.voot-backup.db')
+src.backup(dst); dst.close(); src.close()" >> "$LOG" 2>&1 \
+   && mv "$TMPDB" "$DEST/db/kometa-$STAMP.db"; then
   chk=$(/usr/bin/sqlite3 "$DEST/db/kometa-$STAMP.db" "PRAGMA integrity_check;" 2>&1 | head -1)
   books=$(/usr/bin/sqlite3 "$DEST/db/kometa-$STAMP.db" "SELECT COUNT(*) FROM books;" 2>&1)
   if [ "$chk" = "ok" ]; then say "db ok ($books books)"; else ok=0; notes+=("db integrity: $chk"); say "db FAILED integrity: $chk"; fi
@@ -47,6 +57,7 @@ if /usr/bin/sqlite3 "$DB" ".backup '$DEST/db/kometa-$STAMP.db'"; then
   ls -1t "$DEST"/db/kometa-*.db 2>/dev/null | tail -n +$((KEEP_DB + 1)) | while read -r f; do rm -f "$f"; done
 else
   ok=0; notes+=("db copy failed"); say "db copy FAILED"
+  rm -f "$TMPDB"
 fi
 
 mirror() {   # name src dst [extra rsync args...]
@@ -63,7 +74,7 @@ mirror() {   # name src dst [extra rsync args...]
 # 2. covers and the docker setup (the page cache rebuilds itself; never copy it)
 mirror covers "$COVERS" "$DEST/covers/"
 mirror docker "$DOCKER" "$DEST/docker/" --exclude "apps/kometa/data/page-cache/" --exclude "apps/kometa/data/covers/" \
-  --exclude "*.db-wal" --exclude "*.db-shm" --exclude ".DS_Store"
+  --exclude "*.db-wal" --exclude "*.db-shm" --exclude ".voot-backup.db" --exclude ".DS_Store"
 
 # 3. the comics, from the NAS — the big one; incremental after the first night
 if [ "${COMICS:-1}" = "1" ]; then
