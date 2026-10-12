@@ -57,6 +57,24 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - After the first pass, retag a file only when its rendered XML changes (store a hash in the DB).
 - **Knock-ons of the first pass:** about 455G of NAS writes, trickled and paused while you're reading. The Voot II mirror copies everything again and keeps the old copies for 30 days (about 900G, with 3.1T free). The reader page cache (keyed on size and mtime) rebuilds.
 
+### Rewrite mechanics (the bulk pass)
+
+The CPU work is trivial on ginbako (generating the XML, a STORED repack, unrar); the gigabit link is the limit (measured 2026-10-12: NFS read ~108 MB/s, write ~102 MB/s). So:
+1. **Read from the Voot II mirror** when its size and mtime match the NAS file, falling back to the NAS. That takes the reads off the network.
+2. **Build on Catbus** in batches of a few GB, several files in parallel.
+3. **Verify before upload:** every page entry's CRC32 and size match the original, the page count matches, and ComicInfo parses.
+4. **Upload as a temp file in the same folder**, read it back and check, then rename over the original (atomic). A failure leaves the original untouched.
+5. **Keep a journal per file in the DB** (pending, built, verified, swapped, with the old size, mtime and hash), so the job can resume and be audited. Yield to the reader.
+6. **Carry the page cache over:** pages are byte-identical, so rename each book's page-cache version dir to the new size/mtime version instead of re-rendering 21G.
+
+Network cost: about 5 hours of writes plus about 5 hours of read-back. Afterwards the 02:00 backup re-copies the new files (about 5 hours) and keeps the originals in `deleted/` for 30 days (about 455G extra; Voot II has 3.1T free).
+
+### On arrival (every new comic, from day one)
+
+- **Finalize** (`acquisition._finalize_download` → `ensure_cbz` / `inject_covers`) already rebuilds CBRs and covered issues. Writing the ComicInfo goes into that same rebuild, so a new file is written once, not twice. A clean CBZ costs one rewrite, done before placement where possible.
+- **Enrich the issue on arrival:** variants from every source, the CV original, the record filled, and covers written to the series' `.kometa/covers/`.
+- **Re-enrich new releases on a schedule** (for example +7, +30 and +90 days), because exclusives land on LOCG for weeks after release and CV originals arrive late. Retag the file only when the rendered XML's hash changes.
+
 ## Open questions
 
 - Community stats (LOCG pull counts, rating): store as a snapshot, or skip because they change over time?
