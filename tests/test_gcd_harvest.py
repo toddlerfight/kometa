@@ -155,7 +155,7 @@ def test_many_plausible_is_ambiguous_with_candidates():
     assert outcome == "ambiguous" and gid is None
     assert len(cands) == 8 and 99 not in [c["gcd_id"] for c in cands]
     assert set(cands[0]) == {"gcd_id", "name", "year_began", "year_ended", "issues", "language", "country",
-                             "publishing_format"}
+                             "publishing_format", "publisher_id"}
 
 
 def test_too_short_or_foreign_is_never_linked_but_offered():
@@ -344,3 +344,50 @@ def test_old_db_rebuilds_then_keeps_the_gcd_columns(tmp_path):
     with db._connect(p) as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
     assert {"gcd_series_id", "gcd_link", "gcd_candidates_json"} <= set(cols)
+
+
+# --- tie-breaks from what the shelf already says ------------------------------------
+class _Pubs:
+    def __init__(self, names):
+        self.names, self.asked = names, []
+
+    def publisher_name(self, pid):
+        self.asked.append(pid)
+        return self.names.get(pid)
+
+
+def _cands():
+    return [{"gcd_id": 1, "name": "Black Cat", "year_began": 2006, "year_ended": 2009, "language": "en", "publisher_id": 10},
+            {"gcd_id": 2, "name": "Black Cat", "year_began": 2019, "year_ended": 2020, "language": "en", "publisher_id": 20},
+            {"gcd_id": 3, "name": "Black Cat", "year_began": 2021, "year_ended": 2021, "language": "en", "publisher_id": 20}]
+
+
+def test_publisher_folder_narrows_then_file_years_decide(db_path):
+    from kometa import harvest
+    import kometa.db as db
+    sid = db.add_series(title="Black Cat", publisher="Marvel Comics", folder_path="/comics/Marvel Comics/Black Cat",
+                        on_pull_list=False, path=db_path)
+    db.upsert_book("/comics/Marvel Comics/Black Cat/Black Cat #001 (2019).cbz", 1, 1.0, [], tracked_series_id=sid, number=1.0, path=db_path)
+    s = db.get_series_by_id(sid, db_path)
+    pubs = _Pubs({10: "Aspen MLT", 20: "Marvel"})
+    assert harvest.gcd_tiebreak(s, _cands(), db_path, pubs) == 2
+    assert sorted(set(pubs.asked)) == [10, 20]
+
+
+def test_still_ambiguous_means_no_link(db_path):
+    from kometa import harvest
+    import kometa.db as db
+    sid = db.add_series(title="Black Cat", publisher="Marvel Comics", folder_path="/comics/Marvel Comics/Black Cat",
+                        on_pull_list=False, path=db_path)
+    s = db.get_series_by_id(sid, db_path)                                   # no files: no year to decide by
+    assert harvest.gcd_tiebreak(s, _cands(), db_path, _Pubs({10: "Aspen MLT", 20: "Marvel"})) is None
+
+
+def test_a_bogus_pack_year_cannot_force_a_wrong_link(db_path):
+    from kometa import harvest
+    import kometa.db as db
+    sid = db.add_series(title="Black Cat", publisher="Marvel Comics", folder_path="/comics/Marvel Comics/Black Cat",
+                        on_pull_list=False, path=db_path)
+    db.upsert_book("/comics/Marvel Comics/Black Cat/Black Cat #001 (2015).cbz", 1, 1.0, [], tracked_series_id=sid, number=1.0, path=db_path)
+    s = db.get_series_by_id(sid, db_path)
+    assert harvest.gcd_tiebreak(s, _cands(), db_path, _Pubs({10: "Aspen MLT", 20: "Marvel"})) is None   # 2015 fits none: stays yours

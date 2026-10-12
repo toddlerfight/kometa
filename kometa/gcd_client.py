@@ -156,6 +156,18 @@ def _descriptor_title(descriptor: str) -> str | None:
     return parts[1].strip() if len(parts) == 2 and parts[1].strip() else None
 
 
+_publisher_names: dict[int, str] = {}
+
+
+def publisher_name(gcd_publisher_id: int) -> str | None:
+    """A publisher's name — one request per publisher, ever (per process)."""
+    pid = int(gcd_publisher_id)
+    if pid not in _publisher_names:
+        d = _get(f"publisher/{pid}/")
+        _publisher_names[pid] = (d or {}).get("name") or ""
+    return _publisher_names[pid] or None
+
+
 def series_detail(gcd_series_id: int) -> dict | None:
     """The series and its issue list: active_issues and issue_descriptors run
     side by side, one entry per issue."""

@@ -8,6 +8,7 @@ instead of five log greps.
 """
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -255,6 +256,50 @@ def _year_hint(s: dict) -> int | None:
     return None
 
 
+# words a publisher's name carries that say nothing about which publisher it is
+_PUB_NOISE = {"comics", "comic", "publishing", "publications", "entertainment", "press", "books", "studios",
+              "studio", "inc", "ltd", "llc", "group", "the", "and", "media", "editions", "edition", "co"}
+
+
+def _pub_words(name: str | None) -> set[str]:
+    from kometa.naming import norm_key
+    return {w for w in norm_key(name or "").split() if w not in _PUB_NOISE and len(w) > 1}
+
+
+def _file_year(series_id: int, path) -> int | None:
+    """The earliest plausible year in the run's own file names. Weak on purpose:
+    a pack can stamp one year on everything (Uncanny X-Men's '(2009)')."""
+    with db._connect(path) as conn:
+        names = [r[0] for r in conn.execute("SELECT path FROM books WHERE tracked_series_id = ?", (series_id,))]
+    years = [int(y) for p in names for y in re.findall(r"\((\d{4})\)", os.path.basename(p)) if 1930 <= int(y) <= 2100]
+    return min(years) if years else None
+
+
+def gcd_tiebreak(s: dict, cands: list[dict], path, client) -> int | None:
+    """When more than one GCD run fits, use what the shelf already says: the
+    publisher folder the run lives in, then the years in its file names. Only
+    narrows — a link happens only if exactly ONE candidate survives every check."""
+    pool = [c for c in cands if c.get("language") == "en"] or cands
+    folder_pub = (s.get("folder_path") or "").replace("\\", "/").split("/")
+    folder_pub = folder_pub[2] if len(folder_pub) > 3 else s.get("publisher")
+    want = _pub_words(folder_pub) | _pub_words(s.get("publisher"))
+    if want:
+        named = []
+        for c in pool:
+            pid = c.get("publisher_id")
+            if pid and _pub_words(client.publisher_name(pid)) & want:
+                named.append(c)
+        if named:
+            pool = named
+    if len(pool) > 1:
+        year = _file_year(s["id"], path)
+        if year:
+            fits = [c for c in pool if _year_fits(c, year)]
+            if fits:
+                pool = fits
+    return pool[0]["gcd_id"] if len(pool) == 1 else None
+
+
 def _year_fits(c: dict, year: int | None) -> bool:
     if year is None:
         return True
@@ -285,7 +330,7 @@ def gcd_match(s: dict, hi: float | None, results: list[dict]) -> tuple[str, int 
     pool = sorted(pool, key=lambda c: (c.get("language") != "en",
                                        abs((c.get("year_began") or 0) - (year or c.get("year_began") or 0)),
                                        -(c.get("issues") or 0)))
-    keep = ("gcd_id", "name", "year_began", "year_ended", "issues", "language", "country", "publishing_format")
+    keep = ("gcd_id", "name", "year_began", "year_ended", "issues", "language", "country", "publishing_format", "publisher_id")
     return "ambiguous", None, [{k: c.get(k) for k in keep} for c in pool[:GCD_CANDIDATES_KEPT]]
 
 
@@ -322,6 +367,24 @@ def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int
         from kometa import gcd_client as client
     from kometa.gcd_client import GCDUnavailable
     linked = 0
+    # runs left 'ambiguous' get the shelf's tie-breaks again (cheap: publisher names are
+    # looked up once, file years are local) — a new file or a newer rule can settle them
+    with db._connect(path) as conn:
+        waiting = [r[0] for r in conn.execute("SELECT id FROM tracked_series WHERE gcd_link = 'ambiguous'")]
+    for sid in waiting:
+        s = db.get_series_by_id(sid, path)
+        cands = json.loads((s or {}).get("gcd_candidates_json") or "[]")
+        if len(cands) < 2:
+            continue
+        try:
+            gid = gcd_tiebreak(s, cands, path, client)
+        except GCDUnavailable as e:
+            logger.info(f"GCD tie-break stopped this tick: {e}")
+            return linked
+        if gid:
+            db.set_gcd_link(sid, "linked", gid, [], path)
+            logger.info(f"GCD: {s['title']!r} → linked {gid} (tie-break)")
+            linked += 1
     for s in gcd_link_candidates(path, limit):
         try:
             results = []
@@ -333,6 +396,14 @@ def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int
             logger.info(f"GCD linking stopped this tick: {e}")
             break
         outcome, gid, cands = gcd_match(s, s.get("_owned_hi"), results)
+        if outcome == "ambiguous" and len(cands) > 1:
+            try:
+                gid = gcd_tiebreak(s, cands, path, client)
+            except GCDUnavailable as e:
+                logger.info(f"GCD linking stopped this tick: {e}")
+                break
+            if gid:
+                outcome, cands = "linked", []
         db.set_gcd_link(s["id"], outcome, gid, cands, path)
         logger.info(f"GCD: {s['title']!r} → {outcome}{f' {gid}' if gid else ''}")
         linked += outcome == "linked"
