@@ -149,3 +149,31 @@ def test_metron_with_nothing_extra_is_not_asked_forever(db_path):
     rec.write_issue(sid, 1.0, {"desc": "x", "extra": {}}, "metron", "full", {"metron_issue_id": 1}, db_path)
     assert rec._fresh(rec.get_issue(sid, 1.0, db_path)) is True
     assert rec.pending_issues(db_path) == []
+
+
+def test_runs_matched_after_their_last_sync_are_synced_most_owned_first(db_path, monkeypatch):
+    monkeypatch.setattr(mc, "configured", lambda: True)
+    monkeypatch.setattr(mc, "harvest_share_spent", lambda: False)
+    a = db.add_series(title="Hellblazer", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    b = db.add_series(title="The Woods", publisher="BOOM", folder_path=None, on_pull_list=False, path=db_path)
+    c = db.add_series(title="Fetched", publisher="X", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = 1 WHERE id IN (?, ?, ?)", (a, b, c))
+        conn.execute("UPDATE tracked_series SET metron_fetched_at = '2026-10-01 00:00:00' WHERE id = ?", (c,))
+    for n in range(1, 4):
+        db.upsert_issue_status(a, float(n), None, 1, path=db_path)
+    db.upsert_issue_status(b, 1.0, None, 1, path=db_path)
+    db.upsert_issue_status(c, 1.0, None, 1, path=db_path)
+    synced = []
+    assert harvest.issue_ids_tick(limit=5, path=db_path, sync=lambda s: synced.append(s["title"])) == 2
+    assert synced == ["Hellblazer", "The Woods"]
+
+
+def test_issue_ids_tick_rests_when_the_harvest_share_is_spent(db_path, monkeypatch):
+    monkeypatch.setattr(mc, "configured", lambda: True)
+    monkeypatch.setattr(mc, "harvest_share_spent", lambda: True)
+    a = db.add_series(title="Hellblazer", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = 1 WHERE id = ?", (a,))
+    db.upsert_issue_status(a, 1.0, None, 1, path=db_path)
+    assert harvest.issue_ids_tick(path=db_path, sync=lambda s: 1 / 0) == 0

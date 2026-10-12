@@ -63,3 +63,37 @@ def progress(path=None) -> dict:
 @router.get("/api/harvest/progress")
 def get_progress():
     return progress()
+
+
+# --- issue ids for runs matched after their last sync (1d) -----------------------
+IDS_PER_TICK = 3
+
+
+def unfetched_series(path=None, limit: int = IDS_PER_TICK) -> list[dict]:
+    """Runs matched to Metron whose issue list was never fetched — linked after
+    their last sync, then left for the weekly not-pulled cycle (2026-10-12: 27
+    runs, 517 owned issues, Hellblazer among them, with no issue ids at all).
+    Most owned issues first."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        ids = [r[0] for r in conn.execute("""
+            SELECT s.id FROM tracked_series s JOIN issue_status i ON i.tracked_series_id = s.id
+            WHERE s.metron_series_id IS NOT NULL AND s.metron_fetched_at IS NULL
+              AND (s.kind IS NULL OR s.kind != 'arc') AND i.owned = 1
+            GROUP BY s.id ORDER BY COUNT(*) DESC, s.id LIMIT ?""", (limit,))]
+    return [s for s in (db.get_series_by_id(i, path) for i in ids) if s]
+
+
+def issue_ids_tick(limit: int = IDS_PER_TICK, path=None, sync=None) -> int:
+    """Scheduler tick (harvest traffic): sync a few of those runs through the one
+    sync path — its Metron list carries the ids, its folder scan keeps ownership
+    honest. Stops at Metron's first refusal (the harvest floor included)."""
+    from kometa import metron_client
+    from kometa.sync import sync_one_guarded
+    done = 0
+    for s in unfetched_series(path, limit):
+        if not metron_client.configured() or metron_client.harvest_share_spent():
+            break
+        (sync or sync_one_guarded)(s)
+        done += 1
+    return done
