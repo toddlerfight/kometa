@@ -386,6 +386,18 @@ class TestComicVineRequest(BaseModel):
     apikey: str | None = None
 
 
+class TestGcdRequest(BaseModel):
+    user: str | None = None
+    password: str | None = None
+
+
+@app.post("/api/test/gcd")
+def test_gcd(req: TestGcdRequest):
+    from kometa import gcd_client
+    ok, detail = gcd_client.test(req.user, req.password)
+    return {"ok": True, "detail": detail} if ok else {"ok": False, "error": detail}
+
+
 @app.post("/api/test/comicvine")
 def test_comicvine(req: TestComicVineRequest):
     apikey = req.apikey or _stored("cv_api_key")
@@ -407,6 +419,7 @@ _INTEGRATION_KEYS = {
     "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
     "comicvine": ["cv_api_key"],
+    "gcd":       ["gcd_user", "gcd_pass"],
 }
 
 
@@ -540,6 +553,11 @@ def get_config():
         "usenet_enabled":      cfg.get("usenet_enabled", "1") != "0",
         "torrent_enabled":     cfg.get("torrent_enabled", "1") != "0",
         "comicvine_enabled":   cfg.get("comicvine_enabled", "1") != "0",
+        # Grand Comics Database: the back catalogue (kometa/gcd_client.py). Password never echoed.
+        "gcd_user":            cfg.get("gcd_user", ""),
+        "gcd_pass":            "",
+        "gcd_configured":      bool(cfg.get("gcd_user", "") and cfg.get("gcd_pass", "")),
+        "gcd_enabled":         cfg.get("gcd_enabled", "1") != "0",
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),
         "metron_pass":         "",
@@ -576,6 +594,9 @@ class ConfigRequest(BaseModel):
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
     comicvine_enabled:  str | None = None   # "1"/"0" — metadata source toggle
+    gcd_user:           str | None = None
+    gcd_pass:           str | None = None
+    gcd_enabled:        str | None = None   # "1"/"0" — metadata source toggle
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)

@@ -4147,6 +4147,15 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
+        <div class="settings-section ${cfg.gcd_enabled ? '' : 'section-off'}" id="sec-gcd" style="margin-top:32px">
+          ${_settingsSectionHead('Grand Comics Database', 'back catalogue', 't-gcd', cfg.gcd_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsField('f-gcd-user', 'Username', cfg.gcd_user, { ph: 'Email or username', test: { cardId: 'gcd', configured: cfg.gcd_configured } })}
+              ${_settingsField('f-gcd-pass', 'Password', '', { set: cfg.gcd_configured, ph: 'Enter password' })}
+            </div>
+          </div></div>
+        </div>
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('League of Comic Geeks', 'your browser’s pass', 'locg', true, cfg.locg_cf_configured)}
           ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies' })}
@@ -4164,6 +4173,7 @@ async function renderSettings() {
   // whole usenet+torrent branch it wraps.
   if (!cfg.komga_enabled)     _collapseSection(document.getElementById('sec-komga'), true, false);
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
+  if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
   if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
   if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
@@ -4188,10 +4198,12 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
+  'f-gcd-user':        { card: 'gcd',       key: 'gcd_user',        test: 'gcd' },
+  'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', locg: 'locg' };
+const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', locg: 'locg' };
 
 // Komga harvest: one tap pulls what Komga knows into the record (kometa/harvest_komga.py).
 function _komgaHarvestLine(cfg) {
@@ -4341,6 +4353,7 @@ const _SOURCE_TOGGLES = {
   't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
   't-komga-covers': { key: 'komga_covers',   section: null,            label: 'Komga covers as a last resort' },
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
+  't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
   't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },
