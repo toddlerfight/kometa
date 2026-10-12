@@ -163,7 +163,11 @@ function _rdTurnMotion(outgoing) {
   const swipe = turn.by === 'swipe';
   stage.classList.add(swipe ? (turn.dir > 0 ? 'rd-in-r' : 'rd-in-l') : 'rd-in-fade');
   outgoing.id = '';
-  outgoing.className = 'rd-stage rd-out ' + (swipe ? (turn.dir > 0 ? 'rd-out-l' : 'rd-out-r') : 'rd-out-fade');
+  // keep rd-two: since pages fill their slot (2026-10-12), a two-up spread that lost
+  // it re-laid its pages at full width for the length of the fade — a ~68px twitch
+  // outward on every turn
+  const two = outgoing.classList.contains('rd-two') ? 'rd-two ' : '';
+  outgoing.className = 'rd-stage rd-out ' + two + (swipe ? (turn.dir > 0 ? 'rd-out-l' : 'rd-out-r') : 'rd-out-fade');
   stage.parentNode.insertBefore(outgoing, stage);
   const done = () => outgoing.remove();
   outgoing.addEventListener('animationend', done, { once: true });
