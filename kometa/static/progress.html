@@ -44,6 +44,8 @@
     .task h3 { font-size: var(--fs-body); margin: 0 0 6px; font-weight: 700; }
     .task p { margin: 4px 0; font-size: var(--fs-body); color: var(--tq); }
     .task p b { color: var(--tp); font-weight: inherit; }
+    .task ul.files { margin: 6px 0 6px 18px; padding: 0; color: var(--tp); font-size: var(--fs-body); }
+    .task ul.files li { margin: 2px 0; }
   </style>
 </head>
 <body>
@@ -124,6 +126,7 @@ async function renderPlan() {
       <h3>${esc(t.title)}</h3>
       <p><b>Why:</b> ${esc(t.why)}</p>
       <p><b>How:</b> ${esc(t.how)}</p>
+      ${t.files ? `<ul class="files">${t.files.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
       <p><b>Blocking:</b> ${esc(t.blocking)}</p>
     </div>`).join('');
 }
