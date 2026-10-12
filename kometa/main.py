@@ -237,6 +237,8 @@ from kometa.harvest import router as _harvest_router        # the library harves
 app.include_router(_harvest_router)
 from kometa.coververify import router as _coververify_router  # which issue is this file, really? ask the cover
 app.include_router(_coververify_router)
+from kometa.marveldc import router as _marveldc_router      # what the night's Marvel.com run brought back
+app.include_router(_marveldc_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
 app.include_router(_opds_router)
 from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series
@@ -450,7 +452,20 @@ def _extra_budgets() -> dict:
         out["fandom"] = fandom_client.budget()      # the wikis' one throttle: galleries + collected editions
     except Exception:
         pass
+    try:
+        from kometa import marveldc
+        out["marveldc"] = marveldc.marvel.budget()
+    except Exception:
+        pass
     return out
+
+
+def _marveldc_tonight() -> dict | None:
+    try:
+        from kometa import marveldc
+        return marveldc.tonight(DB_PATH)
+    except Exception:
+        return None
 
 
 def settings_attention() -> list[dict]:
@@ -605,6 +620,10 @@ def get_config():
         "hardcover_token":     "",
         "hardcover_configured": bool((cfg.get("hardcover_token") or "").strip()),
         "hardcover_enabled":   cfg.get("hardcover_enabled", "1") != "0",
+        # Marvel.com print covers (1i-e): night only, on by default (the user's call, 2026-10-12)
+        "marveldc_enabled":    cfg.get("marveldc_enabled", "1") != "0",
+        "marveldc_hours":      cfg.get("marveldc_hours") or "23-7",
+        "marveldc_tonight":    _marveldc_tonight(),
         "extra_budgets":       _extra_budgets(),
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),
@@ -647,6 +666,8 @@ class ConfigRequest(BaseModel):
     fandom_download:    str | None = None   # "1"/"0" — and their images downloaded (default off)
     hardcover_token:    str | None = None   # Hardcover API token (read:catalog)
     hardcover_enabled:  str | None = None   # "1"/"0" — Hardcover book ratings
+    marveldc_enabled:   str | None = None   # "1"/"0" — Marvel.com print covers, overnight
+    marveldc_hours:     str | None = None   # "23-7": the local hours it may run in (wraps midnight)
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)
@@ -659,6 +680,11 @@ class ConfigRequest(BaseModel):
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
+    if "marveldc_hours" in updates:
+        from kometa.marveldc import valid_hours
+        if not valid_hours(updates["marveldc_hours"]):
+            raise HTTPException(400, "hours are two numbers 0-23, e.g. 23-7")
+        updates["marveldc_hours"] = updates["marveldc_hours"].replace(" ", "")
     if "locg_cf_clearance" in updates:
         updates["locg_cf_clearance"] = updates["locg_cf_clearance"].strip().removeprefix("cf_clearance=")
         updates["locg_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

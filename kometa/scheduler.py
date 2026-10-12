@@ -242,7 +242,9 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # no-ops when its Settings toggle is off. No Metron traffic, so no harvest wrapper.
     for mod_name, job_id, offset in (("prh", "harvest_prh", 4), ("openlibrary", "harvest_openlibrary", 6),
                                      ("cbr", "harvest_cbr", 8), ("fandom_covers", "harvest_fandom", 3),
-                                     ("hardcover", "harvest_hardcover", 5)):
+                                     ("hardcover", "harvest_hardcover", 5),
+                                     # Marvel.com (1i-e): NIGHT ONLY — the tick no-ops outside marveldc_hours
+                                     ("marveldc", "harvest_marveldc", 2)):
         try:
             import importlib
             mod = importlib.import_module(f"kometa.{mod_name}")

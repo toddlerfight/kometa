@@ -138,7 +138,7 @@ def get_series(series_id: int, path=None) -> dict | None:
 
 
 # Keys other workers merge into extra (merge_extra) — carried across a Metron refresh.
-HARVEST_EXTRA_KEYS = ("prh", "cv_original", "fandom")
+HARVEST_EXTRA_KEYS = ("prh", "cv_original", "fandom", "marveldc")
 
 
 def write_issue(series_id: int, number: float, data: dict, source: str | None, state: str, issue: dict | None = None,

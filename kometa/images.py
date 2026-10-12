@@ -90,6 +90,17 @@ def fandom_key(series_id: int, number: float, name: str) -> str:
     return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/fandom/{safe}"
 
 
+def marveldc_key(series_id: int, number: float, name: str | None = None) -> str:
+    """Marvel.com's print-size cover (enrichment 1i-e): the main at .../marveldc,
+    a variant the issue page lists at .../marveldc/<name> — beside every other
+    source's copy, never over it."""
+    base = f"{issue_key(series_id, number).rsplit('/', 1)[0]}/marveldc"
+    if name is None:
+        return base
+    safe = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_.-]", "_", str(name))).strip("_.")[:120] or "cover"
+    return f"{base}/{safe}"
+
+
 def isbn_key(isbn: str, source: str) -> str:
     """A book's cover by ISBN (Open Library): one ISBN can be a trade on several
     runs' shelves, so the image belongs to the ISBN, not to a series."""

@@ -102,3 +102,13 @@ def test_polite_sources_have_cards_with_toggles(app):
         app.locator('#t-cbr').uncheck()
     expect(app.locator('#sec-cbr.section-off')).to_have_count(1)
     expect(app.locator('#harvest-progress')).to_contain_text('ComicBookRoundup')
+
+
+def test_marvel_card_has_toggle_hours_and_tonight(app):
+    # Marvel.com / DC.com (harvest 1i-e): on by default, a night window you can
+    # edit, tonight's counts, and a row on the harvest card.
+    app.locator('.nav-item[data-view="settings"]').click()
+    expect(app.locator('#t-marveldc')).to_be_checked()
+    expect(app.locator('#f-marveldc-hours')).to_have_value('23-7')
+    expect(app.locator('#sec-marveldc .settings-stat').first).to_contain_text(' of ')
+    expect(app.locator('#harvest-progress')).to_contain_text('Marvel.com')

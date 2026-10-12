@@ -3530,6 +3530,9 @@ async function _renderHarvest() {
   const hc = h.hardcover;
   const hardcover = !hc ? '—' : off(hc) ? 'switched off' : !hc.configured ? 'no token'
     : `${n(hc.rated)} rated · ${n(hc.none)} not there${today(hc.budget)}`;
+  const md = h.marveldc;
+  const marveldc = !md ? '—' : off(md) ? 'switched off'
+    : `${n(md.asked)} asked · ${n(md.matched)} matched · ${n(md.kept)} covers kept · ${n(md.upgrades)} upgrades${today(md.budget)}`;
   const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
   el.innerHTML = [
     row('Owned issues', n(o.owned)),
@@ -3547,6 +3550,7 @@ async function _renderHarvest() {
     row('ComicBookRoundup', cbr),
     row('Fandom wikis', fandom),
     row('Hardcover', hardcover),
+    row('Marvel.com', marveldc),
   ].join('');
 }
 
@@ -4237,6 +4241,15 @@ async function renderSettings() {
         ${_politeSourceSection('cbr', 'ComicBookRoundup', 'critic scores', cfg)}
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
           `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>`)}
+        <div class="settings-section ${cfg.marveldc_enabled ? '' : 'section-off'}" id="sec-marveldc" style="margin-top:32px">
+          ${_settingsSectionHead('Marvel.com / DC.com', 'print covers, overnight', 't-marveldc', cfg.marveldc_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsField('f-marveldc-hours', 'Hours it may run (24h, from-to)', cfg.marveldc_hours, { ph: '23-7' })}
+              ${_marveldcTonight(cfg)}
+            </div>
+          </div></div>
+        </div>
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4269,7 +4282,7 @@ async function renderSettings() {
   // whole usenet+torrent branch it wraps.
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
-  for (const k of ['prh', 'openlibrary', 'cbr', 'fandom', 'hardcover']) {
+  for (const k of ['prh', 'openlibrary', 'cbr', 'fandom', 'hardcover', 'marveldc']) {
     if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
   }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
@@ -4286,6 +4299,7 @@ async function renderSettings() {
 // integration to re-verify after the value changes.
 const _SETTINGS_FIELDS = {
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
+  'f-marveldc-hours': { card: 'marveldc', key: 'marveldc_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
   'f-qbit-url':        { card: 'qbit',     key: 'qbit_url',         test: 'qbit' },
@@ -4422,6 +4436,18 @@ function _requestsToday(cfg, key) {
   return `<div class="settings-stat"><span>Requests today</span><b>${today}</b></div>`;
 }
 
+// Marvel.com's night: requests used today, then what the last night matched and kept
+function _marveldcTonight(cfg) {
+  const t = cfg.marveldc_tonight || {};
+  const n = v => (v == null ? '—' : Number(v).toLocaleString());
+  const stat = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
+  return [
+    stat('Requests today', `${n(t.requests)} of ${n(t.cap)}${t.paused ? ' · resting' : ''}`),
+    stat('Matched', n(t.matched)),
+    stat('Covers kept', n(t.kept)),
+  ].join('');
+}
+
 function _politeSourceSection(key, title, tag, cfg, extra = '') {
   const on = !!cfg[`${key}_enabled`];
   return `<div class="settings-section ${on ? '' : 'section-off'}" id="sec-${key}" style="margin-top:32px">
@@ -4459,6 +4485,7 @@ const _SOURCE_TOGGLES = {
   // cover store leaves ginbako's internal disk
   't-fandom-download': { key: 'fandom_download', section: null, label: 'Fandom gallery downloads' },
   't-hardcover': { key: 'hardcover_enabled', section: 'sec-hardcover', label: 'Hardcover' },
+  't-marveldc':  { key: 'marveldc_enabled',  section: 'sec-marveldc',  label: 'Marvel.com / DC.com' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
   't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },
@@ -4544,6 +4571,11 @@ function _validSyncHours(v) {
   return /^\d{1,2}(\s*,\s*\d{1,2})*$/.test(v) && v.split(',').every(h => +h >= 0 && +h <= 23);
 }
 
+function _validHourWindow(v) {
+  const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(v);
+  return !!m && +m[1] <= 23 && +m[2] <= 23;
+}
+
 async function _settingsChanged(el) {
   const f = _SETTINGS_FIELDS[el.id];
   if (!f) return;
@@ -4554,6 +4586,11 @@ async function _settingsChanged(el) {
   if (f.key === 'sync_hours' && !_validSyncHours(val)) {
     el.classList.add('input-bad');
     _whisper(f.card, 'hours are 0–23, comma-separated', true);
+    return;
+  }
+  if (f.key === 'marveldc_hours' && !_validHourWindow(val)) {
+    el.classList.add('input-bad');
+    _whisper(f.card, 'two hours 0–23, from-to, e.g. 23-7', true);
     return;
   }
   el.classList.remove('input-bad');

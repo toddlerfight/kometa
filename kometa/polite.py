@@ -58,6 +58,12 @@ class Limiter:
         b = self.budget()
         return b["left"] <= 0 or b["paused"]
 
+    def rest(self, seconds: float):
+        """Stop sending for a while without a refusal to blame — e.g. a page that
+        no longer has the shape the worker reads (better idle than mis-record)."""
+        with self._lock:
+            self._state["paused_until"] = max(self._state["paused_until"], time.time() + seconds)
+
     def reset(self):
         """Tests only: a fresh day, no pause."""
         self._state.update(last=0.0, day="", count=0, paused_until=0.0)
