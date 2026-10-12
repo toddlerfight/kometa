@@ -455,6 +455,11 @@ def download_pending(path=None, night: str | None = None, limit: int = DOWNLOADS
                     img["same_as"] = v["same_as"]
                 if v["keep"]:
                     images.store_bytes(img["key"], data, img["url"], "marveldc", path)
+                    try:                                    # shown in place of the smaller same cover
+                        from kometa import coverupgrade
+                        coverupgrade.link(r["sid"], r["number"], img["key"], data, path)
+                    except Exception as e:
+                        logger.info(f"Cover upgrade link for {img['key']} skipped: {e}")
                     img["status"] = "kept"
                     kept += 1
                 else:

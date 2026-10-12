@@ -329,7 +329,7 @@ function esc(str) {
 // Kometa's own cover route for an issue: your chosen variant, else the file's own
 // first page (kept in the image store), else the catalogue's.
 function bookThumb(issue) {
-  return `/api/series/${issue.tracked_series_id}/issues/${issue.number}/thumbnail`;
+  return `/api/series/${issue.tracked_series_id}/issues/${issue.number}/thumbnail?c=2`;   // c: bumped when covers got bigger
 }
 
 function _localToday() {

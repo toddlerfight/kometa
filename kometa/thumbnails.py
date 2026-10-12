@@ -154,8 +154,8 @@ COVER_MAX_AGE = 86400
 def _store_response(key: str, source: str, max_age: int = COVER_MAX_AGE) -> Response | None:
     """Bytes the record's store holds for a key — file covers, Komga posters —
     with the source named in the headers so a tile can say where it came from."""
-    from kometa import images
-    p = images.local_path(key, DB_PATH)
+    from kometa import coverupgrade, images
+    p = coverupgrade.better_path(key, DB_PATH) or images.local_path(key, DB_PATH)   # a bigger copy of the same cover first
     if not p:
         return None
     try:

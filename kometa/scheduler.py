@@ -253,6 +253,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                               next_run_time=datetime.now(TZ) + timedelta(minutes=offset))
         except Exception as e:
             logger.warning(f"{mod_name} harvest not scheduled: {e}")
+    # Bigger copies of the same cover stand in for the small ones (kometa/coverupgrade.py):
+    # links any stored stand-in that predates its link; one cheap query once caught up.
+    try:
+        from kometa.coverupgrade import backfill as coverupgrade_backfill
+        scheduler.add_job(coverupgrade_backfill, IntervalTrigger(minutes=30), id="coverupgrade_backfill",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=1))
+    except Exception as e:
+        logger.warning(f"Cover-upgrade backfill not scheduled: {e}")
     # ComicInfo into the files (kometa/retag.py): the full run, new arrivals and
     # re-checks — a few files per tick, and nothing at all unless retag_enabled = '1'.
     try:

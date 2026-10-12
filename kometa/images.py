@@ -221,6 +221,17 @@ def serve(key: str, url: str | None, source: str, path=None, max_age: int = 8640
     the caller falls through to its old chain. X-Kometa-Image says which.
     The URL goes through best_url first, or a tile asking with the catalogue's
     medium- URL would undo the trickle's large- upgrade on every view."""
+    from kometa import coverupgrade
+    better = coverupgrade.better_path(key, path)            # a bigger copy of the same cover (Marvel.com, 1i-e)
+    if better:
+        try:
+            data = open(better, "rb").read()
+        except OSError:
+            data = b""
+        if data:
+            return Response(content=data, media_type=_ct(data),
+                            headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800",
+                                     "X-Kometa-Image": "upgrade"})
     url = best_url(url)
     row = get(key, path)
     hit = row and row.get("url") == url and row.get("path") and os.path.exists(row["path"])
