@@ -24,12 +24,13 @@
 </head>
 <body>
   <div class="pad" id="pad">
-    <div class="note">Swipe sideways with two fingers, <b>one swipe at a time</b>, the way you'd turn a page in the reader.
-      Do <b>10 single swipes</b> (mix them: gentle, brisk, a long flick), pausing between each. Then Save.</div>
+    <div class="note">Swipe sideways with two fingers the way you would in the reader — this time <b>quickly, one after another</b>,
+      like flicking through pages. Count your swipes, type the number in the box, then Save.</div>
     <div class="big" id="turns">0</div>
     <div class="row"><span>turns the reader would make</span></div>
     <div class="row"><span>events <b id="events">0</b></span><span>last turn <b id="last">—</b></span></div>
     <div class="btns">
+      <input class="settings-input" id="did" type="number" min="1" placeholder="swipes you did" style="width:150px">
       <button class="btn btn-primary" id="save">Save recording</button>
       <button class="btn btn-ghost" id="reset">Start over</button>
     </div>
@@ -61,7 +62,7 @@
       $('status').textContent = 'Saving…';
       try {
         const r = await fetch('/api/debug/wheel-recording', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ events, ua: navigator.userAgent, swipes_intended: 10,
+          body: JSON.stringify({ events, ua: navigator.userAgent, swipes_intended: parseInt($('did').value, 10) || null,
                                  note: `rule counted ${turns} turns` }) });
         const j = await r.json();
         $('status').textContent = j.ok ? `Saved (${j.events} events) — thanks. Tell Claude it's done.` : 'Save failed.';
