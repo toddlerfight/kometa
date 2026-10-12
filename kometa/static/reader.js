@@ -203,6 +203,7 @@ function _rdRenderEnd() {
       </div>
       <div class="rd-end-note" id="rd-end-note">${_rd.list ? 'Looking for the next on the list…' : 'Looking for the next issue…'}</div>
     </div>`;
+  _rd.done = true;
   _rdQueueSave(b.page_count, true);
   // From a list the list's next is primary; otherwise the series' own next.
   if (_rd.list) _rdListNext(_rd.list, b.id); else _rdSeriesNext(b.id);
@@ -218,10 +219,10 @@ async function _rdSeriesNext(bookId, secondary = false) {
   if (!_rd.book || _rd.book.id !== bookId || !_rd.ended) return;
   const note = document.getElementById('rd-end-note');
   const host = document.getElementById('rd-end-next');
-  if (!n) { if (note && !secondary) note.textContent = ''; return; }
-  if (n.status !== 'book') {
-    if (note && !secondary) note.textContent = n.label;
-    else if (note && secondary && !note.textContent) note.textContent = `In the series: ${n.label}`;
+  if (!n || n.status !== 'book') {
+    if (note && !secondary) note.textContent = n ? n.label : '';
+    else if (note && secondary && !note.textContent && n) note.textContent = `In the series: ${n.label}`;
+    _rdNothingNext();
     return;
   }
   if (secondary) {
@@ -240,22 +241,32 @@ async function _rdSeriesNext(bookId, secondary = false) {
   _rdStartCountdown(n.book_id);
 }
 
-function _rdStartCountdown(nextId) {
+// The end of what's on the shelf: nothing to open, so the reader goes. Marked as
+// read, at once; read to the last page, after the same countdown 'Up next' gets —
+// a tap stays.
+function _rdNothingNext() {
+  if (_rd.markedRead) return _rdExit();
+  const host = document.getElementById('rd-end-next');
+  if (host) host.innerHTML = `<div class="rd-next-count" id="rd-next-count">Closing in ${RD_COUNTDOWN_S}…</div>`;
+  _rdStartCountdown(null, 'Closing in', () => _rdExit());
+}
+
+function _rdStartCountdown(nextId, word = 'Starting in', then = null) {
   _rdCancelCountdown();
   let left = RD_COUNTDOWN_S;
   const tick = () => {
     left -= 1;
     const c = document.getElementById('rd-next-count');
     if (!_rd.ended || !c) return _rdCancelCountdown();
-    if (left <= 0) { _rdCancelCountdown(); _rdOpenNext(nextId); return; }
-    c.textContent = `Starting in ${left}…`;
+    if (left <= 0) { _rdCancelCountdown(); then ? then() : _rdOpenNext(nextId); return; }
+    c.textContent = `${word} ${left}…`;
   };
   _rd.countdown = setInterval(tick, 1000);
   // any touch, click or key anywhere cancels — capture phase, before handlers
   _rd.cancelCountdown = () => {
     _rdCancelCountdown();
     const c = document.getElementById('rd-next-count');
-    if (c) c.textContent = 'Tap to read';
+    if (c) c.textContent = then ? '' : 'Tap to read';
   };
   _rdEl().addEventListener('pointerdown', _rd.cancelCountdown, { capture: true, once: true });
   document.addEventListener('keydown', _rd.cancelCountdown, { capture: true, once: true });
@@ -390,6 +401,9 @@ function _rdQueueSave(page, completed) {
 
 async function _rdSave(page, completed) {
   if (!_rd.book) return;
+  // Finished stays finished this visit: a later page save (or the close-time flush)
+  // used to land page 25, not-done, on top of 'Mark as read' with a NEWER timestamp
+  completed = completed || _rd.done;
   // Opening a book is not reading it. Page 1 is never recorded — turn a page
   // and it counts — so Continue reading holds what you're IN, not what you
   // glanced at (2026-10-08: thirteen page-1 ghosts from an afternoon's poking).
@@ -406,11 +420,16 @@ async function _rdSave(page, completed) {
   }
 }
 
+// Mark as read = you're done with it: the end screen, which offers the next issue
+// if the shelf has one — and if it doesn't, out of the reader, back where you came from.
 async function _rdMarkRead() {
-  clearTimeout(_rd.saveTimer);
+  clearTimeout(_rd.saveTimer); _rd.saveTimer = null;
+  _rd.done = true;
   await _rdSave(_rd.book.page_count, true);
   showToast('Marked as read');
   _rdToggleChrome(false);
+  _rd.markedRead = true;
+  _rdEnded(true);
 }
 
 // --- input -------------------------------------------------------------------------
@@ -554,7 +573,7 @@ async function renderReader(params) {
   _rdRecButton();
   try {
     const book = await api.get(`/api/books/${params.book}`);
-    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null,
+    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null, done: false, markedRead: false,
       list: params.list ? parseInt(params.list, 10) : null });
     _rd.spreads = _rdBuildSpreads();
     const p = book.progress;
@@ -599,7 +618,7 @@ function closeReader() {
   const el = document.getElementById('reader');
   if (!el || el.classList.contains('hidden') || el.classList.contains('rd-leaving')) return;
   if (_rd.book && _rd.saveTimer) {
-    clearTimeout(_rd.saveTimer);
+    clearTimeout(_rd.saveTimer); _rd.saveTimer = null;
     const s = _rd.spreads[_rd.at];
     if (s && !_rd.ended) _rdSave(s[s.length - 1]);
   }

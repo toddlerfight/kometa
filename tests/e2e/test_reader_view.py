@@ -163,3 +163,45 @@ def test_recorded_safari_swipes_turn_one_page_each(app, app_server):
     # turned while still speeding up, wobbled (…12 19 7 3 7 14 22…) and the wobble read as a
     # quick follow-up swipe. A cliff now only counts once the swipe is past its peak.
     assert turns[5] == 22, turns
+
+
+def _wipe(app, app_server, book_id):
+    app.wait_for_timeout(1600)                     # let the debounced save land first
+    import sqlite3
+    with sqlite3.connect(app_server["db_path"]) as c:
+        c.execute("DELETE FROM read_progress WHERE book_id = ?", (book_id,))
+
+
+def test_mark_as_read_with_nothing_next_closes_and_stays_read(app, app_server):
+    # 2026-10-13: Mark as read saved, then the close-time flush landed page 25,
+    # not-done, on top of it with a newer timestamp — the book never counted as read
+    app.route("**/api/books/*/next", lambda r: r.fulfill(status=200, content_type="application/json", body="null"))
+    app.set_viewport_size({"width": 820, "height": 1180})
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
+    reader = app.locator("#reader")
+    expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)
+    app.keyboard.press("ArrowRight")
+    app.keyboard.press("ArrowRight")
+    book_id = int(app.url.split("book=")[1])
+    app.evaluate("_rdMarkRead()")
+    expect(reader).to_be_hidden()
+    app.wait_for_timeout(1600)
+    done = app.evaluate(f"fetch('/api/books/{book_id}').then(r=>r.json()).then(b=>b.progress && b.progress.completed)")
+    assert done in (1, True)
+    _wipe(app, app_server, book_id)
+
+
+def test_end_of_the_shelf_counts_down_and_closes(app, app_server):
+    app.route("**/api/books/*/next", lambda r: r.fulfill(status=200, content_type="application/json", body="null"))
+    app.set_viewport_size({"width": 820, "height": 1180})
+    _open_alpha_issue_1(app)
+    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
+    reader = app.locator("#reader")
+    expect(reader.locator("#rd-stage .rd-page")).to_have_count(1)
+    book_id = int(app.url.split("book=")[1])
+    app.evaluate("_rdGo(_rd.book.page_count)")
+    app.keyboard.press("ArrowRight")
+    expect(reader.get_by_text(re.compile(r"Closing in \d"))).to_be_visible()
+    expect(reader).to_be_hidden(timeout=9000)
+    _wipe(app, app_server, book_id)
