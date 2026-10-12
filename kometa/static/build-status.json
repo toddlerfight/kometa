@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 22:55 AEST",
-  "now": "Reader polish done (swipes, spreads). Waiting on you: the test batch check (THE ONE TEST).",
+  "updated": "2026-10-12 23:10 AEST",
+  "now": "Test batch approved. New-arrival tagging is ON. Full rewrite (3f) waits for your go — best once more of the library has catalogue data (48% today).",
   "groups": [
     {
       "title": "Komga retirement",
@@ -190,8 +190,8 @@
         {
           "id": "3e",
           "label": "Test batch of ~20 files",
-          "state": "waiting-you",
-          "note": "all 17 written (switch back off) — check them (Your tasks)"
+          "state": "done",
+          "note": "17 files checked by you — ok"
         },
         {
           "id": "3f",
@@ -208,7 +208,7 @@
           "id": "4a",
           "label": "ComicInfo written in finalize's rebuild",
           "state": "done",
-          "note": "switched off; arrivals wait for catalogue data (or 7 days), then go through the verified rewrite"
+          "note": "ON since 2026-10-12: new downloads tagged once a catalogue fills their details (or after 7 days)"
         },
         {
           "id": "4b",
@@ -292,29 +292,6 @@
   ],
   "your_tasks": [
     {
-      "title": "THE ONE TEST: check the 17 rewritten files (step 3e)",
-      "why": "Before the whole library gets a clean ComicInfo, you confirm the rewritten files are fine. Every page was verified byte-identical; the 2 CBRs became CBZs (originals in _trash for 7 days).",
-      "how": "Open a few in kometa (YondeB too if you like). Check: all pages there and in order · reading progress kept · nothing odd. Some still show stand-in details — expected. Then say 'test batch ok' (or what's wrong).",
-      "blocking": "Yes — 3f and 4a stop here.",
-      "files": [
-        "Midnight Spider-Man #1 — modern Marvel",
-        "The Expanse: A Little Death #3 — was a CBR",
-        "East of West #1 — was a CBR",
-        "DIE HC — a trade",
-        "Fantastic Four #605.1 — point issue",
-        "Uncanny X-Men #1, #5, #200 — 1963 scans (#5 has no cover page)",
-        "TMNT: The Last Ronin II #2 — 300 MB file",
-        "Tintin #16 — European",
-        "Fables #155",
-        "Invincible #0",
-        "Hellblazer #1",
-        "Hellboy: Krampusnacht #1",
-        "Batman: Year 100 #1",
-        "Ghost Pepper #13",
-        "The Boogyman #6"
-      ]
-    },
-    {
       "title": "Community ratings: v1 is live on the issue sheet — dial it in when you like",
       "why": "LOCG, ComicBookRoundup, Hardcover and Open Library ratings are being collected per issue (dated snapshots) but nothing in kometa shows them yet — only the files' ComicInfo will carry LOCG's rating.",
       "how": "Open any issue; the Community line sits under your stars. Tell me what to change (and whether trades' book sheet should get it).",
@@ -334,8 +311,8 @@
     },
     {
       "title": "Say go for the full ComicInfo rewrite (step 3f)",
-      "why": "Every file gets its clean ComicInfo. ~10 hours of network time; pauses while you read; Voot II keeps every original for 30 days.",
-      "how": "A yes, after the test batch.",
+      "why": "Every file in the library gets a clean ComicInfo, the way the test batch did. Best once more of the library has real catalogue data — 48% today (rising daily) — otherwise many files get stand-in details now and a second rewrite later. Voot II keeps every original for 30 days; CBRs' originals go to _trash for 7.",
+      "how": "Say 'go full rewrite' when you're ready (I'd suggest at ~80% coverage). It pauses while you read.",
       "blocking": "Yes."
     },
     {
