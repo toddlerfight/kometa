@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 21:10 AEST",
-  "now": "1i PRH/Open Library/ComicBookRoundup LIVE. Rewrite job (3b–3d) LIVE but writes nothing on its own; dry run on 17 varied files passed (14 rewrite, 2 CBR→CBZ, 1 trade skipped). Next: trades get ComicInfo, Fandom wired in, GCD matcher signals, Hardcover, 4a–4c behind a switch.",
+  "updated": "2026-10-12 21:40 AEST",
+  "now": "Trades now get ComicInfo too. Background: Fandom galleries + Hardcover being wired in. Me: step 4 (new arrivals) — one switch-gated retag job that serves the full run, new arrivals and re-checks.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -115,8 +115,8 @@
         {
           "id": "1i-f",
           "label": "Hardcover (trade ratings)",
-          "state": "todo",
-          "note": "token received and stored"
+          "state": "building",
+          "note": "token stored; worker being wired in"
         }
       ]
     },
@@ -165,7 +165,8 @@
         {
           "id": "3a+",
           "label": "Trades get ComicInfo too (from the trade records)",
-          "state": "todo"
+          "state": "done",
+          "note": "series, volume, format, ISBN, date, what it collects"
         },
         {
           "id": "3b",
@@ -203,7 +204,7 @@
         {
           "id": "4a",
           "label": "ComicInfo written in finalize's rebuild",
-          "state": "todo",
+          "state": "building",
           "note": "built switched off until 3e is approved"
         },
         {
@@ -214,7 +215,7 @@
         {
           "id": "4c",
           "label": "Re-checked at +7 / +30 / +90 days",
-          "state": "todo"
+          "state": "building"
         }
       ]
     },
