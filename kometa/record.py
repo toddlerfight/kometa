@@ -148,7 +148,8 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
     with db._connect(path) as conn:
         # a variant list already fetched outlives a details write: REPLACE used to
         # wipe it and its stamp, and the LOCG sweep then fetched it all over again
-        kept = conn.execute("SELECT covers_json, variants_at, extra_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+        kept = conn.execute("SELECT covers_json, variants_at, extra_json, community_json, community_at FROM issue_record "
+                            "WHERE tracked_series_id = ? AND number = ?",
                             (series_id, number)).fetchone()
         extra = data.get("extra")
         # a write that brings no extra (LOCG, a stopgap) never wipes what Metron said;
@@ -168,6 +169,11 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
         if kept and kept["variants_at"]:
             conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
                          (kept["covers_json"], kept["variants_at"], series_id, number))
+        if kept and kept["community_json"]:
+            # readers' scores (LOCG, ComicBookRoundup, Open Library) aren't details:
+            # a details refresh used to REPLACE them away and the sweep re-asked
+            conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
+                         (kept["community_json"], kept["community_at"], series_id, number))
     return get_issue(series_id, number, path)
 
 
@@ -205,18 +211,63 @@ def merge_extra(series_id: int, number: float, fields: dict, path=None) -> None:
                      (json.dumps(extra), series_id, number))
 
 
+# Other sources' scores ride in community_json under their own key, beside LOCG's
+# top-level fields (enrichment 1i). LOCG's snapshot is rewritten whole on every
+# refresh, so these are carried across it — and community_at stays LOCG's clock
+# (the sweep reads it as "LOCG asked"); each nested snapshot carries its own 'at'.
+COMMUNITY_SOURCES = ("cbr", "openlibrary")
+
+
 def set_community(series_id: int, number: float, data: dict, path=None) -> None:
     """LOCG's community snapshot for one issue, stamped now. A row that doesn't
     exist yet is made as a covers-only placeholder ('variants' state), the same
-    way the variant list makes one — the details are still owed."""
+    way the variant list makes one — the details are still owed. Other sources'
+    nested snapshots (COMMUNITY_SOURCES) survive the rewrite."""
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
-        cur = conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
-                           (json.dumps(data or {}), _now(), series_id, number))
-        if cur.rowcount == 0:
+        r = conn.execute("SELECT community_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        merged = dict(data or {})
+        if r and r["community_json"]:
+            try:
+                prior = json.loads(r["community_json"]) or {}
+            except (TypeError, ValueError):
+                prior = {}
+            for k in COMMUNITY_SOURCES:
+                if k in prior and k not in merged:
+                    merged[k] = prior[k]
+        if r:
+            conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(merged), _now(), series_id, number))
+        else:
             conn.execute("""INSERT INTO issue_record (tracked_series_id, number, covers_json, fill_state, community_json, community_at)
-                VALUES (?, ?, '[]', 'variants', ?, ?)""", (series_id, number, json.dumps(data or {}), _now()))
+                VALUES (?, ?, '[]', 'variants', ?, ?)""", (series_id, number, json.dumps(merged), _now()))
+
+
+def merge_community(series_id: int, number: float, source: str, snapshot: dict, path=None) -> None:
+    """One other source's snapshot into community_json[source], leaving LOCG's
+    fields and community_at alone. A row that doesn't exist yet is made as the
+    same covers-only placeholder set_community makes, with no community_at —
+    LOCG still owes its ask."""
+    if source not in COMMUNITY_SOURCES:
+        raise ValueError(f"not a community source: {source!r}")
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT community_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        if r:
+            try:
+                cur = json.loads(r["community_json"] or "{}") or {}
+            except (TypeError, ValueError):
+                cur = {}
+            cur[source] = snapshot
+            conn.execute("UPDATE issue_record SET community_json = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(cur), series_id, number))
+        else:
+            conn.execute("""INSERT INTO issue_record (tracked_series_id, number, covers_json, fill_state, community_json)
+                VALUES (?, ?, '[]', 'variants', ?)""", (series_id, number, json.dumps({source: snapshot})))
 
 
 def fill_issue(series_id: int, number: float, path=None, force: bool = False, issue: dict | None = None,

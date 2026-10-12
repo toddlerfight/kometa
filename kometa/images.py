@@ -77,6 +77,18 @@ def cv_key(series_id: int, number: float) -> str:
     return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/cv"
 
 
+def prh_key(series_id: int, number: float) -> str:
+    """Penguin Random House's print-res main cover (enrichment 1i), converted to
+    JPEG on arrival — beside the catalogue main and ComicVine's, not over them."""
+    return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/prh"
+
+
+def isbn_key(isbn: str, source: str) -> str:
+    """A book's cover by ISBN (Open Library): one ISBN can be a trade on several
+    runs' shelves, so the image belongs to the ISBN, not to a series."""
+    return f"isbn/{re.sub(r'[^0-9Xx]', '', str(isbn))}/{source}"
+
+
 def series_key(series_id: int) -> str:
     return f"series/{int(series_id)}"
 
@@ -155,6 +167,27 @@ def fetch_image(key: str, url: str | None, source: str, path=None, root: str | N
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, dest)
+        conn.execute("""INSERT OR REPLACE INTO image_record (key, path, url, bytes, fetched_at, source, failed_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL)""", (key, dest, url, len(data), _now(), source))
+    return get(key, path)
+
+
+def store_bytes(key: str, data: bytes, url: str, source: str, path=None, root: str | None = None) -> dict | None:
+    """Keep bytes a worker fetched itself (through its own source's throttle —
+    PRH's TIFFs, Open Library's covers) under a key, the same way fetch_image
+    does after its download. Not for the trickle: those sources mustn't be
+    fetched by the trickle's 0.5 s image pace."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    if not data:
+        return None
+    dest = file_for(key, root)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = f"{dest}.{os.getpid()}.tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, dest)
+    with db._connect(path) as conn:
         conn.execute("""INSERT OR REPLACE INTO image_record (key, path, url, bytes, fetched_at, source, failed_at)
             VALUES (?, ?, ?, ?, ?, ?, NULL)""", (key, dest, url, len(data), _now(), source))
     return get(key, path)

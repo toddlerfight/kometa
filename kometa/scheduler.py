@@ -234,6 +234,20 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=9))
     except Exception as e:
         logger.warning(f"GCD harvest not scheduled: {e}")
+    # The polite extras (1i): PRH's print covers, Open Library's book ratings and
+    # covers, ComicBookRoundup's critic/user scores. Each module owns one throttle
+    # and a daily cap, and each tick no-ops when its Settings toggle is off. No
+    # Metron traffic, so no harvest wrapper.
+    for mod_name, job_id, offset in (("prh", "harvest_prh", 4), ("openlibrary", "harvest_openlibrary", 6),
+                                     ("cbr", "harvest_cbr", 8)):
+        try:
+            import importlib
+            mod = importlib.import_module(f"kometa.{mod_name}")
+            scheduler.add_job(mod.tick, IntervalTrigger(minutes=10), id=job_id,
+                              replace_existing=True, coalesce=True, max_instances=1,
+                              next_run_time=datetime.now(TZ) + timedelta(minutes=offset))
+        except Exception as e:
+            logger.warning(f"{mod_name} harvest not scheduled: {e}")
     # Trades fill what singles can't: collects for a few trades, the coverage
     # stamps, then a few stuck issues looked up — proposals wait in Activity.
     try:

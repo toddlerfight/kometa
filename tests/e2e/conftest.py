@@ -21,7 +21,9 @@ import urllib.request
 
 import pytest
 
-E2E_PORT = 6971
+# overridable: two worktrees running the suite at once would otherwise both bind
+# 6971, and the second silently drives the FIRST one's server
+E2E_PORT = int(os.environ.get("KOMETA_E2E_PORT", "6971"))
 BASE = f"http://127.0.0.1:{E2E_PORT}"
 
 
@@ -125,6 +127,14 @@ def app_server(tmp_path_factory):
     shelf_import.DB_PATH = dbfile
     shelf_import.find_confident_match = lambda *a, **k: None
     shelf_import.THROTTLE_S = 0
+    # The polite extras (PRH, Open Library, ComicBookRoundup) need no login, so
+    # their scheduler ticks WOULD reach out on a long session. Their one seam
+    # refuses instead — the toggles and cards still render as in real life.
+    import kometa.polite as polite
+
+    def _offline(self, url, **kw):
+        raise polite.SourceUnavailable("e2e: offline")
+    polite.Limiter.get = _offline
 
     db.init_db(dbfile)
     ids = _seed(db, dbfile)

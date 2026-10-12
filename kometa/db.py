@@ -672,7 +672,7 @@ def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
 # left all of it behind (the audit found 38 orphan trade records, 18 trade caches,
 # 13 queue rows …); none of it means anything without the series.
 _SERIES_ROWS = ("trade_record", "trades_cache", "download_queue", "series_record", "issue_record",
-                "series_signals", "arc_discovery_cache", "failed_releases", "variant_prefs")
+                "series_signals", "arc_discovery_cache", "failed_releases", "variant_prefs", "cbr_series")
 
 
 def remove_series(series_id, path=DB_PATH):

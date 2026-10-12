@@ -425,6 +425,18 @@ def _locg_status() -> dict:
         return {"locg_pass_live": False, "locg_paused_until": None, "locg_topup_waiting": 0, "locg_topup_by_kind": {}}
 
 
+def _extra_budgets() -> dict:
+    """Today's requests per polite source — the Settings cards' only line."""
+    out = {}
+    try:
+        from kometa import cbr, openlibrary, prh
+        for name, mod in (("prh", prh), ("openlibrary", openlibrary), ("cbr", cbr)):
+            out[name] = mod.limiter.budget()
+    except Exception:
+        pass
+    return out
+
+
 def settings_attention() -> list[dict]:
     """Everything in Settings that's waiting on YOU — the nav badge's count and
     each card's red dot. Only states you can fix from Settings; a source that's
@@ -447,6 +459,8 @@ def settings_attention() -> list[dict]:
         out.append({"card": "comicvine", "reason": "no API key"})
     if on("gcd_enabled") and not has("gcd_user", "gcd_pass"):
         out.append({"card": "gcd", "reason": "no login"})
+    # PRH, Open Library and ComicBookRoundup need no login — nothing for you to fix,
+    # so never a dot (a refusal just rests that source; the harvest card shows it)
     if on("locg_enabled"):
         st = _locg_status()
         waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
@@ -562,6 +576,11 @@ def get_config():
         "gcd_pass":            "",
         "gcd_configured":      bool(cfg.get("gcd_user", "") and cfg.get("gcd_pass", "")),
         "gcd_enabled":         cfg.get("gcd_enabled", "1") != "0",
+        # the polite extras (harvest 1i): no login, just on/off and today's allowance
+        "prh_enabled":         cfg.get("prh_enabled", "1") != "0",
+        "openlibrary_enabled": cfg.get("openlibrary_enabled", "1") != "0",
+        "cbr_enabled":         cfg.get("cbr_enabled", "1") != "0",
+        "extra_budgets":       _extra_budgets(),
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),
         "metron_pass":         "",
@@ -596,6 +615,9 @@ class ConfigRequest(BaseModel):
     gcd_user:           str | None = None
     gcd_pass:           str | None = None
     gcd_enabled:        str | None = None   # "1"/"0" — metadata source toggle
+    prh_enabled:        str | None = None   # "1"/"0" — PRH print covers (no login)
+    openlibrary_enabled: str | None = None  # "1"/"0" — Open Library ratings + covers (no login)
+    cbr_enabled:        str | None = None   # "1"/"0" — ComicBookRoundup scores (no login)
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)

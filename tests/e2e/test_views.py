@@ -87,3 +87,18 @@ def test_source_toggles_render_and_flip(app):
         usenet.uncheck()
     # section collapses (fold + fade)
     expect(app.locator('#sec-usenet.section-off')).to_have_count(1)
+
+
+def test_polite_sources_have_cards_with_toggles(app):
+    # PRH / Open Library / ComicBookRoundup (harvest 1i): no login, so each card is
+    # a toggle plus today's allowance; off folds it like every other source.
+    app.locator('.nav-item[data-view="settings"]').click()
+    for key in ('prh', 'openlibrary', 'cbr'):
+        expect(app.locator(f'#t-{key}')).to_be_checked()
+        expect(app.locator(f'#sec-{key} .settings-stat b')).to_contain_text(' of ')
+    with app.expect_request(
+        lambda r: '/api/config' in r.url and r.method == 'PATCH', timeout=10000
+    ):
+        app.locator('#t-cbr').uncheck()
+    expect(app.locator('#sec-cbr.section-off')).to_have_count(1)
+    expect(app.locator('#harvest-progress')).to_contain_text('ComicBookRoundup')

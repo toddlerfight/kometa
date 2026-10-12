@@ -67,6 +67,13 @@ def progress(path=None) -> dict:
         out["gcd"] = gcd_status(path)
     except Exception:
         out["gcd"] = None
+    # the polite extras (1i): each its own module, throttle and Settings toggle
+    from kometa import cbr, openlibrary, prh
+    for name, mod in (("prh", prh), ("openlibrary", openlibrary), ("cbr", cbr)):
+        try:
+            out[name] = mod.status(path)
+        except Exception:
+            out[name] = None
     return out
 
 

@@ -3515,6 +3515,15 @@ async function _renderHarvest() {
   const metron = m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`;
   const g = h.gcd;
   const gcd = g ? `${n(g.linked)} linked · ${n(g.ambiguous)} waiting for you · ${n(g.filled)} issues` : '—';
+  const today = b => (b ? ` · ${n(b.used)}/${n(b.cap)} today${b.paused ? ' · resting' : ''}` : '');
+  const off = s => s && s.enabled === false;
+  const p = h.prh;
+  const prh = !p ? '—' : off(p) ? 'switched off' : `${n(p.found)} covers · ${n(p.none)} not there${today(p.budget)}`;
+  const ol = h.openlibrary;
+  const olib = !ol ? '—' : off(ol) ? 'switched off'
+    : `${n(ol.rated)} rated · ${n(ol.covers)} covers · ${n(ol.none)} not there${today(ol.budget)}`;
+  const c = h.cbr;
+  const cbr = !c ? '—' : off(c) ? 'switched off' : `${n(c.linked)} runs · ${n(c.issues)} issues · ${n(c.none)} not found${today(c.budget)}`;
   const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
   el.innerHTML = [
     row('Owned issues', n(o.owned)),
@@ -3527,6 +3536,9 @@ async function _renderHarvest() {
     row('LOCG sweep', locg),
     row('Metron today', metron),
     row('GCD', gcd),
+    row('PRH print covers', prh),
+    row('Open Library', olib),
+    row('ComicBookRoundup', cbr),
   ].join('');
 }
 
@@ -4212,6 +4224,9 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
+        ${_politeSourceSection('prh', 'Penguin Random House', 'print covers', cfg)}
+        ${_politeSourceSection('openlibrary', 'Open Library', 'book ratings', cfg)}
+        ${_politeSourceSection('cbr', 'ComicBookRoundup', 'critic scores', cfg)}
         <div class="settings-section ${cfg.locg_enabled ? '' : 'section-off'}" id="sec-locg" style="margin-top:32px">
           ${_settingsSectionHead('League of Comic Geeks', 'your browser’s pass', 't-locg', cfg.locg_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4235,6 +4250,9 @@ async function renderSettings() {
   // whole usenet+torrent branch it wraps.
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
+  for (const k of ['prh', 'openlibrary', 'cbr']) {
+    if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
+  }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
   if (!cfg.locg_enabled)      _collapseSection(document.getElementById('sec-locg'), true, false);
   if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
@@ -4376,6 +4394,22 @@ function _testControls(cardId, configured) {
       </span>`;
 }
 
+// The polite extras (harvest 1i: PRH, Open Library, ComicBookRoundup): no login,
+// so the card is the toggle plus today's allowance — nothing to fill in.
+function _politeSourceSection(key, title, tag, cfg) {
+  const on = !!cfg[`${key}_enabled`];
+  const b = (cfg.extra_budgets || {})[key];
+  const today = b ? `${Number(b.used).toLocaleString()} of ${Number(b.cap).toLocaleString()}${b.paused ? ' · resting' : ''}` : '—';
+  return `<div class="settings-section ${on ? '' : 'section-off'}" id="sec-${key}" style="margin-top:32px">
+    ${_settingsSectionHead(title, tag, `t-${key}`, on)}
+    <div class="settings-section-body"><div class="settings-section-inner">
+      <div class="settings-card">
+        <div class="settings-stat"><span>Requests today</span><b>${today}</b></div>
+      </div>
+    </div></div>
+  </div>`;
+}
+
 // One header row per toggleable section (sources / Prowlarr / Usenet / Torrent):
 // title + role tag + the enable toggle, underlined. Off folds the body; head stays.
 function _settingsSectionHead(title, tag, toggleId, on) {
@@ -4392,6 +4426,9 @@ const _SOURCE_TOGGLES = {
   't-locg':      { key: 'locg_enabled',      section: 'sec-locg',      label: 'League of Comic Geeks' },
   't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
   't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
+  't-prh':       { key: 'prh_enabled',       section: 'sec-prh',       label: 'Penguin Random House' },
+  't-openlibrary': { key: 'openlibrary_enabled', section: 'sec-openlibrary', label: 'Open Library' },
+  't-cbr':       { key: 'cbr_enabled',       section: 'sec-cbr',       label: 'ComicBookRoundup' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
   't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },
