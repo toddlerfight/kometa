@@ -2077,14 +2077,18 @@ body.reading #layout { opacity: 0; transition: opacity var(--t-fast) var(--ease-
   .rd-stage.rd-opening.rd-loaded .rd-page { transition: opacity .2s linear; } }
 
 .rd-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-/* The box IS the slot (whole screen, or half in two-up) and object-fit scales the
-   picture to it — up as well as down. max-* alone only ever shrinks, so a spread
-   saved smaller than the screen floated mid-stage at its own pixel size, touching
-   no edge (2026-10-12). Filling the slot is also what makes object-position below
-   do anything: two-up halves meet at the spine. */
-.rd-page { display: block; width: 100vw; height: 100vh; height: 100dvh; object-fit: contain;
-  -webkit-user-drag: none; }
-.rd-two .rd-page { width: 50vw; }
+/* The box IS the picture, sized from the page's own shape (--ar = w/h, set per
+   page by _rdRender): as tall as the screen allows, unless that would be wider than
+   the slot (whole screen, or half in two-up). That scales a small spread UP to the
+   edges (2026-10-12: they used to float at their own pixel size — max-* only ever
+   shrinks) without screen-sized boxes: those made Safari re-place the picture
+   inside the box on every frame of a swipe, which read as a twitch. object-fit
+   stays as the backstop for a page whose shape we don't know. */
+.rd-page { display: block; width: auto; max-width: 100vw;
+  height: min(100vh, calc(100vw / var(--ar, 0.65))); height: min(100dvh, calc(100vw / var(--ar, 0.65)));
+  object-fit: contain; -webkit-user-drag: none; }
+.rd-two .rd-page { max-width: 50vw;
+  height: min(100vh, calc(50vw / var(--ar, 0.65))); height: min(100dvh, calc(50vw / var(--ar, 0.65))); }
 .rd-two .rd-left  { object-position: right center; }
 .rd-two .rd-right { object-position: left center; }
 

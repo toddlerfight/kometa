@@ -97,8 +97,11 @@ function _rdRender() {
   if (_rd.ended) return _rdRenderEnd();
   const spread = _rd.spreads[_rd.at] || [1];
   const last = spread[spread.length - 1];
+  // each page carries its own shape (--ar = w/h, from the book's page list) so CSS
+  // can size the box to the picture itself — see .rd-page in style.css
+  const ar = p => { const pg = b.pages[p - 1]; return pg && pg.w && pg.h ? (pg.w / pg.h).toFixed(4) : ''; };
   const imgs = spread.map(p => `
-    <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"
+    <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"${ar(p) ? ` style="--ar:${ar(p)}"` : ''}
       src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false"
       onload="this.parentElement.classList.add('rd-loaded');_rdOpened()" onerror="_rdOpened()">`).join('');
   const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
