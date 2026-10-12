@@ -1620,6 +1620,12 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
                 metron_image    = excluded.metron_image,
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
         """, (tracked_series_id, issue_number, store_date))
+    # out of the transaction: tell the phone (pull-list series, batched — kometa/push.py)
+    try:
+        from kometa import push
+        push.issue_landed(tracked_series_id, issue_number, path)
+    except Exception:
+        pass
 
 
 def dequeue_waiting_issue(series_id, number, path=DB_PATH) -> int:

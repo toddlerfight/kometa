@@ -255,6 +255,8 @@ from kometa.search import router as _search_router          # universal search: 
 app.include_router(_search_router)
 from kometa.retag import router as _retag_router            # read-only: the ComicInfo a retag would write
 app.include_router(_retag_router)
+from kometa.push import router as _push_router              # 'it landed' on your phone (APNs → YondeB)
+app.include_router(_push_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)
@@ -677,6 +679,10 @@ class ConfigRequest(BaseModel):
     marveldc_hours:     str | None = None   # "23-7": the local hours it may run in (wraps midnight)
     cbr_people_enabled: str | None = None   # "1"/"0" — ComicBookRoundup's critics + readers, overnight
     cbr_people_hours:   str | None = None   # "23-7", same rules as marveldc_hours
+    push_enabled:       str | None = None   # "1"/"0" — notify YondeB when a download lands
+    push_scope:         str | None = None   # "pull" (pull-list series only) | "all"
+    apns_key_id:        str | None = None   # the .p8's key id; the key itself sits in data/apns/
+    apns_team_id:       str | None = None
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)
