@@ -135,3 +135,37 @@ def test_variants_large_view_gets_the_linked_bigger_copy(store, monkeypatch):
     covers = main.get_issue_variants(12, 1.0)["covers"]
     assert covers[0]["big"] == "/api/cover-upgrade/issue/12/1/variant/B" and "big" not in covers[1]
     assert main.get_cover_upgrade("issue/12/1/variant/B").body == big
+
+
+def test_marvel_print_size_variants_get_their_own_entries(store, monkeypatch):
+    import json
+    import kometa.db as kdb
+    from kometa import main, record
+    record.ensure_tables(store)
+    sid = kdb.add_series(title="Midnight", publisher="Marvel", folder_path="/comics/m", path=store)
+    big, small, exact = _jpeg(20, (1821, 2800)), _jpeg(21, (553, 850)), _jpeg(22, (1821, 2800))
+    _put(store, f"issue/{sid}/1/marveldc/138065", big, "marveldc")
+    _put(store, f"issue/{sid}/1/marveldc/1", small, "marveldc")
+    _put(store, f"issue/{sid}/1/marveldc/2", exact, "marveldc")
+    _put(store, f"issue/{sid}/1/variant/B", _jpeg(22, (600, 922)), "metron")
+    coverupgrade.link(sid, 1.0, f"issue/{sid}/1/marveldc/2", exact, store)     # already shows as B's big
+    imgs = [{"key": f"issue/{sid}/1/marveldc/138065", "kind": "variant", "status": "kept", "width": 1821, "url": "https://cdn.marvel.com/a.jpg"},
+            {"key": f"issue/{sid}/1/marveldc/1", "kind": "variant", "status": "kept", "width": 553, "url": "https://cdn.marvel.com/b.jpg"},
+            {"key": f"issue/{sid}/1/marveldc/2", "kind": "variant", "status": "kept", "width": 1821, "url": "https://cdn.marvel.com/c.jpg"},
+            {"key": f"issue/{sid}/1/marveldc/3", "kind": "variant", "status": "pending", "width": 1821, "url": "https://cdn.marvel.com/d.jpg"}]
+    with kdb._connect(store) as conn:
+        conn.execute("INSERT INTO issue_record (tracked_series_id, number, extra_json) VALUES (?, 1, ?)",
+                     (sid, json.dumps({"marveldc": {"images": imgs}})))
+    got = coverupgrade.own_entries(sid, 1.0, store)
+    assert [g["id"] for g in got] == ["marvel-138065"]
+    assert got[0]["large"] == "https://cdn.marvel.com/a.jpg" and got[0]["thumb"].endswith("?w=400")
+    monkeypatch.setattr(main, "DB_PATH", store)
+    full = main.get_cover_store(f"issue/{sid}/1/marveldc/138065")
+    assert full.body == big
+    from PIL import Image
+    import io
+    assert Image.open(io.BytesIO(main.get_cover_store(f"issue/{sid}/1/marveldc/138065", w=400).body)).size[0] == 400
+    import pytest as _pt
+    from fastapi import HTTPException
+    with _pt.raises(HTTPException):
+        main.get_cover_store(f"issue/{sid}/1/variant/B")          # not a Marvel key: not served here

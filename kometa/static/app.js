@@ -1068,11 +1068,13 @@ function _rowSig(el, payload) { if (el) el.dataset.sig = JSON.stringify(payload)
 function _trendCard(e) {
   const owned = e.owned && e.series_id;
   const go = owned ? `navigate('series-detail', {id: ${e.series_id}})`
-    : `showCatalogueModal(${JSON.stringify({ title: e.metron_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] }).replace(/"/g, '&quot;')})`;
+    : `showCatalogueModal(${JSON.stringify({ title: e.metron_title || e.locg_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, locg_series_id: e.locg_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] }).replace(/"/g, '&quot;')})`;
   const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
   const action = owned ? ''
     : e.metron_series_id
       ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
+    : e.locg_series_id      // Metron hasn't got it; LOCG has
+      ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ locg_id: e.locg_series_id, title: e.locg_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
       : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
   return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" title="${esc(e.title)} · ${esc(e.publisher || '')}">
     <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(_ext(e.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
@@ -1337,7 +1339,8 @@ async function showBookModal(c) {
 // the same modal, the catalogue's facts, and Track where Read would be.
 function showCatalogueModal(r) {
   const why = (r.why || []).filter(Boolean);
-  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.metron_title || r.title, publisher_name: r.publisher || '',
+  const anchor = r.metron_series_id ? { metron_id: r.metron_series_id } : r.locg_series_id ? { locg_id: r.locg_series_id } : null;
+  const payload = JSON.stringify({ ...anchor, title: r.metron_title || r.title, publisher_name: r.publisher || '',
     year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
@@ -1354,7 +1357,7 @@ function showCatalogueModal(r) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
-      ${r.metron_series_id ? `<button class="btn btn-primary" onclick="closeModal(); _relTrack(${payload}, this)">Track series</button>`
+      ${anchor ? `<button class="btn btn-primary" onclick="closeModal(); _relTrack(${payload}, this)">Track series</button>`
         : `<button class="btn btn-primary" onclick="closeModal(); showAddWizard(${JSON.stringify(r.title).replace(/"/g, '&quot;')})">Find in catalogue</button>`}
     </div>`);
 }

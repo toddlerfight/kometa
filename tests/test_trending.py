@@ -1,6 +1,18 @@
 """Trending (kometa/trending.py): ICv2's charts parsed, matched to the shelf, enriched from Metron."""
+import pytest
+
 import kometa.db as db
 import kometa.trending as tr
+
+
+@pytest.fixture(autouse=True)
+def _no_locg(monkeypatch):
+    # a Metron miss asks LOCG next — never the real one from a test
+    from kometa import locg_client
+
+    def refuse(title):
+        raise RuntimeError("no network in tests")
+    monkeypatch.setattr(locg_client, "search_series_strict", refuse)
 
 PAGE = """<table><tr><td>Top 50 Comic Books by Units – September 2026</td></tr>
 <tr><th>Rank</th><th>Title</th><th>Publisher</th><th>Price</th></tr>
@@ -104,3 +116,26 @@ def test_a_catalogue_id_matches_when_the_names_dont(db_path):
     rows = [dict(tr.parse_title("Amazing Spider-Man #1000"), rank=3, metron_series_id=10958)]
     tr.match_shelf(rows, db_path)
     assert rows[0]["series_id"] == sid
+
+
+DCC = [{"id": 192964, "title": "Dungeon Crawler Carl", "publisher": "Webtoon", "year": 2025, "cover": "w.jpg"},
+       {"id": 209896, "title": "Dungeon Crawler Carl", "publisher": "Vault Comics", "year": 2026, "cover": "v.jpg"},
+       {"id": 211918, "title": "Dungeon Crawler Carl Special Edition", "publisher": "Vault Comics", "year": 2026},
+       {"id": 5, "title": "Dungeon Crawler Carl #1", "publisher": "Vault Comics", "year": 2026, "comic": True}]
+
+
+def test_a_metron_miss_gets_locg_series_same_publisher(db_path):
+    e = dict(tr.parse_title("Dungeon Crawler Carl Vol. 2 (Regular Edition Cover)"), rank=6, publisher="Vault Comics")
+    data = {"comics": [], "graphic_novels": [e]}
+    tr.enrich_catalogue(data, db_path, lookup=lambda s_, n: {"results": []}, locg_search=lambda t: DCC)
+    assert e["catalogue_miss"] and e["locg_series_id"] == 209896 and e["cover"] == "v.jpg" and e["year"] == 2026
+
+
+def test_a_locg_that_didnt_answer_is_asked_again_later(db_path):
+    e = dict(tr.parse_title("Dungeon Crawler Carl Vol. 1"), rank=9, publisher="Vault Comics", catalogue_miss=True)
+    data = {"comics": [], "graphic_novels": [e]}
+
+    def down(t):
+        raise RuntimeError("paused")
+    assert tr._locg_fallback(data, db_path, down) == 0 and not e.get("locg_tried")
+    assert tr._locg_fallback(data, db_path, lambda t: []) == 0 and e["locg_tried"] and "locg_series_id" not in e

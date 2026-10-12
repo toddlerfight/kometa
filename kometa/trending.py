@@ -177,7 +177,7 @@ def _same_name(catalogue: str, chart: str) -> bool:
 _enriching = {"on": False}
 
 
-def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, limit_gns=ENRICH_GNS) -> int:
+def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, limit_gns=ENRICH_GNS, locg_search=None) -> int:
     """Unowned rows: one Metron issue call each → series id + cover, saved back.
     Returns how many were filled."""
     from kometa import metron_client
@@ -208,7 +208,43 @@ def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, 
             else:
                 e["catalogue_miss"] = True
             n += 1
+    n += _locg_fallback(data, path, locg_search)
     _save(data, path)
+    return n
+
+
+def _locg_pick(rows: list[dict], e: dict) -> dict | None:
+    """LOCG's series rows (not its issue rows) with the chart's name — the same
+    publisher if one is, else the newest run. The chart is this month's."""
+    same = [r for r in rows if not r.get("comic") and _same_name(r.get("title") or "", e["series"])]
+    pub = (e.get("publisher") or "").lower()
+    by_pub = [r for r in same if pub and (r.get("publisher") or "").lower() == pub]
+    return max(by_pub or same, key=lambda r: r.get("year") or 0, default=None)
+
+
+def _locg_fallback(data: dict, path, search=None) -> int:
+    """Metron missed it (Dungeon Crawler Carl, Vault): ask LOCG once, so the card gets
+    a cover and a Track button instead of a dead 'Find'. A LOCG that didn't answer
+    (paused, walled) is not a miss — the row is tried again next time."""
+    from kometa import locg_client
+    search = search or locg_client.search_series_strict
+    n = 0
+    for key in ("comics", "graphic_novels"):
+        for e in [x for x in data.get(key, []) if x.get("catalogue_miss") and not x.get("owned")
+                  and not x.get("locg_series_id") and not x.get("locg_tried")]:
+            try:
+                rows = search(e["series"])
+            except Exception as ex:
+                logger.info(f"Trending LOCG fallback paused at {e['series']!r}: {ex}")
+                return n
+            hit = _locg_pick(rows, e)
+            e["locg_tried"] = True
+            if hit:
+                e["locg_series_id"] = hit["id"]
+                e["locg_title"] = re.sub(r"\s*\(\d{4}\)\s*$", "", hit.get("title") or "")
+                e["year"] = hit.get("year")
+                e["cover"] = e.get("cover") or hit.get("cover")
+                n += 1
     return n
 
 
@@ -244,7 +280,10 @@ def trending(path=None, refresh: bool = False) -> dict:
     match_shelf(data.get("graphic_novels", []), path)
     needs = any(not e.get("owned") and not e.get("metron_series_id") and not e.get("catalogue_miss")
                 for key in ("comics", "graphic_novels") for e in data.get(key, [])[:ENRICH_COMICS])
-    if needs:
+    # misses from before the LOCG fallback (or a LOCG that was paused): one more look, quietly
+    retry = any(e.get("catalogue_miss") and not e.get("owned") and not e.get("locg_tried")
+                for key in ("comics", "graphic_novels") for e in data.get(key, []))
+    if needs or retry:
         _enrich_in_background(data, path)
     data["pending"] = needs
     return {k: v for k, v in data.items() if not k.startswith("_")}

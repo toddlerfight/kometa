@@ -1996,6 +1996,7 @@ def get_issue_variants(series_id: int, number: float):
             k = images.variant_key(series_id, number, c.get("id"))
             if c.get("id") and coverupgrade.better_path(k, DB_PATH):
                 c["big"] = f"/api/cover-upgrade/{k}"
+        covers += coverupgrade.own_entries(series_id, number, DB_PATH)   # Marvel.com's print-size variants
         return {"covers": covers, "locg_issue_id": locg_issue_id, "source": data.get("source"),
                 "selected_ids": sel_ids, "primary_id": primary, "record": data.get("record")}
     except Exception as e:
@@ -2012,6 +2013,29 @@ def get_cover_upgrade(key: str):
         raise HTTPException(404)
     with open(p, "rb") as fh:
         data = fh.read()
+    from fastapi.responses import Response
+    return Response(content=data, media_type=images._ct(data), headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/cover-store/{key:path}")
+def get_cover_store(key: str, w: int | None = None):
+    """A stored Marvel.com copy for the Variants tab — whole, or cut down to `w`
+    wide for the grid (a 2800px page per tile is a lot of bytes for a thumbnail)."""
+    from kometa import coverupgrade, images
+    p = coverupgrade.stored_marvel_path(key, DB_PATH)
+    if not p:
+        raise HTTPException(404)
+    with open(p, "rb") as fh:
+        data = fh.read()
+    if w:
+        import io
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            im = im.convert("RGB")
+            im.thumbnail((max(100, min(int(w), 1200)), 10_000))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=85)
+        data = buf.getvalue()
     from fastapi.responses import Response
     return Response(content=data, media_type=images._ct(data), headers={"Cache-Control": "public, max-age=86400"})
 
