@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 19:45 AEST",
-  "now": "Running on your go: covers copying into the library folders (18,657 files, 3.93 GB), and the 17-file test batch rewriting inside kometa (switch goes back off automatically when done).",
+  "updated": "2026-10-12 20:40 AEST",
+  "now": "Covers home DONE (18,683 covers in 686 series folders). Test batch written: 16 of 17 first time, Hellblazer #001 retrying after a folder-permission fix. Two bugs found by the real run, fixed (folder modes; the re-check firing too eagerly).",
   "groups": [
     {
       "title": "Komga retirement",
@@ -134,13 +134,14 @@
         {
           "id": "2b",
           "label": "Copy the cover store to the NAS, verified",
-          "state": "building",
-          "note": "copying now — 686 folders, 18,657 files, 3.93 GB"
+          "state": "done",
+          "note": "18,683 covers, 3.9 GB, in 686 series folders; 25 owner-only folders opened (777) first"
         },
         {
           "id": "2c",
           "label": "The NAS copy becomes the permanent one",
-          "state": "todo"
+          "state": "todo",
+          "note": "next — kometa rebuilding its store from the NAS copy"
         },
         {
           "id": "2d",
@@ -189,8 +190,8 @@
         {
           "id": "3e",
           "label": "Test batch of ~20 files",
-          "state": "building",
-          "note": "17 files rewriting now (16 + the DIE HC trade); then you check them"
+          "state": "waiting-you",
+          "note": "written — open a few and check (Your tasks)"
         },
         {
           "id": "3f",
@@ -300,8 +301,8 @@
     },
     {
       "title": "Check the test batch once it's written (step 3e)",
-      "why": "The rewrite job is built and a dry run passed on 16 deliberately varied files (modern Marvel, 1963 scans, a #605.1, Fables' 2022 run, two CBRs, Tintin, a 300 MB file…). Writing them proves the real swap end to end before the full run. Each original is read back before the swap; CBRs' old files go to _trash; Voot II keeps the originals 30 days. Many of these still carry stand-in data (Metron hasn't reached them) — the test is about the files, not the data; they'll be retagged later with the better record.",
-      "how": "I'll list the 17 files when they're done; open a few in kometa (and YondeB if you like): pages intact, reading progress kept, details showing.",
+      "why": "17 files now carry a clean ComicInfo; every page verified byte-identical; the 2 CBRs became CBZs with the originals in _trash/<publisher>/retag-cbr-2026-10-12/ (7 days). Files: Midnight Spider-Man #1 · TMNT Last Ronin II #2 · The Expanse: A Little Death #3 (was CBR) · DIE HC · Tintin #16 · Hellboy: Krampusnacht #1 · Batman: Year 100 #1 · Fables #155 · East of West #1 (was CBR) · Invincible #0 · Ghost Pepper #13 · Uncanny X-Men #1, #5, #200 · Hellblazer #1 · The Boogyman #6 · Fantastic Four #605.1.",
+      "how": "Open a few in kometa (and YondeB if you like): pages all there, reading progress kept, nothing odd. Then 'test batch ok' (or what's wrong). Note many still show stand-in details — Metron hasn't reached them; they'll be retagged when it has.",
       "blocking": "Yes — 3f and 4a stop here."
     },
     {
