@@ -150,4 +150,8 @@ def test_recorded_safari_swipes_turn_one_page_each(app, app_server):
         const f = _rdWheelGesture(); let n = 0;
         for (const [t, dx, dy] of ev) if (f(t, dx, dy)) n++;
         return n; })""", streams)
-    assert turns == [1, 4, 7], turns
+    # the 4th: 2026-10-12, 15 separate swipes 1–2 s apart; the old rule turned 25 pages
+    # (an accelerating swipe's wobble read as a second push). 15 = one each, give or take
+    # one gentle swipe that doesn't turn and one that turns twice.
+    assert turns[:3] == [1, 4, 7], turns
+    assert 14 <= turns[3] <= 16, turns

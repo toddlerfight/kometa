@@ -1274,28 +1274,36 @@ async function _rlPollGetMissing(listId) {
 //    (≤ TROUGH) and then a sustained climb: 3 events, none falling, ending ≥ PUSH.
 //    Or a pause (GAP) — fingers lifted, everything resets.
 function _rdWheelGesture() {
-  const TURN = 40, GAP = 140, TROUGH = 4, PUSH = 6;
-  const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: false, ramp: [] };
-  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: false, ramp: [] });
+  // Tuned on two Safari/macOS trackpad recordings (2026-10-11, 2026-10-12 — the second
+  // in tests/e2e/fixtures_safari_swipes.json too). 10-12: a single swipe's acceleration
+  // wobbles (…16 10 8 6 2 9 10 13…) read as "it bottomed out, here's a new push" and one
+  // swipe turned 2–3 pages. So a stop must be SUSTAINED (LOW_RUN quiet samples), a new
+  // push must CLIMB (RAMP samples, to at least half the last swipe's peak), and nothing
+  // turns within REFRACTORY ms of the last turn — nobody swipes twice in a quarter second.
+  const TURN = 40, GAP = 140, TROUGH = 4, PUSH = 6, LOW_RUN = 3, RAMP = 6, PEAK_FRAC = 0.5, REFRACTORY = 250;
+  const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: 0, ramp: [], lastTurn: -Infinity, lastPeak: 0 };
+  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: 0, ramp: [] });
   return (now, dx, dy) => {
     const mag = Math.abs(dx);
     if (now - g.at > GAP) fresh();
     else if (mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x)) fresh();   // a scroll, then a swipe
     else if (g.spent) {
-      if (mag <= TROUGH) { g.low = true; g.ramp = []; }
-      else if (g.low) {
+      if (mag <= TROUGH) { g.low++; g.ramp = []; }
+      else if (g.low >= LOW_RUN) {
         if (g.ramp.length && mag < g.ramp[g.ramp.length - 1]) g.ramp = [];
         g.ramp.push(mag);
-        if (g.ramp.length >= 3 && mag >= PUSH) {               // a real second push: start over, keep its travel
-          const travel = g.ramp.reduce((a, b) => a + b, 0) * Math.sign(dx);
+        if (g.ramp.length >= RAMP && mag >= Math.max(PUSH, PEAK_FRAC * g.lastPeak) && now - g.lastTurn >= REFRACTORY) {
+          const travel = g.ramp.reduce((a, b) => a + b, 0) * Math.sign(dx);   // a real second push: start over, keep its travel
           fresh(); g.x = travel - dx;
         }
-      }
+      } else g.low = 0;                                         // one quiet sample isn't a stop
     }
     g.at = now; g.x += dx; g.y += dy; g.peak = Math.max(g.peak, mag);
+    if (g.spent) g.lastPeak = Math.max(g.lastPeak, mag);
     if (Math.abs(g.x) <= Math.abs(g.y)) return 0;                // an up-down scroll: leave it alone
     if (g.spent || Math.abs(g.x) < TURN || g.peak < PUSH) return 0;
-    g.spent = true; g.low = false; g.ramp = [];
+    if (now - g.lastTurn < REFRACTORY) return 0;
+    g.spent = true; g.low = 0; g.ramp = []; g.lastTurn = now; g.lastPeak = g.peak;
     return g.x > 0 ? 1 : -1;
   };
 }
