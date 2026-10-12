@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
 BATCH_S = 60                        # quiet this long after the last landing, then send
+MAX_BATCH_IDS = 20                  # book ids a batch carries (APNs payloads cap at 4 KB)
 JWT_TTL_S = 40 * 60                 # Apple wants it 20–60 min old at most; refresh at 40
 HOSTS = {"sandbox": "https://api.sandbox.push.apple.com", "production": "https://api.push.apple.com"}
 TOPIC = "dev.kometa.yondeb"
@@ -179,8 +180,12 @@ def build_payload(items: list[dict]) -> dict:
                  "body": ", ".join(_label(i) for i in items[:4]) + ("…" if len(items) > 4 else "")}
     p = {"aps": {"alert": alert, "sound": "default", "thread-id": "kometa-new"}, "kind": "new",
          "series_id": first["series_id"]}
-    if first.get("book_id"):
-        p["book_id"] = first["book_id"]
+    if len(items) > 1:
+        # a batch opens On Deck's Recently added with these lit up — not the first one, arbitrarily
+        p["dest"] = "recent"
+        p["book_ids"] = [i["book_id"] for i in items if i.get("book_id")]
+    elif first.get("book_id"):
+        p["book_id"] = first["book_id"]                  # one issue: straight into the reader
     return p
 
 
@@ -198,7 +203,8 @@ def flush(path=None, post=None) -> dict | None:
         if k not in seen:
             seen.add(k)
             uniq.append(it)
-    uniq[0]["book_id"] = _book_id(uniq[0]["series_id"], uniq[0]["number"])     # the tap opens the first one
+    for it in uniq[:MAX_BATCH_IDS]:                       # indexed now, so the tap (reader or row) finds them
+        it["book_id"] = _book_id(it["series_id"], it["number"])
     res = send(build_payload(uniq), path, post)
     logger.info(f"Push: {len(uniq)} landed → {res}")
     return res

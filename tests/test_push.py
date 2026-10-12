@@ -90,12 +90,13 @@ def test_pull_list_only_and_batched_into_one(setup, db_path, monkeypatch):
     p = sent[0]
     assert p["aps"]["alert"]["title"] == "2 new on the shelf"
     assert p["aps"]["alert"]["body"] == "Midnight X-Men #2, Midnight X-Men #3"
-    assert p["book_id"] == 77 and p["series_id"] == a and p["kind"] == "new"
+    assert p["dest"] == "recent" and p["book_ids"] == [77, 77] and "book_id" not in p and p["kind"] == "new"
     db.set_config({"push_scope": "all"}, db_path)
     push.issue_landed(b, 5.0, db_path)
     push._timer.cancel()
     push.flush(db_path, post=lambda u, h, body: sent.append(json.loads(body)) or R(200))
     assert sent[-1]["aps"]["alert"]["body"] == "Not Pulled #5"
+    assert sent[-1]["book_id"] == 77 and "dest" not in sent[-1]           # one issue: the reader
 
 
 def test_unconfigured_sends_nothing(db_path, monkeypatch):
