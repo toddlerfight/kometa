@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 20:40 AEST",
-  "now": "Covers home DONE (18,683 covers in 686 series folders). Test batch written: 16 of 17 first time, Hellblazer #001 retrying after a folder-permission fix. Two bugs found by the real run, fixed (folder modes; the re-check firing too eagerly).",
+  "updated": "2026-10-12 21:30 AEST",
+  "now": "Test batch complete: all 17 files rewritten (Hellblazer #1 after the folder fix); the switch is off again. Community ratings v1 is on the issue sheet. Waiting on you: check the test batch.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -191,7 +191,7 @@
           "id": "3e",
           "label": "Test batch of ~20 files",
           "state": "waiting-you",
-          "note": "written — open a few and check (Your tasks)"
+          "note": "all 17 written (switch back off) — check them (Your tasks)"
         },
         {
           "id": "3f",
@@ -276,15 +276,20 @@
           "id": "x6",
           "label": "Reader caches on Catbus (21 GB freed)",
           "state": "done"
+        },
+        {
+          "id": "x7",
+          "label": "Community ratings on the issue sheet (v1)",
+          "state": "done"
         }
       ]
     }
   ],
   "your_tasks": [
     {
-      "title": "Decide where community ratings should show",
+      "title": "Community ratings: v1 is live on the issue sheet — dial it in when you like",
       "why": "LOCG, ComicBookRoundup, Hardcover and Open Library ratings are being collected per issue (dated snapshots) but nothing in kometa shows them yet — only the files' ComicInfo will carry LOCG's rating.",
-      "how": "Pick any of: issue sheet ratings line · series page average · Library sort/filter by rating · use as a signal in Suggestions. I'll mock it up first.",
+      "how": "Open any issue; the Community line sits under your stars. Tell me what to change (and whether trades' book sheet should get it).",
       "blocking": "No."
     },
     {
