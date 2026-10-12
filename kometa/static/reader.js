@@ -444,12 +444,17 @@ function _rdBindInput() {
   // macOS's momentum tail. One page per swipe — the rules live in _rdWheelGesture.
   const turnFor = _rdWheelGesture();
   el.addEventListener('wheel', e => {
-    if (!_rd.book || _rd.ended || _rdZoomed() || onBar(e)) return;
+    if (onBar(e) || _rdZoomed()) return;                          // the strip scrolls sideways; zoomed in, you pan
+    // Claim EVERY wheel event in the reader. Safari decides at a swipe's first event
+    // whether it's the page's or its own two-finger "Back" — and a swipe often opens with
+    // an ambiguous (0, 1): left unclaimed, Safari took the gesture and left the reader for
+    // the series page (2026-10-12). Nothing else in the reader scrolls.
+    e.preventDefault();
+    if (!_rd.book || _rd.ended) return;
     const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;   // lines / pages → px
     const dx = e.deltaX * k, dy = e.deltaY * k;
     const now = e.timeStamp || performance.now();
     const turn = turnFor(now, dx, dy);
-    if (Math.abs(dx) > Math.abs(dy) || turn) e.preventDefault();   // ours, not the browser's back/forward swipe
     if (_rdRec.on) _rdRec.ev.push([Math.round((now - (_rdRec.t0 ??= now)) * 10) / 10, dx, dy, turn,
                                    Math.round(performance.now() - now)]);   // last: how late the event was handled
     if (turn) _rdStep(turn, 'swipe');

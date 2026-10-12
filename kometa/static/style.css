@@ -2076,6 +2076,8 @@ body.reading #layout { opacity: 0; transition: opacity var(--t-fast) var(--ease-
   .rd-stage.rd-opening .rd-page { transform: none; }
   .rd-stage.rd-opening.rd-loaded .rd-page { transition: opacity .2s linear; } }
 
+/* the reader never hands an overscroll to the browser (Safari's swipe-to-go-back) */
+body:has(.rd-stage) { overscroll-behavior: none; }
 .rd-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 /* The box IS the picture, sized from the page's own shape (--ar = w/h, set per
    page by _rdRender): as tall as the screen allows, unless that would be wider than
