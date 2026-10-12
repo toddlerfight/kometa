@@ -3524,6 +3524,12 @@ async function _renderHarvest() {
     : `${n(ol.rated)} rated · ${n(ol.covers)} covers · ${n(ol.none)} not there${today(ol.budget)}`;
   const c = h.cbr;
   const cbr = !c ? '—' : off(c) ? 'switched off' : `${n(c.linked)} runs · ${n(c.issues)} issues · ${n(c.none)} not found${today(c.budget)}`;
+  const f = h.fandom;
+  const fandom = !f ? '—' : off(f) ? 'switched off'
+    : `${n(f.galleries)} galleries · ${n(f.missing)} pages missing · ${n(f.covers)} covers listed${f.download ? ` · ${n(f.downloaded)} downloaded` : ''}${today(f.budget)}`;
+  const hc = h.hardcover;
+  const hardcover = !hc ? '—' : off(hc) ? 'switched off' : !hc.configured ? 'no token'
+    : `${n(hc.rated)} rated · ${n(hc.none)} not there${today(hc.budget)}`;
   const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
   el.innerHTML = [
     row('Owned issues', n(o.owned)),
@@ -3539,6 +3545,8 @@ async function _renderHarvest() {
     row('PRH print covers', prh),
     row('Open Library', olib),
     row('ComicBookRoundup', cbr),
+    row('Fandom wikis', fandom),
+    row('Hardcover', hardcover),
   ].join('');
 }
 
@@ -4227,6 +4235,17 @@ async function renderSettings() {
         ${_politeSourceSection('prh', 'Penguin Random House', 'print covers', cfg)}
         ${_politeSourceSection('openlibrary', 'Open Library', 'book ratings', cfg)}
         ${_politeSourceSection('cbr', 'ComicBookRoundup', 'critic scores', cfg)}
+        ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
+          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>`)}
+        <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
+          ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsField('f-hardcover-token', 'API Token', '', { set: cfg.hardcover_configured, ph: 'hardcover.app → settings → API', test: { cardId: 'hardcover', configured: cfg.hardcover_configured } })}
+              ${_requestsToday(cfg, 'hardcover')}
+            </div>
+          </div></div>
+        </div>
         <div class="settings-section ${cfg.locg_enabled ? '' : 'section-off'}" id="sec-locg" style="margin-top:32px">
           ${_settingsSectionHead('League of Comic Geeks', 'your browser’s pass', 't-locg', cfg.locg_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4250,7 +4269,7 @@ async function renderSettings() {
   // whole usenet+torrent branch it wraps.
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
-  for (const k of ['prh', 'openlibrary', 'cbr']) {
+  for (const k of ['prh', 'openlibrary', 'cbr', 'fandom', 'hardcover']) {
     if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
   }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
@@ -4278,10 +4297,11 @@ const _SETTINGS_FIELDS = {
   'f-metron-token':    { card: 'metron',    key: 'metron_token',    test: 'metron', secret: true },
   'f-gcd-user':        { card: 'gcd',       key: 'gcd_user',        test: 'gcd' },
   'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
+  'f-hardcover-token': { card: 'hardcover', key: 'hardcover_token', test: 'hardcover', secret: true },
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg' };
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
@@ -4394,17 +4414,22 @@ function _testControls(cardId, configured) {
       </span>`;
 }
 
-// The polite extras (harvest 1i: PRH, Open Library, ComicBookRoundup): no login,
-// so the card is the toggle plus today's allowance — nothing to fill in.
-function _politeSourceSection(key, title, tag, cfg) {
-  const on = !!cfg[`${key}_enabled`];
+// The polite extras (harvest 1i: PRH, Open Library, ComicBookRoundup, Fandom): no
+// login, so the card is the toggle plus today's allowance (and any extra rows).
+function _requestsToday(cfg, key) {
   const b = (cfg.extra_budgets || {})[key];
   const today = b ? `${Number(b.used).toLocaleString()} of ${Number(b.cap).toLocaleString()}${b.paused ? ' · resting' : ''}` : '—';
+  return `<div class="settings-stat"><span>Requests today</span><b>${today}</b></div>`;
+}
+
+function _politeSourceSection(key, title, tag, cfg, extra = '') {
+  const on = !!cfg[`${key}_enabled`];
   return `<div class="settings-section ${on ? '' : 'section-off'}" id="sec-${key}" style="margin-top:32px">
     ${_settingsSectionHead(title, tag, `t-${key}`, on)}
     <div class="settings-section-body"><div class="settings-section-inner">
       <div class="settings-card">
-        <div class="settings-stat"><span>Requests today</span><b>${today}</b></div>
+        ${_requestsToday(cfg, key)}
+        ${extra}
       </div>
     </div></div>
   </div>`;
@@ -4429,6 +4454,11 @@ const _SOURCE_TOGGLES = {
   't-prh':       { key: 'prh_enabled',       section: 'sec-prh',       label: 'Penguin Random House' },
   't-openlibrary': { key: 'openlibrary_enabled', section: 'sec-openlibrary', label: 'Open Library' },
   't-cbr':       { key: 'cbr_enabled',       section: 'sec-cbr',       label: 'ComicBookRoundup' },
+  't-fandom':    { key: 'fandom_enabled',    section: 'sec-fandom',    label: 'Fandom wikis' },
+  // a flag inside the Fandom card, nothing to fold: downloads stay off until the
+  // cover store leaves ginbako's internal disk
+  't-fandom-download': { key: 'fandom_download', section: null, label: 'Fandom gallery downloads' },
+  't-hardcover': { key: 'hardcover_enabled', section: 'sec-hardcover', label: 'Hardcover' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
   't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },

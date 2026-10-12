@@ -355,7 +355,8 @@ def _extra(d: dict) -> dict:
         "publisher": (d.get("publisher") or {}).get("name") if isinstance(d.get("publisher"), dict) else None,
         "age_rating": (d.get("rating") or {}).get("name") if isinstance(d.get("rating"), dict) else None,
         "series_type": stype.get("name") if isinstance(stype, dict) else stype,
-        "series_volume": series.get("volume"), "alt_number": d.get("alt_number") or None,
+        "series_volume": series.get("volume"), "series_name": (series.get("name") or "").strip() or None,
+        "alt_number": d.get("alt_number") or None,
         "cover_hash": d.get("cover_hash") or None, "modified": d.get("modified"),
     }
     return {k: v for k, v in out.items() if v not in (None, [], "")}

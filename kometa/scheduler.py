@@ -235,11 +235,14 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     except Exception as e:
         logger.warning(f"GCD harvest not scheduled: {e}")
     # The polite extras (1i): PRH's print covers, Open Library's book ratings and
-    # covers, ComicBookRoundup's critic/user scores. Each module owns one throttle
-    # and a daily cap, and each tick no-ops when its Settings toggle is off. No
-    # Metron traffic, so no harvest wrapper.
+    # covers, ComicBookRoundup's critic/user scores, the Fandom wikis' cover
+    # galleries (listed only — downloads have their own switch), Hardcover's book
+    # ratings. Each module owns one throttle and a daily cap (Fandom's is
+    # fandom_client's, shared with the collected-edition lookups), and each tick
+    # no-ops when its Settings toggle is off. No Metron traffic, so no harvest wrapper.
     for mod_name, job_id, offset in (("prh", "harvest_prh", 4), ("openlibrary", "harvest_openlibrary", 6),
-                                     ("cbr", "harvest_cbr", 8)):
+                                     ("cbr", "harvest_cbr", 8), ("fandom_covers", "harvest_fandom", 3),
+                                     ("hardcover", "harvest_hardcover", 5)):
         try:
             import importlib
             mod = importlib.import_module(f"kometa.{mod_name}")

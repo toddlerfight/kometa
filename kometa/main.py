@@ -369,6 +369,14 @@ def test_gcd(req: TestGcdRequest):
     return {"ok": True, "detail": detail} if ok else {"ok": False, "error": detail}
 
 
+@app.post("/api/test/hardcover")
+def test_hardcover():
+    """One light catalogue question with the stored token (never echoed)."""
+    from kometa import hardcover
+    ok, detail = hardcover.test(DB_PATH)
+    return {"ok": True, "detail": detail} if ok else {"ok": False, "error": detail}
+
+
 @app.post("/api/test/comicvine")
 def test_comicvine(req: TestComicVineRequest):
     apikey = req.apikey or _stored("cv_api_key")
@@ -390,6 +398,7 @@ _INTEGRATION_KEYS = {
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
     "comicvine": ["cv_api_key"],
     "gcd":       ["gcd_user", "gcd_pass"],
+    "hardcover": ["hardcover_token"],
     # the refusal mark is deliberately NOT cleared: it's the ban guard, not a credential
     "metron":    ["metron_token", "metron_user", "metron_pass"],
 }
@@ -431,9 +440,14 @@ def _extra_budgets() -> dict:
     """Today's requests per polite source — the Settings cards' only line."""
     out = {}
     try:
-        from kometa import cbr, openlibrary, prh
-        for name, mod in (("prh", prh), ("openlibrary", openlibrary), ("cbr", cbr)):
+        from kometa import cbr, hardcover, openlibrary, prh
+        for name, mod in (("prh", prh), ("openlibrary", openlibrary), ("cbr", cbr), ("hardcover", hardcover)):
             out[name] = mod.limiter.budget()
+    except Exception:
+        pass
+    try:
+        from kometa import fandom_client
+        out["fandom"] = fandom_client.budget()      # the wikis' one throttle: galleries + collected editions
     except Exception:
         pass
     return out
@@ -461,6 +475,8 @@ def settings_attention() -> list[dict]:
         out.append({"card": "comicvine", "reason": "no API key"})
     if on("gcd_enabled") and not has("gcd_user", "gcd_pass"):
         out.append({"card": "gcd", "reason": "no login"})
+    if on("hardcover_enabled") and not has("hardcover_token"):
+        out.append({"card": "hardcover", "reason": "no API token"})
     # PRH, Open Library and ComicBookRoundup need no login — nothing for you to fix,
     # so never a dot (a refusal just rests that source; the harvest card shows it)
     if on("locg_enabled"):
@@ -582,6 +598,13 @@ def get_config():
         "prh_enabled":         cfg.get("prh_enabled", "1") != "0",
         "openlibrary_enabled": cfg.get("openlibrary_enabled", "1") != "0",
         "cbr_enabled":         cfg.get("cbr_enabled", "1") != "0",
+        # Fandom galleries (1i-d): listing on by default; downloading OFF until asked
+        "fandom_enabled":      cfg.get("fandom_enabled", "1") != "0",
+        "fandom_download":     cfg.get("fandom_download", "0") == "1",
+        # Hardcover (1i-f): book ratings by ISBN with your token — never echoed
+        "hardcover_token":     "",
+        "hardcover_configured": bool((cfg.get("hardcover_token") or "").strip()),
+        "hardcover_enabled":   cfg.get("hardcover_enabled", "1") != "0",
         "extra_budgets":       _extra_budgets(),
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),
@@ -620,6 +643,10 @@ class ConfigRequest(BaseModel):
     prh_enabled:        str | None = None   # "1"/"0" — PRH print covers (no login)
     openlibrary_enabled: str | None = None  # "1"/"0" — Open Library ratings + covers (no login)
     cbr_enabled:        str | None = None   # "1"/"0" — ComicBookRoundup scores (no login)
+    fandom_enabled:     str | None = None   # "1"/"0" — Fandom cover galleries listed into the record
+    fandom_download:    str | None = None   # "1"/"0" — and their images downloaded (default off)
+    hardcover_token:    str | None = None   # Hardcover API token (read:catalog)
+    hardcover_enabled:  str | None = None   # "1"/"0" — Hardcover book ratings
     metron_user:        str | None = None
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)

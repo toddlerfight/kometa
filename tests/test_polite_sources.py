@@ -413,7 +413,7 @@ def wired(tmp_path, monkeypatch):
 def test_no_login_sources_never_nag(wired):
     db.set_config({"metron_token": "t", "cv_api_key": "k", "gcd_user": "u", "gcd_pass": "p",
                    "prowlarr_url": "http://p", "prowlarr_apikey": "k", "sab_url": "http://s", "sab_apikey": "k",
-                   "qbit_url": "http://q", "qbit_user": "u"}, wired)
+                   "qbit_url": "http://q", "qbit_user": "u", "hardcover_token": "h"}, wired)
     assert main.settings_attention() == []
     prh.limiter._state["paused_until"] = 9e18                               # even resting after a refusal
     try:
@@ -425,7 +425,7 @@ def test_no_login_sources_never_nag(wired):
 def test_toggles_round_trip_through_config(wired):
     cfg = main.get_config()
     assert cfg["prh_enabled"] and cfg["openlibrary_enabled"] and cfg["cbr_enabled"]
-    assert set(cfg["extra_budgets"]) == {"prh", "openlibrary", "cbr"}
+    assert {"prh", "openlibrary", "cbr"} <= set(cfg["extra_budgets"])
     assert cfg["extra_budgets"]["prh"]["cap"] == 300
     cfg = main.update_config(main.ConfigRequest(prh_enabled="0", openlibrary_enabled="0", cbr_enabled="0"))
     assert not (cfg["prh_enabled"] or cfg["openlibrary_enabled"] or cfg["cbr_enabled"])

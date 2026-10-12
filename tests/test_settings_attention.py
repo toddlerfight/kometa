@@ -20,7 +20,7 @@ def wired(tmp_path, monkeypatch):
     # a fully set-up house: nothing should nag
     db.set_config({"metron_token": "t", "cv_api_key": "k", "gcd_user": "u", "gcd_pass": "p",
                    "prowlarr_url": "http://p", "prowlarr_apikey": "k", "sab_url": "http://s", "sab_apikey": "k",
-                   "qbit_url": "http://q", "qbit_user": "u"}, dbp)
+                   "qbit_url": "http://q", "qbit_user": "u", "hardcover_token": "h"}, dbp)
     return dbp
 
 

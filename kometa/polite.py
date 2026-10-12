@@ -67,6 +67,13 @@ class Limiter:
         and the other 4xx the caller may want to read; raises SourceUnavailable
         for refusals (403/429/503 → pause, Retry-After honoured), outages, a
         spent day or an active pause."""
+        return self._send("get", url, **kw)
+
+    def post(self, url: str, **kw) -> requests.Response:
+        """One POST through the same throttle (Hardcover's GraphQL), same rules."""
+        return self._send("post", url, **kw)
+
+    def _send(self, method: str, url: str, **kw) -> requests.Response:
         headers = {"User-Agent": self.user_agent, **(kw.pop("headers", None) or {})}
         with self._lock:
             self._roll_day()
@@ -79,7 +86,7 @@ class Limiter:
                 self.sleep(wait)
             self._state["count"] += 1               # counted when sent: a failed request still costs the day
             try:
-                r = requests.get(url, headers=headers, timeout=kw.pop("timeout", self.timeout_s), **kw)
+                r = getattr(requests, method)(url, headers=headers, timeout=kw.pop("timeout", self.timeout_s), **kw)
             except requests.RequestException as e:
                 self._state["paused_until"] = time.time() + self.unreachable_pause_s
                 raise SourceUnavailable(f"{self.name} unreachable: {e.__class__.__name__}")

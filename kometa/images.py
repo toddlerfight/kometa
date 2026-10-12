@@ -83,6 +83,13 @@ def prh_key(series_id: int, number: float) -> str:
     return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/prh"
 
 
+def fandom_key(series_id: int, number: float, name: str) -> str:
+    """One cover from an issue's Fandom gallery (enrichment 1i-d), by its file
+    name on the wiki — beside the catalogue's variants, never over them."""
+    safe = re.sub(r"_+", "_", re.sub(r"[^A-Za-z0-9_.-]", "_", str(name or "cover"))).strip("_.")[:120] or "cover"
+    return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/fandom/{safe}"
+
+
 def isbn_key(isbn: str, source: str) -> str:
     """A book's cover by ISBN (Open Library): one ISBN can be a trade on several
     runs' shelves, so the image belongs to the ISBN, not to a series."""
@@ -365,6 +372,21 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                     out.append((k, url, "comicvine"))
                     if len(out) >= limit:
                         return out[:limit]
+            # Fandom galleries (1i-d): dead last, and only with Settings' 'Download
+            # gallery images' on — full galleries run to tens of GB, which waits for
+            # the cover store's move off ginbako's internal disk
+            if db.get_config(path).get("fandom_download", "0") == "1":
+                for r in conn.execute("""SELECT r.tracked_series_id AS sid, r.number, r.extra_json FROM issue_record r
+                    JOIN tracked_series s ON s.id = r.tracked_series_id
+                    WHERE r.extra_json LIKE '%"fandom": {%' ORDER BY s.on_pull_list DESC, r.tracked_series_id, r.number"""):
+                    g = json.loads(r["extra_json"] or "{}").get("fandom") or {}
+                    for c in g.get("covers") or []:
+                        url = c.get("url")
+                        k = fandom_key(r["sid"], r["number"], c.get("name"))
+                        if url and _wants(have, k, url):
+                            out.append((k, url, "fandom"))
+                            if len(out) >= limit:
+                                return out[:limit]
         except Exception as e:
             logger.info(f"Image trickle: extra sources skipped: {e}")
     return out[:limit]
@@ -384,7 +406,13 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
     from kometa.activity import yield_to_reader
     for key, url, source in pending(path, limit=limit):
         yield_to_reader(sleep)
-        row = fetch_image(key, url, source, path, http=http)
+        if source == "fandom":
+            # hashed against the issue's covers before it's kept: a match is the
+            # same cover at a bigger size, not one more variant
+            from kometa import fandom_covers
+            row = fandom_covers.download(key, url, path, http=http)
+        else:
+            row = fetch_image(key, url, source, path, http=http)
         # a failed upgrade hands back the old row (file kept): still a failure
         # as far as "is the CDN down" goes
         if row and not row.get("failed_at"):

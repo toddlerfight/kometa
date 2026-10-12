@@ -137,6 +137,10 @@ def get_series(series_id: int, path=None) -> dict | None:
         return dict(r) if r else None
 
 
+# Keys other workers merge into extra (merge_extra) — carried across a Metron refresh.
+HARVEST_EXTRA_KEYS = ("prh", "cv_original", "fandom")
+
+
 def write_issue(series_id: int, number: float, data: dict, source: str | None, state: str, issue: dict | None = None,
                 path=None) -> dict:
     """Store what a catalogue said about one issue. data uses the issue_meta /
@@ -155,6 +159,15 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
         # a write that brings no extra (LOCG, a stopgap) never wipes what Metron said;
         # Metron's {} — asked, nothing beyond the basics — is stored as {}, not as
         # "never asked", or that issue would be asked again on every tick forever
+        if extra is not None and kept and kept["extra_json"]:
+            # what other workers wrote into extra (PRH's ask, ComicVine's original,
+            # the Fandom gallery) isn't Metron's to drop on a refresh — losing it
+            # meant asking those sources all over again
+            try:
+                prior = json.loads(kept["extra_json"]) or {}
+            except (TypeError, ValueError):
+                prior = {}
+            extra = {**{k: prior[k] for k in HARVEST_EXTRA_KEYS if k in prior}, **extra}
         extra_json = json.dumps(extra) if extra is not None else (kept["extra_json"] if kept else None)
         cv_id = issue.get("cv_issue_id") or ((extra or {}).get("cv_id"))
         conn.execute("""INSERT OR REPLACE INTO issue_record
@@ -215,7 +228,7 @@ def merge_extra(series_id: int, number: float, fields: dict, path=None) -> None:
 # top-level fields (enrichment 1i). LOCG's snapshot is rewritten whole on every
 # refresh, so these are carried across it — and community_at stays LOCG's clock
 # (the sweep reads it as "LOCG asked"); each nested snapshot carries its own 'at'.
-COMMUNITY_SOURCES = ("cbr", "openlibrary")
+COMMUNITY_SOURCES = ("cbr", "openlibrary", "hardcover")
 
 
 def set_community(series_id: int, number: float, data: dict, path=None) -> None:
