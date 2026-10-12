@@ -1286,6 +1286,7 @@ async function showBookModal(c) {
         <div class="issue-modal-meta">${esc([bk?.publisher, pages].filter(Boolean).join(' · '))}${esc(prog)}</div>
         <div style="margin:8px 0"><span class="chip chip-complete">On the shelf</span>${c.number == null ? ' <span class="chip chip-collected">Collected edition</span>' : ''}</div>
         ${bk ? _markRowHtml(bk) : ''}
+        <div class="issue-modal-details" id="issue-modal-details"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1296,6 +1297,11 @@ async function showBookModal(c) {
       <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${c.book_id}, ${completed ? 'false' : 'true'})">${completed ? 'Mark as unread' : 'Mark as read'}</button>
       <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>
     </div>`);
+  // a trade the catalogue lists: the book sites' ratings under the stars
+  try {
+    const r = await api.get(`/api/books/${c.book_id}/community`);
+    if (r.community) _renderIssueDetails('', [], r.community);
+  } catch {}
 }
 
 // A series that isn't on the shelf (Related's "By the same people", Trending):
@@ -2542,7 +2548,7 @@ async function showTradeModal(locgId) {
   `);
   try {
     const d = await api.get(`/api/trade/${encodeURIComponent(locgId)}/details`);
-    _renderIssueDetails(d.desc, d.credits || []);
+    _renderIssueDetails(d.desc, d.credits || [], d.community);
   } catch { _renderIssueDetails('', []); }
 }
 

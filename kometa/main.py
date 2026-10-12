@@ -965,13 +965,23 @@ def get_trade_details(locg_id: str):
     """Description + credits for a collected edition — same LOCG page scrape the
     issue modal uses, just addressed by the trade's own comic id."""
     from kometa.record import trade_details
+    from kometa.trade_community import for_trade
     local = trade_details(locg_id)
-    if local is not None:
-        return local
-    try:
-        return _locg_issue_details(locg_id)
-    except Exception as e:
-        raise HTTPException(502, f"LOCG details failed: {e}")
+    if local is None:
+        try:
+            local = _locg_issue_details(locg_id)
+        except Exception as e:
+            raise HTTPException(502, f"LOCG details failed: {e}")
+    # the book sites' ratings for this edition, by its ISBN (Hardcover, Open Library)
+    return {**local, "community": for_trade(locg_id)}
+
+
+@app.get("/api/books/{book_id}/community")
+def get_book_community(book_id: int):
+    """The shelf's book sheet: a trade's community ratings, found through its run's
+    trades list. {"community": null} for anything that isn't a rated trade."""
+    from kometa.trade_community import for_book
+    return {"community": for_book(book_id)}
 
 
 class TradeDownloadRequest(BaseModel):
