@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 19:15 AEST",
-  "now": "1i (PRH, Open Library, ComicBookRoundup) building in the background. 3a done — 3b–3d (the rewrite job) next, tested on throwaway copies only.",
+  "updated": "2026-10-12 19:40 AEST",
+  "now": "Step 2 built and dry-run done (numbers in Your tasks). 1i (PRH, Open Library, ComicBookRoundup) and 3b–3d (the rewrite job) building in the background.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -123,13 +123,14 @@
         {
           "id": "2a",
           "label": "Folder layout: <Series>/.kometa/covers/",
-          "state": "todo"
+          "state": "done",
+          "note": "<series>/.kometa/covers/ + index.json; the library scan skips it"
         },
         {
           "id": "2b",
           "label": "Copy the cover store to the NAS, verified",
-          "state": "todo",
-          "note": "dry run first, then your go"
+          "state": "waiting-you",
+          "note": "built + dry run: 685 folders, 18,154 files, 3.84 GB — needs your go"
         },
         {
           "id": "2c",
@@ -273,8 +274,8 @@
     },
     {
       "title": "Say go for copying covers into your library folders (step 2)",
-      "why": "Covers become part of the library (a hidden .kometa/covers/ folder per series on the NAS), so the nightly comics backup protects them and ginbako's disk is freed.",
-      "how": "I'll show the dry-run numbers (folders, files, GB) first. Then a yes or no.",
+      "why": "Covers become part of the library: a hidden .kometa/covers/ folder in each series folder on the NAS, so the nightly comics backup protects them and the store on ginbako can later move to Catbus. Dry run done (read-only): 685 series folders, 18,154 files, 3.84 GB today (it grows as the harvest adds full-size covers). Each file is written to a temp name, size-checked, then renamed; re-running only writes what's new. 375 covers belong to series you track but don't own (no folder) — those stay in the local store.",
+      "how": "Reply 'go covers'. It takes ~10–15 minutes over the network, pausing while you read.",
       "blocking": "Yes — step 2 stops here."
     },
     {
