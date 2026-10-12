@@ -51,10 +51,12 @@ fi
 
 mirror() {   # name src dst [extra rsync args...]
   local name=$1 src=$2 dst=$3; shift 3
-  if /usr/bin/rsync -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" "$@" "$src" "$dst" >> "$LOG" 2>&1; then
+  local rc=0
+  /usr/bin/rsync -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" "$@" "$src" "$dst" >> "$LOG" 2>&1 || rc=$?
+  if [ $rc = 0 ]; then
     say "$name ok"
-  else
-    ok=0; notes+=("$name rsync exit $?"); say "$name FAILED"
+  else   # read rc, not $? — by the time the note was built, ok=0 had already reset it to 0
+    ok=0; notes+=("$name rsync exit $rc"); say "$name FAILED (rsync exit $rc)"
   fi
 }
 
