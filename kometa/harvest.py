@@ -28,7 +28,7 @@ def _owned_record(path) -> dict:
     with db._connect(path) as conn:
         rows = conn.execute("""
             SELECT
-              SUM(CASE WHEN r.source IN ('metron', 'locg', 'gcd') AND r.fill_state != 'miss' THEN 1 ELSE 0 END) AS catalogue,
+              SUM(CASE WHEN r.source IN ('metron', 'locg', 'gcd', 'comicinfo-kometa') AND r.fill_state != 'miss' THEN 1 ELSE 0 END) AS catalogue,
               SUM(CASE WHEN r.source IN ('comicinfo', 'komga') THEN 1 ELSE 0 END) AS stopgap,
               SUM(CASE WHEN r.tracked_series_id IS NULL OR r.fill_state = 'miss' THEN 1 ELSE 0 END) AS no_record,
               SUM(CASE WHEN i.metron_issue_id IS NULL AND (i.locg_issue_id IS NULL OR i.locg_issue_id = '') THEN 1 ELSE 0 END) AS no_catalogue_id,
