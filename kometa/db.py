@@ -521,12 +521,9 @@ def _migrate(path=DB_PATH):
 # entirely from compose/env instead of clicking through Settings. Seeded with
 # INSERT OR IGNORE (below), so it's first-run only — the UI stays the source of
 # truth after that, and changing the env later won't clobber UI edits.
+# (KOMGA_* went with Komga, retired 2026-10-12.)
 _ENV_SEEDED_CONFIG = {
     "comics_root":      "COMICS_ROOT",
-    "komga_url":        "KOMGA_URL",
-    "komga_user":       "KOMGA_USER",
-    "komga_pass":       "KOMGA_PASS",
-    "komga_library_id": "KOMGA_LIBRARY_ID",
 }
 
 
@@ -656,18 +653,6 @@ def get_series_by_cv_volume(cv_volume_id, path=DB_PATH):
     with _connect(path) as conn:
         r = conn.execute("SELECT * FROM tracked_series WHERE cv_volume_id = ?",
                          (str(cv_volume_id),)).fetchone()
-        return dict(r) if r else None
-
-
-def get_series_by_komga_id(komga_series_id, path=DB_PATH):
-    """A tracked series already linked to this Komga series, or None. komga_series_id
-    is UNIQUE, so creating a second series with the same link IntegrityErrors — callers
-    reuse the existing series instead of inserting a duplicate."""
-    if not komga_series_id:
-        return None
-    with _connect(path) as conn:
-        r = conn.execute("SELECT * FROM tracked_series WHERE komga_series_id = ?",
-                         (str(komga_series_id),)).fetchone()
         return dict(r) if r else None
 
 
@@ -803,7 +788,7 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
       2. the real cover of the file you own, page 1 via Kometa's own issue
          route (a variant edition shows here even if you never used the picker), then
       3. the Metron solicit art.
-    Upcoming issues aren't owned, so they have no Komga book — variant → Metron.
+    Upcoming issues aren't owned, so they have no file — variant → Metron.
     The up_/recent_ columns are scratch and aren't returned."""
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
@@ -1025,7 +1010,7 @@ def get_issues_for_series(tracked_series_id, path=DB_PATH, number=None):
         )}
     # Stamp variant_cover = the chosen variant's image on issues that have a saved pref.
     # Lets the modal header show YOUR pick for an upcoming/not-yet-downloaded issue
-    # (owned issues get their cover from the injected CBZ via Komga, no pref kept).
+    # (owned issues get their cover from the injected CBZ itself, no pref kept).
     for row in rows:
         p = prefs.get(row["number"])
         if not p:
@@ -1180,28 +1165,6 @@ def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
             (locg_series_id, series_id),
         )
 
-
-def set_komga_series_id(series_id, komga_series_id, path=DB_PATH) -> bool:
-    """Link a series to its Komga counterpart. komga_series_id is UNIQUE, so this
-    returns False (no-op) if that Komga series is already linked to another series."""
-    import sqlite3
-    with _connect(path) as conn:
-        try:
-            conn.execute(
-                "UPDATE tracked_series SET komga_series_id = ? WHERE id = ?",
-                (str(komga_series_id), series_id),
-            )
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-
-
-def clear_komga_series_id(series_id, path=DB_PATH):
-    """Unlink a series from Komga — its stored id points at nothing any more."""
-    with _connect(path) as conn:
-        conn.execute("UPDATE tracked_series SET komga_series_id = NULL WHERE id = ?",
-                     (series_id,))
 
 # --- Download queue ---
 
@@ -1681,7 +1644,7 @@ def clear_queue_history(path=DB_PATH) -> int:
 
 
 def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
-    """Return {series_id: count} of released issues not yet in Komga, for all monitored series."""
+    """Return {series_id: count} of released issues not yet on disk, for all monitored series."""
     with _connect(path) as conn:
         rows = conn.execute("""
             SELECT s.id, COUNT(*) as cnt

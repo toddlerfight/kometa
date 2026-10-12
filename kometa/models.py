@@ -14,7 +14,6 @@ class AddSeriesRequest(BaseModel):
     cv_arc_id: int | None = None
     cv_volume_id: int | None = None   # the origin run, when followed via a storyline
     folder_path: str | None = None
-    komga_id: str | None = None
     on_pull_list: bool = True
     # Metadata carried from the LOCG/ComicVine search result
     title: str | None = None

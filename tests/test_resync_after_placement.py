@@ -1,5 +1,6 @@
 """After a file lands: the cover from the file and the shelf row for the book,
-now, locally. Komga is never asked (read-only since 2026-10-10)."""
+now, locally. No Komga (retired 2026-10-12) — a legacy komga_series_id on the row
+changes nothing."""
 import kometa.db as db
 import kometa.acquisition as acq
 import kometa.shelf as shelf

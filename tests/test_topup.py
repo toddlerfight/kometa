@@ -45,5 +45,5 @@ def test_fillers_enqueue_instead_of_asking_while_shut(db_path):
     assert rec.fill_issue(sid, 1.0, db_path, locg_open=lambda: False) is None
     with db._connect(db_path) as c:
         c.execute("UPDATE tracked_series SET locg_series_id = 123 WHERE id = ?", (sid,))
-    rec.fill_trades(sid, path=db_path, locg_open=lambda: False, enrich=lambda s, t, books=None: None)
+    rec.fill_trades(sid, path=db_path, locg_open=lambda: False, enrich=lambda s, t: None)
     assert tp.waiting(db_path)["by_kind"] == {"issue_details": 1, "trades": 1}

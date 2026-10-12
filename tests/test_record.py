@@ -124,7 +124,6 @@ DETAIL = {501: {"title": "The Promise", "page": 156, "isbn": "9781607067702", "p
 
 def _eow(db_path, tmp_path, monkeypatch, locg=None):
     import kometa.sync as sync
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     folder = tmp_path / "East of West"; folder.mkdir()
     sid = db.add_series(title="East of West", publisher="Image", year_began=2013, folder_path=str(folder), on_pull_list=False, path=db_path)
     db.set_metron_series_id(sid, 4528, db_path)
@@ -180,7 +179,6 @@ def test_metron_key_never_collides_with_locg_ids_or_the_sentinels():
 
 def test_trades_trickle_fills_pull_list_first_and_stops_at_metrons_refusal(db_path, tmp_path, monkeypatch):
     import kometa.sync as sync
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     a = db.add_series(title="A", publisher="X", folder_path=None, on_pull_list=False, path=db_path)
     b = db.add_series(title="B", publisher="X", folder_path=None, on_pull_list=True, path=db_path)
     for sid in (a, b):
@@ -208,11 +206,11 @@ def test_locg_stands_in_for_trades_when_metron_is_out(db_path, tmp_path, monkeyp
     monkeypatch.setattr(rec, "_metron_trades", lambda *a, **k: (_ for _ in ()).throw(MetronUnavailable("asked us to wait")))
     trades = rec.fill_trades(sid, path=db_path, locg_open=lambda: True,
                              locg_fetch=lambda lid: [{"title": "Amazing Spider-Man Vol. 1 TP", "vol": 1, "format": "TP", "is_variant": False}],
-                             enrich=lambda s, t, books=None: t)
+                             enrich=lambda s, t: t)
     assert [t["title"] for t in trades] == ["Amazing Spider-Man Vol. 1 TP"]
     with db._connect(db_path) as c:
         age = c.execute("SELECT (julianday('now') - julianday(fetched_at)) FROM trades_cache WHERE tracked_series_id = ?", (sid,)).fetchone()[0]
     assert age > 5                                                     # pre-aged: due again tomorrow, not next week
     import pytest
     with pytest.raises(MetronUnavailable):
-        rec.fill_trades(sid, path=db_path, force=True, locg_open=lambda: False, enrich=lambda s, t, books=None: t)
+        rec.fill_trades(sid, path=db_path, force=True, locg_open=lambda: False, enrich=lambda s, t: t)

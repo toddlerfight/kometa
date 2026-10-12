@@ -63,7 +63,7 @@ finds private data or dead code. Edit the recipient-facing files in `packaging/`
 ```
 
 Note: most remaining mypy output is bs4 typing noise (`str | AttributeValueList`)
-and `_komga()` None paths guarded by `try/except` — not real bugs.
+— not real bugs.
 
 ## Tests
 
@@ -75,14 +75,14 @@ and `_komga()` None paths guarded by `try/except` — not real bugs.
 
 The suite (`tests/`) runs against a throwaway SQLite DB per test (`db_path` fixture
 in `conftest.py`) and injects fakes for every external source — no GetComics,
-SABnzbd, Komga, or network. Coverage: `naming` pure parsers, `db` (atomic
+SABnzbd, or network. Coverage: `naming` pure parsers, `db` (atomic
 `complete_download`, queue requeue rules, the fresh-install migration), and
 `acquisition` (`_process_queue` happy/not-found paths, `_finalize_usenet_download`
 file moves). Dev-only deps live in `requirements-dev.txt` and never ship to the
 container.
 
 Pattern for new tests: use the `db_path`/`series` fixtures, `monkeypatch.setattr`
-the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`, `acq._komga_scan`,
+the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`,
 `acq.GetComicsClient`), call the function, assert DB/disk state.
 
 ## Deploy to the NAS (commit-then-deploy — no per-change approval needed)
@@ -124,7 +124,7 @@ over a non-interactive ssh, so always use the absolute path). No rsync/scp — u
 
 Layout on ginbako:
 - `$KOMETA_COMPOSE_DIR` (`~/docker`) — holds `compose.yml` for every app on the box
-  (komga, seerr, gitea, backlog, ...). `docker compose` commands must run from here.
+  (komga [retired from Kometa 2026-10-12], seerr, gitea, backlog, ...). `docker compose` commands must run from here.
 - `$KOMETA_APP_DIR` (`~/docker/apps/kometa`) — the deploy target. The bind mount is
   `./apps/kometa/kometa:/app/kometa`, so the tar extracts into `$KOMETA_APP_DIR` and
   the `kometa/` dir inside it *is* the live code.
@@ -133,7 +133,8 @@ Layout on ginbako:
 **Where those `$KOMETA_*` values live:** a gitignored `.env` in the repo root, read by
 `deploy.sh` (see `.env.example`). They are NOT in the repo and must never be — this
 is a public GitHub repo. The host has its own separate `.env` under `$KOMETA_APP_DIR`
-holding the app's `KOMGA_*` / `METRON_*` / `CV_API_KEY`; the two files are unrelated,
+holding the app's `METRON_*` / `CV_API_KEY` (any `KOMGA_*` left there is dead — Komga
+is retired); the two files are unrelated,
 don't confuse them. (`deploy.sh` still honours the legacy `NAS_*` names as a fallback
 so an old `.env` keeps working, but `KOMETA_*` wins.)
 
@@ -228,22 +229,18 @@ a full sync (and its auto-grabs) right after any deploy that crossed a sync hour
 
 ## Runtime integrations
 
-Split across two boxes since the Aug 2026 move. **Komga runs on ginbako**
-(`$KOMETA_HOST`) alongside Kometa; **SABnzbd, qBittorrent and Prowlarr are still on
-the NAS** (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those.
+Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
+(`$KOMETA_HOST`); **SABnzbd, qBittorrent and Prowlarr are still on the NAS**
+(`$NAS_HOST`) — the `/volume1/...` paths below are correct for those.
 
-- **Komga** (reader + cover source): `http://$KOMETA_HOST:8585` (also reachable over
-  the tailnet at `https://$KOMETA_TS_HOST`). **Creds live in the DB `config`
-  table, NOT in any `.env`** — the `KOMGA_*` env keys are vestigial and ignored. Change
-  them via `PATCH /api/config`, never a raw DB write. Linked per-series via folder-path
-  match (Komga's `series.url` == Kometa `folder_path`) — unambiguous, unlike title
-  matching.
-- **Komga numberSort lies**: Komga's own issue-number parsing is unreliable (counts
-  TPBs/dupes, mis-parses mixed naming). Kometa derives the true number from the FILENAME
-  and (a) keys its book map on it, (b) pushes it back to Komga on every sync via
-  `KomgaClient.set_book_number` (locked `numberLock`/`numberSortLock`) so Komga's own
-  labels AND ordering are correct. After re-writing a CBZ (variant cover inject), call
-  `analyze_book` so Komga re-extracts the cover.
+- **Komga — RETIRED 2026-10-12** (docs/library-enrichment-spec.md, K1–K5). Kometa
+  no longer talks to it: no client, no Settings card, no config keys, no series
+  linking, no covers, no imports. Do NOT configure or reintroduce it. What it held
+  was pulled in first (read history, reading lists/collections, a last metadata
+  harvest); those rows stay as data — `issue_record` rows with source `komga` are
+  stopgaps the catalogues overwrite, `reading_lists.source = 'komga'` is provenance,
+  and the `komga_series_id` / `komga_book_id` columns are kept but nothing reads or
+  writes them. Ownership is the folder on disk, the reader is Kometa's own.
 - **Metron API — READ THIS BEFORE TOUCHING IT** (source: Metron-Project/metron
   `api/RATELIMIT.md`, `fail2ban/jail.d/metron.conf`, `api/throttle.py`; verified 2026-10-10
   after Kometa got the house IP banned for 24h):
@@ -286,7 +283,7 @@ the NAS** (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those
 For anything with real UI or product decisions (not bug fixes), in this order:
 
 1. **Decide** — work out what's being built one question at a time, each with a
-   recommendation, until there's a shared understanding. Look up facts (DB, Komga,
+   recommendation, until there's a shared understanding. Look up facts (DB, catalogues,
    files) rather than asking for them; put the decisions to the owner.
 2. **Research** prior art from primary sources → `docs/<feature>-research.md`, cited.
 3. **Spec** the agreed decisions → `docs/<feature>-spec.md`. Layout is NOT decided

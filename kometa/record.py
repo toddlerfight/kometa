@@ -585,7 +585,7 @@ def _merge_locg(trades: list[dict], locg: list[dict]) -> list[dict]:
     return trades
 
 
-def fill_trades(series, force: bool = False, path=None, books=None, search=None, issues=None, detail=None,
+def fill_trades(series, force: bool = False, path=None, search=None, issues=None, detail=None,
                 locg_fetch=None, locg_open=None, enrich=None) -> list[dict]:
     """The series' collected editions into trade_record AND trades_cache (enriched
     with owned/file, the two stored facts). Metron first; LOCG only when open.
@@ -632,9 +632,9 @@ def fill_trades(series, force: bool = False, path=None, books=None, search=None,
             return cached["trades"]
     from kometa.sync import enrich_trades
     if enrich:
-        enrich(series, trades, books=books)
+        enrich(series, trades)
     else:
-        enrich_trades(series, trades, books=books, landed=db.landed_trade_files(series["id"], path))
+        enrich_trades(series, trades, landed=db.landed_trade_files(series["id"], path))
     with db._connect(path) as conn:
         for t in trades:
             key = metron_key(t["metron_issue_id"]) if t.get("metron_issue_id") else f"l:{t.get('locg_id')}"

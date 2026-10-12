@@ -145,65 +145,9 @@ def import_cbl(data: bytes, source_ref: str | None = None, path=None) -> int:
     return save_list(parsed["name"], parsed["items"], "cbl", source_ref, path)
 
 
-def import_komga(komga=None, path=None) -> list[dict]:
-    """Every Komga read list → a list here, one entry per book, the FILE NAME
-    as the hint — Komga's metadata.number is a counter, not the issue (its
-    'Batman: Knightfall #1' is a nine-volume trade). The title+number are kept
-    beside it for the day the file is renamed."""
-    import os
-    from kometa import sources
-    from kometa.naming import parse_issue_number
-    komga = komga or sources.komga()
-    if not komga:
-        raise RuntimeError("Komga isn't configured")
-    out = []
-    for rl in _pages(komga, "/api/v1/readlists"):
-        books = _pages(komga, f"/api/v1/readlists/{rl['id']}/books")
-        items = []
-        for b in books:
-            fn = os.path.basename(b.get("url") or "")
-            series = b.get("seriesTitle") or ""
-            n = parse_issue_number(fn, series) if fn else None
-            if n is None:
-                n = (b.get("metadata") or {}).get("number")
-            items.append({"series": series, "number": str(n) if n is not None else None, "file": fn or None})
-        if not items:
-            continue
-        lid = save_list(rl["name"], items, "komga", rl["id"], path)
-        out.append({"id": lid, "name": rl["name"], "entries": len(items)})
-    return out
-
-
-def import_komga_collections(komga=None, min_series: int = 2, path=None) -> list[dict]:
-    """Komga's collections are reading lists at series grain — 'Murphyverse' is
-    ten runs in an order. One entry per series, no number, so each resolves to
-    its whole run in order (the rule the TPB reading orders already use).
-    A one-series collection isn't an order, so it's skipped."""
-    from kometa import sources
-    komga = komga or sources.komga()
-    if not komga:
-        raise RuntimeError("Komga isn't configured")
-    out = []
-    for coll in _pages(komga, "/api/v1/collections"):
-        series = _pages(komga, f"/api/v1/collections/{coll['id']}/series")
-        items = [{"series": s.get("metadata", {}).get("title") or s.get("name") or "", "number": None}
-                 for s in series]
-        items = [it for it in items if it["series"]]
-        if len(items) < min_series:
-            continue
-        lid = save_list(coll["name"], items, "komga", coll["id"], path)
-        out.append({"id": lid, "name": coll["name"], "entries": len(items)})
-    return out
-
-
-def _pages(komga, url: str, size: int = 200) -> list[dict]:
-    rows, page = [], 0
-    while True:
-        r = komga._get(url, params={"size": size, "page": page})
-        rows += r.get("content", [])
-        if r.get("last", True) or not r.get("content"):
-            return rows
-        page += 1
+# Komga's read lists and collections came in through a one-time import here
+# (source 'komga' on those rows is their provenance). Komga is retired
+# (2026-10-12): the import, and its button, are gone.
 
 
 def get_lists(path=None) -> list[dict]:
@@ -828,17 +772,6 @@ async def api_import_body(request: Request, name: str | None = None):
     except CblError as e:
         raise HTTPException(400, str(e))
     return {"id": lid}
-
-
-@router.post("/api/readlists/import-komga")
-def api_import_komga():
-    """Komga's read lists AND its collections — both are orders to read in."""
-    try:
-        return import_komga() + import_komga_collections()
-    except RuntimeError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"Komga didn't answer: {e}")
 
 
 @router.post("/api/readlists/import-url")

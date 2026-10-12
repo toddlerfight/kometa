@@ -1,18 +1,17 @@
-"""Per-series sync — reconcile one tracked series against Komga (ownership +
-book IDs) and the metadata sources, then upsert the merged issue list.
+"""Per-series sync — reconcile one tracked series against its folder on disk
+(ownership) and the metadata sources, then upsert the merged issue list.
 
-Ownership is what's on disk; the Komga book map only supplies book IDs for
-thumbnails. LOCG is authoritative for the issue list (covers land in the
+Ownership is what's on disk, and nothing else. Komga used to be asked for a
+series link and a folder; it's retired (2026-10-12) and sync never talks to
+it. LOCG is authoritative for the issue list (covers land in the
 legacy-named metron_image column); CV fills arc/storyline runs and upcoming
 solicitations.
 """
 import os
 import re
-import time
 import logging
 import threading
 
-from kometa.sources import komga as _komga
 from kometa.naming import (
     scan_folder_numbers as _scan_folder_numbers, parse_issue_number as _parse_issue_number,
     scan_folder_volume_entries as _scan_folder_volume_entries,
@@ -29,12 +28,6 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
 
-# Full Komga library, cached briefly so a 47-series sync_all loop pulls it ONCE
-# instead of hammering Komga per series. TTL is short — a sync run is the only
-# place this gets read in bursts.
-_KOMGA_ALL_CACHE: dict = {"ts": 0.0, "data": None}
-_KOMGA_ALL_TTL = 120  # seconds
-
 # Concurrency guards. SEVEN entry points can reach sync_one (manual per-series,
 # sync-all, the cron, the startup catch-up, add_series, and two arc-path inline
 # calls) and SQLite has exactly ONE WAL writer slot — overlap them and the loser
@@ -46,54 +39,6 @@ _sync_locks: dict = {}
 _sync_locks_guard = threading.Lock()
 full_sync_lock = threading.Lock()
 
-
-
-def _komga_all_series(komga):
-    """The whole Komga library (cached), LIVE series only. Returns a list; [] on failure.
-
-    Komga doesn't forget a series whose folder vanished — it keeps the row, flagged
-    deleted, until someone empties the trash (which we never do). Rename a folder and
-    the old id still answers, so the dead-id relink in sync_one read it as alive and
-    kept handing out a corpse: Legacy of Vader et al., 2026-10-04, after the SMB-safe
-    folder renames. A soft-deleted series is never a link target — drop it here."""
-    now = time.time()
-    if _KOMGA_ALL_CACHE["data"] is None or now - _KOMGA_ALL_CACHE["ts"] > _KOMGA_ALL_TTL:
-        try:
-            _KOMGA_ALL_CACHE["data"] = [r for r in komga.get_all_series() if not r.get("deleted")]
-            _KOMGA_ALL_CACHE["ts"] = now
-        except Exception as e:
-            logger.warning(f"Komga get_all_series failed: {e}")
-            return _KOMGA_ALL_CACHE["data"] or []
-    return _KOMGA_ALL_CACHE["data"] or []
-
-
-def _best_komga_match(candidates, title):
-    """Pick the Komga series matching title — only when there's exactly ONE exact
-    (normalised) title match, so ambiguous names (e.g. multiple Batman runs) don't
-    mis-link. Match is punctuation-insensitive (strips everything but a-z0-9), so
-    Kometa's 'Batman: Gargoyle of Gotham' links to Komga's 'Batman - Gargoyle of
-    Gotham'. Feed it the FULL library (not a Komga /search result), since Komga's
-    search itself chokes on the punctuation we're trying to ignore. Returns id or None."""
-    def norm(s):
-        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
-    tn = norm(title)
-    if not tn:
-        return None
-    exact = [r.get("id") for r in (candidates or [])
-             if norm((r.get("metadata") or {}).get("title") or r.get("name") or "") == tn]
-    return exact[0] if len(exact) == 1 else None
-
-
-def _best_komga_match_by_path(candidates, folder_path):
-    """Match a series to its Komga counterpart by FOLDER PATH (Komga's series.url).
-    This is the unambiguous join key — same /comics mount on both sides — and it's
-    the ONLY thing that can disambiguate cases title-matching can't: three bare
-    'Batman' series in Komga (different runs) all normalise identically, but their
-    folder urls are distinct. Returns the id on a single exact path match, else None."""
-    if not folder_path:
-        return None
-    hits = [r.get("id") for r in (candidates or []) if r.get("url") == folder_path]
-    return hits[0] if len(hits) == 1 else None
 
 
 # --- How much LOCG a sync is allowed (2026-10-08) ------------------------------
@@ -145,57 +90,15 @@ def sync_one(series: dict, force: bool = False):
     everything. Otherwise LOCG is only asked for what can have changed."""
     if series.get("kind") == "arc":
         # Arcs are populated from ComicVine on add and carry no single-title
-        # issue_status, so the normal sync (Komga link, LOCG issues, trades)
+        # issue_status, so the normal sync (folder, LOCG issues, trades)
         # doesn't apply. Phase E adds arc-specific sync (ownership + trades).
         return
-    komga = _komga()
-
-    # A stored Komga id is a promise Komga can break. Drop and re-add the library
-    # (dead SMB mount, rebuild, whatever) and Komga re-mints EVERY series id — the
-    # 2026-09-12 purge killed 57 links in one shot, and each one kept asking a
-    # corpse for its books: zero book ids, zero read links, two weeks of silence.
-    # So check the id is still alive and, if it's not, forget it and fall through
-    # to the auto-link below like a fresh series. An EMPTY library read is Komga
-    # down or blind, not a verdict — never unlink on that.
-    if series.get("komga_series_id") and komga:
-        all_komga = _komga_all_series(komga)
-        if all_komga and not any(r.get("id") == series["komga_series_id"] for r in all_komga):
-            logger.warning(f"Komga id {series['komga_series_id']} for {series.get('title')!r} "
-                           f"is gone from Komga — relinking")
-            db.clear_komga_series_id(series["id"], DB_PATH)
-            series = dict(series, komga_series_id=None)
-
-    # Auto-link to a Komga series when connected but unlinked. Folder PATH first
-    # (unambiguous — disambiguates same-titled runs like the Batman 2016/2025), then
-    # fall back to normalised title for series whose folder Komga hasn't got.
-    if not series.get("komga_series_id") and komga:
-        try:
-            all_komga = _komga_all_series(komga)
-            kid = (_best_komga_match_by_path(all_komga, series.get("folder_path"))
-                   or _best_komga_match(all_komga, series["title"]))
-            if kid and db.set_komga_series_id(series["id"], kid, DB_PATH):
-                series = dict(series, komga_series_id=kid)
-        except Exception as e:
-            logger.warning(f"Komga auto-link failed for {series.get('title')!r}: {e}")
-
-    # Lazily populate folder_path from Komga on first sync (only if linked)
-    if not series.get("folder_path") and series.get("komga_series_id") and komga:
-        try:
-            komga_series = komga.get_series(series["komga_series_id"])
-            fp = komga_series.get("url")
-            if fp:
-                db.set_folder_path(series["id"], fp, DB_PATH)
-                series = dict(series, folder_path=fp)
-        except Exception:
-            pass
-
-    # No Komga book map any more (2026-10-10): the cover comes from the file, the
-    # reader is Kometa's own, so an issue needs no Komga book id. The column stays;
-    # nothing writes it. Komga itself is read-only to us — no renumber push either.
+    # No Komga (retired 2026-10-12): no series link, no book map, no folder
+    # lookup — a series without a folder_path simply owns nothing until it gets
+    # one (add_series always derives one, so that's the odd old row).
     # Ownership = what's on disk, FULL STOP. No folder, or a folder that isn't
     # there yet? Then nothing is owned until a real file lands (rescan_owned,
     # below, is the sole authority and re-derives purely from disk).
-    # Komga's book list does NOT get a vote here — that's the rule.
     folder = series.get("folder_path")
     owned_numbers = (
         _scan_folder_numbers(folder, series.get("title", ""))
@@ -205,7 +108,7 @@ def sync_one(series: dict, force: bool = False):
 
     # --- Build issue map from LoCG (best for upcoming solicitations) ---
     # All keyless: series added via the wizard already carry a locg_series_id;
-    # one without a linked id (e.g. Komga-first) gets resolved by title here.
+    # one without a linked id (e.g. a shelf import) gets resolved by title here.
     # LOCG never needed a login — the search/issue endpoints ignore auth.
     issue_map: dict[float, dict] = {}
     locg_id = series.get("locg_series_id")
@@ -267,8 +170,8 @@ def sync_one(series: dict, force: bool = False):
 
     # Cache available collected editions while we're here — same anon LOCG
     # path, so the Trades tab reads instantly instead of searching live every
-    # open. Enrich with the two stored facts (owned from the folder, komga_book_id
-    # from Komga) so reads never fold-scan. Best-effort: a trades hiccup must
+    # open. Enrich with the stored facts (owned + the file, from the folder) so
+    # reads never fold-scan. Best-effort: a trades hiccup must
     # never fail an issue sync.
     if (locg_id or series.get("metron_series_id")) and (force or _trades_due(series)):
         try:
@@ -277,7 +180,7 @@ def sync_one(series: dict, force: bool = False):
         except Exception as e:
             logger.warning(f"Trades cache failed for '{series['title']}': {e}")
 
-    # NB: a storyline-followed run (only a cv_volume_id, no LOCG/Komga) is
+    # NB: a storyline-followed run (only a cv_volume_id, no LOCG/Metron) is
     # SCOPED to its arcs — it does NOT pull the full CV volume. Its issues are stamped
     # in by arc participation (_populate_participating_issues), carrying their covers.
     # So the loops above legitimately leave issue_map empty here; that's fine.
@@ -341,16 +244,12 @@ def _scan_folder_edition_names(folder_path: str) -> dict[str, str]:
     return names
 
 
-def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = None,
+def enrich_trades(series: dict, trades: list[dict],
                   landed: dict[str, str] | None = None) -> list[dict]:
-    """Stamp the two stored facts onto each trade: `owned` (file in the folder) and
-    `komga_book_id` (the matching Komga book, for the read link). Computed at sync
-    time and cached so request handlers never fold-scan. The two are independent —
-    the folder answers 'do I have it', Komga answers 'can I read it'; Komga is never
-    an ownership source.
-
-    books: pass the series' Komga book list if already fetched (sync_one pulls it
-    for the issue book map) to avoid a second full paginated get_books.
+    """Stamp the stored facts onto each trade: `owned` (an edition's file is in the
+    folder) and `file` (which one). Computed at sync time and cached so request
+    handlers never fold-scan. (A third, `komga_book_id`, was Komga's read link;
+    the reader opens the file by name, and Komga is retired.)
 
     landed: {lowercased file name: edition id} for the trades Kometa downloaded
     itself (db.landed_trade_files) — the surest word on which edition a file IS."""
@@ -376,16 +275,6 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
     def _vol_files(vol, kws):
         return [real_names.get(name, name) for v, name in vol_entries if v == vol and _edition_keywords(name) == kws]
 
-    # `books`: a Komga book list, only when a caller hands one over (nothing does
-    # since 2026-10-10 — the reader opens the file by name; komga_book_id is legacy)
-    kbook_by_volkey, kbook_by_name = {}, {}
-    for b in books or []:
-        name = b.get("name", "")
-        v = _parse_volume_number(name)
-        if v is not None:
-            kbook_by_volkey[(v, _edition_keywords(name))] = b["id"]
-        kbook_by_name[_norm_name(name)] = b["id"]
-
     vol_bids: list[tuple] = []        # (fit, order, trade, file): settled below, one file per edition
     for i, t in enumerate(trades):
         kws = _edition_keywords(t.get("title", ""))
@@ -393,22 +282,19 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
         # 'Also on the shelf' and the Trades tab reads it
         t["file"] = None
         if t.get("vol") is not None:
-            t["owned"], t["komga_book_id"] = False, None
+            t["owned"] = False
             for f in _vol_files(t["vol"], kws):
                 vol_bids.append((_trade_file_fit(t, f, landed), -i, t, f))
         elif t.get("vol_range"):
             lo, hi = t["vol_range"]
             t["owned"] = all(_vol_owned(v, kws) for v in range(lo, hi + 1))
-            t["komga_book_id"] = None  # a range spans multiple books — no single link
         else:
             # No volume number — an OGN / one-shot ("Gigs TP"). It can't match by
             # volume, so key off the edition title: the file we place is named for it
-            # (_trade_fallback_name → edition_title), and Komga's book carries the same
-            # name. Without this an owned OGN reads forever-missing on the Trades tab.
+            # (_trade_fallback_name → edition_title). Without this an owned OGN reads forever-missing on the Trades tab.
             key = _norm_name(t.get("title", ""))
             t["owned"] = bool(key) and key in owned_names
             t["file"] = owned_names.get(key) if t["owned"] else None
-            t["komga_book_id"] = kbook_by_name.get(key)
     # Volume ownership, settled. (vol, edition words) alone let 'Avengers Academy:
     # The Complete Collection Vol. 2 TP' AND 'Vol. 2: Will We Use This in the Real
     # World? HC' both grab the one Vol 2 file — two editions "owned", one book on
@@ -420,7 +306,6 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
         if t["owned"] or f in taken:
             continue
         t["owned"], t["file"] = True, f
-        t["komga_book_id"] = kbook_by_volkey.get((t["vol"], _edition_keywords(t.get("title", ""))))
         taken.add(f)
     # Second pass, loose: the catalogue says 'Batman Year 100 Deluxe Edition HC',
     # the file says 'Batman - Year 100 and Other Tales Deluxe Edition (2015)'. Same
@@ -437,8 +322,6 @@ def enrich_trades(series: dict, trades: list[dict], books: list[dict] | None = N
         if f:
             t["owned"], t["file"] = True, f
             claimed.add(f)
-            t["komga_book_id"] = t.get("komga_book_id") or kbook_by_name.get(
-                _norm_name(re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", os.path.splitext(f)[0])))
     return trades
 
 
@@ -498,7 +381,7 @@ def _loose_edition_file(title: str, kws: frozenset, owned_names: dict[str, str],
 
 
 def refresh_trades_owned(series_id: int) -> None:
-    """Re-stamp owned/komga on a series' cached trades without re-hitting LOCG —
+    """Re-stamp owned/file on a series' cached trades without re-hitting LOCG —
     used right after a trade download so the tile flips to owned immediately
     instead of waiting for the next sync."""
     cached = db.get_trades(series_id, DB_PATH)

@@ -122,7 +122,7 @@ def trade_search_title(title: str, vol=None) -> str:
 
 def _trade_fallback_name(meta: dict, default_title: str) -> str:
     """Canonical on-disk base name for a collected edition (no extension). Zero-padded
-    'Series Vol NN' for numbered editions (clean Komga sort), the edition's own title
+    'Series Vol NN' for numbered editions (clean sort), the edition's own title
     for the no-volume ones (Compendium, year HCs, OGNs) so they don't all collapse onto
     one name. Shared by the GetComics and usenet trade-finalize paths."""
     title = meta.get("title") or default_title
@@ -139,8 +139,8 @@ def _trade_fallback_name(meta: dict, default_title: str) -> str:
 # book, both now, both local. Komga used to be in this loop — place, ask Komga
 # to scan, poll it for the book, sync to stamp its id — and for months a fresh
 # issue sat owned-but-blank until Komga got round to it (2026-09-23: three
-# Absolutes, linkless for two hours). Komga is read-only to us since 2026-10-10;
-# nothing here waits on it.
+# Absolutes, linkless for two hours). Komga is retired (2026-10-12); nothing
+# here waits on anything but the disk.
 def _resync_after_placement(series_id: int, placed_path: str | None = None) -> None:
     """The finalize thread has done its job the moment the file is on the shelf;
     this makes the tile and the reader see it. Seam name kept for its callers."""
@@ -443,7 +443,6 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
             issue_number=item["issue_number"],
             store_date=store_date,
             hint_filename=hint,
-            komga_scan_fn=None,
             progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
             dest_dir=item.get("folder_path") or None,
             tracked_series_id=item["tracked_series_id"],
@@ -647,7 +646,6 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
             dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
             series_title=title,
             progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
-            komga_scan_fn=None,
             on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
         )
     except DuplicateIssueError:
@@ -1191,7 +1189,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     # Trade — the 'dumb' path, same contract as download_trade: a collected
     # edition has no single issue number (it's None here), so single-issue
     # verify/rename below would crash on int(None). Place the file(s) under the
-    # canonical trade name and let folder ownership + Komga scan do the rest.
+    # canonical trade name and let folder ownership do the rest.
     # NO content verification.
     if item.get("kind") == "trade":
         meta = json.loads(item.get("meta_json") or "{}")

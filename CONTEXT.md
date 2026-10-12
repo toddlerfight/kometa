@@ -2,10 +2,11 @@
 
 ## What it is
 
-Kometa is a comic-book acquisition and tracking service that pairs with **Komga**
-(a self-hosted comic server). Kometa watches the series you follow, detects missing
-issues, downloads them from multiple sources, files them on disk, and lets Komga
-index them. Komga owns reading and serving; Kometa owns finding and acquiring.
+Kometa is a comic-book acquisition, tracking and reading service. It watches the
+series you follow, detects missing issues, downloads them from multiple sources, files
+them on disk, and reads them in its own reader. It used to pair with **Komga** (a
+self-hosted comic server) for reading and covers; Komga was retired on 2026-10-12 and
+Kometa no longer talks to it (see INSTRUCTIONS.md, "Runtime integrations").
 
 FastAPI backend + static single-page UI, deployed as a Docker container on a NAS.
 SQLite for state. Background scheduler drives periodic work.
@@ -13,29 +14,26 @@ SQLite for state. Background scheduler drives periodic work.
 ## Ownership model (load-bearing)
 
 **Ownership is the disk folder, and only the disk folder.** A series is "owned" because
-its files exist under a `folder_path`. Komga is a metadata and thumbnail source — never
-the source of truth for ownership. Deleting/moving files on disk is the real mutation;
-Komga merely reflects it on its next scan.
+its files exist under a `folder_path`. Deleting/moving files on disk is the real
+mutation; everything else reflects it.
 
-## Komga numberSort is a lie (load-bearing gotcha)
+## The filename is the issue number (load-bearing)
 
-Komga's per-book `number`/`numberSort` is an unreliable running counter — TPBs, specials,
-duplicate printings and mixed filenames shift it (e.g. "Monstress #062" lands at
-`numberSort 83`; a lone noir #3 lands at `1`). So: **the FILENAME is the source of truth
-for issue number.** `parse_issue_number` (naming.py) derives it; the Komga book map keys on
-that, not `numberSort`. And `sync_one` pushes the filename-derived number back into Komga
-(`set_book_number`, locked) so Komga's own labels and ordering get corrected over time.
-Series are linked to Komga by **folder path** (`series.url`), not title — the only key that
+**The FILENAME is the source of truth for issue number.** `parse_issue_number`
+(naming.py) derives it. (Komga's per-book `numberSort` was an unreliable running
+counter — "Monstress #062" landed at 83 — which is how this rule was learned.) A series
+is identified on disk by its **folder path**, not its title — the only key that
 disambiguates same-titled runs (three bare "Batman" series) and alternate printings.
 
 ## Core entities (SQLite — see db.py)
 
 - **tracked_series** — a series under management. Bridges identities across sources:
-  `komga_series_id` ↔ `metron_series_id` ↔ `cv_volume_id` ↔ `locg_series_id`. Carries
+  `metron_series_id` ↔ `cv_volume_id` ↔ `locg_series_id` (`komga_series_id` is a kept,
+  unused column since the Komga retirement). Carries
   `folder_path` (ownership), `on_pull_list`, `monitor_status`, `year_began`, `publisher`.
 - **issue_status** — per-issue state for a tracked series: `number` (REAL), `store_date`,
-  `owned` (on disk — the ownership flag; set by the folder scan, not Komga),
-  `komga_book_id`, `metron_image`, `metron_issue_id`, `locg_issue_id`.
+  `owned` (on disk — the ownership flag; set by the folder scan),
+  `metron_image`, `metron_issue_id`, `locg_issue_id` (`komga_book_id`: kept, unused).
 - **download_queue** — issues being acquired. State machine:
   `queued → searching → downloading → done | not_found | failed | pending_usenet`.
   Carries `retry_after` (release-day/duplicate backoff) and `sab_nzo_id` (SABnzbd handle).
@@ -47,7 +45,6 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
 
 | Source | Role | Module |
 |---|---|---|
-| **Komga** | Reader + cover source; linked per-series by FOLDER PATH (`series.url`); scan + per-book `analyze` triggers; Kometa pushes correct issue numbers back (its `numberSort` is unreliable) | komga_client.py |
 | **Metron** | Primary metadata: series, issue lists, store dates | metron_client.py |
 | **ComicVine (CV)** | Alternate metadata + cover images | comicvine_client.py |
 | **LOCG** (League of Comic Geeks) | Series/issue data + variant covers | locg_client.py |
@@ -58,12 +55,12 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
 ## Core workflows
 
 1. **Add** — find a series (Metron or anonymous LOCG search), derive its folder from
-   publisher+title, and track it. No Komga required.
+   publisher+title, and track it.
 2. **Sync** — for tracked series, pull issue lists (Metron → CV → LOCG, anon if no
    creds), update `issue_status`, and detect missing by scanning the folder on disk.
 3. **Queue + download** — missing issues enter `download_queue`. `_process_queue` tries
    GetComics first, falls back to Usenet (newznab search → SABnzbd submit → poll).
-   Archives are extracted (rarfile/bsdtar), filed under `folder_path`, then Komga scans.
+   Archives are extracted (rarfile/bsdtar) and filed under `folder_path`.
 4. **Variant covers** — scrape variant covers from LOCG, inject into the issue's CBZ.
 5. **Scheduling** (scheduler.py) — APScheduler: periodic full sync (which folder-gated-sweeps at
    the end), SABnzbd poller (interval configurable via `KOMETA_USENET_POLL_SECONDS`, default 5s),
@@ -76,16 +73,13 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
   The deep orchestration that used to live here has been extracted (see below); main is
   now the web layer plus glue (`_sync_all_job`, `_summary`).
 - **sources.py** — the seam to every external system. Configured-client accessors
-  (`komga`, `metron`, `comicvine`, `sabnzbd`, `locg`, `usenet_indexers`) that read config
+  (`comicvine`, `sabnzbd`, `qbittorrent`, `prowlarr`, `wikipedia`) that read config
   from the DB and cache where it makes sense. Callers never touch credentials.
-- **sync.py** — `sync_one`: auto-link to Komga (folder-path first via `_best_komga_match_by_path`,
-  then normalised-title `_best_komga_match` against the full library `_komga_all_series`); build
-  the issue list from metadata sources (Metron primary, CV/LOCG supplements; LOCG anon), reconcile
-  ownership against the disk folder, upsert. The Komga book map keys on the parsed FILENAME (not
-  numberSort) and pushes number corrections back to Komga; book IDs are stamped onto owned issues
-  (`db.set_komga_book_id`) even for folder-only series.
+- **sync.py** — `sync_one`: build the issue list from metadata sources (Metron primary,
+  CV/LOCG supplements; LOCG anon), reconcile ownership against the disk folder, upsert. No
+  Komga: no series linking, no book map.
 - **acquisition.py** — the download state machine (`_process_queue`, `_sweep_missing`,
-  `_poll_usenet_jobs`, `_finalize_usenet_download`, `_release_day_retry`, `_komga_scan`).
+  `_poll_usenet_jobs`, `_finalize_usenet_download`, `_release_day_retry`).
   `_sweep_missing` is **folder-gated** (only sweeps series whose folder it has actually inventoried
   — no sweeping into the void). `_finalize_usenet_download` scans `dirname(storage)` when SAB
   reports a single grab's storage as a file. Owns `_dl_progress`, the live progress map the UI polls.

@@ -327,8 +327,7 @@ function esc(str) {
 }
 
 // Kometa's own cover route for an issue: your chosen variant, else the file's own
-// first page (kept in the image store), else the catalogue's. Komga is out of the
-// chain unless Settings turns it on as a last resort (2026-10-10).
+// first page (kept in the image store), else the catalogue's.
 function bookThumb(issue) {
   return `/api/series/${issue.tracked_series_id}/issues/${issue.number}/thumbnail`;
 }
@@ -2130,7 +2129,7 @@ async function buildArcReadlist(id, btn) {
 }
 
 async function refreshArcOwnership(id, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Checking Komga…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking the shelf…'; }
   try {
     const r = await api.post(`/api/series/${id}/resolve-arc`, {});
     const note = r.collection ? ` · collected in "${r.collection.name}"` : '';
@@ -4089,7 +4088,6 @@ async function renderSettings() {
   setApp('<div class="state-msg">Loading...</div>');
 
   const cfg = await api.get('/api/config');
-  const komgaCfg  = !!(cfg.komga_url && cfg.komga_user);
 
   setApp(`
     <div class="settings-grid">
@@ -4151,24 +4149,7 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
-        <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga">
-          ${_settingsSectionHead('Komga', 'optional · legacy', 't-komga', cfg.komga_enabled)}
-          <div class="settings-section-body"><div class="settings-section-inner">
-            <div class="settings-card">
-              ${_settingsField('f-komga-url', 'Server URL', cfg.komga_url, { test: { cardId: 'komga', configured: komgaCfg } })}
-              ${_settingsField('f-komga-user', 'Username', cfg.komga_user)}
-              ${_settingsField('f-komga-pass', 'Password', '', { set: komgaCfg })}
-              ${_settingsField('f-komga-lib', 'Library ID', cfg.komga_library_id)}
-              <div class="settings-help" id="komga-harvest-status">${_komgaHarvestLine(cfg)}</div>
-              <div class="settings-row settings-row-toggle">
-                <span>Komga thumbnails as a last-resort cover</span>
-                ${_settingsToggle('t-komga-covers', cfg.komga_covers, 'Komga covers as a last resort')}
-              </div>
-              <div class="settings-help">Kometa reads, covers and tracks on its own now. Komga is only read from: a harvest copies its summaries, credits, release dates, genres and posters into Kometa’s record where no catalogue has answered yet. Nothing is written to Komga.</div>
-            </div>
-          </div></div>
-        </div>
-        <div class="settings-section ${cfg.comicvine_enabled ? '' : 'section-off'}" id="sec-comicvine" style="margin-top:32px">
+        <div class="settings-section ${cfg.comicvine_enabled ? '' : 'section-off'}" id="sec-comicvine">
           ${_settingsSectionHead('ComicVine', 'storylines', 't-comicvine', cfg.comicvine_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
@@ -4205,7 +4186,6 @@ async function renderSettings() {
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings). Prowlarr is the master — off folds the
   // whole usenet+torrent branch it wraps.
-  if (!cfg.komga_enabled)     _collapseSection(document.getElementById('sec-komga'), true, false);
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
@@ -4221,10 +4201,6 @@ async function renderSettings() {
 // input id → config key, owning card (for the 'saved' whisper), and which
 // integration to re-verify after the value changes.
 const _SETTINGS_FIELDS = {
-  'f-komga-url':   { card: 'komga',     key: 'komga_url',        test: 'komga' },
-  'f-komga-user':  { card: 'komga',     key: 'komga_user',       test: 'komga' },
-  'f-komga-pass':  { card: 'komga',     key: 'komga_pass',       test: 'komga', secret: true },
-  'f-komga-lib':   { card: 'komga',     key: 'komga_library_id' },
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
@@ -4240,30 +4216,7 @@ const _SETTINGS_FIELDS = {
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg' };
-
-// Komga harvest: one tap pulls what Komga knows into the record (kometa/harvest_komga.py).
-function _komgaHarvestLine(cfg) {
-  if (!(cfg.komga_url && cfg.komga_user)) return 'Not connected.';
-  return `Harvest what Komga knows <button class="btn-link" onclick="_komgaHarvestNow(this)">harvest now</button>`;
-}
-async function _komgaHarvestNow(btn) {
-  btn.disabled = true; btn.textContent = 'harvesting…';
-  try {
-    await api.post('/api/komga/harvest', {});
-    const poll = setInterval(async () => {
-      try {
-        const st = await api.get('/api/komga/harvest');
-        if (st.running) return;
-        clearInterval(poll);
-        const l = st.last || {};
-        btn.disabled = false; btn.textContent = 'harvest now';
-        showToast(l.error ? `Komga harvest failed: ${l.error}`
-          : `Komga harvest: ${l.series_seen || 0} series read · ${l.series || 0} series facts · ${l.issues || 0} issues · ${l.posters || 0} posters`, l.error ? 'error' : undefined);
-      } catch { clearInterval(poll); btn.disabled = false; btn.textContent = 'harvest now'; }
-    }, 2000);
-  } catch (e) { btn.disabled = false; btn.textContent = 'harvest now'; _whisper('komga', 'couldn’t start', true); }
-}
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
@@ -4376,7 +4329,7 @@ function _testControls(cardId, configured) {
       </span>`;
 }
 
-// One header row per toggleable section (Komga / Prowlarr / Usenet / Torrent):
+// One header row per toggleable section (sources / Prowlarr / Usenet / Torrent):
 // title + role tag + the enable toggle, underlined. Off folds the body; head stays.
 function _settingsSectionHead(title, tag, toggleId, on) {
   return `<div class="settings-section-head">
@@ -4386,10 +4339,8 @@ function _settingsSectionHead(title, tag, toggleId, on) {
 }
 
 // Toggle → persist the flag + fold/unfold the section. Backend reads the flag
-// (gates the search cascade for usenet/torrent, sources.komga() for komga).
+// (gates the search cascade for usenet/torrent, each source's accessor for the rest).
 const _SOURCE_TOGGLES = {
-  't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
-  't-komga-covers': { key: 'komga_covers',   section: null,            label: 'Komga covers as a last resort' },
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
   't-locg':      { key: 'locg_enabled',      section: 'sec-locg',      label: 'League of Comic Geeks' },
   't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
@@ -4507,7 +4458,7 @@ async function _settingsChanged(el) {
   try {
     const cfg = await api.patch('/api/config', body);
     // Settings autosave changes what the SERVER knows, but every render decision
-    // gated on _appConfig (Arcs tab, "Open in Komga" links, …) was reading the
+    // gated on _appConfig (Arcs tab, …) was reading the
     // STALE snapshot from boot() until a hard reload — a toggle could report
     // 'enabled' via toast while the UI it unlocks stayed invisible all session.
     _appConfig = cfg;
@@ -5151,7 +5102,7 @@ let _ptrStartY = 0, _ptrPulling = false;
 function _ptrRefresh() {
   // The gesture means "make it FRESH", not just "repaint the cache" — where
   // the data is born (library, series detail), a pull also kicks a real sync
-  // (LOCG/Komga/folder rescan). Repaint is instant; the sync lands behind it.
+  // (LOCG/Metron/folder rescan). Repaint is instant; the sync lands behind it.
   if (currentView === 'library') {
     api.post('/api/sync', {}).catch(() => {});
     showToast('Refreshing — full sync started');
@@ -5235,9 +5186,9 @@ if ((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || 'on
 }
 
 async function boot() {
-  // Always land on the library. Komga is an optional integration, configured
-  // in Settings — never a blocking welcome gate. Kometa runs fine without it:
-  // search and track via LOCG, own via folders.
+  // Always land on the library — never a blocking welcome gate. Every
+  // integration is optional and configured in Settings: search and track via
+  // Metron/LOCG, own via folders.
   const cfg = await api.get('/api/config');
   _appConfig = cfg;
   const { view, params } = _parseHash();

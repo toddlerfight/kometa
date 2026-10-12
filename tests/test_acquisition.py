@@ -1,5 +1,5 @@
 """acquisition.py — the download state machine, run against fakes. No GetComics,
-no SABnzbd, no Komga, no network. We seed the DB, inject fake sources, and watch
+no SABnzbd, no network. We seed the DB, inject fake sources, and watch
 the queue/issue rows land where they should.
 
 _finalize_usenet_download gets the heaviest coverage here — it moves real files
@@ -44,15 +44,15 @@ def _qid_for(db_path, series_id, number):
 
 @pytest.fixture
 def wired(db_path, series, monkeypatch):
-    """Point acquisition at the temp DB and stub Komga scans + torrent sources
-    to no-ops. The torrent stubs matter: _try_torrent runs in the no-source and
+    """Point acquisition at the temp DB and stub the post-placement resync +
+    torrent sources to no-ops. The torrent stubs matter: _try_torrent runs in the no-source and
     usenet-failed fallback paths, and the real _prowlarr()/_qbittorrent() read
     config via sources.DB_PATH — the container path — which doesn't exist on a
     dev machine, so without these two lines those paths die on 'unable to open
     database file' and mark items failed instead of not_found."""
     monkeypatch.setattr(acq, "DB_PATH", db_path)
-    # The post-placement resync spawns a thread that would poll a Komga that
-    # isn't there and then run a REAL sync (LOCG, network) against the temp DB.
+    # The post-placement resync would cut covers and touch the shelf for files
+    # these fakes never really placed — not what these tests are about.
     monkeypatch.setattr(acq, "_resync_after_placement", lambda *a, **k: None)
     monkeypatch.setattr(acq, "_prowlarr", lambda: None)
     monkeypatch.setattr(acq, "_qbittorrent", lambda: None)

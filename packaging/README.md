@@ -29,8 +29,8 @@ Open a series and check the **Trades** tab to grab a collected edition instead �
 handy when single issues are hard to find.
 
 Nothing to configure to get going: search and downloads work out of the box, no
-API keys. Connecting Komga, Metron, or SABnzbd in **Settings** is optional — it
-adds metadata, in-app reading, and usenet — but none of it is required.
+API keys. Connecting Metron or SABnzbd in **Settings** is optional — it adds
+metadata and usenet — but none of it is required.
 
 ## Commands
 

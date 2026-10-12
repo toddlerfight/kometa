@@ -1,4 +1,4 @@
-"""Komga-optional onboarding: adding a series with no Komga configured must still
+"""Onboarding with no Komga (retired 2026-10-12): adding a series must
 land a correct folder_path, derived from publisher+title. This is what lets the
 first sync reconcile owned-vs-missing against disk instead of falling into the
 'own nothing, download everything' trap.
@@ -15,7 +15,6 @@ def _wire(monkeypatch, tmp_path, comics_root):
     db.init_db(dbp)
     monkeypatch.setattr(main, "DB_PATH", dbp)
     monkeypatch.setattr(main, "_comics_root", lambda: str(comics_root))
-    monkeypatch.setattr(main, "_komga", lambda: None)          # no Komga
     monkeypatch.setattr(main, "_sync_one", lambda s: None)      # neutralize bg thread
     monkeypatch.setattr(main, "_process_queue", lambda: None)
     return dbp
@@ -223,23 +222,6 @@ class TestArcParticipantGate:
         assert arcs._arc_participant_allowed("DC Comics", None)
 
 
-def test_add_with_claimed_komga_id_lands_unlinked(tmp_path, monkeypatch):
-    """A Komga id the auto-link picked but another tracked series already owns
-    must be dropped, not INSERTed — komga_series_id is UNIQUE and the collision
-    used to 500 the whole add (live repro: adding a 'Feral' one-shot while the
-    Feral series already claimed that Komga id)."""
-    root = tmp_path / "comics"
-    root.mkdir()
-    dbp = _wire(monkeypatch, tmp_path, root)
-    db.add_series("K123", title="Feral", publisher="Image Comics", path=dbp)
-
-    added = main.add_series(AddSeriesRequest(title="Feral: Wildcats", publisher_name="Image Comics",
-                                             komga_id="K123", on_pull_list=False))
-
-    assert added["id"] is not None
-    assert added["komga_series_id"] is None
-
-
 def test_duplicate_locg_add_returns_existing_row(tmp_path, monkeypatch):
     """Adding the same LOCG series twice must return the FIRST row, not mint a
     twin. Live repro: The Foundry added twice 41 min apart → two tracked_series
@@ -258,24 +240,6 @@ def test_duplicate_locg_add_returns_existing_row(tmp_path, monkeypatch):
     assert second["id"] == first["id"]
     all_series = db.get_all_series(main.DB_PATH)
     assert len([s for s in all_series if str(s.get("locg_series_id")) == "210251"]) == 1
-
-
-def test_duplicate_add_via_claimed_komga_id_returns_existing_row(tmp_path, monkeypatch):
-    """No LOCG id to dedupe on, but the Komga id resolves to a row whose title
-    MATCHES this add — that's the same series, not an adjacent franchise title.
-    Return the existing row instead of inserting an unlinked twin."""
-    root = tmp_path / "comics"
-    root.mkdir()
-    dbp = _wire(monkeypatch, tmp_path, root)
-    existing_id = db.add_series("K900", title="The Foundry",
-                                publisher="Dark Horse Comics", path=dbp)
-
-    added = main.add_series(AddSeriesRequest(title="The Foundry (2026)",
-                                             publisher_name="Dark Horse Comics",
-                                             komga_id="K900", on_pull_list=False))
-
-    assert added["id"] == existing_id
-    assert len(db.get_all_series(dbp)) == 1
 
 
 TRUNC = "Teenage Mutant Ninja Turtles: The Last Ronin – Training Day..."
@@ -314,3 +278,70 @@ def test_clipped_title_loses_dots_when_locg_has_no_series_row(tmp_path, monkeypa
                                              publisher_name="IDW Publishing", on_pull_list=False))
     assert added["title"] == FULL
     assert not added["folder_path"].endswith(".")
+
+
+# --- arcs without Komga (retired 2026-10-12): ownership off the runs' folders -----
+def _arc_wire(monkeypatch, tmp_path):
+    dbp = str(tmp_path / "k.db")
+    db.init_db(dbp)
+    root = tmp_path / "comics"
+    monkeypatch.setattr(arcs, "DB_PATH", dbp)
+    monkeypatch.setattr(arcs, "_comics_root", lambda: str(root))
+    monkeypatch.setattr(arcs, "_sync_one", lambda s: None)
+    monkeypatch.setattr(arcs, "sync_one_guarded", lambda s, fn=None: True)
+    return dbp, root
+
+
+def test_arc_ownership_resolves_from_the_runs_folders(tmp_path, monkeypatch):
+    dbp, root = _arc_wire(monkeypatch, tmp_path)
+    batman = root / "DC Comics" / "Batman (1940)"
+    batman.mkdir(parents=True)
+    make_cbz(batman / "Batman (1940) #492.cbz")
+    tec = root / "DC Comics" / "Detective Comics"
+    tec.mkdir(parents=True)
+    make_cbz(tec / "Detective Comics #659.cbz")
+    coll = root / "DC Comics" / "Knightfall"
+    coll.mkdir(parents=True)
+    make_cbz(coll / "Knightfall v01.cbz")
+    db.add_series(title="Batman (1940)", publisher="DC Comics", folder_path=str(batman),
+                  cv_volume_id="796", path=dbp)
+    db.add_series(title="Detective Comics", publisher="DC Comics", folder_path=str(tec), path=dbp)
+    db.add_series(title="Knightfall", publisher="DC Comics", folder_path=str(coll), path=dbp)
+    arc = db.add_series(title="Knightfall", publisher="DC Comics", kind="arc", path=dbp)
+    db.replace_arc_reading_order(arc, [
+        {"reading_order": 1, "source_title": "Batman", "number": "492", "story_title": "",
+         "cv_issue_id": "1", "cv_volume_id": "796"},                         # by CV volume
+        {"reading_order": 2, "source_title": "Detective Comics", "number": "659", "story_title": "",
+         "cv_issue_id": "2", "cv_volume_id": None},                          # by title
+        {"reading_order": 3, "source_title": "Batman", "number": "493", "story_title": "",
+         "cv_issue_id": "3", "cv_volume_id": "796"},                         # not on disk
+    ], dbp)
+
+    r = arcs._resolve_arc_ownership(arc)
+
+    assert (r["owned"], r["total"]) == (2, 3)
+    assert [x["owned"] for x in db.get_arc_reading_order(arc, dbp)] == [1, 1, 0]
+    assert r["collection"]["name"] == "Knightfall"                          # the trade on disk
+
+
+def test_arc_participant_reuses_the_run_already_in_its_folder(tmp_path, monkeypatch):
+    # Komga's title match used to stop a twin of a run tracked before it had a CV
+    # id; the folder does that now — and the run gets anchored to the volume.
+    dbp, root = _arc_wire(monkeypatch, tmp_path)
+    folder = root / "DC Comics" / "Batman (1940)"
+    folder.mkdir(parents=True)
+    make_cbz(folder / "Batman (1940) #492.cbz")
+    run = db.add_series(title="Batman (1940)", publisher="DC Comics", folder_path=str(folder), path=dbp)
+    arc = db.add_series(title="Knightfall", publisher="DC Comics", kind="arc", path=dbp)
+    db.replace_arc_reading_order(arc, [
+        {"reading_order": 1, "source_title": "Batman", "number": "492", "story_title": "",
+         "cv_issue_id": "1", "cv_volume_id": "796"}], dbp)
+
+    class _CV:
+        def get_volume_info(self, vid):
+            return {"year": 1940, "publisher": "DC Comics"}
+    monkeypatch.setattr(arcs, "_comicvine", lambda: _CV())
+
+    assert arcs._track_participating(arc) == {"796": run}
+    assert len([s for s in db.get_all_series(dbp) if s.get("kind") != "arc"]) == 1
+    assert db.get_series_by_id(run, dbp)["cv_volume_id"] == "796"

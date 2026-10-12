@@ -90,45 +90,36 @@ def test_bad_cbl_is_refused(shelf):
         rl.import_cbl(b"<ReadingList><Name>x</Name><Books/></ReadingList>", path=shelf)
 
 
-class _FakeKomga:
-    """Two Komga read lists; its metadata.number lies (a counter), the file name doesn't."""
-    def _get(self, url, params=None):
-        if url == "/api/v1/readlists":
-            return {"content": [{"id": "rl1", "name": "Witchfinder arc"}, {"id": "rl2", "name": "Empty"}], "last": True}
-        if url == "/api/v1/collections":
-            return {"content": [{"id": "c1", "name": "Mignolaverse"}, {"id": "c2", "name": "Lonely"}], "last": True}
-        if url == "/api/v1/collections/c1/series":
-            return {"content": [{"metadata": {"title": "Hellboy: Seed of Destruction"}}, {"metadata": {"title": "B.P.R.D.: Plague of Frogs"}}], "last": True}
-        if url == "/api/v1/collections/c2/series":
-            return {"content": [{"metadata": {"title": "Only One"}}], "last": True}
-        if url == "/api/v1/readlists/rl1/books":
-            return {"content": [
-                {"seriesTitle": "Sir Edward Grey, Witchfinder", "url": "/data/x/Sir Edward Grey, Witchfinder #002.cbz", "metadata": {"number": "1"}},
-                {"seriesTitle": "Hellboy: Seed of Destruction", "url": "/data/x/Hellboy - Seed of Destruction #001.cbz", "metadata": {"number": "7"}},
-                {"seriesTitle": "Gone", "url": "/data/x/Gone #001.cbz", "metadata": {"number": "1"}},
-            ], "last": True}
-        return {"content": [], "last": True}
-
-
-def test_komga_lists_import_by_file_name(shelf):
-    made = rl.import_komga(_FakeKomga(), path=shelf)
-    assert [m["name"] for m in made] == ["Witchfinder arc"] and made[0]["entries"] == 3
-    r = rl.resolve(made[0]["id"], path=shelf)
+# Komga's lists came in through a one-time import (retired 2026-10-12). The rows it
+# left — source 'komga', a FILE NAME hint per book, series-grain collections —
+# must keep resolving off the shelf with no Komga anywhere.
+def test_komga_imported_lists_still_resolve_by_file_name(shelf):
+    lid = rl.save_list("Witchfinder arc", [
+        {"series": "Sir Edward Grey, Witchfinder", "number": "2", "file": "Sir Edward Grey, Witchfinder #002.cbz"},
+        {"series": "Hellboy: Seed of Destruction", "number": "1", "file": "Hellboy - Seed of Destruction #001.cbz"},
+        {"series": "Gone", "number": "1", "file": "Gone #001.cbz"},
+    ], "komga", "rl1", shelf)
+    r = rl.resolve(lid, path=shelf)
     e = r["entries"]
-    assert e[0]["status"] == "owned" and e[0]["books"][0]["label"] == "#2"       # file, not Komga's '1'
+    assert e[0]["status"] == "owned" and e[0]["books"][0]["label"] == "#2"
     assert e[1]["status"] == "owned" and [b["label"] for b in e[1]["books"]] == ["#1"]   # one file, not the whole run
     assert e[2]["status"] == "not_on_shelf"
-    assert r["source"] == "komga"
-    # importing again replaces, same id
-    assert rl.import_komga(_FakeKomga(), path=shelf)[0]["id"] == made[0]["id"]
+    assert r["source"] == "komga"                                    # provenance kept
 
 
-def test_komga_collections_import_as_series_grain_lists(shelf):
-    made = rl.import_komga_collections(_FakeKomga(), path=shelf)
-    assert [m["name"] for m in made] == ["Mignolaverse"]          # the one-series collection is no order
-    r = rl.resolve(made[0]["id"], path=shelf)
+def test_komga_imported_collections_still_resolve_as_whole_runs(shelf):
+    lid = rl.save_list("Mignolaverse", [
+        {"series": "Hellboy: Seed of Destruction", "number": None},
+        {"series": "B.P.R.D.: Plague of Frogs", "number": None},
+    ], "komga", "c1", shelf)
+    r = rl.resolve(lid, path=shelf)
     assert [e["status"] for e in r["entries"]] == ["owned", "owned"]
     assert [b["label"] for b in r["entries"][0]["books"]] == ["#1", "#2"]   # the whole run, in order
+
+
+def test_the_komga_import_is_gone():
+    assert not hasattr(rl, "import_komga") and not hasattr(rl, "import_komga_collections")
+    assert not any(getattr(r, "path", "") == "/api/readlists/import-komga" for r in rl.router.routes)
 
 
 def test_renamed_shapes_still_resolve(shelf, tmp_path):

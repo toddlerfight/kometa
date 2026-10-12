@@ -11,7 +11,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from kometa.komga_client import KomgaClient
 from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
 from kometa.models import AddSeriesRequest
 from kometa.arcs import (
@@ -21,15 +20,14 @@ from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
 from kometa.version import build_info as _build_info
 import kometa.db as db
 from kometa.sources import (
-    komga as _komga, comics_root as _comics_root, comicvine as _comicvine,
+    comics_root as _comics_root, comicvine as _comicvine,
 )
 from kometa.naming import (
-    find_issue_file as _find_issue_file, normalize_url as _normalize_url, _resolve_dir,
+    find_issue_file as _find_issue_file, _resolve_dir,
 )
 from kometa.sync import (
     sync_one as _sync_one, sync_one_guarded, full_sync_lock,
     rescan_owned as _rescan_owned,
-    _best_komga_match, _komga_all_series,
     enrich_trades as _enrich_trades,
 )
 from kometa.acquisition import (
@@ -245,8 +243,6 @@ from kometa.people import router as _people_router          # search by writer /
 app.include_router(_people_router)
 from kometa.search import router as _search_router          # universal search: series, people, lists, issue jumps
 app.include_router(_search_router)
-from kometa.komga_import import router as _komga_import_router   # one-time read-history handover
-app.include_router(_komga_import_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
 # three functions main's own routes call back into).
 app.include_router(_arcs_router)
@@ -281,44 +277,6 @@ def _summary(issues):
 # never round-trip through the browser, so 'Test' must work against what's saved.
 def _stored(key: str) -> str:
     return db.get_config(DB_PATH).get(key, "")
-
-
-class TestKomgaRequest(BaseModel):
-    url: str | None = None
-    user: str | None = None
-    password: str | None = None
-
-
-@app.post("/api/test/komga")
-def test_komga(req: TestKomgaRequest):
-    url = req.url or _stored("komga_url")
-    user = req.user or _stored("komga_user")
-    password = req.password or _stored("komga_pass")
-    if not (url and user and password):
-        return {"ok": False, "error": "Not configured"}
-    try:
-        client = KomgaClient(base_url=_normalize_url(url), auth=(user, password))
-        r = client.session.get(f"{client.base_url}/api/v1/libraries", timeout=8)
-        r.raise_for_status()
-        raw = r.json()
-        libs = raw if isinstance(raw, list) else raw.get("content", [])
-        return {"ok": True, "libraries": [{"id": lib["id"], "name": lib["name"]} for lib in libs]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/api/komga/harvest")
-def komga_harvest():
-    """Pull what Komga knows (series/book metadata, custom posters) into the local
-    record, in a thread. Read-only against Komga; never overwrites a catalogue row."""
-    from kometa import harvest_komga
-    return harvest_komga.harvest_in_background()
-
-
-@app.get("/api/komga/harvest")
-def komga_harvest_status():
-    from kometa import harvest_komga
-    return harvest_komga.status()
 
 
 class TestSabRequest(BaseModel):
@@ -421,7 +379,6 @@ def test_comicvine(req: TestComicVineRequest):
 # Integration → config keys it owns. Drives 'Disconnect': blank password fields
 # mean 'keep current', so without this there is NO path to remove a credential.
 _INTEGRATION_KEYS = {
-    "komga":     ["komga_url", "komga_user", "komga_pass", "komga_library_id"],
     "sabnzbd":   ["sab_url", "sab_apikey"],
     "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
@@ -577,10 +534,6 @@ def get_config():
         # Usable = exists and writable. Drives the just-in-time folder prompt:
         # a properly-mounted deploy is ok and never gets nagged.
         "comics_root_ok":      os.path.isdir(root) and os.access(root, os.W_OK),
-        "komga_url":           cfg.get("komga_url", ""),
-        "komga_user":          cfg.get("komga_user", ""),
-        "komga_pass":          "",
-        "komga_library_id":    cfg.get("komga_library_id", ""),
         "sync_hours":          cfg.get("sync_hours", "5,12,17"),
         "sab_url":             cfg.get("sab_url", ""),
         "sab_configured":      bool(cfg.get("sab_url", "") and cfg.get("sab_apikey", "")),
@@ -594,10 +547,6 @@ def get_config():
         "cv_api_key":          "",
         "comicvine_configured": bool(cfg.get("cv_api_key", "")),
         # Integration/search toggles — absent = enabled (existing installs unchanged).
-        "komga_enabled":       cfg.get("komga_enabled", "1") != "0",
-        # Komga retirement, step 1 (2026-10-10): its thumbnails are a last resort
-        # behind this flag; covers come from the record's own store.
-        "komga_covers":        cfg.get("komga_covers", "0") == "1",
         "backup_last":         _backup_last(),
         # Prowlarr is the master search switch; usenet/torrent are its children.
         "prowlarr_enabled":    cfg.get("prowlarr_enabled", "1") != "0",
@@ -627,10 +576,6 @@ def get_config():
 
 class ConfigRequest(BaseModel):
     comics_root:        str | None = None
-    komga_url:          str | None = None
-    komga_user:         str | None = None
-    komga_pass:         str | None = None
-    komga_library_id:   str | None = None
     sync_hours:         str | None = None
     sab_url:            str | None = None
     sab_apikey:         str | None = None
@@ -640,8 +585,6 @@ class ConfigRequest(BaseModel):
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
     cv_api_key:         str | None = None
-    komga_enabled:      str | None = None   # "1"/"0" — integration toggle
-    komga_covers:       str | None = None   # "1"/"0" — Komga thumbnails as a last-resort cover source
     prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
     torrent_enabled:    str | None = None
@@ -661,8 +604,6 @@ class ConfigRequest(BaseModel):
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
-    if "komga_url" in updates:
-        updates["komga_url"] = _normalize_url(updates["komga_url"])
     if "locg_cf_clearance" in updates:
         updates["locg_cf_clearance"] = updates["locg_cf_clearance"].strip().removeprefix("cf_clearance=")
         updates["locg_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -743,7 +684,7 @@ def _family_for(series_id: int) -> dict:
 
 
 def _cached_trades(series: dict) -> list[dict] | None:
-    """Read the enriched trade cache (owned + komga_book_id stamped at sync time).
+    """Read the enriched trade cache (owned + file stamped at sync time).
     Self-heals a pre-enrichment cache once, so reads stay fold-scan-free after."""
     cached = db.get_trades(series["id"], DB_PATH)
     if not cached:
@@ -809,8 +750,7 @@ def get_series(series_id: int):
         # is the only ownership source — a Komga metadata entry named after the arc does
         # NOT count (that was the old lie: a "collected" arc whose trade had no files).
         coll = _owned_collection(s["title"])
-        collection = ({"name": coll["title"], "series_id": coll["id"],
-                       "komga_series_id": coll.get("komga_series_id")} if coll else None)
+        collection = {"name": coll["title"], "series_id": coll["id"]} if coll else None
         return dict(s, arc_issues=arc_issues, issues=[],
                     owned=owned, missing=len(arc_issues) - owned, upcoming=0,
                     collected=bool(coll), collection=collection,
@@ -966,7 +906,7 @@ class TradeDownloadRequest(BaseModel):
 def download_trade(series_id: int, req: TradeDownloadRequest):
     """Queue a collected edition — exactly like queueing an issue, kind='trade'.
     It flows through the same worker (GetComics + usenet, civility, parking) and
-    shows up in Activity. The file lands and Komga scans it; issues are not
+    shows up in Activity. The file lands in the series folder; issues are not
     reconciled (folder is truth)."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
@@ -1033,7 +973,6 @@ def add_series(req: AddSeriesRequest):
     year_began = req.year_began
     locg_series_id = req.locg_id
     folder_path = req.folder_path
-    komga_series_id = req.komga_id
 
     # One-shot backstop: if the client forwards a comic id + slug, the picked result was
     # an ISSUE, not a series. Resolve it to its parent series HERE, server-side, so a
@@ -1071,51 +1010,10 @@ def add_series(req: AddSeriesRequest):
                 logger.info(f"Add {title!r}: Metron series {req.metron_id} already tracked as #{s['id']}")
                 return s
 
-    komga = _komga()
-    if komga_series_id and komga:
-        try:
-            ks = komga.get_series(komga_series_id)
-            title = ks.get("name") or title
-            publisher = ks.get("metadata", {}).get("publisher") or publisher
-            if not folder_path:
-                folder_path = ks.get("url")
-        except Exception:
-            pass
-    elif not komga_series_id and komga:
-        # Auto-link to Komga via the SAME single-exact-match rule sync uses
-        # (_best_komga_match) — refuses ambiguous titles (e.g. multiple Batman runs)
-        # instead of grabbing the first loose lowercase hit.
-        try:
-            komga_series_id = _best_komga_match(_komga_all_series(komga), title)
-        except Exception:
-            pass
-
-    # A Komga id already claimed by another tracked series must not reach the
-    # INSERT — komga_series_id is UNIQUE, so it would 500 the whole add. Two ways
-    # to land here:
-    #   1) SAME series, added again — the claiming row title-matches this add.
-    #      "Already linked elsewhere" is not a nuisance here, it's the smoking gun
-    #      of a duplicate. Return the existing row; do NOT insert an unlinked twin
-    #      (the old behavior dropped the evidence and did exactly that).
-    #   2) Adjacent franchise title — the auto-link loosely matched a Komga series
-    #      an honestly-different row owns. Leave THIS add unlinked and proceed,
-    #      same graceful manners as the sync-time linker.
-    if komga_series_id:
-        claimer = db.get_series_by_komga_id(str(komga_series_id), DB_PATH)
-        if claimer:
-            from kometa.arc import base_series_title, titles_match
-            if titles_match(claimer.get("title") or "", base_series_title(title)):
-                logger.info(f"Add {title!r}: Komga series {komga_series_id} already tracked "
-                            f"as #{claimer['id']} — returning existing, not minting a twin")
-                return claimer
-            logger.info(f"Add {title!r}: Komga series {komga_series_id} already linked to "
-                        f"{claimer.get('title')!r} — leaving unlinked")
-            komga_series_id = None
-
-    # No folder yet (no Komga, or Komga had none)? Derive it from publisher+title.
-    # _resolve_dir finds an existing on-disk folder (variation-tolerant) or returns
-    # the canonical new path, so the first sync reconciles owned-vs-missing correctly
-    # whether or not the series is already on disk. This is what makes Komga optional.
+    # No folder picked? Derive it from publisher+title. _resolve_dir finds an
+    # existing on-disk folder (variation-tolerant) or returns the canonical new
+    # path, so the first sync reconciles owned-vs-missing correctly whether or not
+    # the series is already on disk. The folder is the only link a series needs.
     if req.metron_id and not publisher:
         # Track from a catalogue card carries no publisher (creator works don't):
         # ask Metron for the run's own, or the folder lands under 'Unknown'.
@@ -1143,7 +1041,6 @@ def add_series(req: AddSeriesRequest):
             logger.warning(f"Could not create folder {folder_path!r} for {title!r}: {e}")
 
     new_id = db.add_series(
-        komga_series_id,
         title=title,
         publisher=publisher,
         year_began=year_began,
@@ -1990,7 +1887,6 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
             # pick at once whatever the cover store holds.
             db.set_variant_prefs(series_id, number, req.selected, req.primary_id, DB_PATH)
             # The file's page 1 just changed: re-cut Kometa's own file cover from it.
-            # (Used to poke Komga to re-analyze — Komga is read-only to us now.)
             try:
                 from kometa import covers
                 covers.generate_for_path(file_path, series_id, DB_PATH)

@@ -998,9 +998,9 @@ def _get_with_retries(url: str, label: str):
     raise last_exc or RuntimeError(f"{label} failed after retries: {url[:80]}")
 
 
-# Komga runs as a non-root user (uid 1026) — anything we drop into the library has
-# to be world-traversable/readable or the scanner walks straight past it and the
-# issue never appears. We used to trust upstream perms: WRONG. SAB, bsdtar, and
+# Komga ran as a non-root user (uid 1026), and so does everything else that reads
+# the share — anything we drop into the library has to be world-traversable/readable
+# or a scanner walks straight past it and the issue never appears. We used to trust upstream perms: WRONG. SAB, bsdtar, and
 # shutil.copy2's copystat have all handed us mode-000 files, and makedirs(exist_ok)
 # flat-out REFUSES to re-chmod a dir already sitting at 000 — so a single poisoned
 # download could bury a whole series behind a 000 folder (that's the Absolute Catwoman
@@ -1011,7 +1011,7 @@ _LIBRARY_FILE_MODE = 0o644
 
 
 def force_readable_tree(dest_dir: str) -> None:
-    """Force Komga-readable perms across a just-touched library folder — the placed
+    """Force world-readable perms across a just-touched library folder — the placed
     file, any pack-extracted siblings, cover-injected repackages — plus every
     ancestor up to the library root so the scanner can actually walk in. Idempotent,
     best-effort: a chmod we're not allowed to do is logged and skipped, never fatal."""
@@ -1065,7 +1065,6 @@ def download_issue(
     issue_number: float,
     store_date: str | None,
     hint_filename: str | None,
-    komga_scan_fn,
     progress_fn=None,
     dest_dir: str | None = None,
     tracked_series_id: int | None = None,
@@ -1074,7 +1073,7 @@ def download_issue(
     on_bytes_done=None,
 ) -> str:
     """
-    Download from url, place in library, trigger Komga scan.
+    Download from url, place in library.
     Returns the final file path. Raises on failure.
     Pass tracked_series_id + db_path to enable automatic variant injection.
     page_max: per-series single-issue page ceiling (oversized formats); None = default.
@@ -1166,11 +1165,6 @@ def download_issue(
                 if already and counts_as_owned(already, title):
                     logger.info(f"Pack: #{format_issue_number(issue_number)} already on the shelf: {already}")
                     force_readable_tree(dest_dir)
-                    if extracted and komga_scan_fn:
-                        try:
-                            komga_scan_fn()
-                        except Exception as e:
-                            logger.warning(f"Komga scan trigger failed: {e}")
                     return already
                 # Extracted extras stay on disk — the next sync picks them up.
                 raise WrongIssueError(
@@ -1255,15 +1249,9 @@ def download_issue(
         if rar_dir:
             shutil.rmtree(rar_dir, ignore_errors=True)
 
-    # Stamp Komga-readable perms before we tell Komga to look — otherwise a 000
-    # file/dir from the move or a cover-inject repackage stays invisible.
+    # Stamp readable perms — otherwise a 000 file/dir from the move or a
+    # cover-inject repackage stays invisible to anything not running as root.
     force_readable_tree(dest_dir)
-
-    if komga_scan_fn:
-        try:
-            komga_scan_fn()
-        except Exception as e:
-            logger.warning(f"Komga scan trigger failed: {e}")
 
     return dest_path
 
@@ -1274,14 +1262,13 @@ def download_trade(
     hint_filename: str | None = None,
     fallback_name: str | None = None,
     progress_fn=None,
-    komga_scan_fn=None,
     on_bytes_done=None,
     series_title: str | None = None,
 ) -> list[str]:
     """Download a collected edition (TPB/HC) into dest_dir. The 'dumb' path: NO
     issue-number validation (a trade has no single number; a 'Vol 1-6' bundle
-    holds many), NO variant injection, NO reconcile. Just fetch, place, and let
-    Komga scan. Returns the placed file path(s) — a pack expands to several."""
+    holds many), NO variant injection, NO reconcile. Just fetch and place.
+    Returns the placed file path(s) — a pack expands to several."""
     os.makedirs(sources.staging_dir(), exist_ok=True)
     os.makedirs(dest_dir, exist_ok=True)
 
@@ -1340,12 +1327,6 @@ def download_trade(
     placed = [ensure_cbz(p) for p in placed]
 
     force_readable_tree(dest_dir)
-
-    if komga_scan_fn:
-        try:
-            komga_scan_fn()
-        except Exception as e:
-            logger.warning(f"Komga scan after trade failed: {e}")
     return placed
 
 

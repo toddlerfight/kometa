@@ -78,3 +78,24 @@ class TestLocgSwitch:
         assert main.get_config()["locg_enabled"] is True
         db.set_config({"locg_enabled": "0"}, wired)
         assert main.get_config()["locg_enabled"] is False
+
+
+# --- Komga retired 2026-10-12: no config keys, no routes, no disconnect ----------
+def test_config_carries_no_komga_keys(wired):
+    # even on a DB that still holds the old rows
+    db.set_config({"komga_url": "http://komga:8585", "komga_user": "u", "komga_pass": "p",
+                   "komga_enabled": "1", "komga_covers": "1"}, wired)
+    assert not [k for k in main.get_config() if "komga" in k]
+
+
+def test_config_patch_ignores_komga_keys(wired):
+    main.update_config(main.ConfigRequest(**{"komga_url": "http://new:8585", "sync_hours": "6"}))
+    cfg = db.get_config(wired)
+    assert cfg.get("sync_hours") == "6" and "komga_url" not in cfg
+
+
+def test_no_komga_routes_or_disconnect(wired):
+    paths = {getattr(r, "path", "") for r in main.app.routes}
+    assert not [p for p in paths if "komga" in p.lower()]
+    with pytest.raises(main.HTTPException):
+        main.disconnect_integration("komga")

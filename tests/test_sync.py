@@ -128,7 +128,6 @@ class TestIssueDetailsParser:
 
 def _all_sources_off(monkeypatch, db_path):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     # LOCG is keyless now. Stub the title→id resolver to None so a series
     # without a seeded locg_series_id doesn't reach out to the live site;
     # tests that DO seed one go straight through get_issues_anon.
@@ -269,7 +268,7 @@ class TestEnrichTradesEditions:
     book forever — the Transmetropolitan incident, 2026-08-21)."""
 
     def _series(self, folder):
-        return {"id": 1, "title": "Transmetropolitan", "folder_path": str(folder), "komga_series_id": None}
+        return {"id": 1, "title": "Transmetropolitan", "folder_path": str(folder)}
 
     def test_tpb_does_not_claim_absolute(self, tmp_path):
         (tmp_path / "Transmetropolitan v01 - Back On the Street.cbz").write_bytes(b"x")
@@ -277,7 +276,7 @@ class TestEnrichTradesEditions:
             {"title": "Transmetropolitan Vol. 1: Back on the Street TP", "vol": 1, "vol_range": None},
             {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
         ]
-        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        out = sync.enrich_trades(self._series(tmp_path), trades)
         assert out[0]["owned"] is True
         assert out[1]["owned"] is False
 
@@ -287,127 +286,81 @@ class TestEnrichTradesEditions:
             {"title": "Transmetropolitan Vol. 1: Back on the Street TP", "vol": 1, "vol_range": None},
             {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
         ]
-        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        out = sync.enrich_trades(self._series(tmp_path), trades)
         assert out[0]["owned"] is False
         assert out[1]["owned"] is True
 
-    def test_komga_book_mapping_is_edition_aware(self, tmp_path):
+    def test_file_mapping_is_edition_aware_and_carries_no_komga_link(self, tmp_path):
         (tmp_path / "Transmetropolitan v01.cbz").write_bytes(b"x")
         (tmp_path / "Absolute Transmetropolitan v01.cbz").write_bytes(b"x")
-        books = [
-            {"id": "TPB1", "name": "Transmetropolitan v01"},
-            {"id": "ABS1", "name": "Absolute Transmetropolitan v01"},
-        ]
         trades = [
             {"title": "Transmetropolitan Vol. 1 TP", "vol": 1, "vol_range": None},
             {"title": "Absolute Transmetropolitan Vol. 1 HC", "vol": 1, "vol_range": None},
         ]
-        out = sync.enrich_trades(self._series(tmp_path), trades, books=books)
-        assert out[0]["komga_book_id"] == "TPB1"
-        assert out[1]["komga_book_id"] == "ABS1"
+        out = sync.enrich_trades(self._series(tmp_path), trades)
+        assert out[0]["file"] == "Transmetropolitan v01.cbz"
+        assert out[1]["file"] == "Absolute Transmetropolitan v01.cbz"
+        assert all("komga_book_id" not in t for t in out)      # Komga's read link is gone
 
     def test_vol_range_requires_all_same_edition(self, tmp_path):
         (tmp_path / "Transmetropolitan v01.cbz").write_bytes(b"x")
         (tmp_path / "Absolute Transmetropolitan v02.cbz").write_bytes(b"x")
         trades = [{"title": "Transmetropolitan Vol. 1-2", "vol": None, "vol_range": [1, 2]}]
-        out = sync.enrich_trades(self._series(tmp_path), trades, books=[])
+        out = sync.enrich_trades(self._series(tmp_path), trades)
         # v02 on disk is the Absolute — doesn't complete a plain-edition range
         assert out[0]["owned"] is False
 
 
-class _FakeKomga:
-    """Komga with a fixed library. get_books only answers for LIVE series ids —
-    a dead id returns nothing, exactly like the real one after a re-mint."""
-    def __init__(self, series, books=None):
-        self.series, self.books = series, books or {}
+class TestSyncWithoutKomga:
+    """Komga is retired (2026-10-12): sync is the folder plus the catalogues and
+    nothing else. No Komga client exists to ask; a legacy komga_series_id on the
+    row is inert data — not cleared, not relinked, not used."""
 
-    def get_all_series(self):
-        return self.series
-
-    def get_books(self, sid):
-        return self.books.get(sid, []) if any(s["id"] == sid for s in self.series) else []
-
-    def get_series(self, sid):
-        return next(s for s in self.series if s["id"] == sid)
-
-    def set_book_number(self, *a):
-        pass
-
-
-def _book(bid, name):
-    return {"id": bid, "name": name, "metadata": {"numberSort": 1}, "media": {"status": "READY"}}
-
-
-class TestStaleKomgaLink:
-    """Komga re-mints series ids when it drops and re-adds a library (the 2026-09-12
-    mass re-creation). A stored id that no longer exists must relink by folder,
-    not sit there dead handing out zero book ids forever."""
-
-    def _setup(self, tmp_path, monkeypatch, komga):
+    def _setup(self, tmp_path, monkeypatch, komga_id=None, with_folder=True):
         dbp = str(tmp_path / "k.db")
         db.init_db(dbp)
         _all_sources_off(monkeypatch, dbp)
-        monkeypatch.setattr(sync, "_komga", lambda: komga)
-        monkeypatch.setattr(sync, "_KOMGA_ALL_CACHE", {"ts": 0.0, "data": None})
         monkeypatch.setattr(sync, "get_issues_anon", lambda sid: [])
+        # the old Komga config rows, as a pre-retirement DB still has them
+        db.set_config({"komga_url": "http://komga:8585", "komga_user": "u", "komga_pass": "p",
+                       "komga_enabled": "1", "komga_covers": "1"}, dbp)
+        import requests
+        monkeypatch.setattr(requests.Session, "request",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("network call during sync")))
         folder = tmp_path / "Marvel Comics" / "Black Cat"
         folder.mkdir(parents=True)
         make_cbz(folder / "Black Cat #001.cbz")
-        sid = db.add_series(komga_series_id="DEADID", title="Black Cat", publisher="Marvel",
-                            folder_path=str(folder), path=dbp)
-        return dbp, sid, str(folder)
+        make_cbz(folder / "Black Cat #002.cbz")
+        sid = db.add_series(komga_series_id=komga_id, title="Black Cat", publisher="Marvel",
+                            folder_path=str(folder) if with_folder else None, path=dbp)
+        return dbp, sid
 
-    def test_dead_id_relinks_by_folder_and_stamps_book_ids(self, tmp_path, monkeypatch):
-        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
-        komga = _FakeKomga([{"id": "NEWID", "name": "Black Cat", "url": folder}],
-                           {"NEWID": [_book("B1", "Black Cat #001.cbz")]})
-        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
-
+    def test_ownership_comes_from_the_folder_alone(self, tmp_path, monkeypatch):
+        dbp, sid = self._setup(tmp_path, monkeypatch)
         sync.sync_one(db.get_series_by_id(sid, dbp))
+        owned = sorted(i["number"] for i in db.get_issues_for_series(sid, dbp) if i["owned"])
+        assert owned == [1.0, 2.0]
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] is None   # nothing links it
 
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
-        issues = db.get_issues_for_series(sid, dbp)
-
-    def test_dead_id_with_no_match_is_cleared_not_kept(self, tmp_path, monkeypatch):
-        komga = _FakeKomga([{"id": "OTHER", "name": "Saga", "url": "/comics/Image Comics/Saga"}])
-        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
-
+    def test_a_legacy_komga_id_is_left_as_data(self, tmp_path, monkeypatch):
+        dbp, sid = self._setup(tmp_path, monkeypatch, komga_id="OLDID")
         sync.sync_one(db.get_series_by_id(sid, dbp))
+        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "OLDID"
+        assert len([i for i in db.get_issues_for_series(sid, dbp) if i["owned"]]) == 2
 
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] is None
-
-    def test_komga_unreachable_keeps_the_link(self, tmp_path, monkeypatch):
-        # An empty library read is Komga down (or its mount dead), not proof the
-        # id is gone. Never unlink on it.
-        komga = _FakeKomga([])
-        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
-
+    def test_no_folder_is_not_looked_up_anywhere(self, tmp_path, monkeypatch):
+        # Komga used to be asked for a folder; now a folder-less row just owns nothing
+        dbp, sid = self._setup(tmp_path, monkeypatch, komga_id="OLDID", with_folder=False)
         sync.sync_one(db.get_series_by_id(sid, dbp))
+        assert db.get_series_by_id(sid, dbp)["folder_path"] is None
+        assert not any(i["owned"] for i in db.get_issues_for_series(sid, dbp))
 
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
-
-    def test_soft_deleted_id_relinks_to_the_live_twin(self, tmp_path, monkeypatch):
-        # Folder renamed: Komga keeps the old row flagged deleted and mints a new one.
-        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
-        komga = _FakeKomga([{"id": "DEADID", "name": "BLKCAT~1", "url": "/comics/Marvel Comics/BLKCAT~1",
-                             "deleted": True},
-                            {"id": "NEWID", "name": "Black Cat", "url": folder}],
-                           {"NEWID": [_book("B1", "Black Cat #001.cbz")]})
-        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
-
-        sync.sync_one(db.get_series_by_id(sid, dbp))
-
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "NEWID"
-
-    def test_live_id_is_left_alone(self, tmp_path, monkeypatch):
-        folder = str(tmp_path / "Marvel Comics" / "Black Cat")
-        komga = _FakeKomga([{"id": "DEADID", "name": "Black Cat", "url": folder},
-                            {"id": "NEWID", "name": "Black Cat", "url": "/elsewhere"}])
-        dbp, sid, _ = self._setup(tmp_path, monkeypatch, komga)
-
-        sync.sync_one(db.get_series_by_id(sid, dbp))
-
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "DEADID"
+    def test_komga_is_gone_from_the_code(self):
+        import importlib.util
+        from kometa import sources
+        assert not hasattr(sources, "komga") and not hasattr(sync, "_komga")
+        for mod in ("kometa.komga_client", "kometa.komga_import", "kometa.harvest_komga"):
+            assert importlib.util.find_spec(mod) is None
 
 
 def test_a_no_volume_edition_on_disk_matches_its_trade_whatever_year_the_file_carries(tmp_path):
@@ -415,7 +368,7 @@ def test_a_no_volume_edition_on_disk_matches_its_trade_whatever_year_the_file_ca
     from kometa.sync import enrich_trades
     (tmp_path / "DIE HC (2022).cbz").write_bytes(b"PK\x03\x04")
     trades = [{"title": "DIE HC", "vol": None}, {"title": "DIE Vol. 1: Fantasy Heartbreaker TP", "vol": 1}]
-    enrich_trades({"folder_path": str(tmp_path), "title": "Die"}, trades, books=[])
+    enrich_trades({"folder_path": str(tmp_path), "title": "Die"}, trades)
     assert [t["owned"] for t in trades] == [True, False]
 
 
@@ -428,12 +381,12 @@ def test_a_no_volume_edition_matches_loosely_when_the_words_agree_and_never_stea
         (tmp_path / f).write_bytes(b"PK\x03\x04")
     trades = [{"title": "Batman: Year 100 TP", "vol": None}, {"title": "Batman: Year 100 TP2013 Edition", "vol": None},
               {"title": "Batman Year 100 Deluxe Edition HC", "vol": None}]
-    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Year 100"}, trades, books=[])
+    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Year 100"}, trades)
     assert [t["owned"] for t in trades] == [False, False, True]
     assert trades[2]["file"].startswith("Batman - Year 100 and Other Tales")
     (tmp_path / "Heavy Liquid - Collected Edition (2019).cbz").write_bytes(b"PK\x03\x04")
     hl = [{"title": "Heavy Liquid TP", "vol": None}, {"title": "Heavy Liquid HC", "vol": None}]
-    enrich_trades({"folder_path": str(tmp_path), "title": "Heavy Liquid"}, hl, books=[])
+    enrich_trades({"folder_path": str(tmp_path), "title": "Heavy Liquid"}, hl)
     assert [t["owned"] for t in hl] == [True, False]                       # one file, one trade
 
 
@@ -443,7 +396,6 @@ def test_trade_refresh_also_reconciles_single_issues_from_a_pack(tmp_path, db_pa
     import kometa.sync as sync
     from tests.conftest import make_cbz
     monkeypatch.setattr(sync, "DB_PATH", db_path)
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     folder = tmp_path / "Faithless"; folder.mkdir()
     sid = db.add_series(title="Faithless", publisher="Boom! Studios", folder_path=str(folder), on_pull_list=True, path=db_path)
     for n in (1, 2):
@@ -460,12 +412,12 @@ def test_a_scene_tagged_one_word_trade_file_matches_its_run(tmp_path):
     from kometa.sync import enrich_trades
     (tmp_path / "100% TPB (2020) (Digital) (Mephisto-Empire).cbz").write_bytes(b"PK\x03\x04")
     trades = [{"title": "100% TP", "vol": None}, {"title": "100% HC", "vol": None}]
-    enrich_trades({"folder_path": str(tmp_path), "title": "100%"}, trades, books=[])
+    enrich_trades({"folder_path": str(tmp_path), "title": "100%"}, trades)
     assert [t["owned"] for t in trades] == [True, False]
     # but one word that is NOT the series name still can't claim anything
     (tmp_path / "Batman Lost (2018).cbz").write_bytes(b"PK\x03\x04")
     other = [{"title": "Batman TP", "vol": None}]
-    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Lost"}, other, books=[])
+    enrich_trades({"folder_path": str(tmp_path), "title": "Batman - Lost"}, other)
     assert other[0]["owned"] is False
 
 
@@ -478,18 +430,18 @@ def test_one_vol_file_makes_one_edition_owned_not_every_edition_with_that_vol(tm
     series = {"title": "Avengers Academy", "folder_path": str(tmp_path)}
     hc = {"title": "Avengers Academy Vol. 2: Will We Use This in the Real World? HC", "vol": 2, "locg_id": "1485878"}
     cc = {"title": "Avengers Academy: The Complete Collection Vol. 2 TP", "vol": 2, "locg_id": "5484155"}
-    sync.enrich_trades(series, [hc, cc], books=[])
+    sync.enrich_trades(series, [hc, cc])
     assert (hc["owned"], hc["file"]) == (False, None)
     assert cc["owned"] is True and cc["file"] == "Avengers Academy - The Complete Collection Vol. 02 (2018).cbz"
     # a bare 'Vol 02' says nothing about the edition: the one Kometa downloaded it AS wins
     for p in tmp_path.iterdir():
         p.unlink()
     (tmp_path / "Avengers Academy Vol 02.cbz").write_bytes(b"x")
-    sync.enrich_trades(series, [cc, hc], books=[], landed={"avengers academy vol 02.cbz": "1485878"})
+    sync.enrich_trades(series, [cc, hc], landed={"avengers academy vol 02.cbz": "1485878"})
     assert hc["owned"] is True and cc["owned"] is False
     # two files, two editions: each owns its own
     (tmp_path / "Avengers Academy - The Complete Collection Vol. 02.cbz").write_bytes(b"x")
-    sync.enrich_trades(series, [hc, cc], books=[])
+    sync.enrich_trades(series, [hc, cc])
     assert hc["file"] == "Avengers Academy Vol 02.cbz"
     assert cc["file"] == "Avengers Academy - The Complete Collection Vol. 02.cbz"
 
@@ -498,7 +450,6 @@ def test_refresh_trades_owned_hands_the_landed_file_to_its_edition(tmp_path, db_
     import json as _json
     import kometa.sync as sync
     monkeypatch.setattr(sync, "DB_PATH", db_path)
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     folder = tmp_path / "Avengers Academy"; folder.mkdir()
     sid = db.add_series(title="Avengers Academy", publisher="Marvel", folder_path=str(folder), on_pull_list=False, path=db_path)
     book = folder / "Avengers Academy Vol 02.cbz"; book.write_bytes(b"x")

@@ -207,7 +207,7 @@ def _download(monkeypatch, folder, body, number):
     return downloader.download_issue(
         url="https://getcomics.org/dls/chunk-1-5", title="Curse Words", publisher="Image Comics",
         issue_number=number, store_date="2017-02-22", hint_filename=None,
-        komga_scan_fn=lambda: None, dest_dir=str(folder))
+        dest_dir=str(folder))
 
 
 class TestDownloadIssueFromChunk:
@@ -268,6 +268,6 @@ def test_an_unfinished_copy_of_the_same_issue_is_replaced_not_a_duplicate(librar
     dest = downloader.download_issue(
         url="https://getcomics.org/dls/x", title="Curse Words", publisher="Image Comics",
         issue_number=4.0, store_date="2017-02-22", hint_filename="Curse Words 004.cbz",
-        komga_scan_fn=lambda: None, dest_dir=str(library))
+        dest_dir=str(library))
     import os
     assert os.path.getsize(dest) > len(b"leftover")

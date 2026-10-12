@@ -12,7 +12,6 @@ TPB = "https://s3.amazonaws.com/comicgeeks/comics/covers/medium-2050784.jpg"
 @pytest.fixture
 def wired(db_path, series, monkeypatch):
     monkeypatch.setattr(th, "DB_PATH", db_path)
-    monkeypatch.setattr(th, "_komga", lambda: None)
     served = []
     monkeypatch.setattr(th, "_cached_image_response", lambda url, *a, **k: served.append(url) or url)
     return db_path, series, served

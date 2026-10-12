@@ -110,7 +110,6 @@ class TestMatchPending:
         monkeypatch.setattr(sync, "find_series_id_anon", lambda *a, **k: guessed.append(a) or 999)
         monkeypatch.setattr(sync, "get_issues_anon", lambda sid: [])
         monkeypatch.setattr(sync, "get_trades_anon", lambda sid: [])
-        monkeypatch.setattr(sync, "_komga", lambda: None)
         r = si.match_pending(sleep=lambda s: None)
         assert r == {"auto": 1, "needs_match": 1, "failed": 0}
         by = {s["title"]: s for s in db.get_all_series(si.DB_PATH)}
@@ -221,7 +220,6 @@ class TestCoversWithoutKomgaOrLocg:
         monkeypatch.setattr(th, "DB_PATH", si.DB_PATH)
         monkeypatch.setattr(rd, "DB_PATH", si.DB_PATH)
         monkeypatch.setattr(rd, "PAGE_CACHE_DIR", str(shelf.parent / "page-cache"))
-        monkeypatch.setattr(th, "_komga", lambda: None)
         si.import_new_folders()
         hk = next(s for s in db.get_all_series(si.DB_PATH) if s["title"] == "Hawkeye")
         card = th.series_thumbnail(hk["id"])

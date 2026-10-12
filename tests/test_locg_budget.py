@@ -16,7 +16,6 @@ def _ts(days_ago):
 @pytest.fixture
 def wired(db_path, series, monkeypatch):
     monkeypatch.setattr(sync, "DB_PATH", db_path)
-    monkeypatch.setattr(sync, "_komga", lambda: None)
     from kometa import locg_client
     monkeypatch.setitem(locg_client._pause, "until", 0.0)      # trades now honour the pause; an earlier test may have set one
     calls = {"issues": 0, "trades": 0}

@@ -3,7 +3,7 @@
 Extracted from main.py. An arc owns nothing: it's a cross-title reading-order
 overlay whose issues live in their real series' folders (see kometa/arc.py for
 the matching logic). This module holds the bricks: ownership resolution against
-disk/Komga (brick A), auto-tracking of participating series (brick B, publisher-
+the disk (brick A), auto-tracking of participating series (brick B, publisher-
 gated), stamping arc issues into their runs (brick C), plus discovery, populate,
 open-issue, fulfill, and the readlist builder.
 
@@ -22,15 +22,15 @@ from pydantic import BaseModel
 
 import kometa.db as db
 from kometa.sources import (
-    komga as _komga, comics_root as _comics_root,
+    comics_root as _comics_root,
     comicvine as _comicvine, wikipedia as _wikipedia,
 )
-from kometa.sync import (
-    sync_one as _sync_one, sync_one_guarded,
-    _best_komga_match, _komga_all_series,
-)
+from kometa.sync import sync_one as _sync_one, sync_one_guarded
 from kometa.acquisition import _process_queue
-from kometa.naming import _resolve_dir, norm_key as _norm, parse_issue_number as _parse_issue_number, OWNED_EXTS
+from kometa.naming import (
+    _resolve_dir, norm_key as _norm, parse_issue_number as _parse_issue_number,
+    scan_folder_numbers as _scan_folder_numbers, OWNED_EXTS,
+)
 from kometa.models import AddSeriesRequest
 
 logger = logging.getLogger(__name__)
@@ -38,34 +38,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 DB_PATH = db.DB_PATH
-
-
-def _arc_collection(arc_title: str, komga, all_series=None):
-    """The Komga series that collects an arc (its trade edition), matched by title —
-    owned-as-a-collection regardless of whether that collection is separately tracked.
-    Returns the Komga series dict or None."""
-    if not komga:
-        return None
-    from kometa.arc import titles_match
-    try:
-        series = all_series if all_series is not None else komga.get_all_series()
-    except Exception:
-        return None
-    return next((x for x in series if titles_match(x.get("name", ""), arc_title)), None)
-
-
-def _collection_info(coll, komga) -> dict | None:
-    """Shape a Komga collection series for the API: name, book count, and the tracked
-    series id (if any) so the arc page can link to it."""
-    if not coll:
-        return None
-    try:
-        books = len(komga.get_books(coll["id"]))
-    except Exception:
-        books = None
-    tracked = db.find_series_by_title(coll.get("name", ""), DB_PATH)
-    return {"name": coll["name"], "komga_series_id": coll["id"], "books": books,
-            "series_id": tracked["id"] if tracked else None}
 
 
 def _folder_has_comics(folder: str | None) -> bool:
@@ -84,8 +56,8 @@ def _folder_has_comics(folder: str | None) -> bool:
 
 def _owned_collection(arc_title: str):
     """A trade/series we ACTUALLY own on disk that collects this arc — title-matched,
-    folder must exist with comic files. Replaces the old Komga-title match, which voted
-    ownership off metadata alone (the 'collected' lie). Returns the tracked series dict
+    folder must exist with comic files. (The old match asked Komga for a series by
+    title and voted ownership off metadata alone — the 'collected' lie.) Returns the tracked series dict
     or None."""
     from kometa.arc import titles_match
     for s in db.get_all_series(DB_PATH):
@@ -97,17 +69,18 @@ def _owned_collection(arc_title: str):
 
 
 def _resolve_arc_ownership(arc_series_id: int) -> dict:
-    """Cross-title ownership for an arc (the lens model): match each reading-order
-    issue (source_title + number) against ITS OWN title's Komga series, stamping
-    komga_book_id + owned. An arc spans titles, so this walks several Komga series,
-    not one — that's why a single 'the arc's Komga series' lookup was wrong."""
+    """Cross-title ownership for an arc (the lens model), straight off the disk:
+    each reading-order issue (source_title + number) is owned when ITS OWN run's
+    folder holds that number. An arc spans titles, so this walks several runs —
+    resolved by CV volume id first (the exact run: Batman 1940, not 2016), then by
+    title. Komga used to answer this from its book lists; it's retired (2026-10-12)
+    and the folder was always the real answer anyway."""
     from kometa.arc import titles_match
-    komga = _komga()
     s = db.get_series_by_id(arc_series_id, DB_PATH)
     rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
-    if not komga or not rows:
-        return {"owned": 0, "total": len(rows), "collection": None}
-    all_series = komga.get_all_series()
+    if not rows:
+        return {"owned": 0, "total": 0, "collection": None}
+    runs = [x for x in db.get_all_series(DB_PATH) if x.get("kind") != "arc"]
 
     def _num(v):
         try:
@@ -115,39 +88,41 @@ def _resolve_arc_ownership(arc_series_id: int) -> dict:
         except (TypeError, ValueError):
             return _parse_issue_number(str(v or ""))
 
-    # (A) Singles: match each reading-order issue to a book in ITS title's Komga
-    # series. One book_map (issue number -> book id) per source title, fetched once.
-    book_maps: dict[str, dict] = {}
+    def _run_for(r):
+        vid = r.get("cv_volume_id")
+        if vid:
+            hit = next((x for x in runs if str(x.get("cv_volume_id") or "") == str(vid)), None)
+            if hit:
+                return hit
+        st = r.get("source_title") or ""
+        return next((x for x in runs if st and titles_match(x.get("title") or "", st)), None)
+
+    # (A) Singles: one folder listing per run, however many arc issues it holds.
+    on_disk: dict[int, set] = {}
     resolved = []
     for r in rows:
-        st = r.get("source_title") or ""
-        if st not in book_maps:
-            ks = next((x for x in all_series if titles_match(x.get("name", ""), st)), None)
-            bm = {}
-            if ks:
-                for b in komga.get_books(ks["id"]):
-                    if b.get("media", {}).get("status") == "ERROR":
-                        continue
-                    n = _parse_issue_number(b.get("name", ""), st)
-                    if n is not None and n not in bm:
-                        bm[n] = b["id"]
-            book_maps[st] = bm
-        n = _num(r.get("number"))
-        book_id = book_maps[st].get(n) if n is not None else None
-        resolved.append((r["reading_order"], book_id, 1 if book_id else 0))
+        run = _run_for(r)
+        owned = False
+        if run and run.get("folder_path") and os.path.isdir(run["folder_path"]):
+            if run["id"] not in on_disk:
+                on_disk[run["id"]] = _scan_folder_numbers(run["folder_path"], run.get("title") or "")
+            n = _num(r.get("number"))
+            owned = n is not None and n in on_disk[run["id"]]
+        # the book-id slot was the Komga link: nothing looks one up any more, but a
+        # stored one is data — carried as-is, never nulled
+        resolved.append((r["reading_order"], r.get("komga_book_id"), 1 if owned else 0))
     db.set_arc_ownership(arc_series_id, resolved, DB_PATH)
 
-    # (B) Collected edition: a KOMGA series named after the arc (its trade edition),
-    # whether or not that collection is separately tracked. Vintage arcs are usually
-    # owned this way, not as singles; the readlist falls back to its volumes.
-    coll = _arc_collection(s["title"], komga, all_series)
-    return {"owned": sum(1 for _, b, o in resolved if o), "total": len(rows),
-            "collection": _collection_info(coll, komga)}
+    # (B) Collected edition: a tracked series named after the arc with comics in
+    # its folder. Vintage arcs are usually owned this way, not as singles.
+    coll = _owned_collection(s["title"]) if s else None
+    return {"owned": sum(1 for _, _b, o in resolved if o), "total": len(rows),
+            "collection": {"name": coll["title"], "series_id": coll["id"]} if coll else None}
 
 
 @router.post("/api/series/{series_id}/resolve-arc")
 def resolve_arc(series_id: int):
-    """Re-match an arc's reading order against Komga (after grabbing issues/trades),
+    """Re-match an arc's reading order against the disk (after grabbing issues/trades),
     refreshing the owned counts shown on the arc page."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s or s.get("kind") != "arc":
@@ -157,8 +132,7 @@ def resolve_arc(series_id: int):
 
 @router.post("/api/series/{series_id}/readlist")
 def build_arc_readlist(series_id: int):
-    """The arc's reading order as a KOMETA reading list — the last write into
-    Komga died here. Same name again = rebuilt in place (save_list keeps the id),
+    """The arc's reading order as a KOMETA reading list. Same name again = rebuilt in place (save_list keeps the id),
     so the button is safe to mash. Entries resolve live against the shelf like
     any imported CBL; what isn't owned shows as a gap with a catalogue cover."""
     import re
@@ -390,13 +364,24 @@ def _arc_participant_allowed(vol_publisher: str | None, arc_publisher: str | Non
     return key(vol_publisher) == key(arc_publisher)
 
 
+def _tracked_at_folder(folder: str | None) -> dict | None:
+    """The tracked run (not an arc) already living in this folder, if any. The Komga
+    title match used to stop an arc from minting a twin of a run tracked before it
+    had a CV volume id; the folder is the honest version of that check — same
+    folder, same run."""
+    if not folder:
+        return None
+    return next((x for x in db.get_all_series(DB_PATH)
+                 if x.get("kind") != "arc" and x.get("folder_path") == folder), None)
+
+
 def _track_participating(arc_series_id: int) -> dict:
     """Brick B: auto-track the series an arc's issues belong to — one tracked series
     per distinct CV volume, PULL-LIST OFF so broad sweeps skip them (the arc is the
     lens that pulls just its issues). Idempotent via cv_volume_id. Publisher-gated
     (_arc_participant_allowed) so CV's reprint/magazine noise doesn't mint junk
     series. Returns {cv_volume_id: series_id}."""
-    cv, komga = _comicvine(), _komga()
+    cv = _comicvine()
     rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
     arc = db.get_series_by_id(arc_series_id, DB_PATH)
     publisher = arc.get("publisher") or "DC Comics"
@@ -405,7 +390,6 @@ def _track_participating(arc_series_id: int) -> dict:
         vid = r.get("cv_volume_id")
         if vid and vid not in vols:
             vols[vid] = r.get("source_title") or ""
-    kall = None  # fetched lazily — skip the whole-library pull when nothing to create
     mapping = {}
     for vid, name in vols.items():
         existing = db.get_series_by_cv_volume(vid, DB_PATH)
@@ -421,33 +405,21 @@ def _track_participating(arc_series_id: int) -> dict:
                         f"{info.get('publisher')!r}, arc is {publisher!r}")
             continue
         title = _vol_title(name, year)
-        kid = None
-        if komga:
-            try:
-                if kall is None:
-                    kall = _komga_all_series(komga)
-                kid = _best_komga_match(kall, title) or _best_komga_match(kall, name)
-            except Exception:
-                kid = None
-        # That Komga series may already back a tracked run (komga_series_id is UNIQUE —
-        # inserting a second 500s). Reuse it: anchor its CV volume to this arc's run and
-        # map to it instead of minting a duplicate.
-        if kid:
-            taken = db.get_series_by_komga_id(kid, DB_PATH)
-            if taken:
-                if not taken.get("cv_volume_id"):
-                    db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
-                mapping[vid] = taken["id"]
-                continue
         folder = _resolve_dir(_comics_root(), publisher, title)
-        sid = db.add_series(komga_series_id=kid, title=title, publisher=publisher,
+        taken = _tracked_at_folder(folder)
+        if taken:
+            # already tracked, just never anchored to CV: anchor it, don't twin it
+            if not taken.get("cv_volume_id"):
+                db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
+            mapping[vid] = taken["id"]
+            continue
+        sid = db.add_series(title=title, publisher=publisher,
                             year_began=year, folder_path=folder, on_pull_list=False,
                             cv_volume_id=str(vid), path=DB_PATH)
         mapping[vid] = sid
         # No try needed: sync_one_guarded catches + logs everything internally.
         sync_one_guarded(db.get_series_by_id(sid, DB_PATH), _sync_one)
-        logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid} "
-                    f"(komga={'yes' if kid else 'no'})")
+        logger.info(f"Arc participating series tracked (pull-off): {title!r} -> series {sid}")
     _populate_participating_issues(arc_series_id)
     return mapping
 
@@ -455,7 +427,8 @@ def _track_participating(arc_series_id: int) -> dict:
 def _populate_participating_issues(arc_series_id: int) -> int:
     """Brick C: stamp each arc issue into its participating run's issue_status, so the
     run's card shows the issues THIS arc needs (owned/missing) and Fulfill can act on
-    them. Owned/komga_book_id carry over from the arc's resolved ownership."""
+    them. Owned (and any legacy komga_book_id, as data) carries over from the arc's
+    resolved ownership."""
     rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
     vids = {r.get("cv_volume_id") for r in rows if r.get("cv_volume_id")}
     ps_map = {vid: db.get_series_by_cv_volume(vid, DB_PATH) for vid in vids}
@@ -507,26 +480,18 @@ def _resolve_or_create_run(arc: dict, row: dict, arc_rows: list[dict]) -> dict:
         or db.find_series_by_title(source, DB_PATH)
     if run:
         return run
-    cv, komga = _comicvine(), _komga()
+    cv = _comicvine()
     year = cv.get_volume_year(vid) if (cv and vid) else None
     title = _vol_title(source, year)
     publisher = arc.get("publisher") or "DC Comics"
-    kid = None
-    if komga:
-        try:
-            kall = _komga_all_series(komga)
-            kid = _best_komga_match(kall, title) or _best_komga_match(kall, source)
-            if kid:
-                taken = db.get_series_by_komga_id(kid, DB_PATH)
-                if taken:
-                    if vid and not taken.get("cv_volume_id"):
-                        db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
-                    _stamp_arc_run_issues(taken["id"], arc_rows, source, vid)
-                    return db.get_series_by_id(taken["id"], DB_PATH)
-        except Exception:
-            kid = None
     folder = _resolve_dir(_comics_root(), publisher, title)
-    sid = db.add_series(komga_series_id=kid, title=title, publisher=publisher,
+    taken = _tracked_at_folder(folder)
+    if taken:
+        if vid and not taken.get("cv_volume_id"):
+            db.set_series_cv_volume(taken["id"], str(vid), DB_PATH)
+        _stamp_arc_run_issues(taken["id"], arc_rows, source, vid)
+        return db.get_series_by_id(taken["id"], DB_PATH)
+    sid = db.add_series(title=title, publisher=publisher,
                         year_began=year, folder_path=folder, on_pull_list=False,
                         cv_volume_id=str(vid) if vid else None, path=DB_PATH)
     _stamp_arc_run_issues(sid, arc_rows, source, vid)
@@ -591,7 +556,7 @@ def fulfill_arc(series_id: int):
 
 def _add_arc(req: AddSeriesRequest):
     """Add a story arc: a kind='arc' tracked_series whose cross-title reading order
-    is populated from ComicVine. Reuses folder/queue/Komga machinery; the arc's
+    is populated from ComicVine. Reuses the folder/queue machinery; the arc's
     issues span titles so they live in arc_issues, not issue_status."""
     # Already tracking this arc? Open it instead of duplicating.
     existing = db.find_arc_by_cv_id(req.cv_arc_id, DB_PATH)
@@ -636,11 +601,11 @@ def _add_arc(req: AddSeriesRequest):
             issues = kept
             db.replace_arc_reading_order(new_id, issues, DB_PATH)
             logger.info(f"Arc {title!r}: populated {len(issues)} reading-order issues from CV")
-            # Resolve cross-title ownership against Komga so the arc page shows real
-            # owned counts from the start, not 0/N.
+            # Resolve cross-title ownership against the disk so the arc page shows
+            # real owned counts from the start, not 0/N.
             try:
                 r = _resolve_arc_ownership(new_id)
-                logger.info(f"Arc {title!r}: resolved {r['owned']}/{r['total']} owned in Komga")
+                logger.info(f"Arc {title!r}: resolved {r['owned']}/{r['total']} owned on disk")
             except Exception as e:
                 logger.warning(f"Arc ownership resolve failed for {title!r}: {e}")
             # Brick B: auto-track the participating runs (pull-list OFF) so the arc's

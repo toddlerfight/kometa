@@ -113,34 +113,39 @@ class TestEnvConfigSeeding:
     """Env vars provision config on first boot (so compose-only setup works),
     but never override what's already in the DB."""
 
-    def test_komga_env_seeded_on_fresh_db(self, tmp_path, monkeypatch):
+    def test_env_seeded_on_fresh_db(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("COMICS_ROOT", "/srv/comics")
+        p = str(tmp_path / "k.db")
+        db.init_db(p)
+        assert db.get_config(p)["comics_root"] == "/srv/comics"
+
+    def test_komga_env_is_ignored(self, tmp_path, monkeypatch):
+        # Komga is retired (2026-10-12): a leftover KOMGA_* in someone's .env
+        # must not mint config rows nothing reads
         monkeypatch.setenv("KOMGA_URL", "http://example:8585")
         monkeypatch.setenv("KOMGA_USER", "kuser")
         p = str(tmp_path / "k.db")
         db.init_db(p)
         cfg = db.get_config(p)
-        assert cfg["komga_url"] == "http://example:8585"
-        assert cfg["komga_user"] == "kuser"
+        assert "komga_url" not in cfg and "komga_user" not in cfg
 
     def test_unset_env_seeds_nothing(self, tmp_path, monkeypatch):
-        for v in ("KOMGA_URL", "KOMGA_USER", "CV_API_KEY"):
+        for v in ("COMICS_ROOT", "CV_API_KEY"):
             monkeypatch.delenv(v, raising=False)
         p = str(tmp_path / "k.db")
         db.init_db(p)
-        cfg = db.get_config(p)
-        assert "komga_url" not in cfg
-        assert "komga_user" not in cfg
+        assert "comics_root" not in db.get_config(p)
 
     def test_env_does_not_override_existing_ui_value(self, tmp_path, monkeypatch):
         p = str(tmp_path / "k.db")
-        monkeypatch.delenv("KOMGA_URL", raising=False)
+        monkeypatch.delenv("COMICS_ROOT", raising=False)
         db.init_db(p)
-        db.set_config({"komga_url": "http://ui-set:8585"}, p)  # user configured via UI
+        db.set_config({"comics_root": "/ui/set"}, p)  # user configured via UI
 
-        monkeypatch.setenv("KOMGA_URL", "http://env-changed:9999")
+        monkeypatch.setenv("COMICS_ROOT", "/env/changed")
         db.init_db(p)  # restart with a different env value
 
-        assert db.get_config(p)["komga_url"] == "http://ui-set:8585"  # UI wins
+        assert db.get_config(p)["comics_root"] == "/ui/set"  # UI wins
 
 
 class TestOwnedColumnMigration:

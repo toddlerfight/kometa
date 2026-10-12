@@ -1002,7 +1002,7 @@ async function renderReadLists() {
   if (currentView !== 'readlists') return;
   if (!lists.length) {
     setApp(`<div class="empty-state"><div class="empty-state-title">No reading lists yet</div>
-      <div style="margin-top:8px;color:var(--tq);font-size:13px">Import a ComicRack .cbl, a link to one, or Komga's read lists.</div></div>`);
+      <div style="margin-top:8px;color:var(--tq);font-size:13px">Import a ComicRack .cbl, or a link to one.</div></div>`);
     return;
   }
   // The Library's cards: cover, an owned bar, title and count. Here the bar is
@@ -1034,7 +1034,7 @@ async function renderReadLists() {
   setApp(`<div class="series-grid">${cards}</div>`);
 }
 
-// One modal, three ways in: a .cbl file, a link to one, or Komga's read lists.
+// One modal, two ways in: a .cbl file, or a link to one.
 function _rlImportModal() {
   showModal(`
     <div class="modal-header"><h2>Import a reading list</h2></div>
@@ -1045,8 +1045,6 @@ function _rlImportModal() {
           onkeydown="if(event.key==='Enter')_rlImportUrl()" style="flex:1;min-width:0">
         <button class="btn btn-ghost" onclick="_rlImportUrl()">Import</button></div>
         <div style="margin-top:6px;color:var(--tq);font-size:12px"><a class="btn-link" href="https://github.com/DieselTech/CBL-ReadingLists" target="_blank" rel="noopener">The community repo</a> has about 1,700.</div></div>
-      <div class="settings-field" style="margin-top:14px"><label class="settings-field-label u-label">Or from Komga</label>
-        <button class="btn btn-ghost" title="Every read list in Komga, matched by file name" onclick="_rlImportKomga(this)">Import Komga's read lists</button></div>
     </div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`);
 }
@@ -1074,16 +1072,6 @@ async function _rlImport(pending) {
     showToast('List imported');
     navigate('readlist', { id: r.id });
   } catch (e) { showToast(`Couldn’t import that: ${e.message || e}`, 'error'); }
-}
-
-async function _rlImportKomga(btn) {
-  btn.disabled = true; btn.textContent = 'Importing…';
-  try {
-    const made = await api.post('/api/readlists/import-komga', {});
-    closeModal();
-    showToast(made.length ? `${made.length} list${made.length === 1 ? '' : 's'} imported from Komga` : 'Komga has no read lists');
-    renderReadLists();
-  } catch (e) { btn.disabled = false; btn.textContent = 'Import from Komga'; showToast('Couldn’t import from Komga', 'error'); }
 }
 
 function _rlDelete(id, name) {

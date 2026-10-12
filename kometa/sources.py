@@ -1,6 +1,6 @@
 """Source adapters — one place to get a configured client for every external
-system Kometa talks to (Komga, SABnzbd, qBittorrent, Prowlarr, ComicVine,
-LOCG, and the Usenet indexer list).
+system Kometa talks to (SABnzbd, qBittorrent, Prowlarr, ComicVine, Wikipedia).
+Komga was one until it was retired (2026-10-12); nothing talks to it now.
 
 Each accessor reads current config straight from the DB and rebuilds its client
 when credentials change, so callers never touch credentials or worry about
@@ -9,7 +9,6 @@ caching. This is the seam between Kometa's logic and the outside world.
 import os
 import logging
 
-from kometa.komga_client import KomgaClient
 from kometa.sabnzbd_client import SABnzbdClient, SAB_PRIORITY
 from kometa.qbittorrent_client import QBittorrentClient
 import kometa.db as db
@@ -49,23 +48,6 @@ def _cached(name: str, key: str, build):
     if client is not None:
         _client_cache[name] = (key, client)
     return client
-
-
-def komga() -> KomgaClient | None:
-    cfg = db.get_config(DB_PATH)
-    # Komga is an OPTIONAL enhancement (covers, ownership linking, readlists) —
-    # the app runs on folders + LOCG art without it. The toggle gates it off
-    # without dropping the creds; every caller already treats None as "no Komga".
-    if cfg.get("komga_enabled", "1") == "0":
-        return None
-    if not cfg.get("komga_url"):
-        return None
-    key = f"{cfg.get('komga_url')}|{cfg.get('komga_user')}|{cfg.get('komga_pass')}|{cfg.get('komga_library_id')}"
-    return _cached("komga", key, lambda: KomgaClient(
-        base_url=cfg.get("komga_url", ""),
-        auth=(cfg.get("komga_user", ""), cfg.get("komga_pass", "")),
-        library_id=cfg.get("komga_library_id", ""),
-    ))
 
 
 def sabnzbd() -> SABnzbdClient | None:
