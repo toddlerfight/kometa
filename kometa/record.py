@@ -188,6 +188,23 @@ def _fresh(row: dict | None) -> bool:
     return age < RECORD_TTL_DAYS
 
 
+def merge_extra(series_id: int, number: float, fields: dict, path=None) -> None:
+    """Add keys to an existing row's extra (what Metron said, plus what other
+    sources add, e.g. ComicVine's original cover). A row with no extra yet stays
+    'never asked' for Metron's purposes — this only writes when extra exists."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT extra_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        if not r or r["extra_json"] is None:
+            return
+        extra = json.loads(r["extra_json"] or "{}")
+        extra.update(fields)
+        conn.execute("UPDATE issue_record SET extra_json = ? WHERE tracked_series_id = ? AND number = ?",
+                     (json.dumps(extra), series_id, number))
+
+
 def set_community(series_id: int, number: float, data: dict, path=None) -> None:
     """LOCG's community snapshot for one issue, stamped now. A row that doesn't
     exist yet is made as a covers-only placeholder ('variants' state), the same

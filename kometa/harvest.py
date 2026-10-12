@@ -6,12 +6,15 @@ queue, the image store. Each keeps its own pace and its own refusals. This is
 the one place that adds them up, so 'how far along are we' is a single read
 instead of five log greps.
 """
+import json
+import logging
 import time
 
 from fastapi import APIRouter
 
 import kometa.db as db
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
 _IMAGES_TTL_S = 120
@@ -129,3 +132,59 @@ def split_candidates(path=None, min_unmatched: int = 25, min_outside: int = 3) -
 @router.get("/api/harvest/split-candidates")
 def get_split_candidates():
     return split_candidates()
+
+
+# --- ComicVine's full-size covers (1f) ----------------------------------------------
+CV_BATCH = 100
+
+
+def cv_cover_candidates(path=None, limit: int = CV_BATCH) -> list[dict]:
+    """Owned issues whose record carries a ComicVine id (from Metron) and that
+    ComicVine hasn't been asked about yet. Pull list first, then the rest."""
+    path = path or DB_PATH
+    from kometa import record
+    record.ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = conn.execute("""
+            SELECT r.tracked_series_id AS sid, r.number, r.cv_issue_id, r.extra_json
+            FROM issue_record r JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
+            JOIN tracked_series s ON s.id = r.tracked_series_id
+            WHERE i.owned = 1 AND r.cv_issue_id IS NOT NULL AND r.cv_issue_id != '' AND r.extra_json IS NOT NULL
+              AND (s.kind IS NULL OR s.kind != 'arc')
+            ORDER BY s.on_pull_list DESC, r.tracked_series_id, r.number""").fetchall()
+    out = []
+    for r in rows:
+        extra = json.loads(r["extra_json"] or "{}")
+        if "cv_original" in extra:              # asked already (None = ComicVine had no cover)
+            continue
+        out.append({"sid": r["sid"], "number": r["number"], "cv_id": str(r["cv_issue_id"])})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def cv_covers_tick(limit: int = CV_BATCH, path=None, client=None) -> int:
+    """Scheduler tick: ONE ComicVine request for up to 100 owned issues' original
+    cover URLs, into the record's extra; the image store's trickle downloads them
+    (key issue/<sid>/<n>/cv). Nothing on screen changes: an owned issue's tile is
+    its own file's page 1 — these are for the archive, and for issues not owned."""
+    path = path or DB_PATH
+    cfg = db.get_config(path)
+    if cfg.get("comicvine_enabled", "1") == "0" or not (cfg.get("cv_api_key") or "").strip():
+        return 0
+    todo = cv_cover_candidates(path, limit)
+    if not todo:
+        return 0
+    from kometa import record
+    if client is None:
+        from kometa.comicvine_client import ComicVineClient
+        client = ComicVineClient(cfg["cv_api_key"].strip())
+    try:
+        found = client.get_issue_originals([t["cv_id"] for t in todo])
+    except Exception as e:
+        logger.info(f"ComicVine covers: stopped this tick: {e}")
+        return 0
+    for t in todo:
+        record.merge_extra(t["sid"], t["number"], {"cv_original": found.get(t["cv_id"])}, path)
+    logger.info(f"ComicVine covers: {len(found)} of {len(todo)} issues have an original")
+    return len(found)

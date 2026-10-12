@@ -71,6 +71,12 @@ def variant_key(series_id: int, number: float, variant_id) -> str:
     return f"issue/{int(series_id)}/{number:g}/variant/{re.sub(r'[^A-Za-z0-9_.-]', '_', str(variant_id))}"
 
 
+def cv_key(series_id: int, number: float) -> str:
+    """ComicVine's full-size original of the main cover (enrichment 1f) — kept
+    beside the catalogue's 600–768px main, not over it."""
+    return f"{issue_key(series_id, number).rsplit('/', 1)[0]}/cv"
+
+
 def series_key(series_id: int) -> str:
     return f"series/{int(series_id)}"
 
@@ -316,6 +322,16 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                             out.append((k, url, "trade"))
                             if len(out) >= limit:
                                 return out[:limit]
+            # ComicVine's originals (1f): last — the biggest files, and never on screen
+            # for an owned issue (its tile is the file's own page 1)
+            for r in conn.execute("""SELECT tracked_series_id AS sid, number, extra_json FROM issue_record
+                WHERE extra_json LIKE '%"cv_original": "http%' ORDER BY tracked_series_id, number"""):
+                url = json.loads(r["extra_json"] or "{}").get("cv_original")
+                k = cv_key(r["sid"], r["number"])
+                if url and _wants(have, k, url):
+                    out.append((k, url, "comicvine"))
+                    if len(out) >= limit:
+                        return out[:limit]
         except Exception as e:
             logger.info(f"Image trickle: extra sources skipped: {e}")
     return out[:limit]

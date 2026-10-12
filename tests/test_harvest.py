@@ -193,3 +193,39 @@ def test_split_candidates_from_local_data(db_path):
     c = harvest.split_candidates(db_path)
     assert [r["title"] for r in c["outside"]] == ["Fables"]
     assert [r["title"] for r in c["unmatched"]] == ["Fantastic Four"]
+
+
+# --- 1f: ComicVine originals -----------------------------------------------------
+class _CV:
+    def __init__(self, answers):
+        self.answers, self.calls = answers, []
+
+    def get_issue_originals(self, ids):
+        self.calls.append(list(ids))
+        return {i: self.answers[i] for i in ids if i in self.answers}
+
+
+def test_cv_covers_one_request_per_batch_then_the_trickle_downloads(db_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    db.set_config({"cv_api_key": "k"}, db_path)
+    sid = db.add_series(title="Midnight Spider-Man", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    for n, cv in ((1.0, 1196213), (2.0, 1196300), (3.0, None)):
+        db.upsert_issue_status(sid, n, None, 1, metron_issue_id=int(n), path=db_path)
+        rec.write_issue(sid, n, {"desc": "x", "extra": {"cv_id": cv} if cv else {}}, "metron", "full",
+                        {"metron_issue_id": int(n)}, db_path)
+    cv = _CV({"1196213": "https://comicvine.gamespot.com/a/uploads/original/1/1196213.jpg"})
+    assert harvest.cv_covers_tick(path=db_path, client=cv) == 1
+    assert cv.calls == [["1196213", "1196300"]]                                   # one batch, issue 3 has no cv id
+    assert rec.get_issue(sid, 1.0, db_path)["extra"]["cv_original"].endswith("1196213.jpg")
+    assert rec.get_issue(sid, 2.0, db_path)["extra"]["cv_original"] is None       # asked; CV had none
+    assert harvest.cv_covers_tick(path=db_path, client=cv) == 0 and len(cv.calls) == 1   # never asked twice
+    from kometa import images
+    queued = [(k, u) for k, u, s in images.pending(db_path) if s == "comicvine"]
+    assert queued == [(images.cv_key(sid, 1.0), "https://comicvine.gamespot.com/a/uploads/original/1/1196213.jpg")]
+
+
+def test_cv_covers_off_without_a_key_or_when_switched_off(db_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    assert harvest.cv_covers_tick(path=db_path, client=_CV({})) == 0
+    db.set_config({"cv_api_key": "k", "comicvine_enabled": "0"}, db_path)
+    assert harvest.cv_covers_tick(path=db_path, client=_CV({})) == 0

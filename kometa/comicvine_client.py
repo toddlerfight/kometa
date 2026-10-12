@@ -229,6 +229,24 @@ class ComicVineClient:
                 }
         return out
 
+    def get_issue_originals(self, issue_ids) -> dict:
+        """{str(issue_id): original_url} for up to 100 issues per call — the
+        full-size cover CV keeps (image.original_url). One request per 100 ids,
+        well under CV's 200-per-resource-per-hour. An id CV doesn't answer for is
+        simply absent. Raises on a failed call so the caller can stop."""
+        out = {}
+        ids = [str(i) for i in issue_ids if i]
+        for start in range(0, len(ids), 100):
+            chunk = ids[start:start + 100]
+            d = self._get("issues/", filter="id:" + "|".join(chunk), field_list="id,image", limit=100)
+            if d.get("status_code") not in (None, 1):
+                raise RuntimeError(d.get("error") or f"ComicVine status {d.get('status_code')}")
+            for it in (d.get("results") or []):
+                url = (it.get("image") or {}).get("original_url")
+                if url and "blank" not in url:
+                    out[str(it.get("id"))] = url
+        return out
+
     def get_volume_year(self, cv_volume_id):
         """Start year for a volume — disambiguates which run to track."""
         return self.get_volume_info(cv_volume_id).get("year")
