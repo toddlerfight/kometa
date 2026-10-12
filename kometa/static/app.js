@@ -4972,6 +4972,12 @@ async function showIssueModal(seriesId, number, opts = {}) {
       const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
       _renderIssueDetails(d.desc, d.credits || [], d.community);
     } catch { _renderIssueDetails('', []); }
+  } else if (st === 'owned') {
+    // no catalogue id: the file's own tags may still know (read local first; a 404 when it's off)
+    try {
+      const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
+      if (d.desc || (d.credits || []).length || d.community) _renderIssueDetails(d.desc, d.credits || [], d.community);
+    } catch {}
   }
 
   // Fetch variants in background

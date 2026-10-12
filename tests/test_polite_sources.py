@@ -479,3 +479,18 @@ def test_prh_only_asks_upcs_of_publishers_it_distributes(db_path, monkeypatch):
         db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
         record.write_issue(sid, 1.0, {"desc": "x", "extra": {"upc": upc}}, "metron", "full", {"metron_issue_id": 1}, db_path)
     assert [c["code"] for c in prh.candidates(db_path)] == ["75960621681900111"]
+
+
+def test_limiter_count_and_rest_survive_a_restart(web, tmp_path, monkeypatch):
+    routes, _ = web
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "k.db"))
+    routes["https://x/a"] = (200, b"ok")
+    routes["https://x/b"] = (429, b"", {"Retry-After": "600"})
+    lim = polite.Limiter("Persist", min_interval_s=0, daily_cap=3)
+    lim.get("https://x/a")
+    with pytest.raises(polite.SourceUnavailable):
+        lim.get("https://x/b")
+    again = polite.Limiter("Persist", min_interval_s=0, daily_cap=3)      # a deploy: same name, fresh object
+    b = again.budget()
+    assert b["used"] == 2 and b["paused"]
+    assert polite.Limiter("Other", min_interval_s=0, daily_cap=3).budget()["used"] == 0

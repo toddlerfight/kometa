@@ -219,6 +219,19 @@ def details(issue: dict, path=None) -> dict:
     row = record.get_issue(sid, number, path)
     # 1. the record, when a catalogue (or our own tags) filled it: no network, not even behind
     if row and row.get("fill_state") in ("full", "partial") and row.get("source") in record.CATALOGUE_SOURCES:
+        if not record._fresh(row) and (issue.get("metron_issue_id") or issue.get("locg_issue_id")):
+            # past the record TTL: answer now, refresh behind (as the flag-off path does);
+            # a catalogue that answered rewrites the file's tags too
+            ids = [b["id"] for b in _books(sid, number, path)]
+
+            def refresh():
+                try:
+                    filled = record.fill_issue(sid, number, path, force=True)
+                    if filled and filled.get("source") in record.CATALOGUE_SOURCES and ids:
+                        queue_retag(ids, "changed", path)
+                except Exception as e:
+                    logger.info(f"Read-local refresh for {sid}#{number:g} skipped: {e}")
+            _spawn(refresh)
         return _answer(row, True, issue)
     # 2. the file's own ComicInfo, when it's ours
     books = _books(sid, number, path)
@@ -245,6 +258,10 @@ def details(issue: dict, path=None) -> dict:
                 log_miss(sid, number, record_state, file_state, outcome, book_id, path)
         _spawn(refresh)
         return _answer(row, True, issue)
+    if not (issue.get("metron_issue_id") or issue.get("locg_issue_id")):
+        # no catalogue id to ask with: nothing online can answer — say so, ask nothing
+        log_miss(sid, number, record_state, file_state, "no catalogue id", book_id, path)
+        return {"desc": "", "credits": [], "source": None, "arcs": [], "store_date": issue.get("store_date"), "record": False}
     try:
         d = issue_meta.details_for(issue, path)
     except Exception:

@@ -9,7 +9,10 @@ gap, a daily cap counted when sent, and a pause after a refusal or an outage
 so a struggling host isn't knocked on again for a while. Same shape as
 gcd_client's throttle, without the credentials.
 """
+import json
 import logging
+import os
+import tempfile
 import threading
 import time
 from datetime import date
@@ -20,6 +23,27 @@ logger = logging.getLogger(__name__)
 
 USER_AGENT = "Kometa/1.0 (personal comic library; polite background harvest)"
 REFUSED_STATUSES = (403, 429, 503)
+
+
+# Today's count and any rest survive a restart: kept beside the database in one small
+# file, every limiter under its name. Before this a deploy handed every source a fresh
+# day — a busy deploy night could send Marvel.com well past its 400.
+STATE_FILE = "limiters.json"
+_file_lock = threading.Lock()
+
+
+def _state_path() -> str | None:
+    from kometa import db
+    folder = os.path.dirname(db.DB_PATH)
+    return os.path.join(folder, STATE_FILE) if folder and os.path.isdir(folder) else None
+
+
+def _read_all(p: str) -> dict:
+    try:
+        with open(p) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
 
 
 class SourceUnavailable(RuntimeError):
@@ -41,8 +65,38 @@ class Limiter:
         self.sleep = time.sleep
         self._lock = threading.Lock()
         self._state = {"last": 0.0, "day": "", "count": 0, "paused_until": 0.0}
+        self._loaded = False
+
+    def _load(self):
+        """Once, on first use: today's count and a rest still running, from the file."""
+        if self._loaded:
+            return
+        self._loaded = True
+        p = _state_path()
+        saved = _read_all(p).get(self.name) if p else None
+        if not isinstance(saved, dict):
+            return
+        if saved.get("day") == date.today().isoformat():
+            self._state.update(day=saved["day"], count=max(self._state["count"], int(saved.get("count") or 0)))
+        self._state["paused_until"] = max(self._state["paused_until"], float(saved.get("paused_until") or 0))
+
+    def _save(self):
+        p = _state_path()
+        if not p:
+            return
+        with _file_lock:
+            try:
+                all_ = _read_all(p)
+                all_[self.name] = {k: self._state[k] for k in ("day", "count", "paused_until")}
+                fd, tmp = tempfile.mkstemp(prefix=".limiters", dir=os.path.dirname(p))
+                with os.fdopen(fd, "w") as fh:
+                    json.dump(all_, fh)
+                os.replace(tmp, p)
+            except OSError as e:
+                logger.debug(f"limiter state not saved: {e}")
 
     def _roll_day(self):
+        self._load()
         today = date.today().isoformat()
         if self._state["day"] != today:
             self._state.update(day=today, count=0)
@@ -62,11 +116,14 @@ class Limiter:
         """Stop sending for a while without a refusal to blame — e.g. a page that
         no longer has the shape the worker reads (better idle than mis-record)."""
         with self._lock:
+            self._load()
             self._state["paused_until"] = max(self._state["paused_until"], time.time() + seconds)
+            self._save()
 
     def reset(self):
-        """Tests only: a fresh day, no pause."""
+        """Tests only: a fresh day, no pause (and nothing read back from a file)."""
         self._state.update(last=0.0, day="", count=0, paused_until=0.0)
+        self._loaded = True
 
     def get(self, url: str, **kw) -> requests.Response:
         """One GET through the one throttle. Returns the response for 2xx/3xx/404
@@ -98,16 +155,19 @@ class Limiter:
                 raise SourceUnavailable(f"{self.name} unreachable: {e.__class__.__name__}")
             finally:
                 self._state["last"] = time.time()
+                self._save()                        # the count (and any pause set below is saved too)
             if r.status_code in REFUSED_STATUSES:
                 try:
                     pause = float(r.headers.get("Retry-After") or self.refused_pause_s)
                 except (TypeError, ValueError, AttributeError):
                     pause = self.refused_pause_s
                 self._state["paused_until"] = time.time() + pause
+                self._save()
                 logger.info(f"{self.name} refused us ({r.status_code}); resting {pause / 60:.0f} min")
                 raise SourceUnavailable(f"{self.name} refused us ({r.status_code})")
             if r.status_code >= 500:
                 self._state["paused_until"] = time.time() + self.unreachable_pause_s
+                self._save()
                 raise SourceUnavailable(f"{self.name} answered {r.status_code}")
             return r
 

@@ -100,10 +100,12 @@ def test_on_a_catalogue_row_answers_with_no_network(on, monkeypatch, source):
     for target in ("kometa.issue_meta.details_for", "kometa.issue_meta._metron", "kometa.issue_meta._locg",
                    "kometa.record.fill_issue", "kometa.covers.read_comicinfo"):
         monkeypatch.setattr(target, _boom)
-    monkeypatch.setattr(localfirst, "_spawn", _boom)
+    behind = []                                # old: answered from the record now, refreshed behind (2026-10-13)
+    monkeypatch.setattr(localfirst, "_spawn", behind.append)
     monkeypatch.setattr(record.threading, "Thread", _boom)
     d = record.details(_issue(on), on["db"])
     assert (d["desc"], d["source"], d["record"]) == ("A space opera.", source, True)
+    assert len(behind) == 1
     assert localfirst.miss_count(on["db"]) == 0
 
 
@@ -226,3 +228,29 @@ def test_config_flag_round_trips(tmp_path, monkeypatch):
     assert main.update_config(main.ConfigRequest(read_local_first="1"))["read_local_first"] is True
     assert localfirst.enabled(dbp)
     assert main.update_config(main.ConfigRequest(read_local_first="0"))["read_local_first"] is False
+
+
+# --- 2026-10-13 follow-ups: stale rows refresh behind; id-less issues ask nothing online ---
+def test_followup_stale_catalogue_row_answers_now_and_refreshes_behind(db_path, monkeypatch):
+    import kometa.record as rec
+    from kometa import localfirst
+    db.set_config({"read_local_first": "1"}, db_path)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, path=db_path)
+    db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=101, path=db_path)
+    rec.write_issue(sid, 1.0, {"desc": "old"}, "metron", "full", {"metron_issue_id": 101}, db_path)
+    monkeypatch.setattr(rec, "_fresh", lambda row: False)
+    ran = []
+    monkeypatch.setattr(localfirst, "_spawn", lambda fn: ran.append(fn))
+    issue = {"tracked_series_id": sid, "number": 1.0, "metron_issue_id": 101}
+    assert localfirst.details(issue, db_path)["desc"] == "old"
+    assert len(ran) == 1                       # a refresh queued behind the answer
+
+
+def test_followup_idless_issue_asks_nothing_online(db_path, monkeypatch):
+    from kometa import issue_meta, localfirst
+    db.set_config({"read_local_first": "1"}, db_path)
+    sid = db.add_series(title="Tintin", publisher="Casterman", folder_path=None, path=db_path)
+    db.upsert_issue_status(sid, 16.0, None, 1, path=db_path)
+    monkeypatch.setattr(issue_meta, "details_for", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")))
+    d = localfirst.details({"tracked_series_id": sid, "number": 16.0}, db_path)
+    assert d["source"] is None and d["desc"] == ""

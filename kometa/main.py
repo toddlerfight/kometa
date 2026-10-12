@@ -1939,8 +1939,13 @@ def get_issue_locg_details(series_id: int, number: float):
     from kometa import record
     issues = db.get_issues_for_series(series_id, DB_PATH)
     issue = next((i for i in issues if i["number"] == number), None)
-    if not issue or not (issue.get("locg_issue_id") or issue.get("metron_issue_id")):
+    if not issue:
         raise HTTPException(404)
+    if not (issue.get("locg_issue_id") or issue.get("metron_issue_id")):
+        # no catalogue id: only read-local-first can answer (from the record or our own tags)
+        from kometa import localfirst
+        if not localfirst.enabled(DB_PATH):
+            raise HTTPException(404)
     try:
         d = record.details(issue, DB_PATH)        # the local record first; a catalogue only to fill it
     except Exception as e:
