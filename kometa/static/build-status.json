@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 23:20 AEST",
-  "now": "Fandom galleries + Hardcover LIVE (Hardcover tested: 'Saga Vol 1 found'). GCD now breaks ties from your shelf (publisher folder, file years). Everything that doesn't need you is built; what's left waits on Your tasks.",
+  "updated": "2026-10-12 19:45 AEST",
+  "now": "Running on your go: covers copying into the library folders (18,657 files, 3.93 GB), and the 17-file test batch rewriting inside kometa (switch goes back off automatically when done).",
   "groups": [
     {
       "title": "Komga retirement",
@@ -134,8 +134,8 @@
         {
           "id": "2b",
           "label": "Copy the cover store to the NAS, verified",
-          "state": "waiting-you",
-          "note": "built + dry run: 685 folders, 18,154 files, 3.84 GB — needs your go"
+          "state": "building",
+          "note": "copying now — 686 folders, 18,657 files, 3.93 GB"
         },
         {
           "id": "2c",
@@ -189,8 +189,8 @@
         {
           "id": "3e",
           "label": "Test batch of ~20 files",
-          "state": "waiting-you",
-          "note": "ready — see Your tasks"
+          "state": "building",
+          "note": "17 files rewriting now (16 + the DIE HC trade); then you check them"
         },
         {
           "id": "3f",
@@ -281,16 +281,16 @@
   ],
   "your_tasks": [
     {
+      "title": "Decide where community ratings should show",
+      "why": "LOCG, ComicBookRoundup, Hardcover and Open Library ratings are being collected per issue (dated snapshots) but nothing in kometa shows them yet — only the files' ComicInfo will carry LOCG's rating.",
+      "how": "Pick any of: issue sheet ratings line · series page average · Library sort/filter by rating · use as a signal in Suggestions. I'll mock it up first.",
+      "blocking": "No."
+    },
+    {
       "title": "Pick the right GCD series for the ones it couldn't match",
       "why": "GCD (the Grand Comics Database) fills details for series Metron doesn't have. When several GCD series share a name (Tintin has 145), kometa won't guess.",
       "how": "I'll list each one with its candidates when the first batch is done (about 7 hours for all ~130 series). You pick one per series, or 'none of these'.",
       "blocking": "No — only those series wait."
-    },
-    {
-      "title": "Say go for copying covers into your library folders (step 2)",
-      "why": "Covers become part of the library: a hidden .kometa/covers/ folder in each series folder on the NAS, so the nightly comics backup protects them and the store on ginbako can later move to Catbus. Dry run done (read-only): 685 series folders, 18,154 files, 3.84 GB today (it grows as the harvest adds full-size covers). Each file is written to a temp name, size-checked, then renamed; re-running only writes what's new. 375 covers belong to series you track but don't own (no folder) — those stay in the local store.",
-      "how": "Reply 'go covers'. It takes ~10–15 minutes over the network, pausing while you read.",
-      "blocking": "Yes — step 2 stops here."
     },
     {
       "title": "Say go for moving kometa's cover store to Catbus",
@@ -299,9 +299,9 @@
       "blocking": "Yes — 2d stops here."
     },
     {
-      "title": "Say go for the 16-file test batch, then check them (step 3e)",
+      "title": "Check the test batch once it's written (step 3e)",
       "why": "The rewrite job is built and a dry run passed on 16 deliberately varied files (modern Marvel, 1963 scans, a #605.1, Fables' 2022 run, two CBRs, Tintin, a 300 MB file…). Writing them proves the real swap end to end before the full run. Each original is read back before the swap; CBRs' old files go to _trash; Voot II keeps the originals 30 days. Many of these still carry stand-in data (Metron hasn't reached them) — the test is about the files, not the data; they'll be retagged later with the better record.",
-      "how": "Reply 'go test batch'. I'll list the 16 files; open a few in kometa (and Panels/YondeB if you like): pages intact, reading progress kept, details showing.",
+      "how": "I'll list the 17 files when they're done; open a few in kometa (and YondeB if you like): pages intact, reading progress kept, details showing.",
       "blocking": "Yes — 3f and 4a stop here."
     },
     {
