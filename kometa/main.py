@@ -1289,6 +1289,7 @@ def toggle_pull_list(series_id: int, req: PullListRequest):
 class MatchRequest(BaseModel):
     locg_id: int | None = None
     metron_id: int | None = None
+    metron_extra_ids: list[int] | None = None   # more Metron runs in the same numbering ([] clears)
     none: bool = False          # "there is no run": a collection, a fan book, a folder of one-shots
 
 
@@ -1314,13 +1315,15 @@ def set_series_locg(series_id: int, req: MatchRequest):
         with db._connect(DB_PATH) as conn:
             conn.execute("UPDATE tracked_series SET metron_checked_at = ? WHERE id = ?", (NEVER, series_id))
         return db.get_series_by_id(series_id, DB_PATH)
-    if not (req.locg_id or req.metron_id):
+    if not (req.locg_id or req.metron_id or req.metron_extra_ids is not None):
         raise HTTPException(400, "Pick a run")
     if req.locg_id:
         db.set_locg_series_id(series_id, req.locg_id, DB_PATH)
     if req.metron_id:
         db.set_metron_series_id(series_id, req.metron_id, DB_PATH)
         db.set_metron_link(series_id, "linked", DB_PATH)
+    if req.metron_extra_ids is not None:
+        db.set_metron_extra_ids(series_id, req.metron_extra_ids, DB_PATH)
     db.set_match_status(series_id, "manual", DB_PATH)
     threading.Thread(target=sync_one_guarded,
                      args=(db.get_series_by_id(series_id, DB_PATH), lambda x: _sync_one(x, force=True)),

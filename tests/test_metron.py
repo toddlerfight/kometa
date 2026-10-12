@@ -164,6 +164,38 @@ class TestSync:
         assert calls["locg"] == 0
 
 
+class TestOneRunTwoMetronSeries:
+    """Metron files The X-Men (1963, #1–141) and The Uncanny X-Men (1981,
+    #142–544) apart; a folder holds them as one numbering (2026-10-12)."""
+
+    def test_extra_runs_merge_by_number_primary_first(self, lib, monkeypatch):
+        lists = {1722: [{"number": 142.0, "store_date": "1981-02-01", "image": "u142", "metron_issue_id": 9142},
+                        {"number": 141.0, "store_date": None, "image": "wrong", "metron_issue_id": 1},],
+                 1581: [{"number": 1.0, "store_date": "1963-09-01", "image": "x1", "metron_issue_id": 8001},
+                        {"number": 141.0, "store_date": "1980-12-01", "image": "x141", "metron_issue_id": 8141}]}
+        monkeypatch.setattr(mc, "series_issues", lambda mid: lists[mid])
+        monkeypatch.setattr(sync, "get_issues_anon", lambda lid: [])
+        monkeypatch.setattr(sync, "get_trades_anon", lambda lid: [])
+        sid = db.add_series(title="Uncanny X-Men", publisher="Marvel", on_pull_list=False, path=lib)
+        db.set_metron_series_id(sid, 1722, lib)
+        db.set_metron_extra_ids(sid, [1581], lib)
+        sync.sync_one(db.get_series_by_id(sid, lib))
+        ids = {i["number"]: i["metron_issue_id"] for i in db.get_issues_for_series(sid, lib)}
+        assert ids[1.0] == 8001 and ids[142.0] == 9142
+        assert ids[141.0] == 1                                         # the primary's answer stands
+
+    def test_endpoint_sets_and_clears_extras(self, lib, monkeypatch):
+        import kometa.main as main
+        monkeypatch.setattr(main, "DB_PATH", lib)
+        monkeypatch.setattr(main, "sync_one_guarded", lambda *a, **k: None)
+        sid = db.add_series(title="Uncanny X-Men", publisher="Marvel", on_pull_list=False, path=lib)
+        main.set_series_locg(sid, main.MatchRequest(metron_id=1722, metron_extra_ids=[1581]))
+        s = db.get_series_by_id(sid, lib)
+        assert db.metron_series_ids(s) == [1722, 1581] and s["metron_link"] == "linked" and s["metron_fetched_at"] is None
+        main.set_series_locg(sid, main.MatchRequest(metron_extra_ids=[]))
+        assert db.metron_series_ids(db.get_series_by_id(sid, lib)) == [1722]
+
+
 def test_burst_exhausted_pauses_until_its_reset_without_a_429(monkeypatch):
     """Metron's own guidance: when Burst-Remaining reads 0, stop until Burst-Reset —
     don't fire the next request and get the 429 (and the ban that follows abuse)."""

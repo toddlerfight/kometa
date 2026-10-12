@@ -316,6 +316,12 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
         if "cv_arc_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_arc_id TEXT")
+        if "metron_extra_ids" not in ts_cols:
+            # one run, more than one Metron series: Metron files The X-Men (1963,
+            # #1–141) and The Uncanny X-Men (1981, #142–544) apart; your folder is
+            # one numbering. Comma-separated, merged into the issue list by number.
+            # (Down here, after the rebuilds above, or they'd drop it.)
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_extra_ids TEXT")
         if "cv_volume_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
         # Per-series single-issue page ceiling. NULL = the global default (70).
@@ -2085,6 +2091,25 @@ def set_metron_series_id(series_id, metron_series_id, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET metron_series_id = ?, metron_fetched_at = NULL WHERE id = ?",
                      (metron_series_id, series_id))
+
+
+def set_metron_extra_ids(series_id, ids, path=DB_PATH):
+    """Extra Metron runs whose issues belong to this one (see _migrate). Clears
+    metron_fetched_at so the next sync — or the harvest's issue-id tick — fetches
+    the merged list."""
+    val = ",".join(str(int(i)) for i in ids or []) or None
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_extra_ids = ?, metron_fetched_at = NULL WHERE id = ?",
+                     (val, series_id))
+
+
+def metron_series_ids(series: dict) -> list[int]:
+    """The primary Metron run first, then any extras — the order a merge prefers."""
+    out = [int(series["metron_series_id"])] if series.get("metron_series_id") else []
+    for x in (series.get("metron_extra_ids") or "").split(","):
+        if x.strip().isdigit() and int(x) not in out:
+            out.append(int(x))
+    return out
 
 
 def set_metron_fetched(series_id, when, path=DB_PATH):

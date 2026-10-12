@@ -131,9 +131,12 @@ def sync_one(series: dict, force: bool = False):
             from kometa import metron_client
             if metron_client.configured() and (force or _issues_due(series, "metron_fetched_at")):
                 try:
-                    for mi in metron_client.series_issues(mid):
-                        issue_map[mi["number"]] = {"store_date": mi["store_date"], "image": mi["image"],
-                                                   "locg_issue_id": None, "metron_issue_id": mi.get("metron_issue_id")}
+                    # the primary run, then any extra runs this one spans (db.metron_series_ids);
+                    # a number the primary already has is never overwritten by an extra
+                    for run in db.metron_series_ids(series):
+                        for mi in metron_client.series_issues(run):
+                            issue_map.setdefault(mi["number"], {"store_date": mi["store_date"], "image": mi["image"],
+                                                                "locg_issue_id": None, "metron_issue_id": mi.get("metron_issue_id")})
                     if issue_map:
                         from datetime import datetime, timezone
                         db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
