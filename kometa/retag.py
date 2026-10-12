@@ -225,9 +225,9 @@ def build_one(book: dict, staging_dir: str, row: dict | None = None, path=None, 
     row = row or {"old_size": None, "old_mtime": None}
     if row.get("old_size") is not None:
         _check_unchanged(src, row)
-    sid, number = book.get("tracked_series_id"), book.get("number")
-    if not sid or number is None:
-        return Built(skipped="no record: the book isn't tied to a tracked issue")
+    sid = book.get("tracked_series_id")
+    if not sid:
+        return Built(skipped="no record: the book isn't in a tracked series")
     is_rar = _is_rar(src)
     os.makedirs(staging_dir, exist_ok=True)
     staged = os.path.join(staging_dir, out_name or f"{book['id']}.cbz")
@@ -254,7 +254,7 @@ def build_one(book: dict, staging_dir: str, row: dict | None = None, path=None, 
                 if claimed and got < claimed:
                     raise RetagError(f"the RAR read gave {got} of {claimed} pages — refusing")
             page_count = sum(1 for n, _c, _s in entries if reader._is_page(n))
-            xml = comicinfo.for_issue(sid, number, path, page_count)
+            xml = comicinfo.for_book(book, path, page_count)        # an issue, or the trade it is
             if xml is None:
                 skip = "no record: nothing to write"
             elif not is_rar and _new_path_for(src) == src and n_ci == 1 and old_ci is not None and comicinfo.digest(old_ci) == comicinfo.digest(xml):
@@ -738,9 +738,9 @@ def comicinfo_preview(book_id: int):
     book = db.get_book(book_id, DB_PATH)
     if not book:
         raise HTTPException(404, "No such book")
-    if not book.get("tracked_series_id") or book.get("number") is None:
-        raise HTTPException(404, "This book isn't tied to a tracked issue")
-    xml = comicinfo.for_issue(book["tracked_series_id"], book["number"], DB_PATH, book.get("page_count"))
+    if not book.get("tracked_series_id"):
+        raise HTTPException(404, "This book isn't in a tracked series")
+    xml = comicinfo.for_book(book, DB_PATH, book.get("page_count"))
     if xml is None:
         raise HTTPException(404, "The record has nothing to write for this issue")
     return Response(xml, media_type="application/xml", headers={"X-Comicinfo-Digest": comicinfo.digest(xml)})

@@ -60,3 +60,17 @@ def test_same_record_same_digest_and_a_change_shows():
     a = ci.build(SERIES, ROW, 40)
     assert ci.digest(a) == ci.digest(ci.build(SERIES, ROW, 40))
     assert ci.digest(a) != ci.digest(ci.build(SERIES, dict(ROW, desc="changed"), 40))
+
+
+def test_a_trade_gets_its_own_comicinfo(db_path, monkeypatch):
+    import kometa.db as db
+    sid = db.add_series(title="Die", publisher="Image Comics", folder_path=None, on_pull_list=False, path=db_path)
+    db.set_trades(sid, [{"title": "DIE HC", "vol": None, "format": "HC", "isbn": "9781534323001", "store_date": "2022-11-02",
+                         "file": "DIE HC (2022).cbz", "owned": True, "locg_id": "7473377",
+                         "collects": [{"series": "Die", "number": 1}, {"series": "Die", "number": 2}],
+                         "desc": "Kieron Gillen and Stephanie Hans' complete fantasy-horror epic."}], db_path)
+    book = {"tracked_series_id": sid, "number": None, "path": "/comics/Image Comics/Die/DIE HC (2022).cbz"}
+    f = _parse(ci.for_book(book, db_path, page_count=520))
+    assert (f["Series"], f["Number"], f["Format"], f["GTIN"], f["PageCount"]) == ("Die", "1", "Hardcover", "9781534323001", "520")
+    assert f["Summary"].endswith("Collects Die #1, Die #2") and f["Year"] == "2022"
+    assert ci.for_book(dict(book, path="/comics/Image Comics/Die/Something Else.cbz"), db_path) is None

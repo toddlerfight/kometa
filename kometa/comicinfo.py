@@ -163,3 +163,63 @@ def for_issue(series_id: int, number: float, path=None, page_count: int | None =
         return None
     row = dict(row, number=float(number))
     return build(series, row, page_count, record.get_series(series_id, path))
+
+
+# --- collected editions --------------------------------------------------------------
+def trade_fields(series: dict, t: dict, page_count: int | None = None) -> dict:
+    """A trade's ComicInfo: the series it collects, its volume as the number, its
+    format, ISBN, and what it collects in the summary. Trade records carry no
+    credits — none are invented."""
+    vol = t.get("vol")
+    y, mo, d = _date({"store_date": t.get("store_date")})
+    collects = [f"{c.get('series') or ''} #{c.get('number')}".strip() for c in (t.get("collects") or [])
+                if isinstance(c, dict) and c.get("number") is not None]
+    summary = t.get("desc") or ""
+    if collects:
+        summary = (summary + "\n\n" if summary else "") + "Collects " + ", ".join(collects)
+    ids = [f"{k} {v}" for k, v in (("Metron issue", t.get("metron_issue_id")), ("LOCG", t.get("locg_id"))) if v]
+    f = {
+        "Title": t.get("subtitle") or t.get("edition_title") or t.get("title"),
+        "Series": series.get("title"),
+        "Number": _number(vol) if vol is not None else "1",
+        "Summary": summary,
+        "Notes": "Tagged by Kometa (collected edition). " + "; ".join(ids),
+        "Year": y, "Month": mo, "Day": d,
+        "Publisher": series.get("publisher"),
+        "PageCount": page_count or t.get("page_count") or "",
+        "Format": {"tpb": "TPB", "hc": "Hardcover", "gn": "Graphic Novel", "omnibus": "Omnibus"}.get(
+            (t.get("format") or "").lower(), t.get("format") or ""),
+        "GTIN": t.get("isbn") or "",
+    }
+    return {k: _clean(f[k]) for k in _ORDER if k in f and _clean(f[k])}
+
+
+def _owned_trade(series_id: int, filename: str, path) -> dict | None:
+    """The series' trade-list entry whose landed file is this one."""
+    cached = db.get_trades(series_id, path)
+    for t in (cached or {}).get("trades") or []:
+        if t.get("file") and t["file"] == filename:
+            return t
+    return None
+
+
+def for_book(book: dict, path=None, page_count: int | None = None) -> bytes | None:
+    """The XML for a shelf book: its issue's record, or — numberless in a tracked
+    series — the trade it is. None when kometa knows nothing about it."""
+    import os
+    path = path or DB_PATH
+    sid = book.get("tracked_series_id")
+    if not sid:
+        return None
+    if book.get("number") is not None:
+        return for_issue(sid, book["number"], path, page_count)
+    series = db.get_series_by_id(sid, path)
+    t = series and _owned_trade(sid, os.path.basename(book.get("path") or ""), path)
+    if not t:
+        return None
+    root = ET.Element("ComicInfo", {"xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
+                                    "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance"})
+    for k, v in trade_fields(series, t, page_count).items():
+        ET.SubElement(root, k).text = v
+    ET.indent(root, "  ")
+    return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8") + b"\n"
