@@ -762,7 +762,7 @@ RECHECK_PER_TICK = 300          # finished rows compared against today's record 
 RECHECK_MIN_AGE_DAYS = 7        # a file isn't rewritten again within a week of its last write —
                                 # during the harvest records change hourly (2026-10-12: East of
                                 # West was rewritten twice in ten minutes)
-_CATALOGUE = ("metron", "locg", "gcd")
+_CATALOGUE = ("metron", "locg", "gcd", "comicinfo-kometa")   # the last: our own tags read back (5a)
 
 
 def enabled(path=None) -> bool:

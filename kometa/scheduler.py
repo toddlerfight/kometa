@@ -262,6 +262,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=7))
     except Exception as e:
         logger.warning(f"Retag job not scheduled: {e}")
+    # Retags held back while their book was open in the reader (kometa/localfirst.py, 5b):
+    # onto retag's list once closed. A database move only; empty unless read_local_first ran.
+    try:
+        from kometa.localfirst import flush_deferred
+        scheduler.add_job(flush_deferred, IntervalTrigger(minutes=5), id="retag_deferred",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=6))
+    except Exception as e:
+        logger.warning(f"Deferred-retag job not scheduled: {e}")
     # Covers go home to the series folders on the NAS as they arrive (kometa/coverhome.py, 2e).
     try:
         from kometa.coverhome import sync_tick as coverhome_tick

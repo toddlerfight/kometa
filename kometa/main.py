@@ -637,6 +637,9 @@ def get_config():
         "locg_enabled":        cfg.get("locg_enabled", "1") != "0",
         "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
         "locg_user_agent":     cfg.get("locg_user_agent", ""),
+        # step 5: record → our own ComicInfo → online for the issue sheet. OFF until
+        # the full ComicInfo rewrite has run (kometa/localfirst.py); no UI yet
+        "read_local_first":    cfg.get("read_local_first", "0") == "1",
         **_locg_status(),
     }
 
@@ -675,6 +678,7 @@ class ConfigRequest(BaseModel):
     locg_enabled:       str | None = None   # "1"/"0" — off = not one request to LOCG
     locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
     locg_user_agent:    str | None = None   # the exact UA that pass was issued to
+    read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
 
 
 @app.patch("/api/config")

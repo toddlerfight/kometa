@@ -25,6 +25,9 @@ RECORD_MISS_TTL_DAYS = 7      # a row with nothing to ask is asked again after t
 # what the file's own tags or Komga said: a stopgap, shown until a catalogue answers,
 # never a reason not to ask one — and never thrown away for a miss
 STOPGAP_SOURCES = ("comicinfo", "komga")
+# what a catalogue said — or our own ComicInfo carrying it back ('comicinfo-kometa',
+# step 5a): catalogue-grade, kept fresh on the record TTL like any catalogue row
+CATALOGUE_SOURCES = ("metron", "locg", "gcd", "comicinfo-kometa")
 TRICKLE_LIMIT = 60            # per tick (10 min) — Metron's 3.5 s gap paces it; the harvest floor caps the day
 TRICKLE_MINUTES = 10
 
@@ -446,10 +449,13 @@ def details(issue: dict, path=None) -> dict:
     """What the modal's Details tab shows, from the record. Absent → today's
     resolver answers AND fills the record; old → answer now, refresh behind."""
     path = path or DB_PATH
+    from kometa import localfirst
+    if localfirst.enabled(path):
+        return localfirst.details(issue, path)                   # 5a–5c: record → our ComicInfo → online, off by default
     sid, number = issue["tracked_series_id"], issue["number"]
     row = get_issue(sid, number, path)
     if row and row.get("fill_state") in ("full", "partial"):
-        if not _fresh(row):                                     # old, or a stopgap: answer now, ask behind
+        if not _fresh(row):                                   # old, or a stopgap: answer now, ask behind
             threading.Thread(target=lambda: _safe_refresh(sid, number, path), daemon=True).start()
         return {"desc": row.get("desc") or "", "credits": row.get("credits") or [], "source": row.get("source"),
                 "arcs": row.get("arcs") or [], "store_date": row.get("store_date"), "record": True}

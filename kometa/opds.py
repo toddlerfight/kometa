@@ -421,7 +421,7 @@ async def api_page(book_id: int, page: int, maxWidth: int | None = None):
     from starlette.concurrency import run_in_threadpool
     from kometa import reader
     from kometa.activity import note_reading
-    note_reading()
+    note_reading(book_id)
     book = await run_in_threadpool(reader._book_or_404, book_id)
     if not book.get("pages"):
         # first open: the page list (and the real count), sizes later

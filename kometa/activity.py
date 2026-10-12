@@ -16,9 +16,22 @@ _lock = threading.Lock()
 STOPPING = threading.Event()
 
 
-def note_reading() -> None:
+_book_pages: dict[int, float] = {}       # book id → when a page of it was last served
+
+
+def note_reading(book_id: int | None = None) -> None:
     with _lock:
-        _last_page["at"] = time.time()
+        now = time.time()
+        _last_page["at"] = now
+        if book_id is not None:
+            _book_pages[int(book_id)] = now
+
+
+def last_page_served(book_id: int) -> float:
+    """When a page of this book was last served (0 = not since start-up). One of
+    the two 'is this book open' signals kometa/localfirst.py reads."""
+    with _lock:
+        return _book_pages.get(int(book_id), 0.0)
 
 
 def reading_recently(window: float = READING_WINDOW_S) -> bool:

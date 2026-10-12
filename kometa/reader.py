@@ -567,7 +567,7 @@ async def book_page(book_id: int, page: int, w: int | None = None):
     local cache never queues behind share reads."""
     from starlette.concurrency import run_in_threadpool
     from kometa.activity import note_reading
-    note_reading()
+    note_reading(book_id)
     book = await run_in_threadpool(_book_or_404, book_id)
     if not 1 <= page <= (book["page_count"] or 0):
         raise HTTPException(404, "No such page")

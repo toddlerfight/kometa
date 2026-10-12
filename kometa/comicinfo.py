@@ -111,7 +111,10 @@ def fields(series: dict, row: dict, page_count: int | None = None, series_rec: d
     rating = community.get("rating")
     ids = [f"{k} {v}" for k, v in (("Metron issue", row.get("metron_issue_id")), ("ComicVine issue", row.get("cv_issue_id")),
                                    ("GCD issue", extra.get("gcd_id")), ("LOCG issue", row.get("locg_issue_id"))) if v]
-    sources = ", ".join(dict.fromkeys(s for s in (row.get("source"),) if s))
+    # a record read back out of our own file says where it came from first time round —
+    # so a retag of it writes the same Notes, not 'from comicinfo-kometa'
+    src = extra.get("kometa_from") if row.get("source") == OURS_SOURCE else row.get("source")
+    sources = ", ".join(dict.fromkeys(s for s in (src,) if s))
     f = {
         "Title": title,
         "Series": series.get("title"),
@@ -223,3 +226,90 @@ def for_book(book: dict, path=None, page_count: int | None = None) -> bytes | No
         ET.SubElement(root, k).text = v
     ET.indent(root, "  ")
     return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="utf-8") + b"\n"
+
+
+# --- reading our own back (enrichment 5a) ----------------------------------------------
+# A file Kometa tagged already carries its record: parsed back, a rebuilt DB (or a
+# fresh shelf) costs nobody a catalogue request. Recognised by the Notes marker
+# fields() writes; an uploader's ComicInfo is not ours and stays a stopgap.
+OURS_MARKER = "Tagged by Kometa"
+OURS_SOURCE = "comicinfo-kometa"      # the record's source for a row read back out of our own file
+_FIELD_ROLE = (("Writer", "Writer"), ("Penciller", "Penciller"), ("Inker", "Inker"), ("Colorist", "Colorist"),
+               ("Letterer", "Letterer"), ("CoverArtist", "Cover"), ("Editor", "Editor"), ("Translator", "Translator"))
+_AGE_BACK = {"Everyone": "Everyone", "Teen": "Teen", "Mature 17+": "Mature", "Adults Only 18+": "Explicit"}
+_NOTE_IDS = (("metron_issue_id", r"Metron issue (\d+)"), ("cv_issue_id", r"ComicVine issue ([\w-]+)"),
+             ("gcd_id", r"GCD issue (\d+)"), ("locg_issue_id", r"LOCG issue (\d+)"))
+
+
+def _tags(xml) -> dict:
+    """bytes / str / an already-flat {tag: text} dict (covers.read_comicinfo's) → flat dict."""
+    if isinstance(xml, dict):
+        return xml
+    try:
+        root = ET.fromstring(xml)
+    except (ET.ParseError, TypeError, ValueError):
+        return {}
+    return {el.tag.split("}")[-1]: el.text.strip() for el in root if el.text and el.text.strip()}
+
+
+def _split(s: str | None) -> list[str]:
+    return [p for p in re.split(r"\s*,\s*", s or "") if p]
+
+
+def is_ours(xml) -> bool:
+    return (_tags(xml).get("Notes") or "").startswith(OURS_MARKER)
+
+
+def parse_ours(xml) -> dict | None:
+    """The inverse of fields() for one ISSUE: ComicInfo Kometa wrote → the
+    write_issue shape (desc, credits, arcs, cover_date, page_count, isbn, extra)
+    plus the catalogue ids from Notes (metron_issue_id, cv_issue_id,
+    locg_issue_id; GCD's into extra.gcd_id). None when the file isn't ours, or is
+    a collected edition (a trade isn't an issue record)."""
+    t = _tags(xml)
+    notes = t.get("Notes") or ""
+    if not notes.startswith(OURS_MARKER) or notes.startswith(OURS_MARKER + " (collected edition)"):
+        return None
+    credits = [{"role": role, "name": name, "metron_creator_id": None}
+               for field, role in _FIELD_ROLE for name in _split(t.get(field))]
+    y, mo, d = t.get("Year") or "", t.get("Month") or "", t.get("Day") or ""
+    cover_date = None
+    if y.isdigit():
+        cover_date = f"{int(y):04d}"
+        if mo.isdigit():
+            cover_date += f"-{int(mo):02d}"
+            if d.isdigit():
+                cover_date += f"-{int(d):02d}"
+    extra: dict = {}
+    m = re.match(re.escape(OURS_MARKER) + r" from ([^.]+)\.", notes)
+    if m:
+        extra["kometa_from"] = m.group(1).strip()          # whose record it was when the file was written
+    ids: dict = {}
+    for key, rx in _NOTE_IDS:
+        hit = re.search(rx, notes)
+        if hit:
+            v = hit.group(1)
+            ids[key] = int(v) if key in ("metron_issue_id", "gcd_id") else v
+    if "gcd_id" in ids:
+        extra["gcd_id"] = ids.pop("gcd_id")
+    if "cv_issue_id" in ids:
+        extra["cv_id"] = ids["cv_issue_id"]
+    for tag, key in (("Title", "title"), ("Publisher", "publisher"), ("Imprint", "imprint"), ("LanguageISO", "language")):
+        if t.get(tag):
+            extra[key] = t[tag]
+    if t.get("Format"):
+        extra["series_type"] = {"Series": "Single Issue"}.get(t["Format"], t["Format"])
+    for tag, key in (("Characters", "characters"), ("Teams", "teams")):
+        if t.get(tag):
+            extra[key] = _split(t[tag])
+    if t.get("AgeRating") in _AGE_BACK:
+        extra["age_rating"] = _AGE_BACK[t["AgeRating"]]
+    gtin, isbn = t.get("GTIN") or "", None
+    if re.fullmatch(r"97[89]\d{10}", gtin):
+        isbn = gtin                                         # an ISBN-13; anything else is the barcode
+    elif gtin:
+        extra["upc"] = gtin
+    pages = t.get("PageCount") or ""
+    return {"desc": t.get("Summary") or "", "credits": credits, "arcs": _split(t.get("StoryArc")), "covers": [],
+            "cover_date": cover_date, "store_date": None, "page_count": int(pages) if pages.isdigit() else None,
+            "price": None, "isbn": isbn, "extra": extra, **ids}

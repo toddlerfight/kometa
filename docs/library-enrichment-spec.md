@@ -134,6 +134,7 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - 5a. DB → file ComicInfo → online.
 - 5b. Online results go to the DB; the retag is queued until the book is closed.
 - 5c. Every online fallback is logged and listed as a pipeline miss.
+- **Status 2026-10-12:** 5a–5c built in `kometa/localfirst.py`, OFF (config `read_local_first`, absent = '0'; PATCH /api/config, no Settings UI). Turn on after the full ComicInfo rewrite. Our own tags are recognised by the Notes marker and stored as source `comicinfo-kometa` (catalogue-grade). A book counts as open when a page was served or progress was written in the last 20 min; its retag waits in `retag_deferred`, flushed every 5 min. Misses: `GET /api/harvest/misses`, plus `misses` in /api/harvest/progress.
 
 The phase notes below are background; the checklist above is the plan.
 

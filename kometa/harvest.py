@@ -76,12 +76,24 @@ def progress(path=None) -> dict:
             out[name] = mod.status(path)
         except Exception:
             out[name] = None
+    try:
+        from kometa import localfirst
+        out["misses"] = localfirst.miss_count(path)        # view-time online fallbacks (5c)
+    except Exception:
+        out["misses"] = None
     return out
 
 
 @router.get("/api/harvest/progress")
 def get_progress():
     return progress()
+
+
+@router.get("/api/harvest/misses")
+def get_misses(limit: int = 200):
+    """Every view-time online fallback (5c), latest first, with counts by reason."""
+    from kometa import localfirst
+    return localfirst.misses(DB_PATH, limit=max(1, min(limit, 1000)))
 
 
 # --- issue ids for runs matched after their last sync (1d) -----------------------
