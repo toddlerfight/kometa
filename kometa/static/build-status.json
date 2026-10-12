@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 23:10 AEST",
-  "now": "Test batch approved. New-arrival tagging is ON. Full rewrite (3f) waits for your go — best once more of the library has catalogue data (48% today).",
+  "updated": "2026-10-12 23:25 AEST",
+  "now": "Building 1i-e: Marvel.com/DC.com print-size covers, a night-only job (23:00–07:00, 1 request/min, UPC-matched, bigger-only). Morning report to follow.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -111,8 +111,8 @@
         {
           "id": "1i-e",
           "label": "Marvel.com / DC.com covers (slowest pace)",
-          "state": "todo",
-          "note": "lowest priority — PRH + Fandom already cover most of what it adds"
+          "state": "building",
+          "note": "night-only (23–07), 1 req/min, barcode-matched, keeps only bigger covers — you asked to see what it brings back"
         },
         {
           "id": "1i-f",
@@ -322,8 +322,8 @@
       "blocking": "No."
     },
     {
-      "title": "OK deleting today's 4 safety copies of the database",
-      "why": "Taken before each schema change today (~150 MB). All changes went fine and the nightly backups cover the database.",
+      "title": "OK deleting today's 6 safety copies of the database",
+      "why": "Taken before each schema change today (~200 MB). All changes went fine and the nightly backups cover the database.",
       "how": "A yes.",
       "blocking": "No."
     },
