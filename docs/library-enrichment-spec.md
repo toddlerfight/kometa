@@ -91,6 +91,7 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - K3. Metadata: one last full harvest (fills only where no catalogue has answered; 241 records today).
 - K4. Disconnect everywhere: sync's series linking and folder fallback, arcs, reading-list import, last-resort covers, harvest, history import, the Settings card and config keys, `komga_series_id` use. Tests updated.
 - K5. Stop the Komga container (with the user's OK; check first that nothing else reads from it, e.g. a reading app on the tailnet URL). Remove the container and its config a few days later, after a backup.
+- **Status 2026-10-12: K1–K5 done.** K1 history: 89 written, 6 kept ours, 10 renamed recovered. K2: only Fear Itself imported (a blind re-import would have overwritten the Hickman and Fables CBL lists). K3: 718 series, 253 issues. K4: a40c863. K5: Komga stopped with restart policy `no`; the Komic app on two tailnet devices was its last client and the user is moving to YondeB. `media-boot.sh` no longer restarts it (arr-stack d0fd157, deployed). **Still to do: remove the container and `~/docker/config/komga` after a few days, with the user's OK.**
 
 **2. Covers beside the comics**
 - 2a. The `.kometa/covers/<issue>/…` layout and stable file names.
