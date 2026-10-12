@@ -253,6 +253,16 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                               next_run_time=datetime.now(TZ) + timedelta(minutes=offset))
         except Exception as e:
             logger.warning(f"{mod_name} harvest not scheduled: {e}")
+    # ComicBookRoundup's people (kometa/cbr_people.py): ONE page a minute, night only
+    # (cbr_people_hours, default 23-7), its own 480-a-day limiter. Outside the window
+    # the tick returns after a cached config read, so 960 daytime no-op ticks cost nothing.
+    try:
+        from kometa.cbr_people import tick as cbr_people_tick
+        scheduler.add_job(cbr_people_tick, IntervalTrigger(minutes=1), id="harvest_cbr_people",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=2))
+    except Exception as e:
+        logger.warning(f"CBR people harvest not scheduled: {e}")
     # Bigger copies of the same cover stand in for the small ones (kometa/coverupgrade.py):
     # links any stored stand-in that predates its link; one cheap query once caught up.
     try:
