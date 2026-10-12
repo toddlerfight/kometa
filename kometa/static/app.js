@@ -4122,6 +4122,14 @@ async function renderSettings() {
         </div>
       </div>
       <div>
+        <div class="settings-section ${cfg.metron_enabled ? '' : 'section-off'}" id="sec-metron" style="margin-bottom:32px">
+          ${_settingsSectionHead('Metron', 'primary catalogue', 't-metron', cfg.metron_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+            <div class="settings-card">
+              ${_settingsField('f-metron-token', 'API Token', '', { set: cfg.metron_configured, ph: 'metron.cloud → account → API tokens', test: { cardId: 'metron', configured: cfg.metron_configured } })}
+            </div>
+          </div></div>
+        </div>
         <div class="settings-section ${cfg.komga_enabled ? '' : 'section-off'}" id="sec-komga">
           ${_settingsSectionHead('Komga', 'optional · legacy', 't-komga', cfg.komga_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4174,6 +4182,7 @@ async function renderSettings() {
   if (!cfg.komga_enabled)     _collapseSection(document.getElementById('sec-komga'), true, false);
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
+  if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
   if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
   if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
@@ -4198,12 +4207,13 @@ const _SETTINGS_FIELDS = {
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
+  'f-metron-token':    { card: 'metron',    key: 'metron_token',    test: 'metron', secret: true },
   'f-gcd-user':        { card: 'gcd',       key: 'gcd_user',        test: 'gcd' },
   'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', locg: 'locg' };
+const _TEST_ENDPOINTS = { komga: 'komga', sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg' };
 
 // Komga harvest: one tap pulls what Komga knows into the record (kometa/harvest_komga.py).
 function _komgaHarvestLine(cfg) {
@@ -4353,6 +4363,7 @@ const _SOURCE_TOGGLES = {
   't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
   't-komga-covers': { key: 'komga_covers',   section: null,            label: 'Komga covers as a last resort' },
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
+  't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
   't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },

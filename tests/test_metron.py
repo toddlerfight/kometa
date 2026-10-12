@@ -45,9 +45,14 @@ class TestClient:
             with pytest.raises(mc.MetronUnavailable):
                 mc.search_series("Saga")
         assert len(calls) == 1
-        creds["v"] = ("token", "fixed")                      # new credentials: allowed to try
+        creds["v"] = ("token", "fixed")                      # new credentials: wait out the gap first,
+        with pytest.raises(mc.MetronUnavailable, match="try again"):
+            mc.search_series("Saga")                         # or two typos in a row are strikes two and three
+        assert len(calls) == 1
+        real = mc.time.time
+        monkeypatch.setattr(mc.time, "time", lambda: real() + mc.REFUSAL_GAP_S + 1)
         with pytest.raises(mc.MetronUnavailable):
-            mc.search_series("Saga")
+            mc.search_series("Saga")                         # ...then they get their one try
         assert len(calls) == 2
 
     def test_a_server_error_pauses_everyone_briefly(self, monkeypatch, db_path):

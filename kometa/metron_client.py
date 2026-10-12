@@ -54,12 +54,29 @@ def configured() -> bool:
     return _creds() is not None
 
 
+def test() -> tuple[bool, str]:
+    """The Settings dot: ONE light request through the same throttle and the
+    same refusal guards as everything else — a test can never be the third strike."""
+    if not configured():
+        return False, "Not configured"
+    try:
+        _get("publisher/", page=1)
+    except MetronUnavailable as e:
+        return False, str(e)
+    lim = _state.get("sustained_limit")
+    return True, f"Signed in — {lim} requests a day" if lim else "Signed in"
+
+
 # Metron's fail2ban: 3 refused logins in 5 minutes = a 24-hour IP ban (it
 # happened, 2026-10-10). A 401/403 means THESE credentials are bad, so nothing
 # asks again with them — not the next trickle, not a restart — until they change
 # or AUTH_REFUSED_HOLD_S passes. Stored in config: survives restarts.
 AUTH_REFUSED_KEY = "metron_auth_refused"
 AUTH_REFUSED_HOLD_S = 6 * 3600
+# ...and the per-credential hold alone doesn't stop three DIFFERENT wrong tokens
+# (a typo, then another) inside five minutes. After any refusal, no new login is
+# tried for this long: at most one refusal per window, so never three in five.
+REFUSAL_GAP_S = 600
 SERVER_ERROR_PAUSE_S = 300
 
 
@@ -78,6 +95,20 @@ def _refused(creds) -> bool:
     return fp == _creds_fp(creds) and at and time.time() - float(at) < AUTH_REFUSED_HOLD_S
 
 
+def _recent_refusal_other(creds) -> int:
+    """Seconds still to wait when a DIFFERENT login was refused inside
+    REFUSAL_GAP_S, else 0."""
+    from kometa import db
+    try:
+        mark = db.get_config(db.DB_PATH).get(AUTH_REFUSED_KEY) or ""
+    except Exception:
+        return 0
+    fp, _, at = mark.partition("|")
+    if not at or fp == _creds_fp(creds):
+        return 0
+    return max(0, int(float(at) + REFUSAL_GAP_S - time.time()))
+
+
 def _note_refused(creds, code: int):
     from kometa import db
     try:
@@ -94,6 +125,10 @@ def _get(path: str, **params) -> dict:
         raise MetronUnavailable("Metron isn't configured")
     if _refused(creds):
         raise MetronUnavailable("Metron refused these credentials — fix them in Settings")
+    gap = _recent_refusal_other(creds)
+    if gap:
+        raise MetronUnavailable(f"Metron refused a login {REFUSAL_GAP_S // 60 - gap // 60} min ago — "
+                                f"try again in {gap // 60 + 1} min (three refusals is a 24-hour ban)")
     auth = f"Bearer {creds[1]}" if creds[0] == "token" else "Basic " + base64.b64encode(f"{creds[0]}:{creds[1]}".encode()).decode()
     url = BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
     from kometa.interactive import is_interactive, MAX_WAIT_S

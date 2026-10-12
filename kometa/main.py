@@ -391,6 +391,13 @@ class TestGcdRequest(BaseModel):
     password: str | None = None
 
 
+@app.post("/api/test/metron")
+def test_metron():
+    from kometa import metron_client
+    ok, detail = metron_client.test()
+    return {"ok": True, "detail": detail} if ok else {"ok": False, "error": detail}
+
+
 @app.post("/api/test/gcd")
 def test_gcd(req: TestGcdRequest):
     from kometa import gcd_client
@@ -420,6 +427,8 @@ _INTEGRATION_KEYS = {
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
     "comicvine": ["cv_api_key"],
     "gcd":       ["gcd_user", "gcd_pass"],
+    # the refusal mark is deliberately NOT cleared: it's the ban guard, not a credential
+    "metron":    ["metron_token", "metron_user", "metron_pass"],
 }
 
 
