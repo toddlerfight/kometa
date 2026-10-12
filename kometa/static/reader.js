@@ -164,17 +164,28 @@ function _rdTurnMotion(outgoing) {
   const stage = document.getElementById('rd-stage');
   if (!turn || !stage || !outgoing || !outgoing.querySelector('img')) return;
   const swipe = turn.by === 'swipe';
-  stage.classList.add(swipe ? (turn.dir > 0 ? 'rd-in-r' : 'rd-in-l') : 'rd-in-fade');
   outgoing.id = '';
-  // keep rd-two: since pages fill their slot (2026-10-12), a two-up spread that lost
-  // it re-laid its pages at full width for the length of the fade — a ~68px twitch
-  // outward on every turn
-  const two = outgoing.classList.contains('rd-two') ? 'rd-two ' : '';
-  outgoing.className = 'rd-stage rd-out ' + two + (swipe ? (turn.dir > 0 ? 'rd-out-l' : 'rd-out-r') : 'rd-out-fade');
   stage.parentNode.insertBefore(outgoing, stage);
-  const done = () => outgoing.remove();
-  outgoing.addEventListener('animationend', done, { once: true });
-  setTimeout(done, 400);                                 // reduced motion never fires animationend
+  // the new spread waits, unseen, until EVERY page in it can be drawn — each image
+  // decodes on its own schedule, and a two-up spread used to slide in one page at a
+  // time (2026-10-12). Preloaded pages decode in a few ms; WAIT_MS caps a slow one.
+  const WAIT_MS = 250;
+  stage.classList.add('rd-wait');
+  const go = () => {
+    // turned again before this spread was ready: it's someone else's outgoing now
+    if (!stage.isConnected || stage.id !== 'rd-stage') { outgoing.remove(); return; }
+    stage.classList.remove('rd-wait');
+    stage.classList.add(swipe ? (turn.dir > 0 ? 'rd-in-r' : 'rd-in-l') : 'rd-in-fade');
+    // keep rd-two: a two-up spread that lost it re-laid its pages at full width for the
+    // length of the fade (2026-10-12)
+    const two = outgoing.classList.contains('rd-two') ? 'rd-two ' : '';
+    outgoing.className = 'rd-stage rd-out ' + two + (swipe ? (turn.dir > 0 ? 'rd-out-l' : 'rd-out-r') : 'rd-out-fade');
+    const done = () => outgoing.remove();
+    outgoing.addEventListener('animationend', done, { once: true });
+    setTimeout(done, 400);                               // reduced motion never fires animationend
+  };
+  const decoded = [...stage.querySelectorAll('img.rd-page')].map(i => i.decode ? i.decode().catch(() => {}) : Promise.resolve());
+  Promise.race([Promise.all(decoded), new Promise(r => setTimeout(r, WAIT_MS))]).then(go);
 }
 
 function _rdRenderEnd() {

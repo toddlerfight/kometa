@@ -2113,6 +2113,7 @@ body:has(.rd-stage) { overscroll-behavior: none; }
    The outgoing stage sits UNDER the incoming one and fades, so pages of
    different widths never show a seam. */
 .rd-stage.rd-out { pointer-events: none; }
+.rd-stage.rd-wait { opacity: 0; }       /* the next spread, until all its pages can be drawn */
 .rd-stage.rd-in-fade { animation: rd-fade-in var(--t-mid) var(--ease-out) both; }
 .rd-stage.rd-out-fade { animation: rd-fade-out var(--t-mid) var(--ease-out) both; }
 .rd-stage.rd-in-r { animation: rd-in-r var(--t-slow) var(--ease-out) both; }
