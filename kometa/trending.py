@@ -189,6 +189,7 @@ def enrich_catalogue(data: dict, path, lookup=None, limit_comics=ENRICH_COMICS, 
                 r = lookup(e["series"], e.get("number") or 1)
             except metron_client.MetronUnavailable as ex:
                 logger.info(f"Trending enrich paused: {ex}")
+                n += _locg_fallback(data, path, locg_search)      # Metron resting doesn't stop LOCG's look
                 _save(data, path)
                 return n
             except Exception as ex:
