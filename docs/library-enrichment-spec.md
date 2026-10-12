@@ -51,6 +51,8 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 | GCD (optional) | 30/h anonymous, 2,000/day with a free account | Only with an account; back catalogue Metron lacks |
 | Image hosts (S3, Metron static, CV uploads) | No API limit | Polite: one at a time, 0.5 s gap (the existing trickle) |
 
+**Every source has a Settings card** (credentials, autosave, verified dot, on/off toggle, disconnect): ComicVine, LOCG and Metron already do, and GCD has one since de8648f. A new source isn't done until its card is.
+
 **Parallel.** Each source has its own budget, so each gets its own worker and they run at the same time. They write into the same record under one merge policy (field by field: the best source wins, a weaker one fills gaps, a stopgap never overwrites a catalogue). The only dependency is that ComicVine works on ids as Metron supplies them.
 
 **1. Harvest (parallel workers, one per source)**
