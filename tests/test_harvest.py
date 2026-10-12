@@ -177,3 +177,19 @@ def test_issue_ids_tick_rests_when_the_harvest_share_is_spent(db_path, monkeypat
         conn.execute("UPDATE tracked_series SET metron_series_id = 1 WHERE id = ?", (a,))
     db.upsert_issue_status(a, 1.0, None, 1, path=db_path)
     assert harvest.issue_ids_tick(path=db_path, sync=lambda s: 1 / 0) == 0
+
+
+def test_split_candidates_from_local_data(db_path):
+    f = db.add_series(title="Fables", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = 793 WHERE id = ?", (f,))
+    for n in range(148, 154):
+        db.upsert_issue_status(f, float(n), None, 1, metron_issue_id=n if n <= 149 else None, path=db_path)
+    ff = db.add_series(title="Fantastic Four", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    for n in range(500, 530):
+        db.upsert_issue_status(ff, float(n), None, 1, path=db_path)
+    small = db.add_series(title="One-shot", publisher="X", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(small, 1.0, None, 1, path=db_path)
+    c = harvest.split_candidates(db_path)
+    assert [r["title"] for r in c["outside"]] == ["Fables"]
+    assert [r["title"] for r in c["unmatched"]] == ["Fantastic Four"]
