@@ -3488,6 +3488,44 @@ function _startBadgePolling() {
   _attentionTimer = setInterval(_updateSettingsBadge, 120000);
 }
 
+// Library harvest (kometa/harvest.py): every background fill added up — the
+// record, LOCG's sweep, the image store, today's Metron allowance. Numbers only.
+let _harvestTimer = null;
+function _startHarvestPoll() {
+  clearInterval(_harvestTimer);
+  _renderHarvest();
+  _harvestTimer = setInterval(() => {
+    if (currentView !== 'settings' || !document.getElementById('harvest-progress')) return clearInterval(_harvestTimer);
+    if (!document.hidden) _renderHarvest();
+  }, 60000);
+}
+
+async function _renderHarvest() {
+  const el = document.getElementById('harvest-progress');
+  if (!el) return;
+  let h;
+  try { h = await api.get('/api/harvest/progress'); } catch { return; }
+  const n = v => (v == null ? '—' : Number(v).toLocaleString());
+  const o = h.owned_issues || {};
+  const pct = o.owned ? ` · ${Math.round(100 * (o.catalogue || 0) / o.owned)}%` : '';
+  const l = h.locg || {};
+  const locg = l.locg_paused_until ? esc(l.locg_paused_until === 'switched off' ? 'switched off' : `paused until ${l.locg_paused_until}`)
+    : l.locg_pass_live ? `${n(l.locg_sweep_pending)} to go` : 'no pass';
+  const m = h.metron || {};
+  const metron = m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`;
+  const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
+  el.innerHTML = [
+    row('Owned issues', n(o.owned)),
+    row('Catalogue data', n(o.catalogue) + pct),
+    row('Stand-in data', n(o.stopgap)),
+    row('No catalogue match', n(o.no_catalogue_id)),
+    row('Variant lists', n(o.variant_lists)),
+    row('Covers to fetch or upgrade', n(h.images_pending)),
+    row('LOCG sweep', locg),
+    row('Metron today', metron),
+  ].join('');
+}
+
 // Settings badge: anything in Settings waiting on you (main.settings_attention) —
 // a red count on the nav, and the card's own dot goes red with the reason on hover.
 let _attentionTimer = null;
@@ -4109,6 +4147,10 @@ async function renderSettings() {
           ${_settingsHeader('Sync Schedule', '', 'schedule')}
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
+        <div class="settings-card" style="margin-top:32px">
+          ${_settingsHeader('Library harvest', '', 'harvest')}
+          <div id="harvest-progress"></div>
+        </div>
         <div class="settings-section ${cfg.prowlarr_enabled ? '' : 'section-off'}" id="sec-prowlarr" style="margin-top:32px">
           ${_settingsSectionHead('Prowlarr', 'engine', 't-prowlarr', cfg.prowlarr_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4183,6 +4225,7 @@ async function renderSettings() {
   `);
   _updateRootStatus(cfg.comics_root_ok);
   _updateSettingsBadge();
+  _startHarvestPoll();
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings). Prowlarr is the master — off folds the
   // whole usenet+torrent branch it wraps.
