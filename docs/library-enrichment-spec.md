@@ -48,10 +48,15 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 | Metron | burst 20/min, 5,000/day per user; obey `X-RateLimit-*` and `Retry-After`; 401/403/404 bursts are IP bans | Through `metron_client` only (3.5 s gap). The harvest stops for the day with **1,000 left**, keeping headroom for kometa's own syncs (the existing floor of 200 is for normal use) |
 | LOCG | Cloudflare; kometa's pace is 3 s gap and 20 per 5 min; a refusal pauses 3 h | Through `locg_client` only; the UI's requests go first |
 | ComicVine | 200 per resource per hour, plus velocity detection | Spread evenly (about 1 every 18 s per resource), never in bursts |
-| GCD (optional) | 30/h anonymous, 2,000/day with a free account | Only with an account; back catalogue Metron lacks |
+| GCD | 30/h anonymous, 2,000/day with the free account (set up 2026-10-12) | Back catalogue Metron lacks; about 1 every 45 s |
+| PRH cover CDN | Terms forbid robots | About 1 every 2 s, at most a few hundred a day |
+| Marvel.com / DC.com | Terms forbid automation | The slowest of all; only where no comparable image exists elsewhere |
+| Fandom wikis (MediaWiki API) | Behind Cloudflare | 1 per second or slower |
+| ComicBookRoundup | HTML, no API | About 1 page every 3 s |
+| Hardcover / Open Library | Hardcover 5,000/day, 60/min | Well under; by ISBN only |
 | Image hosts (S3, Metron static, CV uploads) | No API limit | Polite: one at a time, 0.5 s gap (the existing trickle) |
 
-**Every source has a Settings card** (credentials, autosave, verified dot, on/off toggle, disconnect): ComicVine and LOCG already do, and GCD has one since de8648f. **Metron has none**: its login lives only in the config table, with no way to see or change it from the app. Add it before the Metron worker (1d). A new source isn't done until its card is.
+**Every source has a Settings card** (credentials, autosave, verified dot, on/off toggle, disconnect): ComicVine, GCD (de8648f) and Metron (8e5d2d1) do. LOCG has a card but no toggle yet. A new source isn't done until its card is.
 
 **Parallel.** Each source has its own budget, so each gets its own worker and they run at the same time. They write into the same record under one merge policy (field by field: the best source wins, a weaker one fills gaps, a stopgap never overwrites a catalogue). The only dependency is that ComicVine works on ids as Metron supplies them.
 
@@ -62,7 +67,7 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - 1d. **Metron worker**: full issue detail for every owned issue with a Metron id (4,853), keeping what `issue_detail` currently drops (cv_id, gcd_id, UPC/ISBN, page count, price, characters, teams, universes, arcs, reprints). Then match the ~2,300 owned issues with no Metron id (series first). That's about 7k requests ≈ 2 days within the budget.
 - 1e. **LOCG worker**: link the 360 untried series, then the variant list and details for every owned issue (404 of ~7k done), then series and trade data. Fix the duplicated combined-role credits. About 8–10k requests ≈ 1.5–2 days at 240/h; stops when the pass is refused (badge on).
 - 1f. **ComicVine worker**: as cv ids arrive, the original main cover (kept if bigger) and confidently matched variant images; issues with no cv id searched by series and number, confident only. About 40 h.
-- 1g. **GCD worker (optional, needs a free account)**: credits and covers for back-catalogue issues Metron doesn't have.
+- 1g. **GCD worker** (account set up 2026-10-12): credits and covers for back-catalogue issues Metron doesn't have.
 - 1h. The image downloader takes everything the workers queue, at the largest size.
 - Not planned: VerseDB (its ToS forbids mass download and image caching, and kometa already parses variant type and ratio from names).
 - 1i. **More sources (user, 2026-10-12: "use them if we can — polite rate limiting, not a production rate")**, each a worker with its own Settings card and limiter (research: docs/research/comic-sources-2026-10-12.md):
