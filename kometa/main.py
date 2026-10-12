@@ -235,6 +235,8 @@ from kometa.trending import router as _trending_router      # what shops sold mo
 app.include_router(_trending_router)
 from kometa.harvest import router as _harvest_router        # the library harvest, all trickles at a glance
 app.include_router(_harvest_router)
+from kometa.coververify import router as _coververify_router  # which issue is this file, really? ask the cover
+app.include_router(_coververify_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
 app.include_router(_opds_router)
 from kometa.marks import router as _marks_router            # favourites + ratings, next-in-series
