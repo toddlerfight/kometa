@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 20:05 AEST",
-  "now": "Fandom gallery lookup built (one request per issue, ~1300–1900px variant covers). Waiting on the two background builds (1i PRH/Open Library/ComicBookRoundup; 3b–3d rewrite job) to merge before wiring it in.",
+  "updated": "2026-10-12 21:10 AEST",
+  "now": "1i PRH/Open Library/ComicBookRoundup LIVE. Rewrite job (3b–3d) LIVE but writes nothing on its own; dry run on 17 varied files passed (14 rewrite, 2 CBR→CBZ, 1 trade skipped). Next: trades get ComicInfo, Fandom wired in, GCD matcher signals, Hardcover, 4a–4c behind a switch.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -87,17 +87,19 @@
         {
           "id": "1i-a",
           "label": "PRH print-quality covers (by barcode)",
-          "state": "building"
+          "state": "done",
+          "note": "≤300/day; TIFF → full-size JPEG; placeholder detected first"
         },
         {
           "id": "1i-b",
           "label": "Open Library (trade ratings + covers)",
-          "state": "building"
+          "state": "done"
         },
         {
           "id": "1i-c",
           "label": "ComicBookRoundup (critic + user scores)",
-          "state": "building"
+          "state": "done",
+          "note": "one page per series lists every issue's critic + user score"
         },
         {
           "id": "1i-d",
@@ -161,25 +163,31 @@
           "note": "verified on a real record (Midnight Spider-Man #1); writes no files"
         },
         {
+          "id": "3a+",
+          "label": "Trades get ComicInfo too (from the trade records)",
+          "state": "todo"
+        },
+        {
           "id": "3b",
           "label": "Per-file journal",
-          "state": "building"
+          "state": "done"
         },
         {
           "id": "3c",
           "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)",
-          "state": "building"
+          "state": "done"
         },
         {
           "id": "3d",
           "label": "Temp upload → read back → swap; reader cache kept",
-          "state": "building"
+          "state": "done",
+          "note": "dry run on 17 real files: all built + verified, every page identical"
         },
         {
           "id": "3e",
           "label": "Test batch of ~20 files",
-          "state": "todo",
-          "note": "you check them"
+          "state": "waiting-you",
+          "note": "ready — see Your tasks"
         },
         {
           "id": "3f",
@@ -286,9 +294,9 @@
       "blocking": "Yes — 2d stops here."
     },
     {
-      "title": "Check the 20-file test batch (step 3e)",
-      "why": "Before any file in the library is rewritten with clean ComicInfo, you confirm the rewritten files read and look right.",
-      "how": "I'll name the 20 files; open them in kometa (and another reader if you like) and tell me they're right.",
+      "title": "Say go for the 16-file test batch, then check them (step 3e)",
+      "why": "The rewrite job is built and a dry run passed on 16 deliberately varied files (modern Marvel, 1963 scans, a #605.1, Fables' 2022 run, two CBRs, Tintin, a 300 MB file…). Writing them proves the real swap end to end before the full run. Each original is read back before the swap; CBRs' old files go to _trash; Voot II keeps the originals 30 days. Many of these still carry stand-in data (Metron hasn't reached them) — the test is about the files, not the data; they'll be retagged later with the better record.",
+      "how": "Reply 'go test batch'. I'll list the 16 files; open a few in kometa (and Panels/YondeB if you like): pages intact, reading progress kept, details showing.",
       "blocking": "Yes — 3f and 4a stop here."
     },
     {
