@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 22:30 AEST",
-  "now": "Step 4 built and live but switched OFF: new downloads are put on the retag list (a database row) and nothing is written until you approve the test batch. Background: Fandom + Hardcover being wired in. Next: GCD matcher signals.",
+  "updated": "2026-10-12 23:20 AEST",
+  "now": "Fandom galleries + Hardcover LIVE (Hardcover tested: 'Saga Vol 1 found'). GCD now breaks ties from your shelf (publisher folder, file years). Everything that doesn't need you is built; what's left waits on Your tasks.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -77,7 +77,8 @@
         {
           "id": "1g",
           "label": "GCD: older and international series; LOCG linking without Metron",
-          "state": "done"
+          "state": "done",
+          "note": "first results: 4 linked, 4 not on GCD, 1 ambiguous; ties now broken from your shelf"
         },
         {
           "id": "1h",
@@ -104,19 +105,20 @@
         {
           "id": "1i-d",
           "label": "Fandom wikis (fullest variant galleries)",
-          "state": "building",
-          "note": "lookup done; downloads wait until the cover store is off ginbako's disk (2b/2d) — full-size galleries could be tens of GB"
+          "state": "done",
+          "note": "gallery lists saved; image downloads OFF until the covers move (2b/2d)"
         },
         {
           "id": "1i-e",
           "label": "Marvel.com / DC.com covers (slowest pace)",
-          "state": "todo"
+          "state": "todo",
+          "note": "lowest priority — PRH + Fandom already cover most of what it adds"
         },
         {
           "id": "1i-f",
           "label": "Hardcover (trade ratings)",
-          "state": "building",
-          "note": "token stored; worker being wired in"
+          "state": "done",
+          "note": "live, token verified"
         }
       ]
     },
