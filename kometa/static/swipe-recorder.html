@@ -35,8 +35,10 @@
       <button class="btn btn-ghost" id="reset">Start over</button>
     </div>
     <div class="note" id="status"></div>
+    <div class="note">Doubles only in the reader? <button class="btn btn-ghost" id="inreader">Record inside the reader instead</button>
+      — opens a comic with a ● REC button; swipe, then press it.</div>
   </div>
-  <script src="/reader.js?v=65"></script>
+  <script src="/reader.js?v=66"></script>
   <script>
     let events = [], turns = 0, gesture = _rdWheelGesture(), t0 = null;
     const $ = id => document.getElementById(id);
@@ -57,6 +59,8 @@
     }, { passive: false });
     $('reset').onclick = () => { events = []; turns = 0; t0 = null; gesture = _rdWheelGesture();
       $('turns').textContent = 0; $('events').textContent = 0; $('last').textContent = '—'; $('status').textContent = ''; };
+    $('inreader').onclick = () => { try { localStorage.setItem('kometa.recordWheel', '1'); } catch {}
+      location.href = '/#read?book=1&page=5'; };
     $('save').onclick = async () => {
       if (!events.length) { $('status').textContent = 'Nothing recorded yet.'; return; }
       $('status').textContent = 'Saving…';

@@ -450,6 +450,8 @@ function _rdBindInput() {
     const now = e.timeStamp || performance.now();
     const turn = turnFor(now, dx, dy);
     if (Math.abs(dx) > Math.abs(dy) || turn) e.preventDefault();   // ours, not the browser's back/forward swipe
+    if (_rdRec.on) _rdRec.ev.push([Math.round((now - (_rdRec.t0 ??= now)) * 10) / 10, dx, dy, turn,
+                                   Math.round(performance.now() - now)]);   // last: how late the event was handled
     if (turn) _rdStep(turn, 'swipe');
   }, { passive: false });
   document.addEventListener('keydown', e => {
@@ -533,6 +535,7 @@ function _rdOpened() {
 async function renderReader(params) {
   const el = _rdShowLoading();
   _rdBindInput();
+  _rdRecButton();
   try {
     const book = await api.get(`/api/books/${params.book}`);
     Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null,
@@ -1273,6 +1276,34 @@ async function _rlPollGetMissing(listId) {
 //  - so after a turn, a NEW swipe inside the stream needs the tail to bottom out
 //    (≤ TROUGH) and then a sustained climb: 3 events, none falling, ending ≥ PUSH.
 //    Or a pause (GAP) — fingers lifted, everything resets.
+// Record mode (/swipe-recorder.html → "record in the reader"): the wheel stream as the
+// READER sees it — with page renders in the way — plus each turn it made and how late
+// each event was handled. A floating button saves it to data/wheel-recordings/.
+const _rdRec = { on: (() => { try { return localStorage.getItem('kometa.recordWheel') === '1'; } catch { return false; } })(),
+                 ev: [], t0: null };
+function _rdRecButton() {
+  if (!_rdRec.on || document.getElementById('rd-rec')) return;
+  const b = document.createElement('button');
+  b.id = 'rd-rec'; b.className = 'btn btn-primary';
+  b.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999';
+  b.textContent = '● REC — save';
+  b.onclick = async e => {
+    e.stopPropagation();
+    const did = parseInt(prompt('How many swipes did you do?') || '', 10) || null;
+    const turns = _rdRec.ev.filter(x => x[3]).length;
+    try {
+      const r = await fetch('/api/debug/wheel-recording', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events: _rdRec.ev, ua: navigator.userAgent, swipes_intended: did,
+                               note: `IN THE READER: ${turns} turns` }) });
+      const j = await r.json();
+      b.textContent = j.ok ? `Saved ${j.events} events — tell Claude` : 'Save failed';
+      try { localStorage.removeItem('kometa.recordWheel'); } catch {}
+      _rdRec.on = false;
+    } catch { b.textContent = 'Save failed'; }
+  };
+  document.body.appendChild(b);
+}
+
 function _rdWheelGesture() {
   // Tuned on four Safari/macOS trackpad recordings, all in tests/e2e/fixtures_safari_swipes.json.
   // Two ways a new swipe shows up after a turn:
