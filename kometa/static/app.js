@@ -3484,6 +3484,27 @@ function _startBadgePolling() {
   clearInterval(_badgeTimer);
   _updateActivityBadge();
   _badgeTimer = setInterval(_updateActivityBadge, 25000);
+  clearInterval(_attentionTimer);
+  _updateSettingsBadge();
+  _attentionTimer = setInterval(_updateSettingsBadge, 120000);
+}
+
+// Settings badge: anything in Settings waiting on you (main.settings_attention) —
+// a red count on the nav, and the card's own dot goes red with the reason on hover.
+let _attentionTimer = null;
+async function _updateSettingsBadge() {
+  if (document.hidden) return;
+  let items;
+  try { items = await api.get('/api/settings/attention'); } catch { return; }
+  const el = document.getElementById('settings-badge');
+  if (el) {
+    el.textContent = items.length || '';
+    el.className = 'nav-badge' + (items.length ? ' red' : '');
+  }
+  for (const it of items) {
+    const dot = document.getElementById(`dot-${it.card}`);
+    if (dot) { dot.className = 'settings-dot bad'; dot.title = it.reason; }
+  }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) _updateActivityBadge(); });
 
@@ -4164,18 +4185,23 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
-        <div class="settings-card" style="margin-top:32px">
-          ${_settingsHeader('League of Comic Geeks', 'your browser’s pass', 'locg', true, cfg.locg_cf_configured)}
-          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies' })}
+        <div class="settings-section ${cfg.locg_enabled ? '' : 'section-off'}" id="sec-locg" style="margin-top:32px">
+          ${_settingsSectionHead('League of Comic Geeks', 'your browser’s pass', 't-locg', cfg.locg_enabled)}
+          <div class="settings-section-body"><div class="settings-section-inner">
+          <div class="settings-card">
+          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
           <div class="settings-help" id="locg-topup-status">${_locgTopupLine(cfg)}</div>
           <div class="settings-help">${cfg.locg_cf_configured
             ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.locg_user_agent))}. It lasts a few hours and is forgotten the moment LOCG refuses it. Paste from the browser that has LOCG open.`
             : 'LOCG challenges anything that isn’t a browser. When yours gets through, its cookie lets Kometa ride the same session — same house, same IP — at the usual trickle. Optional; Metron covers nearly everything now.'}</div>
+          </div>
+          </div></div>
         </div>
       </div>
     </div>
   `);
   _updateRootStatus(cfg.comics_root_ok);
+  _updateSettingsBadge();
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings). Prowlarr is the master — off folds the
   // whole usenet+torrent branch it wraps.
@@ -4183,6 +4209,7 @@ async function renderSettings() {
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
+  if (!cfg.locg_enabled)      _collapseSection(document.getElementById('sec-locg'), true, false);
   if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
   if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
@@ -4267,7 +4294,8 @@ async function _backupNow(btn) {
 function _locgTopupLine(cfg) {
   const n = cfg.locg_topup_waiting || 0;
   const waiting = n ? `${n} item${n === 1 ? '' : 's'} waiting` : 'nothing waiting';
-  const state = cfg.locg_paused_until ? `paused until ${esc(cfg.locg_paused_until)}`
+  const state = cfg.locg_paused_until === 'switched off' ? 'switched off'
+    : cfg.locg_paused_until ? `paused until ${esc(cfg.locg_paused_until)}`
     : cfg.locg_pass_live ? 'live' : 'no pass';
   const btn = n && cfg.locg_pass_live ? ` <button class="btn-link" onclick="_locgTopupNow(this)">${cfg.locg_topup_draining ? 'topping up…' : 'top up now'}</button>` : '';
   const sweep = cfg.locg_sweep_pending != null
@@ -4363,6 +4391,7 @@ const _SOURCE_TOGGLES = {
   't-komga':     { key: 'komga_enabled',     section: 'sec-komga',     label: 'Komga' },
   't-komga-covers': { key: 'komga_covers',   section: null,            label: 'Komga covers as a last resort' },
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
+  't-locg':      { key: 'locg_enabled',      section: 'sec-locg',      label: 'League of Comic Geeks' },
   't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
   't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
@@ -4412,6 +4441,7 @@ async function _toggleSource(el) {
   try {
     _appConfig = await api.patch('/api/config', { [t.key]: on ? '1' : '0' });
     showToast(`${t.label} ${on ? 'enabled' : 'disabled'}`);
+    _updateSettingsBadge();
   } catch (e) {
     el.checked = !on;                  // revert toggle + fold
     _collapseSection(sec, on, true);
@@ -4485,7 +4515,8 @@ async function _settingsChanged(el) {
     if (f.secret) { el.value = ''; el.placeholder = 'Leave blank to keep current'; }
     _whisper(f.card, 'saved');
     if (f.key === 'comics_root') _updateRootStatus(cfg.comics_root_ok);
-    if (f.test) testIntegration(f.test);             // re-verify after cred change
+    if (f.test) await testIntegration(f.test);       // re-verify after cred change
+    _updateSettingsBadge();
   } catch (e) {
     _whisper(f.card, 'save failed', true);
     showToast(`Save failed: ${e.message || f.key}`, 'error');
@@ -4529,6 +4560,7 @@ async function disconnectIntegration(integ, btn) {
   try {
     await api.post(`/api/config/disconnect/${integ}`, {});
     showToast(`${integ} disconnected`);
+    _updateSettingsBadge();
     renderSettings();
   } catch (e) {
     showToast(`Disconnect failed: ${e.message || integ}`, 'error');

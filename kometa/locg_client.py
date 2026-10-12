@@ -183,12 +183,26 @@ def _paused_until() -> float:
 def pause_label(until: float) -> str:
     """'2:50pm' in YOUR timezone. The container runs on UTC, so time.localtime
     printed '04:50' for a 2:50pm Brisbane pause."""
+    if switched_off():
+        return "switched off"
     from datetime import datetime
     from kometa.scheduler import TZ
     return datetime.fromtimestamp(until, TZ).strftime("%-I:%M%p").lower()
 
 
+def switched_off() -> bool:
+    """The Settings toggle. Off = not one request leaves for LOCG — every path
+    already runs through _check_paused / locg_paused, so this is the one tap."""
+    try:
+        from kometa import db
+        return db.get_config(db.DB_PATH).get("locg_enabled", "1") == "0"
+    except Exception:
+        return False
+
+
 def _check_paused():
+    if switched_off():
+        raise LocgPaused("LOCG is switched off in Settings")
     until = _paused_until()
     if time.time() < until:
         raise LocgPaused(f"LOCG is pausing us until {pause_label(until)} — it refused our requests")
@@ -287,7 +301,11 @@ def probe() -> dict:
 
 
 def locg_paused() -> float | None:
-    """Epoch seconds the pause lifts, or None if LOCG is open to us."""
+    """Epoch seconds the pause lifts, or None if LOCG is open to us. Switched
+    off reads as paused for the next hour, rolling — callers that label the
+    time ask pause_label, which says 'switched off' instead."""
+    if switched_off():
+        return time.time() + 3600
     until = _paused_until()
     return until if time.time() < until else None
 

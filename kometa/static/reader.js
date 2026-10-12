@@ -970,8 +970,9 @@ async function _showLocgPause(seriesId) {
   // Nothing is disabled: matching runs through Metron and doesn't care that LOCG
   // is shut. (It used to grey out Match now — with the one source that worked.)
   if (!banner.querySelector('.match-paused')) {
-    banner.insertAdjacentHTML('beforeend', `<div class="match-paused">LOCG paused until ${esc(st.paused_until_label)} · Metron still answers
-      <button class="btn-link" onclick="_testLocg(this)">Test LOCG now</button></div>`);
+    const off = st.paused_until_label === 'switched off';
+    banner.insertAdjacentHTML('beforeend', `<div class="match-paused">${off ? 'LOCG switched off' : `LOCG paused until ${esc(st.paused_until_label)}`} · Metron still answers
+      ${off ? '' : '<button class="btn-link" onclick="_testLocg(this)">Test LOCG now</button>'}</div>`);
   }
 }
 

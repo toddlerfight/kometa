@@ -464,6 +464,48 @@ def _locg_status() -> dict:
         return {"locg_pass_live": False, "locg_paused_until": None, "locg_topup_waiting": 0, "locg_topup_by_kind": {}}
 
 
+def settings_attention() -> list[dict]:
+    """Everything in Settings that's waiting on YOU — the nav badge's count and
+    each card's red dot. Only states you can fix from Settings; a source that's
+    switched off never nags."""
+    cfg = db.get_config(DB_PATH)
+    on = lambda k: cfg.get(k, "1") != "0"
+    has = lambda *keys: all((cfg.get(k) or "").strip() for k in keys)
+    out = []
+    root = _comics_root()
+    if not (os.path.isdir(root) and os.access(root, os.W_OK)):
+        out.append({"card": "root", "reason": "comics folder missing or read-only"})
+    if on("metron_enabled"):
+        from kometa import metron_client
+        creds = metron_client._creds()
+        if not creds:
+            out.append({"card": "metron", "reason": "no API token"})
+        elif metron_client._refused(creds):
+            out.append({"card": "metron", "reason": "Metron refused the token"})
+    if on("comicvine_enabled") and not has("cv_api_key"):
+        out.append({"card": "comicvine", "reason": "no API key"})
+    if on("gcd_enabled") and not has("gcd_user", "gcd_pass"):
+        out.append({"card": "gcd", "reason": "no login"})
+    if on("locg_enabled"):
+        st = _locg_status()
+        waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
+        if waiting and not st.get("locg_pass_live"):
+            out.append({"card": "locg", "reason": f"{waiting} waiting on a fresh pass"})
+    if on("prowlarr_enabled"):
+        if not has("prowlarr_url", "prowlarr_apikey"):
+            out.append({"card": "prowlarr", "reason": "not set up"})
+        if on("usenet_enabled") and not has("sab_url", "sab_apikey"):
+            out.append({"card": "sabnzbd", "reason": "not set up"})
+        if on("torrent_enabled") and not has("qbit_url", "qbit_user"):
+            out.append({"card": "qbit", "reason": "not set up"})
+    return out
+
+
+@app.get("/api/settings/attention")
+def get_settings_attention():
+    return settings_attention()
+
+
 @app.get("/api/backup")
 def backup_status():
     from kometa import backup
@@ -576,6 +618,7 @@ def get_config():
         "metron_enabled":      cfg.get("metron_enabled", "1") != "0",
         # LOCG: your own browser's pass (kometa/locg_client.py). Never echoed back.
         "locg_cf_configured":  bool(cfg.get("locg_cf_clearance", "")),
+        "locg_enabled":        cfg.get("locg_enabled", "1") != "0",
         "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
         "locg_user_agent":     cfg.get("locg_user_agent", ""),
         **_locg_status(),
@@ -610,6 +653,7 @@ class ConfigRequest(BaseModel):
     metron_pass:        str | None = None
     metron_token:       str | None = None   # API token (preferred over user/pass)
     metron_enabled:     str | None = None   # "1"/"0" — primary metadata source
+    locg_enabled:       str | None = None   # "1"/"0" — off = not one request to LOCG
     locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
     locg_user_agent:    str | None = None   # the exact UA that pass was issued to
 
