@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 21:30 AEST",
-  "now": "Test batch complete: all 17 files rewritten (Hellblazer #1 after the folder fix); the switch is off again. Community ratings v1 is on the issue sheet. Waiting on you: check the test batch.",
+  "updated": "2026-10-12 22:55 AEST",
+  "now": "Reader polish done (swipes, spreads). Waiting on you: the test batch check (THE ONE TEST).",
   "groups": [
     {
       "title": "Komga retirement",
@@ -280,6 +280,11 @@
         {
           "id": "x7",
           "label": "Community ratings on the issue sheet (v1)",
+          "state": "done"
+        },
+        {
+          "id": "x8",
+          "label": "Reader: one page per swipe (slow + quick, tuned on 6 recordings), no Safari Back on swipe, spreads fill + slide in as one",
           "state": "done"
         }
       ]
