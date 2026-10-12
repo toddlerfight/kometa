@@ -2073,9 +2073,14 @@ body.reading #layout { opacity: 0; transition: opacity var(--t-fast) var(--ease-
   .rd-stage.rd-opening.rd-loaded .rd-page { transition: opacity .2s linear; } }
 
 .rd-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-.rd-page { display: block; max-width: 100vw; max-height: 100vh; max-height: 100dvh; object-fit: contain;
+/* The box IS the slot (whole screen, or half in two-up) and object-fit scales the
+   picture to it — up as well as down. max-* alone only ever shrinks, so a spread
+   saved smaller than the screen floated mid-stage at its own pixel size, touching
+   no edge (2026-10-12). Filling the slot is also what makes object-position below
+   do anything: two-up halves meet at the spine. */
+.rd-page { display: block; width: 100vw; height: 100vh; height: 100dvh; object-fit: contain;
   -webkit-user-drag: none; }
-.rd-two .rd-page { max-width: 50vw; }
+.rd-two .rd-page { width: 50vw; }
 .rd-two .rd-left  { object-position: right center; }
 .rd-two .rd-right { object-position: left center; }
 
