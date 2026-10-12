@@ -1031,10 +1031,12 @@ async function renderOnDeck() {
     ((d.favourites || []).length ? row('Favourites', 'what you starred', d.favourites.map(favCard), '') : '') +
     (d.lists || []).map(l => row(`Next on ${esc(l.name)}`, '', l.cards.map(c => listCard(c, l)), '')).join('') +
     `<div class="od-slot" id="od-because"></div>` +
+    `<div class="od-slot" id="od-readers"></div>` +
     // rows 7–10 sit behind More on a phone: the task rows and Because are the page
     ((d.rediscover || []).length ? row('Rediscover', '', d.rediscover.map(c => bookCard(c, lastRead(c.last_read_at))), '', 'od-extra') : '') +
     ((d.quick || []).length ? row('Quick reads', '', d.quick.map(c => bookCard(c, `${c.issues} issue${c.issues === 1 ? '' : 's'}`)), '', 'od-extra') : '') +
     `<div class="od-slot od-extra" id="od-picks"></div>` +
+    `<div class="od-slot od-extra" id="od-likeyou"></div>` +
     `<div class="od-slot od-extra" id="od-trend"></div>` +
     `<button class="btn btn-ghost od-more" onclick="this.closest('#app').classList.add('od-all'); this.remove()">More</button>`
   );
@@ -1044,6 +1046,7 @@ async function renderOnDeck() {
     ...(d.lists || []).flatMap(l => l.cards), ...(d.rediscover || []), ...(d.quick || [])].map(c => c.series_id).filter(Boolean))];
   _loadBecause(onPage);
   _loadPicks();
+  _loadReaders();
   _loadTrending();
 }
 
@@ -1130,6 +1133,39 @@ async function _loadPicks() {
     <div class="od-head"><span class="series-card-title">Community picks</span></div>
     <div class="series-grid">${d.picks.map(_pickCard).join('')}</div>
   </div>`;
+}
+
+// --- Readers like you (kometa/cbr_people.py): ComicBookRoundup's critics and readers
+// who score your runs the way you do, and what else they score high. Series you
+// don't have, so no cover yet: the card opens the catalogue sheet, FIND searches.
+// Nothing harvested yet = no row at all; they turn up on their own as the data lands.
+function _readerCard(it) {
+  const title = it.year ? `${it.name} (${it.year})` : it.name;
+  const sheet = JSON.stringify({ title: it.name, publisher: it.publisher_name || it.publisher || '', year: it.year,
+    why: [it.label] }).replace(/"/g, '&quot;');
+  const go = `showCatalogueModal(${sheet})`;
+  return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}" title="${esc(it.label || title)}">
+    <div class="series-card-img-wrap"><div class="series-card-cover rl-nocover"></div>
+      <button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(it.name).replace(/"/g, '&quot;')})">FIND</button></div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(it.name)}</div>
+      <div class="series-card-count" style="color:var(--tq)">${it.supporters}</div></div>
+    <div class="series-card-publisher u-truncate">${esc(it.publisher_name || it.publisher || '')}</div>
+  </div>`;
+}
+
+async function _loadReaders() {
+  const [rows, all] = await Promise.all([
+    api.get('/api/discover/community/because-ondeck?limit=12').catch(() => null),
+    api.get('/api/discover/community?limit=12').catch(() => null)]);
+  if (currentView !== 'ondeck') return;
+  const row = (head, items) => `<div class="od-row readers-row">
+    <div class="od-head"><span class="series-card-title">${head}</span></div>
+    <div class="series-grid">${items.map(_readerCard).join('')}</div></div>`;
+  const because = (rows && rows.rows || []).filter(r => (r.items || []).length);
+  const a = document.getElementById('od-readers');
+  if (a && because.length) a.innerHTML = because.map(r => row(`Because you're reading ${esc(r.seed.title)}`, r.items)).join('');
+  const b = document.getElementById('od-likeyou');
+  if (b && all && (all.items || []).length >= 4) b.innerHTML = row('Readers like you', all.items);
 }
 
 // --- Related / Suggestions (kometa/related.py) ----------------------------------
