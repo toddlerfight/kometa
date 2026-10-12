@@ -159,3 +159,7 @@ def test_recorded_safari_swipes_turn_one_page_each(app, app_server):
     # momentum dies. 4 is the tuned answer: catching the fifth (the shallowest cliff) made
     # another recording turn a page too many, and a skipped page is worse than a missed flick.
     assert 4 <= turns[4] <= 5, turns
+    # the 6th: 2026-10-12, recorded INSIDE the reader; it ended on a double — a swipe that
+    # turned while still speeding up, wobbled (…12 19 7 3 7 14 22…) and the wobble read as a
+    # quick follow-up swipe. A cliff now only counts once the swipe is past its peak.
+    assert turns[5] == 22, turns

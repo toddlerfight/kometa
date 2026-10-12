@@ -1321,17 +1321,19 @@ function _rdWheelGesture() {
   // And nothing turns within REFRACTORY ms of the last turn. Where in doubt it under-counts:
   // a missed quick swipe costs a flick, an extra turn skips a page you haven't read.
   const TURN = 40, GAP = 140, TROUGH = 4, PUSH = 6, LOW_RUN = 3, RAMP = 6, PEAK_FRAC = 0.5, REFRACTORY = 250;
-  const CLIFF_FROM = 15, CLIFF_RATIO = 0.25, CLIFF_N = 3, CLIFF_RISE = 3;
+  const CLIFF_FROM = 15, CLIFF_RATIO = 0.25, CLIFF_N = 3, CLIFF_RISE = 3, PAST_PEAK = 0.8;
   const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: 0, ramp: [], lastTurn: -Infinity, lastPeak: 0,
-              hist: [], cliff: false };
-  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: 0, ramp: [], hist: [], cliff: false });
+              hist: [], cliff: false, maxSince: 0 };
+  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: 0, ramp: [], hist: [], cliff: false, maxSince: 0 });
   return (now, dx, dy) => {
     const mag = Math.abs(dx);
     if (now - g.at > GAP) fresh();
     else if (mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x)) fresh();   // a scroll, then a swipe
     else if (g.spent) {
       const level = Math.max(0, ...g.hist.slice(-CLIFF_N));
-      if (!g.cliff && level >= CLIFF_FROM && mag <= level * CLIFF_RATIO) { g.cliff = true; g.ramp = []; }
+      // ...and only once the swipe is past its peak (PAST_PEAK): a swipe still speeding up
+      // wobbles (…12 19 7 3 7 14 18 22…) and that cliff turned a second page (2026-10-12)
+      if (!g.cliff && level >= CLIFF_FROM && mag <= level * CLIFF_RATIO && level <= PAST_PEAK * g.maxSince) { g.cliff = true; g.ramp = []; }
       if (mag <= TROUGH) { g.low++; if (!g.cliff) g.ramp = []; }
       const armed = g.low >= LOW_RUN || g.cliff;
       if (armed && mag > TROUGH) {
@@ -1346,11 +1348,11 @@ function _rdWheelGesture() {
     }
     g.hist.push(mag); if (g.hist.length > 8) g.hist.shift();
     g.at = now; g.x += dx; g.y += dy; g.peak = Math.max(g.peak, mag);
-    if (g.spent) g.lastPeak = Math.max(g.lastPeak, mag);
+    if (g.spent) { g.lastPeak = Math.max(g.lastPeak, mag); g.maxSince = Math.max(g.maxSince, mag); }
     if (Math.abs(g.x) <= Math.abs(g.y)) return 0;                // an up-down scroll: leave it alone
     if (g.spent || Math.abs(g.x) < TURN || g.peak < PUSH) return 0;
     if (now - g.lastTurn < REFRACTORY) return 0;
-    g.spent = true; g.low = 0; g.ramp = []; g.lastTurn = now; g.lastPeak = g.peak; g.hist = []; g.cliff = false;
+    g.spent = true; g.low = 0; g.ramp = []; g.lastTurn = now; g.lastPeak = g.peak; g.hist = []; g.cliff = false; g.maxSince = 0;
     return g.x > 0 ? 1 : -1;
   };
 }
