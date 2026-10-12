@@ -58,6 +58,8 @@ const _metronArt = i => (i.metron_image && i.metron_image.startsWith('http')
   && !i.metron_image.includes('no-cover')) ? i.metron_image : null;
 let detailTab = 'all';
 let detailSortDesc = true;
+let detailSortRated = false;   // ★: the community's order, best first (kometa/toprated.py)
+let _topRated = null;          // {id, by: {number: score}} — the run on screen, owned + rated only
 let _autoTabFor = null;   // series id we've already made the B1 trades-default call for
 let _wantTab = null;      // a tab asked for by whoever navigated here (a trade's 'Go to series' → Trades)
 
@@ -1032,6 +1034,7 @@ async function renderOnDeck() {
     // rows 7–10 sit behind More on a phone: the task rows and Because are the page
     ((d.rediscover || []).length ? row('Rediscover', '', d.rediscover.map(c => bookCard(c, lastRead(c.last_read_at))), '', 'od-extra') : '') +
     ((d.quick || []).length ? row('Quick reads', '', d.quick.map(c => bookCard(c, `${c.issues} issue${c.issues === 1 ? '' : 's'}`)), '', 'od-extra') : '') +
+    `<div class="od-slot od-extra" id="od-picks"></div>` +
     `<div class="od-slot od-extra" id="od-trend"></div>` +
     `<button class="btn btn-ghost od-more" onclick="this.closest('#app').classList.add('od-all'); this.remove()">More</button>`
   );
@@ -1040,6 +1043,7 @@ async function renderOnDeck() {
   const onPage = [...new Set([...d.continue, ...(d.want || []), ...d.next, ...d.soon, ...(d.released || []), ...(d.added || []),
     ...(d.lists || []).flatMap(l => l.cards), ...(d.rediscover || []), ...(d.quick || [])].map(c => c.series_id).filter(Boolean))];
   _loadBecause(onPage);
+  _loadPicks();
   _loadTrending();
 }
 
@@ -1099,6 +1103,31 @@ async function _loadTrending(attempt = 0) {
       <div class="series-grid">${d.graphic_novels.slice(0, 12).map(_trendCard).join('')}</div>` : ''}
   </div>`);
   _rowSig(app.querySelector('.trend-row'), sig);
+}
+
+// --- Community picks (kometa/toprated.py): your best-rated runs you haven't read
+// to the end. The score where a run's count sits, how far in under the title. A part-read
+// run shows here even when Continue has it too — that's the point of it.
+function _pickCard(p) {
+  const go = `navigate('series-detail', {id: ${p.series_id}})`;
+  return `<div class="series-card rel-card" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}" title="${esc(p.title)}">
+    <div class="series-card-img-wrap"><img class="series-card-cover" src="/api/series/${p.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
+    <div class="series-card-footer"><div class="series-card-title">${esc(p.title)}</div>
+      <div class="series-card-count comm-v${p.score >= 7.5 ? ' hi' : p.score < 6 ? ' lo' : ''}">${p.score.toFixed(1)}</div></div>
+    <div class="series-card-publisher u-truncate">${p.read ? `${p.read}/${p.books} read` : 'unread'}</div>
+  </div>`;
+}
+
+async function _loadPicks() {
+  let d;
+  try { d = await api.get('/api/ondeck/picks'); } catch { return; }
+  if (currentView !== 'ondeck' || !d.picks.length) return;
+  const slot = document.getElementById('od-picks');
+  if (!slot) return;
+  slot.innerHTML = `<div class="od-row picks-row">
+    <div class="od-head"><span class="series-card-title">Community picks</span></div>
+    <div class="series-grid">${d.picks.map(_pickCard).join('')}</div>
+  </div>`;
 }
 
 // --- Related / Suggestions (kometa/related.py) ----------------------------------
@@ -1883,14 +1912,20 @@ async function openArcIssue(arcId, readingOrder) {
   }
 }
 
+// The ★ sort only exists for the run whose scores are loaded. Anywhere else
+// (a run you don't own, one nobody rated) it quietly falls back to numbers.
+const _ratedHere = s => detailSortRated && _topRated && s && _topRated.id === s.id ? _topRated.by : null;
+
 function buildIssueTiles(s) {
+  const by = _ratedHere(s);
   const filtered = s.issues.filter(i => {
     const st = issueStatus(i);
     if (detailTab === 'owned')    return st === 'owned';
     if (detailTab === 'missing')  return st === 'missing';
     if (detailTab === 'upcoming') return st === 'upcoming' || st === 'today';
     return true;
-  }).sort((a, b) => detailSortDesc ? b.number - a.number : a.number - b.number);
+  }).sort((a, b) => by ? ((by[b.number] ?? -1) - (by[a.number] ?? -1)) || a.number - b.number
+    : detailSortDesc ? b.number - a.number : a.number - b.number);
 
   return filtered.map(issue => _issueTileHtml(s, issue)).join('');
 }
@@ -1898,6 +1933,7 @@ function buildIssueTiles(s) {
 function _issueTileHtml(s, issue) {
     const st = issueStatus(issue);
     const num = `#${fmtNum(issue.number)}`;
+    const score = _ratedHere(s)?.[issue.number];
     const dateBadge = st === 'today'
       ? `<div class="series-card-next-release">TODAY</div>`
       : (st === 'upcoming' && issue.store_date
@@ -1932,17 +1968,29 @@ function _issueTileHtml(s, issue) {
       onclick="showIssueModal(${s.id}, ${issue.number})"
       onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${s.id}, ${issue.number})">
       ${inner}
-      <div class="issue-tile-num">${num}</div>
+      <div class="issue-tile-num">${num}${score != null
+        ? ` <span class="comm-v${score >= 7.5 ? ' hi' : score < 6 ? ' lo' : ''}">${score.toFixed(1)}</span>` : ''}</div>
       ${searchBtn}
     </div>`;
 }
 
+// [title, label] for the sort button: ↓ # → ↑ # → ★ (when there's a ★ to give)
+function _sortBtnState() {
+  if (_ratedHere(_detailSeries)) return ['Top rated', '★'];
+  return detailSortDesc ? ['Newest first', '↓ #'] : ['Oldest first', '↑ #'];
+}
+
+function cycleIssueSort(id) {
+  const canRate = _topRated && _topRated.id === id;
+  if (_ratedHere(_detailSeries)) { detailSortRated = false; detailSortDesc = true; }
+  else if (!detailSortDesc && canRate) detailSortRated = true;
+  else { detailSortRated = false; detailSortDesc = !detailSortDesc; }
+  flipIssueSort(id);
+}
+
 function flipIssueSort(id) {
   const btn = document.querySelector('.sort-toggle');
-  if (btn) {
-    btn.title = detailSortDesc ? 'Newest first' : 'Oldest first';
-    btn.textContent = detailSortDesc ? '↓ #' : '↑ #';
-  }
+  if (btn) [btn.title, btn.textContent] = _sortBtnState();
   const grid = document.querySelector('.issue-grid');
   if (grid && _detailSeries) {
     const tiles = buildIssueTiles(_detailSeries);
@@ -2168,6 +2216,11 @@ async function renderSeriesDetail(id) {
   // front of it — the row paints once the grid is there.
   const relP = api.get(`/api/series/${id}/related`).catch(() => null);
   if (s.kind === 'arc') return renderArcDetail(s);
+  // Owned runs only: the community's scores, already in the record — a local read
+  if (s.owned > 0) {
+    const tr = await api.get(`/api/series/${id}/top-rated`).catch(() => null);
+    _topRated = tr && tr.issues.length ? { id, by: Object.fromEntries(tr.issues.map(i => [i.number, i.score])) } : null;
+  } else _topRated = null;
 
   // Self-healing: a never-synced or stale (>1h) series refreshes itself on view,
   // in the background — no manual Sync button needed. Fires at most once per
@@ -2302,10 +2355,8 @@ async function renderSeriesDetail(id) {
     ${matchBanner}
     <div class="issue-tabs-row">
       <div class="issue-tabs">${tabs}</div>
-      <button class="btn-icon sort-toggle" title="${detailSortDesc ? 'Newest first' : 'Oldest first'}"
-        onclick="detailSortDesc=!detailSortDesc;flipIssueSort(${id})">
-        ${detailSortDesc ? '↓ #' : '↑ #'}
-      </button>
+      <button class="btn-icon sort-toggle" title="${_sortBtnState()[0]}"
+        onclick="cycleIssueSort(${id})">${_sortBtnState()[1]}</button>
     </div>
     ${detailTab === 'trades'
       ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`

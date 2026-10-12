@@ -55,6 +55,10 @@ def _seed(db, path):
         (beta, 2.0, past(370), True, None, None, None),
     ], path=path)
     db.mark_synced(beta, path)
+    # Community scores for Beta's ★ sort: #1 beats #2, so ★ ≠ newest-first
+    from kometa import record as _record
+    _record.merge_community(beta, 1.0, "cbr", {"critic": 9.2, "critic_reviews": 20, "user": 9.0, "user_reviews": 30}, path)
+    _record.merge_community(beta, 2.0, "cbr", {"critic": 6.0, "critic_reviews": 20, "user": 6.5, "user_reviews": 30}, path)
 
     gamma = db.add_series(title="Gamma Run", publisher="Image",
                           year_began=2025, folder_path=None, on_pull_list=False, path=path)

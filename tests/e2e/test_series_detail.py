@@ -132,3 +132,31 @@ def _ignore_roundtrip(app):
     expect(tile.locator(".issue-tile-img.missing")).to_have_count(1)
     app.locator(".issue-tab", has_text="missing").click()
     expect(app.locator(".issue-tile")).to_have_count(1)
+
+
+def test_top_rated_sort_cycles_on_an_owned_rated_run(app):
+    # ↓ # → ↑ # → ★ (community order, score on the tile) → back to ↓ #
+    app.locator(".series-card", has_text="Beta Saga").click()
+    sort = app.locator(".sort-toggle")
+    expect(sort).to_have_text("↓ #")
+    expect(app.locator(".issue-tile").first).to_have_attribute("data-num", "2")
+    sort.click()
+    expect(sort).to_have_text("↑ #")
+    sort.click()
+    expect(sort).to_have_text("★")
+    first = app.locator(".issue-tile").first
+    expect(first).to_have_attribute("data-num", "1")
+    expect(first.locator(".issue-tile-num .comm-v")).to_be_visible()
+    sort.click()
+    expect(sort).to_have_text("↓ #")
+    expect(app.locator(".issue-tile .comm-v")).to_have_count(0)
+
+
+def test_no_star_without_scores(app):
+    # Alpha is owned but nobody rated it: the toggle stays a two-way flip
+    _open_alpha(app)
+    sort = app.locator(".sort-toggle")
+    sort.click()
+    expect(sort).to_have_text("↑ #")
+    sort.click()
+    expect(sort).to_have_text("↓ #")

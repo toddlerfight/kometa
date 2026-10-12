@@ -94,6 +94,11 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
   with the .cbr moved to `_trash/<publisher>/retag-cbr-<date>/`; books row and page cache
   follow (same book id). `run_batch` is called by hand; no scheduler job yet. Only route:
   read-only `GET /api/books/{id}/comicinfo-preview`.
+- **toprated.py** — read-only ranking over the community scores already in
+  `issue_record.community_json` (CBR critic/reader, LOCG ×2, Hardcover/Open Library ×2),
+  capped-vote pooled and Bayesian-shrunk. `GET /api/series/{id}/top-rated` (owned runs only;
+  the series page's ★ sort) and `GET /api/ondeck/picks` (On Deck's Community picks: owned
+  runs not read to the end). No network.
 - **scheduler.py** — APScheduler job registration.
 - **\*_client.py** — one module per external source, wrapping its API/scrape surface.
 

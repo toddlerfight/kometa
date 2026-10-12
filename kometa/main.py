@@ -233,6 +233,8 @@ from kometa.related import router as _related_router        # related to this se
 app.include_router(_related_router)
 from kometa.trending import router as _trending_router      # what shops sold most (ICv2)
 app.include_router(_trending_router)
+from kometa.toprated import router as _toprated_router      # community scores already stored, ranked: series ★ sort + Deck picks
+app.include_router(_toprated_router)
 from kometa.harvest import router as _harvest_router        # the library harvest, all trickles at a glance
 app.include_router(_harvest_router)
 from kometa.coververify import router as _coververify_router  # which issue is this file, really? ask the cover
