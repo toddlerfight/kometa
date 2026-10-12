@@ -4706,10 +4706,50 @@ function _animateModalHeight(mutate) {
   modal.addEventListener('transitionend', done);
 }
 
-function _renderIssueDetails(desc, credits) {
+// Community ratings (v1, 2026-10-12 — "I'll dial it in later"): every source on a
+// 10-point scale under your own 5 stars, with how many people it rests on. LOCG's
+// 0–5 and the book sites' 0–5 double; ComicBookRoundup is already out of 10.
+// Tapping the line opens the detail. A source with nothing for this issue isn't shown.
+function _communityHtml(c) {
+  if (!c) return '';
+  const k = n => n == null ? '' : n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
+  const sc = (src, v, n) => v == null ? '' : `<span class="comm-sc"><span class="comm-src u-label">${esc(src)}</span>`
+    + `<span class="comm-v${v >= 7.5 ? ' hi' : v < 6 ? ' lo' : ''}">${v.toFixed(1)}</span>${n ? `<span class="comm-n">${k(n)}</span>` : ''}</span>`;
+  const locg = c.rating != null ? c : null, cbr = c.cbr, hc = c.hardcover, ol = c.openlibrary;
+  const line = [
+    locg && sc('LOCG', locg.rating * 2, locg.ratings),
+    cbr && sc('Critics', cbr.critic, cbr.critic_reviews),
+    cbr && sc('Readers', cbr.user, cbr.user_reviews),
+    hc && hc.rating != null && sc('Hardcover', hc.rating * 2, hc.count),
+    ol && ol.rating != null && sc('Open Library', ol.rating * 2, ol.count),
+  ].filter(Boolean).join('');
+  if (!line) return '';
+  const more = [];
+  if (locg) {
+    const h = locg.histogram || {}, max = Math.max(1, ...Object.values(h));
+    const top = Object.entries(h).sort((a, b) => b[1] - a[1])[0]?.[0];
+    more.push(`<div>LOCG${locg.verdict ? ' · ' + esc(locg.verdict) : ''} · ${(locg.ratings || 0).toLocaleString()} ratings</div>`);
+    if (Object.keys(h).length) more.push(`<div class="comm-hist">${[1,2,3,4,5,6,7,8,9,10].map(i =>
+      `<i class="${String(i) === top ? 'top' : ''}" style="height:${Math.max(3, Math.round(100 * (h[i] || 0) / max))}%"></i>`).join('')}</div>
+      <div class="comm-axis"><span>1</span><span>10</span></div>`);
+    const counts = [['pulls', 'pull'], ['collected', 'have'], ['read', 'read'], ['wanted', 'want']]
+      .filter(([f]) => locg[f] != null).map(([f, l]) => `<span><b>${locg[f].toLocaleString()}</b> ${l}</span>`);
+    if (counts.length) more.push(`<div class="comm-counts">${counts.join('')}</div>`);
+  }
+  if (cbr) more.push(`<div>ComicBookRoundup · ${cbr.critic_reviews || 0} critic reviews · ${cbr.user_reviews || 0} reader reviews</div>`);
+  if (hc && hc.rating != null) more.push(`<div>Hardcover ${hc.rating}/5 · ${(hc.count || 0).toLocaleString()} ratings</div>`);
+  if (ol && ol.rating != null) more.push(`<div>Open Library ${ol.rating}/5 · ${(ol.count || 0).toLocaleString()} ratings</div>`);
+  return `<div class="issue-modal-credit-row comm-row" onclick="const m=this.nextElementSibling; _animateModalHeight(() => { m.hidden = !m.hidden; })">
+      <div class="issue-modal-credit-role u-label">Community</div>
+      <div class="comm-scores">${line}</div>
+    </div>
+    <div class="comm-more" hidden>${more.join('')}</div>`;
+}
+
+function _renderIssueDetails(desc, credits, community) {
   const el = document.getElementById('issue-modal-details');
   if (!el) return;
-  let html = '';
+  let html = _communityHtml(community);
   if (desc) html += `<div class="issue-modal-desc">${esc(desc)}</div>`;
   if (credits && credits.length) {
     const grouped = {};
@@ -4887,7 +4927,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
   if (hasLocgId) {
     try {
       const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
-      _renderIssueDetails(d.desc, d.credits || []);
+      _renderIssueDetails(d.desc, d.credits || [], d.community);
     } catch { _renderIssueDetails('', []); }
   }
 

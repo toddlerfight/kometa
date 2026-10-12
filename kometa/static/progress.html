@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>コメタ · Build progress</title>
   <link rel="icon" href="/favicon.svg">
-  <link rel="stylesheet" href="/style.css?v=269">
+  <link rel="stylesheet" href="/style.css?v=270">
   <style>
     /* The build's own page (docs/library-enrichment-spec.md): what's done, what's
        running, what's waiting on you. House tokens only — no new palette. */
+    /* the app shell locks the page (body overflow hidden, fixed height) — this is a plain page: let it scroll */
+    html, body { height: auto; overflow: auto; }
     body { margin: 0; background: var(--bg); color: var(--tp); }
     .pg { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
     .pg h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: .02em; }

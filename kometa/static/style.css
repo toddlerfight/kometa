@@ -2353,6 +2353,22 @@ body.touch .od-menu { opacity: .85; }
 .series-card-img-wrap { position: relative; }
 .fav-btn.on { color: var(--amb); border-color: var(--amb); }
 .fav-rating { font-size: 10px; letter-spacing: 0; opacity: .8; margin-left: 2px; }
+/* community ratings on the issue sheet (v1): the credits row, scores on a 10-point scale */
+.comm-row { cursor: pointer; padding-top: 10px; margin-bottom: 4px; border-top: 1px solid var(--su2); }
+.comm-scores { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.comm-sc { white-space: nowrap; }
+.comm-src { margin-right: 6px; color: var(--tq); }
+.comm-v { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--tp); }
+.comm-v.hi { color: var(--pri); }
+.comm-v.lo { color: var(--amb); }
+.comm-n { color: var(--tq); margin-left: 4px; font-size: var(--fs-label); }
+.comm-more { color: var(--tq); font-size: var(--fs-label); margin: 2px 0 12px; }
+.comm-hist { display: flex; align-items: flex-end; gap: 3px; height: 36px; margin: 6px 0 4px; max-width: 200px; }
+.comm-hist i { flex: 1; display: block; background: var(--su2); }
+.comm-hist i.top { background: var(--pri); }
+.comm-axis { display: flex; justify-content: space-between; max-width: 200px; }
+.comm-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; }
+.comm-counts b { color: var(--tp); font-weight: inherit; font-variant-numeric: tabular-nums; }
 .mark-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 10px 0 6px; max-width: 320px; }
 .mark-heart, .rating-dot { background: none; border: 0; color: var(--td); font-size: 20px; line-height: 1; cursor: pointer; padding: 2px; }
 .mark-heart { font-size: 22px; margin-left: auto; }

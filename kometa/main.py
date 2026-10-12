@@ -1884,7 +1884,11 @@ def get_issue_locg_details(series_id: int, number: float):
         d = record.details(issue, DB_PATH)        # the local record first; a catalogue only to fill it
     except Exception as e:
         raise HTTPException(502, "Details fetch failed") from e
-    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source"), "record": d.get("record")}
+    # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
+    # the stored snapshot, never a fetch on open
+    row = record.get_issue(series_id, number, DB_PATH) or {}
+    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source"), "record": d.get("record"),
+            "community": row.get("community") or None}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
