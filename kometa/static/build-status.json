@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-12 19:05 AEST",
+  "updated": "2026-10-12 19:15 AEST",
   "now": "1i (PRH, Open Library, ComicBookRoundup) building in the background. 3a done — 3b–3d (the rewrite job) next, tested on throwaway copies only.",
   "groups": [
     {
@@ -112,8 +112,8 @@
         {
           "id": "1i-f",
           "label": "Hardcover (trade ratings)",
-          "state": "waiting-you",
-          "note": "needs your API token"
+          "state": "todo",
+          "note": "token received and stored"
         }
       ]
     },
@@ -270,12 +270,6 @@
       "why": "GCD (the Grand Comics Database) fills details for series Metron doesn't have. When several GCD series share a name (Tintin has 145), kometa won't guess.",
       "how": "I'll list each one with its candidates when the first batch is done (about 7 hours for all ~130 series). You pick one per series, or 'none of these'.",
       "blocking": "No — only those series wait."
-    },
-    {
-      "title": "Get a Hardcover API token",
-      "why": "Hardcover has community ratings for trades (by ISBN). Its free API needs a personal token.",
-      "how": "Sign up at hardcover.app → Settings → API → copy the token, and paste it to me (or into its Settings card once built).",
-      "blocking": "No — only Hardcover waits."
     },
     {
       "title": "Say go for copying covers into your library folders (step 2)",
