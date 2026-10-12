@@ -35,49 +35,61 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 
 ## Phases
 
-**Build order:** 1 → 2 → 3 → 4 (bulk pass done) → on-arrival tagging → reading order last. The reading order (local first, online fallback, retag) only makes sense once the local data and the XML exist. Built earlier, every comic opened would go to the network and queue a file rewrite. Until then, the detail view keeps today's behaviour: it fetches online into the DB and never writes to files.
+**Build order:** harvest → covers beside the comics → ComicInfo bulk pass → on-arrival → reading order last (checklist steps 1–5). The reading order (local first, online fallback, retag) only makes sense once the local data and the XML exist. Built earlier, every comic opened would go to the network and queue a file rewrite. Until then, the detail view keeps today's behaviour: it fetches online into the DB and never writes to files.
 
 ### Build checklist (each piece ships on its own; show the result before the next)
 
-**1. LOCG harvest**
-- 1a. Prefer the largest URL (`large` over `thumb`) for mains and variants; re-fetch stored images whose best URL changed (includes the 1,933 LOCG 170px covers). No LOCG requests.
-- 1b. Store Metron's `cv_id` per issue; backfill the 4,853 issues with Metron ids, held to Metron's 5,000/day.
-- 1c. Link the 360 untried Metron-matched series to LOCG at the safe pace (owned → pull list → rest); confident matches only, else 'none'.
-- 1d. Variant list for every owned issue (404 of ~7k done) merged into the record; fix the duplicated combined-role credits. About 7k requests ≈ 30 h; resumable; stops when the pass is refused.
-- 1e. Series and trade data the record lacks.
-- 1f. A progress view: series linked, variant lists fetched, images at full size, failures.
-- 1g. A Settings badge (red dot, no copy) when LOCG work is waiting and there's no working pass (none, or refused). Clears when a new pass is accepted.
+**Where it runs.** Every harvest and rewrite runs **inside the kometa app on ginbako, as scheduler workers**: in the background, independent of any Claude session, surviving restarts, with progress on the 1c view. Never as `docker exec` scripts or a second process: Metron's rule is one client, one throttle (INSTRUCTIONS.md), and the same goes for every source here. Watching progress is a background job too; no session waits on it.
 
-**2. ComicVine**
-- 2a. Main cover from `original_url` per issue with a cv id; keep it only if bigger than what's stored.
-- 2b. `associated_images` → known variants, confident name/artist matches only.
-- 2c. Paced at 200/hour per resource (≈ 40 h), resumable.
-- 2d. Issues without a cv id: search by series and number, confident matches only.
+**Rate limits: one limiter per source, shared with kometa's normal traffic (the UI and syncs always come first).**
 
-**3. Covers beside the comics**
-- 3a. The `.kometa/covers/<issue>/…` layout and stable file names.
-- 3b. Copy the store to the NAS, verified.
-- 3c. The NAS copy is the permanent one; `data/covers/` can be rebuilt from it.
-- 3d. Move `data/covers/` to Catbus (`create_host_path: false`).
-- 3e. New covers are written to both.
+| Source | Limit | Harvest share |
+|---|---|---|
+| Metron | burst 20/min, 5,000/day per user; obey `X-RateLimit-*` and `Retry-After`; 401/403/404 bursts are IP bans | Through `metron_client` only (3.5 s gap). The harvest stops for the day with **1,000 left**, keeping headroom for kometa's own syncs (the existing floor of 200 is for normal use) |
+| LOCG | Cloudflare; kometa's pace is 3 s gap and 20 per 5 min; a refusal pauses 3 h | Through `locg_client` only; the UI's requests go first |
+| ComicVine | 200 per resource per hour, plus velocity detection | Spread evenly (about 1 every 18 s per resource), never in bursts |
+| GCD (optional) | 30/h anonymous, 2,000/day with a free account | Only with an account; back catalogue Metron lacks |
+| Image hosts (S3, Metron static, CV uploads) | No API limit | Polite: one at a time, 0.5 s gap (the existing trickle) |
 
-**4. ComicInfo write-back**
-- 4a. The generator (record → clean XML), tested on real and messy records.
-- 4b. The per-file journal in the DB.
-- 4c. The rebuild worker (Voot II read, Catbus build, CBR → CBZ, page CRC verify).
-- 4d. Upload as a temp file, read back, swap, carry the page cache over.
-- 4e. A test batch of about 20 mixed files (CBZ, CBR, trade, injected covers), checked by the user in kometa and another reader.
-- 4f. The full run (about 10 h of network time), yielding to the reader, resumable, on the 1f progress view.
+**Parallel.** Each source has its own budget, so each gets its own worker and they run at the same time. They write into the same record under one merge policy (field by field: the best source wins, a weaker one fills gaps, a stopgap never overwrites a catalogue). The only dependency is that ComicVine works on ids as Metron supplies them.
 
-**5. On arrival**
-- 5a. ComicInfo goes into finalize's existing rebuild.
-- 5b. Enrich on arrival (variants, CV original, covers beside the comic).
-- 5c. Re-enrich at +7/+30/+90 days; retag only when the XML hash changes.
+**1. Harvest (parallel workers, one per source)**
+- 1a. Prefer the largest URL (`large` over `thumb`) for mains and variants; re-fetch stored images whose best URL changed (includes the 1,933 LOCG 170px covers). Image hosts only.
+- 1b. The worker framework: a per-source worker, a per-item journal (pending, done, failed and why), resumable, the merge policy, yield to the reader.
+- 1c. The progress view (per source: done, queued, failed, today's budget left) and **the Settings badge** (red dot, no copy) when LOCG work is waiting with no working pass.
+- 1d. **Metron worker**: full issue detail for every owned issue with a Metron id (4,853), keeping what `issue_detail` currently drops (cv_id, gcd_id, UPC/ISBN, page count, price, characters, teams, universes, arcs, reprints). Then match the ~2,300 owned issues with no Metron id (series first). That's about 7k requests ≈ 2 days within the budget.
+- 1e. **LOCG worker**: link the 360 untried series, then the variant list and details for every owned issue (404 of ~7k done), then series and trade data. Fix the duplicated combined-role credits. About 8–10k requests ≈ 1.5–2 days at 240/h; stops when the pass is refused (badge on).
+- 1f. **ComicVine worker**: as cv ids arrive, the original main cover (kept if bigger) and confidently matched variant images; issues with no cv id searched by series and number, confident only. About 40 h.
+- 1g. **GCD worker (optional, needs a free account)**: credits and covers for back-catalogue issues Metron doesn't have.
+- 1h. The image downloader takes everything the workers queue, at the largest size.
+- Not planned: VerseDB (its ToS forbids mass download and image caching, and kometa already parses variant type and ratio from names).
 
-**6. Read local first (last)**
-- 6a. DB → file ComicInfo → online.
-- 6b. Online results go to the DB; the retag is queued until the book is closed.
-- 6c. Every online fallback is logged and listed as a pipeline miss.
+**2. Covers beside the comics**
+- 2a. The `.kometa/covers/<issue>/…` layout and stable file names.
+- 2b. Copy the store to the NAS, verified.
+- 2c. The NAS copy is the permanent one; `data/covers/` can be rebuilt from it.
+- 2d. Move `data/covers/` to Catbus (`create_host_path: false`).
+- 2e. New covers are written to both.
+
+**3. ComicInfo write-back**
+- 3a. The generator (record → clean XML, using Metron's characters, teams and GTIN), tested on real and messy records.
+- 3b. The per-file journal in the DB.
+- 3c. The rebuild worker (Voot II read, Catbus build, CBR → CBZ, page CRC verify).
+- 3d. Upload as a temp file, read back, swap, carry the page cache over.
+- 3e. A test batch of about 20 mixed files (CBZ, CBR, trade, injected covers), checked by the user in kometa and another reader.
+- 3f. The full run (about 10 h of network time), yielding to the reader, resumable, on the 1c progress view.
+
+**4. On arrival**
+- 4a. ComicInfo goes into finalize's existing rebuild.
+- 4b. Enrich on arrival (every source, covers beside the comic).
+- 4c. Re-enrich at +7/+30/+90 days; retag only when the XML hash changes.
+
+**5. Read local first (last)**
+- 5a. DB → file ComicInfo → online.
+- 5b. Online results go to the DB; the retag is queued until the book is closed.
+- 5c. Every online fallback is logged and listed as a pipeline miss.
+
+The phase notes below are background; the checklist above is the plan.
 
 ### 1. LOCG harvest (do first; the browser pass is the scarce resource)
 - For every issue on the shelf (then every tracked issue): fetch the LOCG variant list and details, store every variant's name and image URL in the record, and download each image at `large-`.
