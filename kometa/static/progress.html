@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>コメタ · Build progress</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css?v=267">
+  <style>
+    /* The build's own page (docs/library-enrichment-spec.md): what's done, what's
+       running, what's waiting on you. House tokens only — no new palette. */
+    body { margin: 0; background: var(--bg); color: var(--tp); }
+    .pg { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
+    .pg h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: .02em; }
+    .pg h2 { font-size: var(--fs-label); letter-spacing: var(--track); text-transform: uppercase;
+             color: var(--tq); font-weight: 700; margin: 32px 0 12px; }
+    .meta { color: var(--tq); font-size: var(--fs-body); }
+    .now { margin-top: 12px; padding: 12px 14px; background: var(--su1); border-left: 2px solid var(--pri);
+           font-size: var(--fs-body); }
+    .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; }
+    @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+    .card { background: var(--su1); padding: 16px 18px; margin-bottom: 16px; }
+    .card h3 { font-size: var(--fs-body); margin: 0 0 10px; font-weight: 700; }
+    .stat { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0;
+            font-size: var(--fs-body); color: var(--tq); }
+    .stat b { color: var(--tp); font-weight: inherit; font-variant-numeric: tabular-nums; }
+    .bar { height: 3px; background: var(--su2); margin: 6px 0 10px; }
+    .bar i { display: block; height: 100%; background: var(--pri); }
+    .item { display: grid; grid-template-columns: 52px 1fr auto; gap: 10px; padding: 5px 0;
+            font-size: var(--fs-body); align-items: baseline; }
+    .item .id { color: var(--tq); }
+    .item .note { grid-column: 2 / 4; color: var(--tq); font-size: var(--fs-label); margin-top: -2px; }
+    .pill { font-size: var(--fs-label); letter-spacing: var(--track); text-transform: uppercase;
+            padding: 1px 6px; white-space: nowrap; }
+    .s-done .pill { color: var(--pri); }
+    .s-done .label { color: var(--tq); }
+    .s-building .pill { color: var(--ink); background: var(--amb); }
+    .s-waiting-you .pill { color: var(--tp); background: var(--pink); }
+    .s-todo .pill { color: var(--tq); }
+    .task { background: var(--su1); padding: 14px 16px; margin-bottom: 10px; border-left: 2px solid var(--su2); }
+    .task.blocking { border-left-color: var(--pink); }
+    .task h3 { font-size: var(--fs-body); margin: 0 0 6px; font-weight: 700; }
+    .task p { margin: 4px 0; font-size: var(--fs-body); color: var(--tq); }
+    .task p b { color: var(--tp); font-weight: inherit; }
+  </style>
+</head>
+<body>
+  <div class="pg">
+    <h1>Build progress</h1>
+    <div class="meta" id="meta"></div>
+    <div class="now" id="now"></div>
+
+    <div class="cols">
+      <div>
+        <h2>Harvest · live</h2>
+        <div id="live"></div>
+        <h2>Your tasks</h2>
+        <div id="tasks"></div>
+      </div>
+      <div>
+        <h2>Checklist</h2>
+        <div id="checklist"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const n = v => (v == null ? '—' : Number(v).toLocaleString());
+const STATE = { 'done': 'done', 'building': 'building', 'waiting-you': 'waiting on you', 'todo': 'to do' };
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(url + ' ' + r.status);
+  return r.json();
+}
+
+function stat(label, value) { return `<div class="stat"><span>${esc(label)}</span><b>${value}</b></div>`; }
+
+async function renderLive() {
+  let h;
+  try { h = await getJSON('/api/harvest/progress'); } catch { return; }
+  const o = h.owned_issues || {}, l = h.locg || {}, m = h.metron || {}, g = h.gcd || {};
+  const pct = o.owned ? Math.round(100 * (o.catalogue || 0) / o.owned) : 0;
+  const locg = l.locg_paused_until ? esc(l.locg_paused_until === 'switched off' ? 'switched off' : 'paused until ' + l.locg_paused_until)
+    : (l.locg_pass_live ? `${n(l.locg_sweep_pending)} to go` : 'no pass');
+  document.getElementById('live').innerHTML = `
+    <div class="card">
+      <h3>Owned issues</h3>
+      ${stat('With catalogue data', `${n(o.catalogue)} of ${n(o.owned)} · ${pct}%`)}
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      ${stat('Stand-in data only', n(o.stopgap))}
+      ${stat('No catalogue match', n(o.no_catalogue_id))}
+      ${stat('Variant lists', n(o.variant_lists))}
+      ${stat('Community ratings', n(o.community))}
+    </div>
+    <div class="card">
+      <h3>Sources</h3>
+      ${stat('Metron today', m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`)}
+      ${stat('LOCG sweep', locg)}
+      ${stat('GCD', `${n(g.linked)} linked · ${n(g.ambiguous)} for you · ${n(g.filled)} issues`)}
+      ${stat('Covers to fetch or upgrade', n(h.images_pending))}
+    </div>`;
+}
+
+async function renderPlan() {
+  let b;
+  try { b = await getJSON('/build-status.json'); } catch { return; }
+  document.getElementById('meta').textContent = 'Updated ' + b.updated;
+  document.getElementById('now').innerHTML = '<b>Now:</b> ' + esc(b.now);
+  document.getElementById('checklist').innerHTML = b.groups.map(g => {
+    const done = g.items.filter(i => i.state === 'done').length;
+    return `<div class="card"><h3>${esc(g.title)} <span class="meta">· ${done}/${g.items.length}</span></h3>
+      ${g.items.map(i => `<div class="item s-${esc(i.state)}">
+        <span class="id">${esc(i.id)}</span><span class="label">${esc(i.label)}</span>
+        <span class="pill">${esc(STATE[i.state] || i.state)}</span>
+        ${i.note ? `<span class="note">${esc(i.note)}</span>` : ''}</div>`).join('')}
+    </div>`;
+  }).join('');
+  document.getElementById('tasks').innerHTML = b.your_tasks.map(t => `
+    <div class="task${/^yes/i.test(t.blocking) ? ' blocking' : ''}">
+      <h3>${esc(t.title)}</h3>
+      <p><b>Why:</b> ${esc(t.why)}</p>
+      <p><b>How:</b> ${esc(t.how)}</p>
+      <p><b>Blocking:</b> ${esc(t.blocking)}</p>
+    </div>`).join('');
+}
+
+function tick() { if (!document.hidden) { renderLive(); renderPlan(); } }
+tick();
+setInterval(tick, 60000);
+document.addEventListener('visibilitychange', tick);
+</script>
+</body>
+</html>

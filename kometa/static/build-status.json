@@ -1,0 +1,140 @@
+{
+  "updated": "2026-10-12 18:40 AEST",
+  "now": "1i — extra sources (PRH covers, Open Library, ComicBookRoundup) being built in the background; this page built alongside.",
+  "groups": [
+    {
+      "title": "Komga retirement",
+      "items": [
+        {"id": "K1", "label": "Read history copied from Komga", "state": "done", "note": "89 written, 10 renamed books recovered"},
+        {"id": "K2", "label": "Missing reading lists imported", "state": "done", "note": "Fear Itself"},
+        {"id": "K3", "label": "Final metadata harvest from Komga", "state": "done", "note": "253 issues"},
+        {"id": "K4", "label": "Komga removed from kometa's code", "state": "done"},
+        {"id": "K5", "label": "Komga container stopped, boot script fixed", "state": "done"},
+        {"id": "K6", "label": "Delete Komga container + config", "state": "waiting-you", "note": "after a few days — see Your tasks"}
+      ]
+    },
+    {
+      "title": "1 · Harvest (background, one job per source)",
+      "items": [
+        {"id": "1a", "label": "Biggest image everywhere; small covers re-fetched", "state": "done"},
+        {"id": "1b", "label": "Owned issues first; Metron harvest share (1,000 kept back daily)", "state": "done"},
+        {"id": "1c", "label": "Library harvest card + Settings attention badge", "state": "done"},
+        {"id": "1d", "label": "Metron: every extra field; issue ids for never-synced series", "state": "done"},
+        {"id": "1e", "label": "LOCG: full variant lists + community ratings", "state": "done"},
+        {"id": "1f", "label": "ComicVine: full-size original covers", "state": "done"},
+        {"id": "1g", "label": "GCD: older and international series; LOCG linking without Metron", "state": "done"},
+        {"id": "1h", "label": "Image downloader at full size", "state": "done"},
+        {"id": "1i-a", "label": "PRH print-quality covers (by barcode)", "state": "building"},
+        {"id": "1i-b", "label": "Open Library (trade ratings + covers)", "state": "building"},
+        {"id": "1i-c", "label": "ComicBookRoundup (critic + user scores)", "state": "building"},
+        {"id": "1i-d", "label": "Fandom wikis (fullest variant galleries)", "state": "todo"},
+        {"id": "1i-e", "label": "Marvel.com / DC.com covers (slowest pace)", "state": "todo"},
+        {"id": "1i-f", "label": "Hardcover (trade ratings)", "state": "waiting-you", "note": "needs your API token"}
+      ]
+    },
+    {
+      "title": "2 · Covers stored with the comics",
+      "items": [
+        {"id": "2a", "label": "Folder layout: <Series>/.kometa/covers/", "state": "todo"},
+        {"id": "2b", "label": "Copy the cover store to the NAS, verified", "state": "todo", "note": "dry run first, then your go"},
+        {"id": "2c", "label": "The NAS copy becomes the permanent one", "state": "todo"},
+        {"id": "2d", "label": "Kometa's local copy moves to Catbus", "state": "todo", "note": "your go — short restart"},
+        {"id": "2e", "label": "New covers written to both", "state": "todo"}
+      ]
+    },
+    {
+      "title": "3 · Clean ComicInfo in every file",
+      "items": [
+        {"id": "3a", "label": "ComicInfo generator (record → clean XML)", "state": "todo"},
+        {"id": "3b", "label": "Per-file journal", "state": "todo"},
+        {"id": "3c", "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)", "state": "todo"},
+        {"id": "3d", "label": "Temp upload → read back → swap; reader cache kept", "state": "todo"},
+        {"id": "3e", "label": "Test batch of ~20 files", "state": "todo", "note": "you check them"},
+        {"id": "3f", "label": "Full run (~10 h network)", "state": "todo", "note": "your go"}
+      ]
+    },
+    {
+      "title": "4 · New arrivals",
+      "items": [
+        {"id": "4a", "label": "ComicInfo written in finalize's rebuild", "state": "todo", "note": "built switched off until 3e is approved"},
+        {"id": "4b", "label": "Enriched on arrival from every source", "state": "todo"},
+        {"id": "4c", "label": "Re-checked at +7 / +30 / +90 days", "state": "todo"}
+      ]
+    },
+    {
+      "title": "5 · Read local first (last)",
+      "items": [
+        {"id": "5a", "label": "Database → file's ComicInfo → online", "state": "todo"},
+        {"id": "5b", "label": "Online answers saved; file update after the book closes", "state": "todo"},
+        {"id": "5c", "label": "Every online fallback logged as a miss", "state": "todo"}
+      ]
+    },
+    {
+      "title": "Built along the way",
+      "items": [
+        {"id": "x1", "label": "Settings cards: Metron, GCD; LOCG toggle", "state": "done"},
+        {"id": "x2", "label": "One series → several Metron series (Uncanny X-Men, Fables, Fantastic Four)", "state": "done"},
+        {"id": "x3", "label": "Split-series finder + 6 series relinked", "state": "done"},
+        {"id": "x4", "label": "Cover check tool (is this file really that issue?)", "state": "done"},
+        {"id": "x5", "label": "Web reader: spreads fill the screen", "state": "done"},
+        {"id": "x6", "label": "Reader caches on Catbus (21 GB freed)", "state": "done"}
+      ]
+    }
+  ],
+  "your_tasks": [
+    {
+      "title": "Pick the right GCD series for the ones it couldn't match",
+      "why": "GCD (the Grand Comics Database) fills details for series Metron doesn't have. When several GCD series share a name (Tintin has 145), kometa won't guess.",
+      "how": "I'll list each one with its candidates when the first batch is done (about 7 hours for all ~130 series). You pick one per series, or 'none of these'.",
+      "blocking": "No — only those series wait."
+    },
+    {
+      "title": "Get a Hardcover API token",
+      "why": "Hardcover has community ratings for trades (by ISBN). Its free API needs a personal token.",
+      "how": "Sign up at hardcover.app → Settings → API → copy the token, and paste it to me (or into its Settings card once built).",
+      "blocking": "No — only Hardcover waits."
+    },
+    {
+      "title": "Say go for copying covers into your library folders (step 2)",
+      "why": "Covers become part of the library (a hidden .kometa/covers/ folder per series on the NAS), so the nightly comics backup protects them and ginbako's disk is freed.",
+      "how": "I'll show the dry-run numbers (folders, files, GB) first. Then a yes or no.",
+      "blocking": "Yes — step 2 stops here."
+    },
+    {
+      "title": "Say go for moving kometa's cover store to Catbus",
+      "why": "Frees ~4–9 GB on ginbako. Same kind of move as this morning's caches, same guard if Catbus isn't mounted.",
+      "how": "A yes. About a minute of downtime.",
+      "blocking": "Yes — 2d stops here."
+    },
+    {
+      "title": "Check the 20-file test batch (step 3e)",
+      "why": "Before any file in the library is rewritten with clean ComicInfo, you confirm the rewritten files read and look right.",
+      "how": "I'll name the 20 files; open them in kometa (and another reader if you like) and tell me they're right.",
+      "blocking": "Yes — 3f and 4a stop here."
+    },
+    {
+      "title": "Say go for the full ComicInfo rewrite (step 3f)",
+      "why": "Every file gets its clean ComicInfo. ~10 hours of network time; pauses while you read; Voot II keeps every original for 30 days.",
+      "how": "A yes, after the test batch.",
+      "blocking": "Yes."
+    },
+    {
+      "title": "OK deleting the Komga container and its config",
+      "why": "Komga is stopped and nothing uses it. Its config is also in the Voot II backup.",
+      "how": "A yes, any time after a few days with no problems.",
+      "blocking": "No."
+    },
+    {
+      "title": "OK deleting today's 4 safety copies of the database",
+      "why": "Taken before each schema change today (~150 MB). All changes went fine and the nightly backups cover the database.",
+      "how": "A yes.",
+      "blocking": "No."
+    },
+    {
+      "title": "Push the arr-stack commit",
+      "why": "The boot script change (no longer restarts Komga) is committed locally in ~/code/arr-stack but not pushed.",
+      "how": "git -C ~/code/arr-stack push, when convenient.",
+      "blocking": "No."
+    }
+  ]
+}
