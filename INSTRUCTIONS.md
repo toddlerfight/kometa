@@ -323,10 +323,20 @@ Three copies of everything Kometa needs:
 1. **Kometa's own nightly** (03:30, `kometa/backup.py`): the database and a cover mirror into `_kometa-backup/` inside the comics folder on the NAS. Keeps 7 nights.
 2. **Voot II** (02:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
    - `db/` — a sqlite `.backup` of the live DB, integrity-checked, 14 kept
-   - `covers/`, `docker/` (all of `~/docker` except the page cache), `comics/` (mirror of `/Volumes/🧳/Comics`)
+   - `covers/`, `docker/` (all of `~/docker` except the page cache — which now lives on Catbus anyway), `comics/` (mirror of `/Volumes/🧳/Comics`)
    - `deleted/YYYY-mm-dd/` — whatever the mirrors removed or replaced, kept 30 days (a bad delete in the library can't wipe the backup)
    - `status.json` (last run) and `backup.log` (every run)
    - It refuses to run if Voot II isn't mounted. `COMICS=0` skips the comics mirror for a quick test.
    - Install / update: copy `ops/ginbako-backup.sh` to `~/bin/kometa-backup.sh`; the plist is a template — `sed "s#__HOME__#$HOME#g" ops/dev.kometa.backup.plist > ~/Library/LaunchAgents/dev.kometa.backup.plist`; then `launchctl bootout gui/$(id -u)/dev.kometa.backup; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.kometa.backup.plist`. Run now: `launchctl kickstart gui/$(id -u)/dev.kometa.backup`.
    - **macOS privacy:** a launchd job can't write to an external drive until `/bin/bash` has Full Disk Access (System Settings › Privacy & Security › Full Disk Access › +, Cmd-Shift-G `/bin/bash`). Without it the run fails with "No such file or directory" on the drive.
 3. **Code**: both repos pushed to GitHub (off ginbako) as well as Gitea.
+
+## Reader caches on Catbus (2026-10-12)
+
+`data/page-cache` (~21 GB) and `data/cover-cache` (~216 MB) live on Catbus, the 2 TB USB SSD on ginbako, to free its internal disk. They're bind-mounted over the same container paths, so the code doesn't know they moved:
+
+- Host: `/Volumes/Catbus/kometa/page-cache` and `/Volumes/Catbus/kometa/cover-cache` → container `/data/page-cache`, `/data/cover-cache` (long-syntax binds in `~/docker/compose.yml`).
+- Both binds set `create_host_path: false`. If Catbus isn't mounted, kometa refuses to start with "bind source path does not exist" rather than Docker creating an empty folder under `/Volumes/Catbus` that squats the mount point. **Never** pre-create anything under `/Volumes`, and never start kometa before Catbus is up. Fix a refused start by mounting Catbus and then `docker compose up -d kometa`.
+- What stays on the internal disk: `kometa.db`, and `covers/`. That's the record's own cover store, kept for good, not regenerable, and mirrored to Voot II nightly.
+- Both caches rebuild themselves, so if Catbus dies, kometa runs again once the two folders exist on a mounted drive.
+- Speed check: `ops/bench-cache.py` (run in the container, see its docstring). Drop the VM cache first: `docker run --rm --privileged alpine sh -c "sync; echo 3 > /proc/sys/vm/drop_caches"`. The 2026-10-12 before/after results are in `data/bench/`.
