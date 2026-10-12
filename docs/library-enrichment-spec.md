@@ -75,6 +75,16 @@ Network cost: about 5 hours of writes plus about 5 hours of read-back. Afterward
 - **Enrich the issue on arrival:** variants from every source, the CV original, the record filled, and covers written to the series' `.kometa/covers/`.
 - **Re-enrich new releases on a schedule** (for example +7, +30 and +90 days), because exclusives land on LOCG for weeks after release and CV originals arrive late. Retag the file only when the rendered XML's hash changes.
 
+### Reading order (when a comic is opened or shown)
+
+1. **The DB record**: local, milliseconds. Always first; it's the index.
+2. **The file's ComicInfo**: only when the DB has no row (a rebuilt DB, or a file dropped in by hand). Harvest it into the DB.
+3. **Online** (Metron → LOCG → CV): write the DB, then queue a retag. Never rewrite on the spot: a file swapped while it's being read changes under the reader. Retag once the book is closed.
+
+An online fetch at view time means the pipeline missed something. Log every one and surface them as a list, so the cause gets fixed for the whole class, not just one issue at a time.
+
+**Where the library stood on 2026-10-12** (7,492 books): 2,594 have catalogue records (Metron/LOCG); **4,583 only have stopgap data** (the file's ComicInfo or Komga); 133 are tracked and numbered with no record row; 141 are tracked with no parsed issue number (trades, one-shots, specials); 36 are on the shelf with no series link; 5 are true catalogue misses. The catalogue record was built on 10-09/10, while LOCG was walled (since 10-08) and Metron was rate-capped or banned, so most of the library predates a working fill. Step 1 should confirm the cause for each group before trusting that explanation.
+
 ## Open questions
 
 - Community stats (LOCG pull counts, rating): store as a snapshot, or skip because they change over time?
