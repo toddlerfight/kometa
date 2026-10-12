@@ -1,6 +1,6 @@
 {
-  "updated": "2026-10-12 21:40 AEST",
-  "now": "Trades now get ComicInfo too. Background: Fandom galleries + Hardcover being wired in. Me: step 4 (new arrivals) — one switch-gated retag job that serves the full run, new arrivals and re-checks.",
+  "updated": "2026-10-12 22:30 AEST",
+  "now": "Step 4 built and live but switched OFF: new downloads are put on the retag list (a database row) and nothing is written until you approve the test batch. Background: Fandom + Hardcover being wired in. Next: GCD matcher signals.",
   "groups": [
     {
       "title": "Komga retirement",
@@ -194,7 +194,7 @@
           "id": "3f",
           "label": "Full run (~10 h network)",
           "state": "todo",
-          "note": "your go"
+          "note": "your go — at 10 files per 10 min it would take ~5 days; can run faster at night"
         }
       ]
     },
@@ -204,18 +204,20 @@
         {
           "id": "4a",
           "label": "ComicInfo written in finalize's rebuild",
-          "state": "building",
-          "note": "built switched off until 3e is approved"
+          "state": "done",
+          "note": "switched off; arrivals wait for catalogue data (or 7 days), then go through the verified rewrite"
         },
         {
           "id": "4b",
           "label": "Enriched on arrival from every source",
-          "state": "todo"
+          "state": "done",
+          "note": "the harvest jobs already take new owned issues first"
         },
         {
           "id": "4c",
           "label": "Re-checked at +7 / +30 / +90 days",
-          "state": "building"
+          "state": "done",
+          "note": "tagged files are re-queued when what their record would write changes"
         }
       ]
     },
