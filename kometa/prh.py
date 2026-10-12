@@ -41,6 +41,15 @@ CONFIG_KEY = "prh_placeholder_md5"
 limiter = Limiter("PRH", min_interval_s=2.0, daily_cap=300, timeout_s=90,
                   refused_pause_s=6 * 3600)
 _placeholder = {"md5": None}
+# PRH has more than one placeholder: the bogus-code one, and a grey 'Cover Coming
+# Soon' card for codes it knows but has no art for yet (seen 2026-10-12 on a
+# week-old Marvel issue). Either is "no cover" — never a cover to keep.
+# Matched by picture (dHash, kometa/coververify.py), not bytes: a re-encode can't sneak past
+KNOWN_PLACEHOLDER_DHASHES = (0x070769796469070F,)    # 'Cover Coming Soon', 297x449
+PLACEHOLDER_CLOSE = 6
+# Periodical UPCs only pay off for the publishers PRH distributes as single issues;
+# 54 asks for DC UPCs on 2026-10-12 found nothing. Books (ISBNs) go to any publisher.
+UPC_PUBLISHERS = ("marvel", "idw", "boom", "dark horse")
 
 
 def code_for(extra: dict | None, isbn: str | None) -> str | None:
@@ -54,6 +63,14 @@ def code_for(extra: dict | None, isbn: str | None) -> str | None:
     if len(digits) == 13 and digits[:3] in ("978", "979"):
         return digits
     return None
+
+
+def _is_placeholder(data: bytes, ph: str) -> bool:
+    if hashlib.md5(data).hexdigest() == ph:
+        return True
+    from kometa.coververify import dhash, hamming
+    h = dhash(data)
+    return h is not None and any(hamming(h, k) <= PLACEHOLDER_CLOSE for k in KNOWN_PLACEHOLDER_DHASHES)
 
 
 def placeholder_md5(path=None) -> str:
@@ -122,7 +139,7 @@ def candidates(path=None, limit: int = 50) -> list[dict]:
     record.ensure_tables(path)
     with db._connect(path) as conn:
         rows = conn.execute("""
-            SELECT r.tracked_series_id AS sid, r.number, r.isbn, r.extra_json
+            SELECT r.tracked_series_id AS sid, r.number, r.isbn, r.extra_json, s.publisher
             FROM issue_record r JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
             JOIN tracked_series s ON s.id = r.tracked_series_id
             WHERE i.owned = 1 AND r.extra_json IS NOT NULL AND (s.kind IS NULL OR s.kind != 'arc')
@@ -134,6 +151,10 @@ def candidates(path=None, limit: int = 50) -> list[dict]:
         if "prh" in extra:
             continue                            # asked already (None = PRH has no cover)
         code = code_for(extra, r["isbn"])
+        if code and len(code) == 17:
+            pub = (extra.get("publisher") or r["publisher"] or "").lower()
+            if not any(p in pub for p in UPC_PUBLISHERS):
+                continue                        # a single issue PRH doesn't distribute
         if code:
             out.append({"sid": r["sid"], "number": r["number"], "code": code})
             if len(out) >= limit:
@@ -153,7 +174,7 @@ def fetch_cover(code: str, path=None, spend=lambda: True) -> tuple[str | None, b
         return None, None
     if small.status_code != 200:
         raise SourceUnavailable(f"PRH answered {small.status_code}")
-    if hashlib.md5(small.content).hexdigest() == ph:
+    if _is_placeholder(small.content, ph):
         return None, None
     if not spend():
         raise SourceUnavailable("PRH: this tick's requests are spent")
@@ -167,7 +188,7 @@ def fetch_cover(code: str, path=None, spend=lambda: True) -> tuple[str | None, b
     if not data:
         logger.info(f"PRH {code}: TIFF over {MAX_BYTES // 2**20} MB, skipped")
         return None, None
-    if hashlib.md5(data).hexdigest() == ph:
+    if _is_placeholder(data, ph):
         return None, None
     conv = to_jpeg(data)
     if not conv:

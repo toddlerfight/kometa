@@ -446,3 +446,36 @@ def test_removing_a_series_drops_its_cbr_link(db_path, web):
     cbr.tick(path=db_path)                                                  # 'unsure' row, no request
     db.remove_series(sid, db_path)
     assert cbr.get_series(sid, db_path) is None
+
+
+def test_prh_coming_soon_card_is_a_placeholder_too(monkeypatch):
+    """Matched by picture: a grey card that looks like the known one is a placeholder."""
+    import io
+    from PIL import Image
+    from kometa import prh, coververify
+    card = io.BytesIO(); Image.new("RGB", (297, 449), (235, 235, 235)).save(card, "JPEG")
+    monkeypatch.setattr(prh, "KNOWN_PLACEHOLDER_DHASHES", (coververify.dhash(card.getvalue()),))
+    assert prh._is_placeholder(card.getvalue(), "not-this-md5")
+    assert not prh._is_placeholder(_stripes(), "not-this-md5")        # an actual picture isn't
+
+
+def _stripes():
+    import io
+    from PIL import Image
+    im = Image.new("L", (297, 449))
+    px = im.load()
+    for x in range(297):
+        for y in range(449):
+            px[x, y] = 255 if (x // 20 + y // 30) % 2 else 0
+    b = io.BytesIO(); im.convert("RGB").save(b, "JPEG")
+    return b.getvalue()
+
+
+def test_prh_only_asks_upcs_of_publishers_it_distributes(db_path, monkeypatch):
+    import kometa.db as db
+    from kometa import prh, record
+    for title, pub, upc in (("Absolute Batman", "DC Comics", "76194138584600111"), ("Midnight Spider-Man", "Marvel Comics", "75960621681900111")):
+        sid = db.add_series(title=title, publisher=pub, folder_path=None, on_pull_list=False, path=db_path)
+        db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
+        record.write_issue(sid, 1.0, {"desc": "x", "extra": {"upc": upc}}, "metron", "full", {"metron_issue_id": 1}, db_path)
+    assert [c["code"] for c in prh.candidates(db_path)] == ["75960621681900111"]
