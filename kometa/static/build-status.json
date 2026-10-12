@@ -1,83 +1,266 @@
 {
-  "updated": "2026-10-12 18:40 AEST",
-  "now": "1i — extra sources (PRH covers, Open Library, ComicBookRoundup) being built in the background; this page built alongside.",
+  "updated": "2026-10-12 19:05 AEST",
+  "now": "1i (PRH, Open Library, ComicBookRoundup) building in the background. 3a done — 3b–3d (the rewrite job) next, tested on throwaway copies only.",
   "groups": [
     {
       "title": "Komga retirement",
       "items": [
-        {"id": "K1", "label": "Read history copied from Komga", "state": "done", "note": "89 written, 10 renamed books recovered"},
-        {"id": "K2", "label": "Missing reading lists imported", "state": "done", "note": "Fear Itself"},
-        {"id": "K3", "label": "Final metadata harvest from Komga", "state": "done", "note": "253 issues"},
-        {"id": "K4", "label": "Komga removed from kometa's code", "state": "done"},
-        {"id": "K5", "label": "Komga container stopped, boot script fixed", "state": "done"},
-        {"id": "K6", "label": "Delete Komga container + config", "state": "waiting-you", "note": "after a few days — see Your tasks"}
+        {
+          "id": "K1",
+          "label": "Read history copied from Komga",
+          "state": "done",
+          "note": "89 written, 10 renamed books recovered"
+        },
+        {
+          "id": "K2",
+          "label": "Missing reading lists imported",
+          "state": "done",
+          "note": "Fear Itself"
+        },
+        {
+          "id": "K3",
+          "label": "Final metadata harvest from Komga",
+          "state": "done",
+          "note": "253 issues"
+        },
+        {
+          "id": "K4",
+          "label": "Komga removed from kometa's code",
+          "state": "done"
+        },
+        {
+          "id": "K5",
+          "label": "Komga container stopped, boot script fixed",
+          "state": "done"
+        },
+        {
+          "id": "K6",
+          "label": "Delete Komga container + config",
+          "state": "waiting-you",
+          "note": "after a few days — see Your tasks"
+        }
       ]
     },
     {
       "title": "1 · Harvest (background, one job per source)",
       "items": [
-        {"id": "1a", "label": "Biggest image everywhere; small covers re-fetched", "state": "done"},
-        {"id": "1b", "label": "Owned issues first; Metron harvest share (1,000 kept back daily)", "state": "done"},
-        {"id": "1c", "label": "Library harvest card + Settings attention badge", "state": "done"},
-        {"id": "1d", "label": "Metron: every extra field; issue ids for never-synced series", "state": "done"},
-        {"id": "1e", "label": "LOCG: full variant lists + community ratings", "state": "done"},
-        {"id": "1f", "label": "ComicVine: full-size original covers", "state": "done"},
-        {"id": "1g", "label": "GCD: older and international series; LOCG linking without Metron", "state": "done"},
-        {"id": "1h", "label": "Image downloader at full size", "state": "done"},
-        {"id": "1i-a", "label": "PRH print-quality covers (by barcode)", "state": "building"},
-        {"id": "1i-b", "label": "Open Library (trade ratings + covers)", "state": "building"},
-        {"id": "1i-c", "label": "ComicBookRoundup (critic + user scores)", "state": "building"},
-        {"id": "1i-d", "label": "Fandom wikis (fullest variant galleries)", "state": "todo"},
-        {"id": "1i-e", "label": "Marvel.com / DC.com covers (slowest pace)", "state": "todo"},
-        {"id": "1i-f", "label": "Hardcover (trade ratings)", "state": "waiting-you", "note": "needs your API token"}
+        {
+          "id": "1a",
+          "label": "Biggest image everywhere; small covers re-fetched",
+          "state": "done"
+        },
+        {
+          "id": "1b",
+          "label": "Owned issues first; Metron harvest share (1,000 kept back daily)",
+          "state": "done"
+        },
+        {
+          "id": "1c",
+          "label": "Library harvest card + Settings attention badge",
+          "state": "done"
+        },
+        {
+          "id": "1d",
+          "label": "Metron: every extra field; issue ids for never-synced series",
+          "state": "done"
+        },
+        {
+          "id": "1e",
+          "label": "LOCG: full variant lists + community ratings",
+          "state": "done"
+        },
+        {
+          "id": "1f",
+          "label": "ComicVine: full-size original covers",
+          "state": "done"
+        },
+        {
+          "id": "1g",
+          "label": "GCD: older and international series; LOCG linking without Metron",
+          "state": "done"
+        },
+        {
+          "id": "1h",
+          "label": "Image downloader at full size",
+          "state": "done"
+        },
+        {
+          "id": "1i-a",
+          "label": "PRH print-quality covers (by barcode)",
+          "state": "building"
+        },
+        {
+          "id": "1i-b",
+          "label": "Open Library (trade ratings + covers)",
+          "state": "building"
+        },
+        {
+          "id": "1i-c",
+          "label": "ComicBookRoundup (critic + user scores)",
+          "state": "building"
+        },
+        {
+          "id": "1i-d",
+          "label": "Fandom wikis (fullest variant galleries)",
+          "state": "todo"
+        },
+        {
+          "id": "1i-e",
+          "label": "Marvel.com / DC.com covers (slowest pace)",
+          "state": "todo"
+        },
+        {
+          "id": "1i-f",
+          "label": "Hardcover (trade ratings)",
+          "state": "waiting-you",
+          "note": "needs your API token"
+        }
       ]
     },
     {
       "title": "2 · Covers stored with the comics",
       "items": [
-        {"id": "2a", "label": "Folder layout: <Series>/.kometa/covers/", "state": "todo"},
-        {"id": "2b", "label": "Copy the cover store to the NAS, verified", "state": "todo", "note": "dry run first, then your go"},
-        {"id": "2c", "label": "The NAS copy becomes the permanent one", "state": "todo"},
-        {"id": "2d", "label": "Kometa's local copy moves to Catbus", "state": "todo", "note": "your go — short restart"},
-        {"id": "2e", "label": "New covers written to both", "state": "todo"}
+        {
+          "id": "2a",
+          "label": "Folder layout: <Series>/.kometa/covers/",
+          "state": "todo"
+        },
+        {
+          "id": "2b",
+          "label": "Copy the cover store to the NAS, verified",
+          "state": "todo",
+          "note": "dry run first, then your go"
+        },
+        {
+          "id": "2c",
+          "label": "The NAS copy becomes the permanent one",
+          "state": "todo"
+        },
+        {
+          "id": "2d",
+          "label": "Kometa's local copy moves to Catbus",
+          "state": "todo",
+          "note": "your go — short restart"
+        },
+        {
+          "id": "2e",
+          "label": "New covers written to both",
+          "state": "todo"
+        }
       ]
     },
     {
       "title": "3 · Clean ComicInfo in every file",
       "items": [
-        {"id": "3a", "label": "ComicInfo generator (record → clean XML)", "state": "todo"},
-        {"id": "3b", "label": "Per-file journal", "state": "todo"},
-        {"id": "3c", "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)", "state": "todo"},
-        {"id": "3d", "label": "Temp upload → read back → swap; reader cache kept", "state": "todo"},
-        {"id": "3e", "label": "Test batch of ~20 files", "state": "todo", "note": "you check them"},
-        {"id": "3f", "label": "Full run (~10 h network)", "state": "todo", "note": "your go"}
+        {
+          "id": "3a",
+          "label": "ComicInfo generator (record → clean XML)",
+          "state": "done",
+          "note": "verified on a real record (Midnight Spider-Man #1); writes no files"
+        },
+        {
+          "id": "3b",
+          "label": "Per-file journal",
+          "state": "building"
+        },
+        {
+          "id": "3c",
+          "label": "Rebuild job (Voot II read, Catbus build, CBR→CBZ, page check)",
+          "state": "building"
+        },
+        {
+          "id": "3d",
+          "label": "Temp upload → read back → swap; reader cache kept",
+          "state": "building"
+        },
+        {
+          "id": "3e",
+          "label": "Test batch of ~20 files",
+          "state": "todo",
+          "note": "you check them"
+        },
+        {
+          "id": "3f",
+          "label": "Full run (~10 h network)",
+          "state": "todo",
+          "note": "your go"
+        }
       ]
     },
     {
       "title": "4 · New arrivals",
       "items": [
-        {"id": "4a", "label": "ComicInfo written in finalize's rebuild", "state": "todo", "note": "built switched off until 3e is approved"},
-        {"id": "4b", "label": "Enriched on arrival from every source", "state": "todo"},
-        {"id": "4c", "label": "Re-checked at +7 / +30 / +90 days", "state": "todo"}
+        {
+          "id": "4a",
+          "label": "ComicInfo written in finalize's rebuild",
+          "state": "todo",
+          "note": "built switched off until 3e is approved"
+        },
+        {
+          "id": "4b",
+          "label": "Enriched on arrival from every source",
+          "state": "todo"
+        },
+        {
+          "id": "4c",
+          "label": "Re-checked at +7 / +30 / +90 days",
+          "state": "todo"
+        }
       ]
     },
     {
       "title": "5 · Read local first (last)",
       "items": [
-        {"id": "5a", "label": "Database → file's ComicInfo → online", "state": "todo"},
-        {"id": "5b", "label": "Online answers saved; file update after the book closes", "state": "todo"},
-        {"id": "5c", "label": "Every online fallback logged as a miss", "state": "todo"}
+        {
+          "id": "5a",
+          "label": "Database → file's ComicInfo → online",
+          "state": "todo"
+        },
+        {
+          "id": "5b",
+          "label": "Online answers saved; file update after the book closes",
+          "state": "todo"
+        },
+        {
+          "id": "5c",
+          "label": "Every online fallback logged as a miss",
+          "state": "todo"
+        }
       ]
     },
     {
       "title": "Built along the way",
       "items": [
-        {"id": "x1", "label": "Settings cards: Metron, GCD; LOCG toggle", "state": "done"},
-        {"id": "x2", "label": "One series → several Metron series (Uncanny X-Men, Fables, Fantastic Four)", "state": "done"},
-        {"id": "x3", "label": "Split-series finder + 6 series relinked", "state": "done"},
-        {"id": "x4", "label": "Cover check tool (is this file really that issue?)", "state": "done"},
-        {"id": "x5", "label": "Web reader: spreads fill the screen", "state": "done"},
-        {"id": "x6", "label": "Reader caches on Catbus (21 GB freed)", "state": "done"}
+        {
+          "id": "x1",
+          "label": "Settings cards: Metron, GCD; LOCG toggle",
+          "state": "done"
+        },
+        {
+          "id": "x2",
+          "label": "One series → several Metron series (Uncanny X-Men, Fables, Fantastic Four)",
+          "state": "done"
+        },
+        {
+          "id": "x3",
+          "label": "Split-series finder + 6 series relinked",
+          "state": "done"
+        },
+        {
+          "id": "x4",
+          "label": "Cover check tool (is this file really that issue?)",
+          "state": "done"
+        },
+        {
+          "id": "x5",
+          "label": "Web reader: spreads fill the screen",
+          "state": "done"
+        },
+        {
+          "id": "x6",
+          "label": "Reader caches on Catbus (21 GB freed)",
+          "state": "done"
+        }
       ]
     }
   ],
