@@ -80,3 +80,27 @@ def test_metron_matched_series_gain_a_locg_id_one_per_tick_when_open(lib, monkey
     assert db.get_series_by_id(b, lib)["locg_link"] == "none"        # asked once, remembered
     monkeypatch.setattr(lc, "_pause", {"until": 4102444800.0})
     assert si.link_locg_existing(limit=5) == 0                       # shut = don't even look
+
+
+def test_locg_linking_no_longer_needs_a_metron_match(lib, monkeypatch):
+    """1g: Tintin and Dune: House Atreides have no Metron run, and LOCG is their
+    only variant list. Pull list first, then most owned; the first matcher's
+    pending series are left to it."""
+    monkeypatch.setattr(lc, "_pause", {"until": 0.0})
+    asked = []
+    monkeypatch.setattr(si, "find_confident_match",
+                        lambda s: asked.append(s["title"]) or (77 if s["title"] == "Tintin" else None))
+    few = db.add_series(title="Dune- House Atreides", publisher="BOOM!", on_pull_list=False, path=lib)
+    many = db.add_series(title="Tintin", publisher="Casterman", on_pull_list=False, path=lib)
+    pend = db.add_series(title="Pending One", publisher="X", on_pull_list=True, path=lib)
+    db.set_match_status(pend, si.PENDING, lib)
+    for n in range(1, 3):
+        db.upsert_issue_status(few, float(n), None, 1, path=lib)
+    for n in range(1, 29):
+        db.upsert_issue_status(many, float(n), None, 1, path=lib)
+    assert si.link_locg_existing(limit=1) == 1
+    assert asked == ["Tintin"]                                       # most owned first, no Metron id needed
+    assert db.get_series_by_id(many, lib)["locg_series_id"] == 77
+    assert si.link_locg_existing(limit=3) == 0
+    assert asked == ["Tintin", "Dune- House Atreides"]               # pending left to the matcher
+    assert db.get_series_by_id(few, lib)["locg_link"] == "none"

@@ -3513,6 +3513,8 @@ async function _renderHarvest() {
     : l.locg_pass_live ? `${n(l.locg_sweep_pending)} to go` : 'no pass';
   const m = h.metron || {};
   const metron = m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`;
+  const g = h.gcd;
+  const gcd = g ? `${n(g.linked)} linked · ${n(g.ambiguous)} waiting for you · ${n(g.filled)} issues` : '—';
   const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
   el.innerHTML = [
     row('Owned issues', n(o.owned)),
@@ -3524,6 +3526,7 @@ async function _renderHarvest() {
     row('Covers to fetch or upgrade', n(h.images_pending)),
     row('LOCG sweep', locg),
     row('Metron today', metron),
+    row('GCD', gcd),
   ].join('');
 }
 

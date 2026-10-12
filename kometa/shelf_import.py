@@ -289,18 +289,24 @@ def link_metron_existing(limit: int = METRON_PER_TICK) -> int:
 
 
 def link_locg_existing(limit: int = 1) -> int:
-    """The mirror of link_metron_existing: a Metron-matched series gains its LOCG
-    id — confident rule, pull list first, ONE per tick (LOCG manners) and only
-    while LOCG is open to us. Why bother: LOCG's variant list (reprints, retailer
-    and event exclusives) is what the Variants tab merges in on top of Metron's.
-    'none' is remembered so a series isn't asked about every tick."""
+    """The mirror of link_metron_existing: a series gains its LOCG id — confident
+    rule, pull list first then the most owned issues, a few per tick (LOCG
+    manners) and only while LOCG is open to us. Why bother: LOCG's variant list
+    (reprints, retailer and event exclusives) is what the Variants tab merges in
+    on top of Metron's — and for a run Metron hasn't got at all (Tintin, Dune:
+    House Atreides) LOCG is the only variant list there is, so a Metron match is
+    no longer required (1g). Series still waiting for the first matcher are its
+    business, not this. 'none' is remembered so a series isn't asked every tick."""
     from kometa.locg_client import locg_paused, LocgPaused
     if locg_paused():
         return 0
     todo = [s for s in db.get_all_series(DB_PATH)
-            if s.get("kind") != "arc" and s.get("metron_series_id") and not s.get("locg_series_id")
-            and s.get("locg_link") is None]
-    todo.sort(key=lambda s: (not s.get("on_pull_list"), s["title"].lower()))
+            if s.get("kind") != "arc" and not s.get("locg_series_id")
+            and s.get("locg_link") is None and s.get("match_status") != PENDING]
+    with db._connect(DB_PATH) as conn:
+        owned = {r[0]: r[1] for r in conn.execute(
+            "SELECT tracked_series_id, SUM(owned) FROM issue_status GROUP BY tracked_series_id")}
+    todo.sort(key=lambda s: (not s.get("on_pull_list"), -(owned.get(s["id"]) or 0), s["title"].lower()))
     linked = 0
     for s in todo[:limit]:
         try:

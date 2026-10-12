@@ -220,6 +220,20 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=5))
     except Exception as e:
         logger.warning(f"ComicVine covers harvest not scheduled: {e}")
+    # The Grand Comics Database for the runs Metron hasn't got: link a few, then
+    # fill their owned issues — GCD's own throttle and daily cap, no Metron
+    # traffic, so no harvest wrapper (kometa/harvest.py, 1g). Both no-op without
+    # a login or with the Settings toggle off.
+    try:
+        from kometa.harvest import gcd_link_tick, gcd_fill_tick
+        scheduler.add_job(gcd_link_tick, IntervalTrigger(minutes=10), id="harvest_gcd_link",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=7))
+        scheduler.add_job(gcd_fill_tick, IntervalTrigger(minutes=10), id="harvest_gcd_fill",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=9))
+    except Exception as e:
+        logger.warning(f"GCD harvest not scheduled: {e}")
     # Trades fill what singles can't: collects for a few trades, the coverage
     # stamps, then a few stuck issues looked up — proposals wait in Activity.
     try:

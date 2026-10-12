@@ -322,6 +322,12 @@ def _migrate(path=DB_PATH):
             # one numbering. Comma-separated, merged into the issue list by number.
             # (Down here, after the rebuilds above, or they'd drop it.)
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_extra_ids TEXT")
+        # The Grand Comics Database run for series Metron hasn't got (harvest 1g):
+        # gcd_link 'linked' / 'none' / 'ambiguous' (candidates kept for you to pick).
+        # Same rule as above: after the rebuilds, or they'd drop them.
+        for col, typ in (("gcd_series_id", "INTEGER"), ("gcd_link", "TEXT"), ("gcd_candidates_json", "TEXT")):
+            if col not in ts_cols:
+                conn.execute(f"ALTER TABLE tracked_series ADD COLUMN {col} {typ}")
         if "cv_volume_id" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
         # Per-series single-issue page ceiling. NULL = the global default (70).
@@ -2135,3 +2141,11 @@ def set_from_list(series_id, list_id, path=DB_PATH):
 def set_locg_link(series_id, outcome, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET locg_link = ? WHERE id = ?", (outcome, series_id))
+
+
+def set_gcd_link(series_id, outcome, gcd_series_id=None, candidates=None, path=DB_PATH):
+    """'linked' (with the GCD run), 'none', or 'ambiguous' (with up to 8
+    candidates for a person to pick from). Each write replaces the last."""
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET gcd_link = ?, gcd_series_id = ?, gcd_candidates_json = ? WHERE id = ?",
+                     (outcome, gcd_series_id, json.dumps(candidates) if candidates else None, series_id))

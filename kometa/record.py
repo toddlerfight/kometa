@@ -227,12 +227,15 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
     Raises metron_client.MetronUnavailable so a trickle stops at the first refusal."""
     path = path or DB_PATH
     existing = get_issue(series_id, number, path)
-    if existing and not force and _fresh(existing):
+    gcd_row = bool(existing) and existing.get("source") == "gcd"
+    if existing and not force and _fresh(existing) and not gcd_row:
         return existing
     if issue is None:
         issue = next((i for i in db.get_issues_for_series(series_id, path) if i["number"] == number), None)
         if issue is None:
             return None
+    if gcd_row and not force and _fresh(existing) and not issue.get("metron_issue_id"):
+        return existing                                        # GCD's answer stands until Metron has the issue
     from kometa import issue_meta
     if issue.get("metron_issue_id"):
         from kometa import metron_client
@@ -240,6 +243,11 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
         if found is None:
             raise metron_client.MetronUnavailable("Metron didn't answer")   # keep the row for next time
         return write_issue(series_id, number, found, "metron", "full", issue, path)
+    if gcd_row:
+        # GCD answered and Metron still can't: keep it. Neither LOCG's thinner
+        # details nor a miss replaces it (harvest.gcd_fill_tick, 1g)
+        _touch(series_id, number, path)
+        return existing
     if issue.get("locg_issue_id"):
         from kometa import locg_client
         is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
@@ -317,7 +325,9 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
                    OR (r.source IN ('comicinfo', 'komga')
                        AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?))
                    -- owned issues Metron filled before its extra fields were kept: once more each
-                   OR (r.source = 'metron' AND r.extra_json IS NULL AND i.owned = 1 AND i.metron_issue_id IS NOT NULL))
+                   OR (r.source = 'metron' AND r.extra_json IS NULL AND i.owned = 1 AND i.metron_issue_id IS NOT NULL)
+                   -- GCD stood in while Metron had no id; it has one now, so Metron refills it
+                   OR (r.source = 'gcd' AND i.metron_issue_id IS NOT NULL))
             -- what you OWN first: 2,528 owned issues sat behind 1,956 unowned record-less ones (2026-10-12)
             ORDER BY s.on_pull_list DESC, i.owned DESC, (r.tracked_series_id IS NOT NULL), i.tracked_series_id, i.number
             LIMIT ?""", (cutoff, cutoff, limit))]

@@ -8,7 +8,9 @@ instead of five log greps.
 """
 import json
 import logging
+import re
 import time
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter
 
@@ -25,7 +27,7 @@ def _owned_record(path) -> dict:
     with db._connect(path) as conn:
         rows = conn.execute("""
             SELECT
-              SUM(CASE WHEN r.source IN ('metron', 'locg') AND r.fill_state != 'miss' THEN 1 ELSE 0 END) AS catalogue,
+              SUM(CASE WHEN r.source IN ('metron', 'locg', 'gcd') AND r.fill_state != 'miss' THEN 1 ELSE 0 END) AS catalogue,
               SUM(CASE WHEN r.source IN ('comicinfo', 'komga') THEN 1 ELSE 0 END) AS stopgap,
               SUM(CASE WHEN r.tracked_series_id IS NULL OR r.fill_state = 'miss' THEN 1 ELSE 0 END) AS no_record,
               SUM(CASE WHEN i.metron_issue_id IS NULL AND (i.locg_issue_id IS NULL OR i.locg_issue_id = '') THEN 1 ELSE 0 END) AS no_catalogue_id,
@@ -61,6 +63,10 @@ def progress(path=None) -> dict:
         out["locg"] = topup.status(path)
     except Exception:
         out["locg"] = None
+    try:
+        out["gcd"] = gcd_status(path)
+    except Exception:
+        out["gcd"] = None
     return out
 
 
@@ -188,3 +194,270 @@ def cv_covers_tick(limit: int = CV_BATCH, path=None, client=None) -> int:
         record.merge_extra(t["sid"], t["number"], {"cv_original": found.get(t["cv_id"])}, path)
     logger.info(f"ComicVine covers: {len(found)} of {len(todo)} issues have an original")
     return len(found)
+
+
+# --- the Grand Comics Database: the back catalogue Metron hasn't got (1g) ---------
+GCD_LINK_PER_TICK = 3
+GCD_FILL_BUDGET = 12                # GCD requests per tick (series lists + issues): ~1,700 a day at 10 min
+GCD_SERIES_TTL_DAYS = 30            # a run's issue list is asked again after this
+GCD_CANDIDATES_KEPT = 8
+_YEAR_RE = re.compile(r"\((\d{4})\)")
+
+
+@db.once_per_db
+def ensure_gcd_tables(path=None):
+    with db._connect(path or DB_PATH) as conn:
+        # one fetch of a run's issue list serves every owned issue in it for a month
+        conn.execute("""CREATE TABLE IF NOT EXISTS gcd_series_cache (
+            gcd_series_id INTEGER PRIMARY KEY, detail_json TEXT, fetched_at TEXT)""")
+
+
+def _gcd_on(path) -> bool:
+    cfg = db.get_config(path)
+    return cfg.get("gcd_enabled", "1") != "0" and bool((cfg.get("gcd_user") or "").strip() and cfg.get("gcd_pass"))
+
+
+def _gcd_name(name: str) -> str:
+    """The comparison key: norm_key, without a leading 'The' or a trailing ', The'."""
+    from kometa.naming import norm_key
+    raw = _YEAR_RE.sub("", name or "").strip()
+    trailing_the = bool(re.search(r",\s*the$", raw, re.I))
+    k = norm_key(raw)
+    if trailing_the and k.endswith(" the"):
+        k = k[:-4].strip()
+    return re.sub(r"^the ", "", k)
+
+
+def _gcd_queries(title: str) -> list[str]:
+    """What to search GCD for: the folder title without its '(2011)' and leading
+    'The' (GCD's name search is a contains match, so 'Adventures of Tintin' finds
+    'The Adventures of Tintin'), with a folder's '- ' put back to ': ' first —
+    'Dune- House Atreides' is 'Dune: House Atreides' everywhere but a filesystem."""
+    base = re.sub(r"^\s*the\s+", "", _YEAR_RE.sub("", title or ""), flags=re.I).strip(" -")
+    colon = re.sub(r"\s*-\s+", ": ", base)
+    return [q for q in dict.fromkeys([colon, base]) if q]
+
+
+def _year_hint(s: dict) -> int | None:
+    import os
+    for text in (s.get("title") or "", os.path.basename((s.get("folder_path") or "").rstrip("/"))):
+        m = _YEAR_RE.search(text)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _year_fits(c: dict, year: int | None) -> bool:
+    if year is None:
+        return True
+    began = c.get("year_began")
+    if not began:
+        return False
+    return began - 1 <= year <= (c.get("year_ended") or began) + 1
+
+
+def gcd_match(s: dict, hi: float | None, results: list[dict]) -> tuple[str, int | None, list[dict]]:
+    """('linked', id, []) only for exactly ONE candidate with the same name
+    (allowing a leading 'The'), in English, with at least as many issues as the
+    highest number we own (when that's a sensible whole number) and a start year
+    that fits the folder's '(YYYY)' if it has one. More than one such → 'ambiguous'
+    with them; none such but a same-name run exists (another language, too
+    short, another year) → 'ambiguous' with those, for a person to judge.
+    Nothing of that name → 'none'. Never a guess."""
+    want, year = _gcd_name(s.get("title")), _year_hint(s)
+    named = [c for c in results if c.get("gcd_id") and _gcd_name(c.get("name")) == want]
+    need = int(hi) if hi is not None and hi == int(hi) and 1 <= hi <= 1500 else None
+    plausible = [c for c in named if c.get("language") == "en" and _year_fits(c, year)
+                 and (need is None or (c.get("issues") or 0) >= need)]
+    if len(plausible) == 1:
+        return "linked", plausible[0]["gcd_id"], []
+    pool = plausible or named
+    if not pool:
+        return "none", None, []
+    pool = sorted(pool, key=lambda c: (c.get("language") != "en",
+                                       abs((c.get("year_began") or 0) - (year or c.get("year_began") or 0)),
+                                       -(c.get("issues") or 0)))
+    keep = ("gcd_id", "name", "year_began", "year_ended", "issues", "language", "country", "publishing_format")
+    return "ambiguous", None, [{k: c.get(k) for k in keep} for c in pool[:GCD_CANDIDATES_KEPT]]
+
+
+def gcd_link_candidates(path=None, limit: int = GCD_LINK_PER_TICK) -> list[dict]:
+    """Owned runs Metron has no series for and GCD hasn't been asked about.
+    Most owned issues first. A run you've said has no run at all (the 'none'
+    button) isn't asked."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT s.id, MAX(i.number) AS hi FROM tracked_series s JOIN issue_status i ON i.tracked_series_id = s.id
+            WHERE s.metron_series_id IS NULL AND s.gcd_link IS NULL AND (s.kind IS NULL OR s.kind != 'arc')
+              AND i.owned = 1 AND COALESCE(s.match_status, '') != 'pending'   -- the Metron matcher goes first
+              AND NOT (COALESCE(s.match_status, '') = 'manual' AND COALESCE(s.metron_link, '') = 'none'
+                       AND COALESCE(s.locg_link, '') = 'none' AND s.locg_series_id IS NULL)
+            GROUP BY s.id ORDER BY COUNT(*) DESC, s.id LIMIT ?""", (limit,))]
+    out = []
+    for r in rows:
+        s = db.get_series_by_id(r["id"], path)
+        if s:
+            s["_owned_hi"] = r["hi"]
+            out.append(s)
+    return out
+
+
+def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int:
+    """Scheduler tick: a few Metron-less runs searched on GCD by title, linked
+    only on the conservative rule (gcd_match). Stops at GCD's first refusal or
+    the day's cap, leaving the run unasked for next time."""
+    path = path or DB_PATH
+    if not _gcd_on(path):
+        return 0
+    if client is None:
+        from kometa import gcd_client as client
+    from kometa.gcd_client import GCDUnavailable
+    linked = 0
+    for s in gcd_link_candidates(path, limit):
+        try:
+            results = []
+            for q in _gcd_queries(s["title"]):
+                results = client.search_series(q)
+                if results:
+                    break
+        except GCDUnavailable as e:
+            logger.info(f"GCD linking stopped this tick: {e}")
+            break
+        outcome, gid, cands = gcd_match(s, s.get("_owned_hi"), results)
+        db.set_gcd_link(s["id"], outcome, gid, cands, path)
+        logger.info(f"GCD: {s['title']!r} → {outcome}{f' {gid}' if gid else ''}")
+        linked += outcome == "linked"
+    return linked
+
+
+def _gcd_series(gid: int, path, client, spend) -> dict | None:
+    """The run's issue list, from the month-long cache or one request."""
+    ensure_gcd_tables(path)
+    from kometa.record import _age_days, _now
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT detail_json, fetched_at FROM gcd_series_cache WHERE gcd_series_id = ?", (gid,)).fetchone()
+    if r and _age_days(r["fetched_at"]) < GCD_SERIES_TTL_DAYS:
+        return json.loads(r["detail_json"] or "null")
+    if not spend():
+        return None
+    d = client.series_detail(gid)
+    with db._connect(path) as conn:
+        conn.execute("INSERT OR REPLACE INTO gcd_series_cache (gcd_series_id, detail_json, fetched_at) VALUES (?, ?, ?)",
+                     (gid, json.dumps(d), _now()))
+    return d
+
+
+def gcd_fill_candidates(path=None) -> list[dict]:
+    """Owned issues in GCD-linked runs that Metron has no id for, whose record is
+    missing, a miss, covers-only, or a stopgap (the file's own tags). A GCD row
+    is done — a GCD miss is asked again after the record's miss TTL."""
+    path = path or DB_PATH
+    from kometa import record
+    record.ensure_tables(path)
+    cutoff = (datetime.utcnow() - timedelta(days=record.RECORD_MISS_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(path) as conn:
+        return [dict(r) for r in conn.execute("""
+            SELECT i.tracked_series_id, i.number, i.metron_issue_id, i.locg_issue_id, i.store_date, i.owned,
+                   s.gcd_series_id
+            FROM issue_status i JOIN tracked_series s ON s.id = i.tracked_series_id
+            LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
+            WHERE s.gcd_link = 'linked' AND s.gcd_series_id IS NOT NULL AND i.owned = 1 AND i.metron_issue_id IS NULL
+              AND (s.kind IS NULL OR s.kind != 'arc')
+              AND (r.tracked_series_id IS NULL OR r.fill_state IN ('miss', 'variants') OR r.source IN ('comicinfo', 'komga'))
+              AND NOT (COALESCE(r.source, '') = 'gcd' AND r.fetched_at >= ?)
+            ORDER BY s.on_pull_list DESC, i.tracked_series_id, i.number""", (cutoff,))]
+
+
+def gcd_fill_tick(budget: int = GCD_FILL_BUDGET, path=None, client=None) -> int:
+    """Scheduler tick: GCD's issue detail (credits, story synopses, cast, dates,
+    price, cover) for owned issues Metron can't answer, into the record as
+    source 'gcd'. budget counts every GCD request, the run's list included.
+    Metron takes the row back the moment the issue gains a Metron id
+    (record.pending_issues)."""
+    path = path or DB_PATH
+    if not _gcd_on(path):
+        return 0
+    if client is None:
+        from kometa import gcd_client as client
+    from kometa import record
+    from kometa.gcd_client import GCDUnavailable
+    left = [budget]
+
+    def spend() -> bool:
+        if left[0] <= 0:
+            return False
+        left[0] -= 1
+        return True
+
+    filled, maps = 0, {}
+    try:
+        for c in gcd_fill_candidates(path):
+            gid = c["gcd_series_id"]
+            if gid not in maps:
+                d = _gcd_series(gid, path, client, spend)
+                if d is None and left[0] <= 0:
+                    break                                   # out of requests before the list came
+                maps[gid] = {}
+                for it in (d or {}).get("issues_list") or []:
+                    if it.get("number") is not None and it.get("gcd_issue_id"):
+                        maps[gid].setdefault(float(it["number"]), it["gcd_issue_id"])
+            iid = maps[gid].get(float(c["number"]))
+            if not iid:
+                continue                                    # GCD's run hasn't this number: costs nothing
+            if not spend():
+                break
+            found = client.issue_detail(iid)
+            sid, n = c["tracked_series_id"], c["number"]
+            issue = {k: c[k] for k in ("metron_issue_id", "locg_issue_id", "store_date")}
+            row = record.get_issue(sid, n, path)
+            if row and row.get("source") in ("metron", "locg") and row.get("fill_state") in ("full", "partial"):
+                continue                                    # a catalogue answered while we waited
+            if found is None:
+                record.write_issue(sid, n, {}, "gcd", "miss", issue, path)
+                continue
+            record.write_issue(sid, n, found, "gcd", "partial", issue, path)
+            filled += 1
+    except GCDUnavailable as e:
+        logger.info(f"GCD fill stopped this tick: {e}")
+    if filled:
+        logger.info(f"GCD: {filled} issues filled")
+    return filled
+
+
+def gcd_status(path=None) -> dict:
+    path = path or DB_PATH
+    from kometa import record
+    record.ensure_tables(path)
+    with db._connect(path) as conn:
+        links = {r[0]: r[1] for r in conn.execute(
+            "SELECT gcd_link, COUNT(*) FROM tracked_series WHERE gcd_link IS NOT NULL GROUP BY gcd_link")}
+        filled = conn.execute("SELECT COUNT(*) FROM issue_record WHERE source = 'gcd' AND fill_state != 'miss'").fetchone()[0]
+    out = {"linked": links.get("linked", 0), "ambiguous": links.get("ambiguous", 0), "none": links.get("none", 0),
+           "filled": filled}
+    try:
+        from kometa import gcd_client
+        out["budget"] = gcd_client.budget()
+    except Exception:
+        out["budget"] = None
+    return out
+
+
+def gcd_candidates(path=None) -> list[dict]:
+    """Runs GCD couldn't place on its own, with what it offered — for a person to
+    pick (PATCH /api/series/{id}/locg {"gcd_id": N}, or 0 for 'not on GCD')."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT s.id, s.title, s.publisher, s.folder_path, s.gcd_candidates_json,
+                   SUM(CASE WHEN i.owned = 1 THEN 1 ELSE 0 END) AS owned
+            FROM tracked_series s LEFT JOIN issue_status i ON i.tracked_series_id = s.id
+            WHERE s.gcd_link = 'ambiguous' GROUP BY s.id ORDER BY owned DESC, s.title""")]
+    for r in rows:
+        r["candidates"] = json.loads(r.pop("gcd_candidates_json") or "[]")
+    return rows
+
+
+@router.get("/api/harvest/gcd-candidates")
+def get_gcd_candidates():
+    return gcd_candidates()

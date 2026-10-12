@@ -1290,6 +1290,7 @@ class MatchRequest(BaseModel):
     locg_id: int | None = None
     metron_id: int | None = None
     metron_extra_ids: list[int] | None = None   # more Metron runs in the same numbering ([] clears)
+    gcd_id: int | None = None   # the Grand Comics Database run (harvest 1g); 0 = "not on GCD"
     none: bool = False          # "there is no run": a collection, a fan book, a folder of one-shots
 
 
@@ -1308,6 +1309,7 @@ def set_series_locg(series_id: int, req: MatchRequest):
         db.set_match_status(series_id, "manual", DB_PATH)
         db.set_metron_link(series_id, "none", DB_PATH)
         db.set_locg_link(series_id, "none", DB_PATH)
+        db.set_gcd_link(series_id, "none", path=DB_PATH)
         # a person said there is no run: neither the re-match job nor the
         # re-check queue ever asks about it again
         from kometa.rematch import NEVER, ensure_columns
@@ -1315,6 +1317,15 @@ def set_series_locg(series_id: int, req: MatchRequest):
         with db._connect(DB_PATH) as conn:
             conn.execute("UPDATE tracked_series SET metron_checked_at = ? WHERE id = ?", (NEVER, series_id))
         return db.get_series_by_id(series_id, DB_PATH)
+    if req.gcd_id is not None:
+        # GCD's link stands apart: no sync, no match status — the harvest's fill
+        # tick picks the run up (an answer to GET /api/harvest/gcd-candidates)
+        if req.gcd_id > 0:
+            db.set_gcd_link(series_id, "linked", req.gcd_id, path=DB_PATH)
+        else:
+            db.set_gcd_link(series_id, "none", path=DB_PATH)
+        if not (req.locg_id or req.metron_id or req.metron_extra_ids is not None):
+            return db.get_series_by_id(series_id, DB_PATH)
     if not (req.locg_id or req.metron_id or req.metron_extra_ids is not None):
         raise HTTPException(400, "Pick a run")
     if req.locg_id:
