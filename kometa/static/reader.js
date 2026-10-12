@@ -1274,36 +1274,47 @@ async function _rlPollGetMissing(listId) {
 //    (≤ TROUGH) and then a sustained climb: 3 events, none falling, ending ≥ PUSH.
 //    Or a pause (GAP) — fingers lifted, everything resets.
 function _rdWheelGesture() {
-  // Tuned on two Safari/macOS trackpad recordings (2026-10-11, 2026-10-12 — the second
-  // in tests/e2e/fixtures_safari_swipes.json too). 10-12: a single swipe's acceleration
-  // wobbles (…16 10 8 6 2 9 10 13…) read as "it bottomed out, here's a new push" and one
-  // swipe turned 2–3 pages. So a stop must be SUSTAINED (LOW_RUN quiet samples), a new
-  // push must CLIMB (RAMP samples, to at least half the last swipe's peak), and nothing
-  // turns within REFRACTORY ms of the last turn — nobody swipes twice in a quarter second.
+  // Tuned on four Safari/macOS trackpad recordings, all in tests/e2e/fixtures_safari_swipes.json.
+  // Two ways a new swipe shows up after a turn:
+  //  - slow swipes: the momentum dies right down (LOW_RUN quiet samples) and a fresh push
+  //    CLIMBS (RAMP samples, to half the last peak). A single dip isn't a stop — a swipe's own
+  //    acceleration wobbles (…16 10 8 6 2 9 10 13…) and used to turn 2–3 pages (2026-10-12).
+  //  - quick swipes: the next one starts before the momentum dies — a CLIFF, a high level
+  //    (>= CLIFF_FROM) dropping to a quarter of itself within CLIFF_N samples as the fingers
+  //    lift and land (…21 19 17 6 3 1 5 7 8…), then a short climb (CLIFF_RISE).
+  // And nothing turns within REFRACTORY ms of the last turn. Where in doubt it under-counts:
+  // a missed quick swipe costs a flick, an extra turn skips a page you haven't read.
   const TURN = 40, GAP = 140, TROUGH = 4, PUSH = 6, LOW_RUN = 3, RAMP = 6, PEAK_FRAC = 0.5, REFRACTORY = 250;
-  const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: 0, ramp: [], lastTurn: -Infinity, lastPeak: 0 };
-  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: 0, ramp: [] });
+  const CLIFF_FROM = 15, CLIFF_RATIO = 0.25, CLIFF_N = 3, CLIFF_RISE = 3;
+  const g = { x: 0, y: 0, at: -Infinity, spent: false, peak: 0, low: 0, ramp: [], lastTurn: -Infinity, lastPeak: 0,
+              hist: [], cliff: false };
+  const fresh = () => Object.assign(g, { x: 0, y: 0, spent: false, peak: 0, low: 0, ramp: [], hist: [], cliff: false });
   return (now, dx, dy) => {
     const mag = Math.abs(dx);
     if (now - g.at > GAP) fresh();
     else if (mag > Math.abs(dy) * 2 && Math.abs(g.y) > Math.abs(g.x)) fresh();   // a scroll, then a swipe
     else if (g.spent) {
-      if (mag <= TROUGH) { g.low++; g.ramp = []; }
-      else if (g.low >= LOW_RUN) {
+      const level = Math.max(0, ...g.hist.slice(-CLIFF_N));
+      if (!g.cliff && level >= CLIFF_FROM && mag <= level * CLIFF_RATIO) { g.cliff = true; g.ramp = []; }
+      if (mag <= TROUGH) { g.low++; if (!g.cliff) g.ramp = []; }
+      const armed = g.low >= LOW_RUN || g.cliff;
+      if (armed && mag > TROUGH) {
         if (g.ramp.length && mag < g.ramp[g.ramp.length - 1]) g.ramp = [];
         g.ramp.push(mag);
-        if (g.ramp.length >= RAMP && mag >= Math.max(PUSH, PEAK_FRAC * g.lastPeak) && now - g.lastTurn >= REFRACTORY) {
+        if (g.ramp.length >= (g.cliff ? CLIFF_RISE : RAMP) && mag >= Math.max(PUSH, PEAK_FRAC * g.lastPeak)
+            && now - g.lastTurn >= REFRACTORY) {
           const travel = g.ramp.reduce((a, b) => a + b, 0) * Math.sign(dx);   // a real second push: start over, keep its travel
           fresh(); g.x = travel - dx;
         }
-      } else g.low = 0;                                         // one quiet sample isn't a stop
+      } else if (!armed && mag > TROUGH) g.low = 0;               // one quiet sample isn't a stop
     }
+    g.hist.push(mag); if (g.hist.length > 8) g.hist.shift();
     g.at = now; g.x += dx; g.y += dy; g.peak = Math.max(g.peak, mag);
     if (g.spent) g.lastPeak = Math.max(g.lastPeak, mag);
     if (Math.abs(g.x) <= Math.abs(g.y)) return 0;                // an up-down scroll: leave it alone
     if (g.spent || Math.abs(g.x) < TURN || g.peak < PUSH) return 0;
     if (now - g.lastTurn < REFRACTORY) return 0;
-    g.spent = true; g.low = 0; g.ramp = []; g.lastTurn = now; g.lastPeak = g.peak;
+    g.spent = true; g.low = 0; g.ramp = []; g.lastTurn = now; g.lastPeak = g.peak; g.hist = []; g.cliff = false;
     return g.x > 0 ? 1 : -1;
   };
 }

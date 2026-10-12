@@ -155,3 +155,7 @@ def test_recorded_safari_swipes_turn_one_page_each(app, app_server):
     # one gentle swipe that doesn't turn and one that turns twice.
     assert turns[:3] == [1, 4, 7], turns
     assert 14 <= turns[3] <= 16, turns
+    # the 5th: 2026-10-12, 5 QUICK swipes in 1.8 s — each starts before the last one's
+    # momentum dies. 4 is the tuned answer: catching the fifth (the shallowest cliff) made
+    # another recording turn a page too many, and a skipped page is worse than a missed flick.
+    assert 4 <= turns[4] <= 5, turns
