@@ -65,6 +65,22 @@ Resolution order per image: file > ComicVine original > Metron > LOCG. For a var
 - 1g. **GCD worker (optional, needs a free account)**: credits and covers for back-catalogue issues Metron doesn't have.
 - 1h. The image downloader takes everything the workers queue, at the largest size.
 - Not planned: VerseDB (its ToS forbids mass download and image caching, and kometa already parses variant type and ratio from names).
+- 1i. **More sources (user, 2026-10-12: "use them if we can — polite rate limiting, not a production rate")**, each a worker with its own Settings card and limiter (research: docs/research/comic-sources-2026-10-12.md):
+  - PRH cover CDN by UPC/ISBN (print-quality TIFF: 1987px mains, 1400px variants; Marvel/IDW/BOOM!/Dark Horse). Hash-check the 200 placeholder first; convert TIFF → JPEG on arrival (no 45 MB files). About 1 request every 2 s, at most a few hundred a day.
+  - Marvel.com and DC.com images (2750–3253px). The terms forbid automation: the slowest of all, only for issues with no PRH or Fandom image of comparable size.
+  - Marvel/DC Fandom wikis (MediaWiki API): the most complete variant galleries (printings, exclusives), up to about 2000px. 1 request per second or slower; CC BY-SA text.
+  - ComicBookRoundup: critic and user scores per issue and series (HTML, about 1 page every 3 s).
+  - Hardcover (5,000/day, 60/min; attribution) and Open Library: trade ratings and covers by ISBN.
+  - Bedetheque/comicguide.de for European books: only if usable within their robots rules (Bedetheque disallows `/api/` and `/Couvertures/`). Otherwise skipped.
+  - Image precedence: PRH → Marvel/DC → Fandom → Metron → ComicVine → LOCG → GCD. Match variants across sources by UPC first, then image hash.
+- **Community ratings** (LOCG, ComicBookRoundup, Hardcover, Open Library): stored as a **dated snapshot**, refreshed on the +7/+30/+90 schedule (decided 2026-10-12).
+
+**K. Retire Komga (decided 2026-10-12; independent of the harvest, do it now)**
+- K1. Read history: apply the one-time import (85 match; the write is stale-rejecting, so newer kometa progress wins). Recover the 10 unmatched (Komga's old pre-rename paths) by series and issue number instead of path.
+- K2. Reading lists and collections: re-run the import for anything added since (15 imported).
+- K3. Metadata: one last full harvest (fills only where no catalogue has answered; 241 records today).
+- K4. Disconnect everywhere: sync's series linking and folder fallback, arcs, reading-list import, last-resort covers, harvest, history import, the Settings card and config keys, `komga_series_id` use. Tests updated.
+- K5. Stop the Komga container (with the user's OK; check first that nothing else reads from it, e.g. a reading app on the tailnet URL). Remove the container and its config a few days later, after a backup.
 
 **2. Covers beside the comics**
 - 2a. The `.kometa/covers/<issue>/…` layout and stable file names.
