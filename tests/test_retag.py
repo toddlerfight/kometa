@@ -413,6 +413,9 @@ def test_enqueue_then_tick_rewrites_and_a_changed_record_requeues(lib):
     assert retag.requeue_changed(path=lib["db"]) == 0                               # same record, same XML: nothing to do
     record.write_issue(lib["series"], 1.0, {"desc": "A new description.", "credits": [], "cover_date": "2012-03-01"},
                        "metron", "full", path=lib["db"])
+    assert retag.requeue_changed(path=lib["db"]) == 0                               # written today: not again within a week
+    with db._connect(lib["db"]) as conn:
+        conn.execute("UPDATE retag_journal SET updated_at = datetime('now', '-8 days')")
     assert retag.requeue_changed(path=lib["db"]) == 1
     assert retag.journal(lib["book_id"], lib["db"])["queued_for"] == "changed"
     out = retag.retag_tick(path=lib["db"], runner=run)
@@ -438,3 +441,13 @@ def test_in_flight_rows_are_not_restarted(lib):
     retag._set(lib["book_id"], lib["db"], state="verified")
     assert retag.enqueue([lib["book_id"]], "arrival", lib["db"]) == 0
     assert retag.journal(lib["book_id"], lib["db"])["state"] == "verified"
+
+
+
+def test_a_requeue_keeps_where_the_cbr_went(lib):
+    retag.enqueue([lib["book_id"]], "run", lib["db"])
+    retag._set(lib["book_id"], lib["db"], state="swapped", trashed_to="/comics/_trash/Image/retag-cbr-x/Saga/Saga #001.cbr")
+    with db._connect(lib["db"]) as conn:
+        conn.execute("UPDATE retag_journal SET updated_at = datetime('now', '-8 days')")
+    retag.enqueue([lib["book_id"]], "changed", lib["db"])
+    assert retag.journal(lib["book_id"], lib["db"])["trashed_to"].endswith("Saga #001.cbr")

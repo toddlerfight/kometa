@@ -1005,8 +1005,12 @@ def _get_with_retries(url: str, label: str):
 # flat-out REFUSES to re-chmod a dir already sitting at 000 — so a single poisoned
 # download could bury a whole series behind a 000 folder (that's the Absolute Catwoman
 # ghost). So we stop trusting anyone. Every finalize stamps the perms itself: dirs
-# 755, comic files 644, walked from the library root all the way down. Belt AND braces.
-_LIBRARY_DIR_MODE = 0o755
+# 777 (see below), comic files 644, walked from the library root all the way down.
+# 777, not 755 (2026-10-12): kometa writes INTO series folders over NFS, where the
+# container's root is squashed to an anonymous user — an owner-only folder refused
+# the covers home (.kometa/covers/) and the ComicInfo retag's temp file in 25 runs,
+# every one stamped 755 by this function. The rest of the library was already 777.
+_LIBRARY_DIR_MODE = 0o777
 _LIBRARY_FILE_MODE = 0o644
 
 

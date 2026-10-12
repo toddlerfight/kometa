@@ -134,7 +134,7 @@ def _start(book: dict, path) -> dict:
             ON CONFLICT(book_id) DO UPDATE SET path = excluded.path, state = 'pending',
                 old_size = excluded.old_size, old_mtime = excluded.old_mtime,
                 old_pages_digest = NULL, old_entries_digest = NULL, xml_digest = NULL, page_count = NULL,
-                new_path = NULL, new_size = NULL, new_mtime = NULL, trashed_to = NULL, error = NULL,
+                new_path = NULL, new_size = NULL, new_mtime = NULL, error = NULL,
                 updated_at = datetime('now')""", (book["id"], book["path"], st.st_size, st.st_mtime))
     return journal(book["id"], path)
 
@@ -759,6 +759,9 @@ def comicinfo_preview(book_id: int):
 ARRIVAL_GRACE_DAYS = 7          # a new download waits for its catalogue data this long at most
 TICK_BUDGET = 10                # files per scheduler tick
 RECHECK_PER_TICK = 300          # finished rows compared against today's record per tick
+RECHECK_MIN_AGE_DAYS = 7        # a file isn't rewritten again within a week of its last write —
+                                # during the harvest records change hourly (2026-10-12: East of
+                                # West was rewritten twice in ten minutes)
 _CATALOGUE = ("metron", "locg", "gcd")
 
 
@@ -824,7 +827,8 @@ def requeue_changed(limit: int = RECHECK_PER_TICK, path=None) -> int:
     ensure_tables(path)
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM retag_journal WHERE state IN ('swapped', 'skipped') ORDER BY updated_at LIMIT ?", (limit,))]
+            "SELECT * FROM retag_journal WHERE state IN ('swapped', 'skipped') AND updated_at <= datetime('now', ?) "
+            "ORDER BY updated_at LIMIT ?", (f"-{RECHECK_MIN_AGE_DAYS} days", limit))]
     n = 0
     for row in rows:
         book = db.get_book(row["book_id"], path)
