@@ -1988,10 +1988,30 @@ def get_issue_variants(series_id: int, number: float):
     from kometa import record
     try:
         data = record.variants(issue, DB_PATH)           # the local record first; a catalogue only to fill it
-        return {"covers": data.get("covers", []), "locg_issue_id": locg_issue_id, "source": data.get("source"),
+        covers = [dict(c) for c in data.get("covers", [])]
+        from kometa import coverupgrade, images
+        for c in covers:                                 # the large view: a stored bigger copy of the SAME image
+            k = images.variant_key(series_id, number, c.get("id"))
+            if c.get("id") and coverupgrade.better_path(k, DB_PATH):
+                c["big"] = f"/api/cover-upgrade/{k}"
+        return {"covers": covers, "locg_issue_id": locg_issue_id, "source": data.get("source"),
                 "selected_ids": sel_ids, "primary_id": primary, "record": data.get("record")}
     except Exception as e:
         raise HTTPException(502, detail=str(e)) from e
+
+
+@app.get("/api/cover-upgrade/{key:path}")
+def get_cover_upgrade(key: str):
+    """The bigger stored copy linked to a cover key (kometa/coverupgrade.py) — the
+    Variants large view. 404 when nothing is linked."""
+    from kometa import coverupgrade, images
+    p = coverupgrade.better_path(key, DB_PATH)
+    if not p:
+        raise HTTPException(404)
+    with open(p, "rb") as fh:
+        data = fh.read()
+    from fastapi.responses import Response
+    return Response(content=data, media_type=images._ct(data), headers={"Cache-Control": "public, max-age=86400"})
 
 
 class VariantApplyRequest(BaseModel):

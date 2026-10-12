@@ -88,3 +88,50 @@ def test_marvel_rejudges_old_not_bigger_skips_once(db_path):
     imgs = rec.get_issue(sid, 1.0, db_path)["extra"]["marveldc"]["images"]
     assert [i["status"] for i in imgs] == ["pending", "kept"]
     assert marveldc.rejudge_once(db_path) == 0
+
+
+def test_a_footer_strip_is_not_the_same_image(store):
+    # Marvel.com's own copy of some runs: the cover, plus a white 'MARVEL.com' strip at the foot
+    from PIL import Image, ImageDraw
+    import io
+    base = Image.open(io.BytesIO(_jpeg(11, (600, 900)))).convert("RGB")
+    footed = base.copy()
+    ImageDraw.Draw(footed).rectangle([0, 860, 600, 900], fill=(250, 250, 250))
+    ImageDraw.Draw(footed).rectangle([420, 868, 590, 892], fill=(200, 20, 20))
+
+    def jpg(im, size):
+        b = io.BytesIO(); im.resize(size).save(b, "JPEG", quality=90); return b.getvalue()
+    _put(store, "issue/11/1/file", jpg(base, (300, 450)), "file")
+    big = jpg(footed, (1200, 1800))
+    _put(store, "issue/11/1/marveldc", big, "marveldc")
+    assert coverupgrade.link(11, 1.0, "issue/11/1/marveldc", big, store) == []
+
+
+def test_relink_once_clears_old_links_and_the_first_table(store):
+    import kometa.db as kdb
+    coverupgrade.ensure_tables(store)
+    with kdb._connect(store) as conn:
+        conn.execute("CREATE TABLE image_upgrade (key TEXT)")
+        conn.execute("INSERT INTO cover_upgrade (key, better, pixels) VALUES ('issue/1/1/file', 'issue/1/1/marveldc', 9)")
+        conn.execute("INSERT INTO cover_upgrade_seen (better) VALUES ('issue/1/1/marveldc')")
+    assert coverupgrade.relink_once(store) and not coverupgrade.relink_once(store)
+    with kdb._connect(store) as conn:
+        assert conn.execute("SELECT count(*) FROM cover_upgrade").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM sqlite_master WHERE name = 'image_upgrade'").fetchone()[0] == 0
+
+
+def test_variants_large_view_gets_the_linked_bigger_copy(store, monkeypatch):
+    from kometa import main, record
+    import kometa.db as kdb
+    small, big = _jpeg(12, (300, 450)), _jpeg(12, (1200, 1800))
+    _put(store, "issue/12/1/variant/B", small, "metron")
+    _put(store, "issue/12/1/marveldc/77", big, "marveldc")
+    coverupgrade.link(12, 1.0, "issue/12/1/marveldc/77", big, store)
+    monkeypatch.setattr(main, "DB_PATH", store)
+    monkeypatch.setattr(kdb, "get_issues_for_series", lambda sid, p: [{"number": 1.0, "metron_issue_id": 5, "tracked_series_id": sid}])
+    monkeypatch.setattr(kdb, "get_variant_prefs", lambda *a: None)
+    monkeypatch.setattr(record, "variants", lambda issue, p: {"covers": [{"id": "B", "thumb": "t", "large": "l"},
+                                                                      {"id": "C", "thumb": "t2", "large": "l2"}]})
+    covers = main.get_issue_variants(12, 1.0)["covers"]
+    assert covers[0]["big"] == "/api/cover-upgrade/issue/12/1/variant/B" and "big" not in covers[1]
+    assert main.get_cover_upgrade("issue/12/1/variant/B").body == big

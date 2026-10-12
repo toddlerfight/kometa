@@ -61,28 +61,35 @@ def hamming(a: int, b: int) -> int:
 FINE = 16
 FINE_SAME = 8
 TOP_BAND = 0.22
+# and the bottom: Marvel.com's own copies of some runs carry a white 'Title (2025) #2 /
+# MARVEL.com' strip along the foot. Measured 2026-10-13: true resizes 0–8 on the
+# bottom 8%, the strip 15–42. Whole and top bands don't notice it at all.
+BOTTOM_BAND = 0.08
+BOTTOM_SAME = 10
 
 
-def fine(data: bytes) -> tuple[int, int] | None:
-    """(whole-cover, top-band) 16×16 hashes."""
+def fine(data: bytes) -> tuple[int, int, int] | None:
+    """(whole-cover, top-band, bottom-band) 16×16 hashes."""
     from PIL import Image
     try:
         with Image.open(io.BytesIO(data)) as im:
             g = im.convert("L")
             w, h = g.size
             top = g.crop((0, 0, w, max(1, int(h * TOP_BAND))))
+            bottom = g.crop((0, min(h - 1, int(h * (1 - BOTTOM_BAND))), w, h))
             out = []
-            for part in (g, top):
+            for part in (g, top, bottom):
                 buf = io.BytesIO()
                 part.save(buf, "PNG")
                 out.append(dhash(buf.getvalue(), FINE))
     except Exception:
         return None
-    return None if None in out else (out[0], out[1])
+    return None if None in out else tuple(out)
 
 
-def same_image(a: tuple[int, int] | None, b: tuple[int, int] | None) -> bool:
-    return bool(a and b) and hamming(a[0], b[0]) <= FINE_SAME and hamming(a[1], b[1]) <= FINE_SAME
+def same_image(a: tuple | None, b: tuple | None) -> bool:
+    return (bool(a and b) and hamming(a[0], b[0]) <= FINE_SAME and hamming(a[1], b[1]) <= FINE_SAME
+            and hamming(a[2], b[2]) <= BOTTOM_SAME)
 
 
 def _report_path(series_id: int, path=None) -> str:

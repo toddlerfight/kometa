@@ -31,6 +31,27 @@ def ensure_tables(path=None):
         conn.execute("CREATE TABLE IF NOT EXISTS cover_upgrade_seen (better TEXT PRIMARY KEY)")
 
 
+RELINK_FLAG = "coverupgrade_bottom_v1"
+
+
+def relink_once(path=None) -> bool:
+    """Once: forget every link and look again with the bottom-band test — Marvel.com's
+    own copy of some runs carries a 'MARVEL.com' footer strip, and nine of those
+    stood in for file covers before coververify noticed. Also drops image_upgrade,
+    the first (loose 8x8) attempt nobody reads. True when it ran."""
+    path = path or DB_PATH
+    if db.get_config(path).get(RELINK_FLAG) == "1":
+        return False
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        conn.execute("DROP TABLE IF EXISTS image_upgrade")
+        conn.execute("DELETE FROM cover_upgrade")
+        conn.execute("DELETE FROM cover_upgrade_seen")
+    db.set_config({RELINK_FLAG: "1"}, path)
+    logger.info("Cover upgrades: links cleared for a re-look with the bottom-band test")
+    return True
+
+
 def _size(data: bytes) -> tuple[int, int] | None:
     from PIL import Image
     try:
@@ -88,6 +109,7 @@ def backfill(path=None, limit: int = 200) -> int:
     any already looked at, so a finished backfill costs one query."""
     path = path or DB_PATH
     ensure_tables(path)
+    relink_once(path)
     from kometa import images
     images.ensure_tables(path)
     with db._connect(path) as conn:

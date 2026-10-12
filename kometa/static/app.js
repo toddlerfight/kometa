@@ -5100,7 +5100,7 @@ function _lbRender() {              // image changed — replay the cover-in rev
   if (!c) return;
   const img = document.getElementById('vlb-img');
   img.classList.remove('loaded');  // reset so the global cover-in animation replays on load
-  img.src = c.large || c.thumb;
+  img.src = c.big || c.large || c.thumb;   // a stored bigger copy of the same image first
   img.alt = c.name || '';
   document.getElementById('vlb-name').textContent = c.name || '';
   document.getElementById('vlb-count').textContent = `${_lbIndex + 1} / ${_issueVariantCovers.length}`;
