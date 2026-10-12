@@ -27,6 +27,7 @@ def _owned_record(path) -> dict:
               SUM(CASE WHEN r.tracked_series_id IS NULL OR r.fill_state = 'miss' THEN 1 ELSE 0 END) AS no_record,
               SUM(CASE WHEN i.metron_issue_id IS NULL AND (i.locg_issue_id IS NULL OR i.locg_issue_id = '') THEN 1 ELSE 0 END) AS no_catalogue_id,
               SUM(CASE WHEN r.variants_at IS NOT NULL THEN 1 ELSE 0 END) AS variant_lists,
+              SUM(CASE WHEN r.community_at IS NOT NULL THEN 1 ELSE 0 END) AS community,
               COUNT(*) AS owned
             FROM issue_status i JOIN tracked_series s ON s.id = i.tracked_series_id
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number

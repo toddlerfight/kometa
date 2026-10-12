@@ -257,7 +257,7 @@ def trickle_tick(now_hour: int | None = None):
         match_pending(limit=METRON_PER_TICK if metron else 1, sleep=lambda s: None)
         if metron:
             link_metron_existing()
-            link_locg_existing(limit=1)        # no-op while LOCG is paused
+            link_locg_existing(limit=3)        # no-op while LOCG is paused; 3 a tick while the harvest runs (1e)
     except Exception as e:
         logger.warning(f"Import trickle failed: {e}")
 

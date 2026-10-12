@@ -2,6 +2,18 @@
 import kometa.db as db
 import kometa.locg_sweep as sw
 import kometa.record as rec
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _community(monkeypatch):
+    """No network: the community snapshot comes from a stub, and every page counts
+    as a fresh fetch unless a test says otherwise."""
+    from kometa import locg_client
+    calls = []
+    monkeypatch.setattr(locg_client, "fetch_community", lambda lid: calls.append(lid) or {"rating": 4.0})
+    monkeypatch.setattr(locg_client, "_page_cache", {})
+    return calls
 
 
 def _series(db_path, title, pull=False):
@@ -14,7 +26,7 @@ def test_tick_picks_owned_locg_unfilled_pull_list_first_and_queues_images(db_pat
     db.upsert_issue_status(a, 1.0, "2026-01-01", 1, locg_issue_id="11", path=db_path)
     db.upsert_issue_status(a, 2.0, "2026-02-01", 0, locg_issue_id="12", path=db_path)     # not owned: skipped
     db.upsert_issue_status(a, 3.0, "2026-03-01", 1, path=db_path)                         # no locg id: skipped
-    db.upsert_issue_status(a, 4.0, "2026-04-01", 1, locg_issue_id="14", metron_issue_id=99, path=db_path)   # Metron's job, never the sweep's
+    db.upsert_issue_status(a, 4.0, "2026-04-01", 1, locg_issue_id="14", metron_issue_id=99, path=db_path)   # Metron hasn't filled it yet: not the sweep's turn
     db.upsert_issue_status(b, 1.0, "2025-01-01", 1, locg_issue_id="21", path=db_path)
     asked, slept = [], []
     def fv(sid, n, issue):
@@ -50,7 +62,7 @@ def test_tick_stops_at_the_first_refusal_and_does_nothing_while_paused_or_syncin
     assert sw.sweep_tick(path=db_path, is_open=lambda: True, syncing=lambda: True, sleep=lambda s: None)["stopped"] == "sync in progress"
 
 
-def test_budget_counts_details_and_variants_together(db_path):
+def test_budget_counts_details_variants_and_community_together(db_path, _community):
     a = _series(db_path, "A", pull=True)
     for n in range(1, 30):
         db.upsert_issue_status(a, float(n), "2026-01-01", 1, locg_issue_id=str(100 + n), path=db_path)   # no metron id → details too
@@ -61,7 +73,7 @@ def test_budget_counts_details_and_variants_together(db_path):
     def fi(sid, n, issue):
         reqs["d"] += 1; return {"ok": True}
     out = sw.sweep_tick(budget=10, path=db_path, is_open=lambda: True, fill_variants=fv, fill_issue=fi, sleep=lambda s: None, syncing=lambda: False)
-    assert out["requests"] == 10 and reqs["v"] + reqs["d"] == 10
+    assert out["requests"] == 10 and reqs["v"] + reqs["d"] + len(_community) == 10
 
 
 
@@ -82,3 +94,26 @@ def test_a_covers_only_row_still_gets_its_details(db_path):
                         fill_issue=details, sleep=lambda s: None, syncing=lambda: False)
     assert asked == [6.0] and out["details"] == 1 and out["variants"] == 0
     assert sw.pending(db_path) == 0
+
+
+def test_metron_known_issue_gets_locg_variants_merged_from_the_record_never_a_metron_call(db_path, monkeypatch):
+    """1e (2026-10-12): issues Metron knows get LOCG's long tail too, once Metron
+    has filled the record — Metron's covers come from the record, not the API."""
+    from kometa import issue_meta
+    monkeypatch.setattr(issue_meta, "_metron", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Metron called")))
+    a = _series(db_path, "Midnight Spider-Man", pull=True)
+    issue = {"tracked_series_id": a, "number": 1.0, "metron_issue_id": 181715, "locg_issue_id": "3951157"}
+    db.upsert_issue_status(a, 1.0, "2026-10-07", 1, locg_issue_id="3951157", metron_issue_id=181715, path=db_path)
+    rec.write_issue(a, 1.0, {"desc": "m", "covers": [{"id": "m181715", "name": "Cover A (Main)", "thumb": "t", "large": "l"}]},
+                    "metron", "full", issue, db_path)
+    from kometa import locg_client
+    monkeypatch.setattr(locg_client, "fetch_variants", lambda lid: {"covers": [
+        {"id": "3951157", "name": "Cover A (Main)", "thumb": "t", "large": "l"},
+        {"id": "v9", "name": "Big Time Collectibles NYCC 2026 ACO Variant", "thumb": "t9", "large": "l9"}]})
+    monkeypatch.setattr(locg_client, "locg_paused", lambda: None)
+    out = sw.sweep_tick(path=db_path, is_open=lambda: True, sleep=lambda s: None, syncing=lambda: False)
+    row = rec.get_issue(a, 1.0, db_path)
+    names = [c["name"] for c in row["covers"]]
+    assert names == ["Cover A (Main)", "Big Time Collectibles NYCC 2026 ACO Variant"]   # Metron's main kept, LOCG's tail added
+    assert row["community"] == {"rating": 4.0} and row["community_at"]
+    assert out["variants"] == 1 and out["community"] == 1 and sw.pending(db_path) == 0

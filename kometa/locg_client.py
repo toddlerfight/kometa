@@ -723,6 +723,89 @@ _variant_cache: "_collections.OrderedDict[str, tuple[float, dict]]" = _collectio
 _VARIANT_CACHE_MAX = 512
 
 
+# The issue page — /comic/{id}/comic — carries the variants, the details AND the
+# community stats. The sweep used to fetch it twice per issue (variants, then
+# details); one fetch now answers all three within a few minutes.
+_PAGE_CACHE_TTL = 600
+_PAGE_CACHE_MAX = 32
+_page_cache: "_collections.OrderedDict[str, tuple[float, str]]" = _collections.OrderedDict()
+
+
+def _issue_page(locg_issue_id, get_fn) -> str:
+    key = str(locg_issue_id)
+    hit = _page_cache.get(key)
+    if hit and time.time() - hit[0] < _PAGE_CACHE_TTL:
+        return hit[1]
+    r = get_fn(f"{BASE}/comic/{key}/comic", headers={'Referer': BASE + '/', 'Accept': 'text/html'})
+    if hasattr(r, 'raise_for_status'):
+        r.raise_for_status()
+    _page_cache[key] = (time.time(), r.text)
+    _page_cache.move_to_end(key)
+    while len(_page_cache) > _PAGE_CACHE_MAX:
+        _page_cache.popitem(last=False)
+    return r.text
+
+
+_COUNT_ICONS = {"cg-icon-pull": "pulls", "cg-icon-collect": "collected", "cg-icon-readlist": "read",
+                "cg-icon-wishlist": "wanted"}
+_HIST_RE = re.compile(r"arrayToDataTable\(\[\s*\['Rating',\s*'Users'\],(.*?)\]\s*\)", re.S)
+
+
+def _int(text) -> int | None:
+    m = re.search(r"\d[\d,]*", text or "")
+    return int(m.group(0).replace(",", "")) if m else None
+
+
+def parse_community(html: str) -> dict:
+    """What LOCG's readers say about an issue, as printed on its page (anonymous):
+    average rating and how many rated it, reviews, pulls, have/read/want counts,
+    the 1–10 histogram, and the page count + price line. Missing parts are absent."""
+    soup = BeautifulSoup(html, "lxml")
+    out: dict = {}
+    score = soup.select_one(".comic-score")
+    if score:
+        avg = score.select_one(".rating-avg")
+        try:
+            out["rating"] = float(avg.get_text(strip=True)) if avg else None
+        except ValueError:
+            pass
+        strong = score.find("strong")
+        if strong and "rating" in score.get_text(" ").lower():
+            out["ratings"] = _int(strong.get_text())
+        label = score.select_one(".font-weight-bold")
+        if label and label.get_text(strip=True):
+            out["verdict"] = label.get_text(strip=True)
+    for icon, field in _COUNT_ICONS.items():
+        for i in soup.select(f"i.{icon}"):
+            span = i.find_next_sibling("span")
+            if span and _int(span.get_text()) is not None:
+                out[field] = _int(span.get_text())
+                break
+    m = re.search(r"(\d[\d,]*)\s*Reviews?\b", soup.get_text(" "))
+    if m:
+        out["reviews"] = int(m.group(1).replace(",", ""))
+    h = _HIST_RE.search(html)
+    if h:
+        pairs = re.findall(r"\['(\d+)',\s*(\d+)\]", h.group(1))
+        if pairs:
+            out["histogram"] = {int(k): int(v) for k, v in pairs}
+    line = soup.select_one(".copy-small.font-italic")
+    if line:
+        t = line.get_text(" ", strip=True)
+        pm = re.search(r"(\d+)\s*pages", t)
+        if pm:
+            out["pages"] = int(pm.group(1))
+        price = re.search(r"\$\s*(\d+(?:\.\d{2})?)", t)
+        if price:
+            out["price"] = price.group(1)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def fetch_community(locg_issue_id) -> dict:
+    """Community stats for one issue — free if the sweep just fetched its page."""
+    return parse_community(_issue_page(locg_issue_id, _anon_get_fn()))
+
+
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
     """Shared variant-scraping logic. get_fn(url, **kwargs) must return a
     requests.Response. Results are cached per issue id for _VARIANT_CACHE_TTL."""
@@ -730,12 +813,7 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
     if cached and time.time() - cached[0] < _VARIANT_CACHE_TTL:
         return cached[1]
 
-    url = f"{BASE}/comic/{locg_issue_id}/comic"
-    r = get_fn(url, headers={'Referer': BASE + '/', 'Accept': 'text/html'})
-    if hasattr(r, 'raise_for_status'):
-        r.raise_for_status()
-
-    soup = BeautifulSoup(r.text, 'html.parser')
+    soup = BeautifulSoup(_issue_page(locg_issue_id, get_fn), 'html.parser')
     title_tag = soup.find('h1') or soup.find('title')
     raw_title = title_tag.get_text(strip=True) if title_tag else ''
     issue_title = re.split(r'[\n|]', raw_title)[0].strip()
@@ -837,8 +915,4 @@ def _parse_issue_details(html: str) -> dict:
 def get_issue_details_anon(comic_id) -> dict:
     """Fetch an issue's description + credits from LOCG with no login. Same /comic/
     {id}/comic page the variant scraper uses. Keyless — works for any install."""
-    g = _anon_get_fn()
-    r = g(f"{BASE}/comic/{comic_id}/comic",
-          headers={'Referer': BASE + '/', 'Accept': 'text/html'})
-    r.raise_for_status()
-    return _parse_issue_details(r.text)
+    return _parse_issue_details(_issue_page(comic_id, _anon_get_fn()))

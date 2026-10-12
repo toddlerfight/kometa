@@ -49,6 +49,11 @@ def ensure_tables(path=None):
             source TEXT, fetched_at TEXT, fill_state TEXT)""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_issue_record_state ON issue_record(fill_state, fetched_at)")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_record)")]
+        if "community_json" not in cols:
+            # what LOCG's readers say (rating, pulls, have/read/want, histogram) — a
+            # dated snapshot, refreshed on the re-enrich schedule; added 2026-10-12
+            conn.execute("ALTER TABLE issue_record ADD COLUMN community_json TEXT")
+            conn.execute("ALTER TABLE issue_record ADD COLUMN community_at TEXT")
         if "extra_json" not in cols:
             # everything else Metron says (ComicVine/GCD ids, barcode, cast, imprint…)
             # — what a clean ComicInfo.xml is made of; added 2026-10-12, additive only
@@ -95,10 +100,11 @@ def _row(r) -> dict | None:
     if not r:
         return None
     d = dict(r)
-    try:
-        d["extra"] = json.loads(d.pop("extra_json", None) or "null")
-    except (TypeError, ValueError):
-        d["extra"] = None
+    for k in ("extra", "community"):
+        try:
+            d[k] = json.loads(d.pop(f"{k}_json", None) or "null")
+        except (TypeError, ValueError):
+            d[k] = None
     for k in ("credits", "arcs", "covers"):
         try:
             d[k] = json.loads(d.pop(f"{k}_json") or "[]")
@@ -180,6 +186,20 @@ def _fresh(row: dict | None) -> bool:
     if row.get("source") == "metron" and row.get("extra") is None:
         return False                                            # filled before 'extra' was kept (2026-10-12): ask once more
     return age < RECORD_TTL_DAYS
+
+
+def set_community(series_id: int, number: float, data: dict, path=None) -> None:
+    """LOCG's community snapshot for one issue, stamped now. A row that doesn't
+    exist yet is made as a covers-only placeholder ('variants' state), the same
+    way the variant list makes one — the details are still owed."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        cur = conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
+                           (json.dumps(data or {}), _now(), series_id, number))
+        if cur.rowcount == 0:
+            conn.execute("""INSERT INTO issue_record (tracked_series_id, number, covers_json, fill_state, community_json, community_at)
+                VALUES (?, ?, '[]', 'variants', ?, ?)""", (series_id, number, json.dumps(data or {}), _now()))
 
 
 def fill_issue(series_id: int, number: float, path=None, force: bool = False, issue: dict | None = None,

@@ -3520,6 +3520,7 @@ async function _renderHarvest() {
     row('Stand-in data', n(o.stopgap)),
     row('No catalogue match', n(o.no_catalogue_id)),
     row('Variant lists', n(o.variant_lists)),
+    row('Community ratings', n(o.community)),
     row('Covers to fetch or upgrade', n(h.images_pending)),
     row('LOCG sweep', locg),
     row('Metron today', metron),
