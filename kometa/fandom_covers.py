@@ -188,8 +188,11 @@ def download(key: str, url: str, path=None, http=None) -> dict | None:
     Returns the image row like images.fetch_image, or None on a failed fetch."""
     from kometa import coververify, images, record
     path = path or DB_PATH
+    from kometa.polite import SourceUnavailable
     try:
         data = (http or images._download)(url)
+    except SourceUnavailable:
+        raise                    # refused / resting / spent: the lane stops, the cover isn't marked failed
     except Exception as e:
         logger.info(f"Fandom image {key}: fetch failed: {e}")
         data = None

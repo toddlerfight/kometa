@@ -41,6 +41,13 @@ LANES = {
 }
 DEFAULT_LANE = (20, 3.0, 500)
 _lane_limiters: dict = {}
+# Fandom's image CDN puts this house's IP behind a Cloudflare challenge (2026-10-13:
+# a 403 'Just a moment…' page for any script, any UA). Chrome is waved through on its
+# fingerprint and never holds a pass; Safari is challenged, solves it, and its
+# cf_clearance works from ginbako with Safari's exact UA. So the lane only knocks
+# with that pass (config fandom_cf_clearance + fandom_user_agent); none → it waits.
+# A 403 WITH the pass = it expired: forgotten, so Settings says so.
+FANDOM_HOST = "static.wikia.nocookie.net"
 EXT_TTL_HOURS = 24
 # Hosts whose images the catalogue cards carry; anything else is refused, this
 # is a cover proxy, not an open one.
@@ -441,11 +448,40 @@ def _lane_limiter(host: str):
     return _lane_limiters[host]
 
 
-def _lane_fetch(lim):
+def _fandom_pass(path=None) -> tuple[str, str]:
+    cfg = db.get_config(path or DB_PATH)
+    return (cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip()
+
+
+def fandom_pass_renewed():
+    """A new pass in Settings: the lane's rest from the old one's 403 is lifted."""
+    lim = _lane_limiters.get(FANDOM_HOST)
+    if lim is not None:
+        lim.resume()
+    else:
+        _lane_limiter(FANDOM_HOST).resume()
+
+
+def _lane_fetch(lim, host: str = "", path=None):
     """http= for fetch_image: the bytes through this host's limiter; None on a miss.
     A refusal / outage / spent day raises polite.SourceUnavailable — the lane stops."""
+    from kometa import polite
+    headers = {}
+    if host == FANDOM_HOST:
+        cf, ua = _fandom_pass(path)
+        headers = {"Cookie": f"cf_clearance={cf}", "User-Agent": ua}
+
     def get(url):
-        r = lim.get(url)
+        if host == FANDOM_HOST and "format=" not in url:
+            # the stored original, not the WebP Fandom hands a Safari UA by default
+            url += ("&" if "?" in url else "?") + "format=original"
+        try:
+            r = lim.get(url, headers=headers) if headers else lim.get(url)
+        except polite.SourceUnavailable as e:
+            if host == FANDOM_HOST and "(403)" in str(e):
+                logger.info("Fandom images: the Cloudflare pass stopped working — forgotten; paste a fresh one")
+                db.set_config({"fandom_cf_clearance": "", "fandom_cf_set_at": ""}, path or DB_PATH)
+            raise
         return r.content if r.status_code == 200 and r.content else None
     return get
 
@@ -473,14 +509,19 @@ def images_lanes(path=None, sleep=time.sleep) -> int:
     if not lanes:
         return 0
     def run(host):
+        if host == FANDOM_HOST and not all(_fandom_pass(path)):
+            return 0                                  # no pass: a knock is a guaranteed 403
         lim = _lane_limiter(host)
         if lim.spent():
             return 0
-        return _run_lane(lanes[host], path, _lane_fetch(lim), sleep, gap=0, label=host)
-    with ThreadPoolExecutor(max_workers=len(lanes), thread_name_prefix="img-lane") as ex:
-        done = sum(ex.map(run, list(lanes)))
+        return _run_lane(lanes[host], path, _lane_fetch(lim, host, path), sleep, gap=0, label=host)
+    hosts = list(lanes)
+    with ThreadPoolExecutor(max_workers=len(hosts), thread_name_prefix="img-lane") as ex:
+        got = dict(zip(hosts, ex.map(run, hosts)))
+    done = sum(got.values())
     if done:
-        logger.info(f"Image lanes: {done} cover(s) fetched — " + ", ".join(f"{h} {len(v)}" for h, v in lanes.items()))
+        # fetched per host, of what each lane was handed — not just what was queued
+        logger.info(f"Image lanes: {done} cover(s) fetched — " + ", ".join(f"{h} {got[h]}/{len(lanes[h])}" for h in hosts))
     return done
 
 

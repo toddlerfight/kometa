@@ -646,6 +646,10 @@ def get_config():
         "locg_enabled":        cfg.get("locg_enabled", "1") != "0",
         "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
         "locg_user_agent":     cfg.get("locg_user_agent", ""),
+        # Fandom's image CDN: your Safari's Cloudflare pass (kometa/images.py). Never echoed back.
+        "fandom_cf_configured": bool(cfg.get("fandom_cf_clearance", "")),
+        "fandom_cf_set_at":    cfg.get("fandom_cf_set_at", ""),
+        "fandom_user_agent":   cfg.get("fandom_user_agent", ""),
         # step 5: record → our own ComicInfo → online for the issue sheet. OFF until
         # the full ComicInfo rewrite has run (kometa/localfirst.py); no UI yet
         "read_local_first":    cfg.get("read_local_first", "0") == "1",
@@ -693,6 +697,8 @@ class ConfigRequest(BaseModel):
     locg_enabled:       str | None = None   # "1"/"0" — off = not one request to LOCG
     locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
     locg_user_agent:    str | None = None   # the exact UA that pass was issued to
+    fandom_cf_clearance: str | None = None  # Fandom image CDN's Cloudflare pass, from the browser that earned it
+    fandom_user_agent:  str | None = None   # …and that browser's exact UA
     read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
     retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
 
@@ -713,7 +719,13 @@ def update_config(req: ConfigRequest):
     if "locg_cf_clearance" in updates:
         updates["locg_cf_clearance"] = updates["locg_cf_clearance"].strip().removeprefix("cf_clearance=")
         updates["locg_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    if "fandom_cf_clearance" in updates:
+        updates["fandom_cf_clearance"] = updates["fandom_cf_clearance"].strip().removeprefix("cf_clearance=")
+        updates["fandom_cf_set_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     db.set_config(updates, DB_PATH)
+    if "fandom_cf_clearance" in updates:
+        from kometa.images import fandom_pass_renewed
+        fandom_pass_renewed()
     if "locg_cf_clearance" in updates:
         # the Settings field re-verifies on save (POST /api/test/locg) — one knock,
         # and if the pass works the pause lifts right there

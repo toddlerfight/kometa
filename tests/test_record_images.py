@@ -200,3 +200,38 @@ def test_lanes_run_each_host_at_its_own_pace_and_a_refusal_stops_only_its_own(db
     n = im.images_lanes(path=db_path, sleep=lambda s: None)
     assert len(fast.asked) == 3                       # its per-tick share, not the whole queue
     assert len(slow.asked) == 1 and n == 3            # refused once: that lane stops, the other doesn't care
+
+
+def test_the_fandom_lane_waits_without_a_pass_and_sends_it_when_there_is_one(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    monkeypatch.setattr(im, "LANES", {im.FANDOM_HOST: (5, 0, 100)})
+    sid = db.add_series(title="X", publisher="P", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 1.0, "2020-01-01", 1, metron_image=f"https://{im.FANDOM_HOST}/a.jpg/revision/latest?cb=1", path=db_path)
+    sent = []
+
+    class L(_Lim):
+        def get(self, url, headers=None):
+            sent.append((url, headers))
+            return super().get(url)
+    lim = L({f"https://{im.FANDOM_HOST}/a.jpg/revision/latest?cb=1&format=original": b"img"})
+    monkeypatch.setattr(im, "_lane_limiter", lambda host: lim)
+    assert im.images_lanes(path=db_path, sleep=lambda s: None) == 0 and sent == []      # no pass: no knock
+    db.set_config({"fandom_cf_clearance": "abc", "fandom_user_agent": "Safari/605"}, db_path)
+    assert im.images_lanes(path=db_path, sleep=lambda s: None) >= 1
+    url, headers = sent[0]
+    assert url.endswith("&format=original") and headers == {"Cookie": "cf_clearance=abc", "User-Agent": "Safari/605"}
+
+
+def test_a_403_with_the_pass_forgets_it(db_path, tmp_path, monkeypatch):
+    from kometa import polite
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    db.set_config({"fandom_cf_clearance": "abc", "fandom_user_agent": "Safari/605"}, db_path)
+
+    class Refuse:
+        def get(self, url, headers=None):
+            raise polite.SourceUnavailable("Images x refused us (403)")
+    get = im._lane_fetch(Refuse(), im.FANDOM_HOST, db_path)
+    import pytest
+    with pytest.raises(polite.SourceUnavailable):
+        get(f"https://{im.FANDOM_HOST}/a.jpg")
+    assert db.get_config(db_path).get("fandom_cf_clearance") == ""

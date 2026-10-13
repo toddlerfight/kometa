@@ -120,6 +120,13 @@ class Limiter:
             self._state["paused_until"] = max(self._state["paused_until"], time.time() + seconds)
             self._save()
 
+    def resume(self):
+        """Lift a rest early — a fresh pass in Settings means the last refusal is moot."""
+        with self._lock:
+            self._load()
+            self._state["paused_until"] = 0.0
+            self._save()
+
     def reset(self):
         """Tests only: a fresh day, no pause (and nothing read back from a file)."""
         self._state.update(last=0.0, day="", count=0, paused_until=0.0)
