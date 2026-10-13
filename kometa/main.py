@@ -255,6 +255,8 @@ from kometa.search import router as _search_router          # universal search: 
 app.include_router(_search_router)
 from kometa.retag import router as _retag_router            # read-only: the ComicInfo a retag would write
 app.include_router(_retag_router)
+from kometa.retag_batch import router as _retag_batch_router  # the full rewrite, phase by phase, armed by hand
+app.include_router(_retag_batch_router)
 from kometa.push import router as _push_router              # 'it landed' on your phone (APNs → YondeB)
 app.include_router(_push_router)
 # Story-arc machinery + routes live in kometa/arcs (imported at the top with the
@@ -691,6 +693,7 @@ class ConfigRequest(BaseModel):
     locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
     locg_user_agent:    str | None = None   # the exact UA that pass was issued to
     read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
+    retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
 
 
 @app.patch("/api/config")

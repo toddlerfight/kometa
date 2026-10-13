@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-13 10:45 AEST",
+ "updated": "2026-10-13 18:00 AEST",
  "now": "Live: Marvel.com covers overnight; trade ratings on the book sheet; read-local-first built (off). Building: harvest health dot on the Settings badge.",
  "groups": [
   {
@@ -196,8 +196,8 @@
     {
      "id": "3f",
      "label": "Full run (~10 h network)",
-     "state": "todo",
-     "note": "your go — at 10 files per 10 min it would take ~5 days; can run faster at night"
+     "state": "building",
+     "note": "batch mode built: reads a Catbus snapshot, builds 4 at a time, stops for your check, then swaps. Run planned Thursday, on your go"
     }
    ]
   },

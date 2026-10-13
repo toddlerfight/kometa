@@ -92,8 +92,13 @@ disambiguates same-titled runs (three bare "Batman" series) and alternate printi
 - **retag.py** — the ComicInfo write-back job (enrichment 3b–3d): `retag_journal` table,
   build in staging → verify → temp beside the original → read back → atomic swap; CBR → CBZ
   with the .cbr moved to `_trash/<publisher>/retag-cbr-<date>/`; books row and page cache
-  follow (same book id). `run_batch` is called by hand; no scheduler job yet. Only route:
-  read-only `GET /api/books/{id}/comicinfo-preview`.
+  follow (same book id). `retag_tick` (behind `retag_enabled`) is the standing job; `JOB_LOCK`
+  keeps it and the batch apart. Only route: read-only `GET /api/books/{id}/comicinfo-preview`.
+- **retag_batch.py** — the full-library rewrite (3f) as three hand-started phases, armed by
+  config `retag_batch_armed`: queue (`POST /api/retag/batch/queue`), build from the Catbus
+  snapshot `/retag/source` into `/retag/build`, 4 at a time, stopping at verified
+  (`.../build`), and swap through `retag.swap` (`.../swap`). Also `.../stop`, `GET /api/retag/batch-report`,
+  `.../batch/dry-count` and `.../batch/staged/{id}/comicinfo`. Runbook in INSTRUCTIONS.md.
 - **toprated.py** — read-only ranking over the community scores already in
   `issue_record.community_json` (CBR critic/reader, LOCG ×2, Hardcover/Open Library ×2),
   capped-vote pooled and Bayesian-shrunk. `GET /api/series/{id}/top-rated` (owned runs only;

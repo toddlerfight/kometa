@@ -82,8 +82,14 @@ mirror docker "$DOCKER" "$DEST/docker/" --exclude "apps/kometa/data/page-cache/"
   --exclude "apps/kometa/data/covers.moved-*/" \
   --exclude "*.db-wal" --exclude "*.db-shm" --exclude ".voot-backup.db" --exclude ".DS_Store"
 
-# 3. the comics, from the NAS — the big one; incremental after the first night
-if [ "${COMICS:-1}" = "1" ]; then
+# 3. the comics, from the NAS — the big one; incremental after the first night.
+# Paused on purpose during the full ComicInfo rewrite (INSTRUCTIONS.md, "batch run"):
+# the mirror must keep the ORIGINALS until the user has seen the new files, and
+# mustn't chew the NAS while the swap does. Deliberate, so not a failure: ok stays 1.
+PAUSE_COMICS="$HOME/docker/apps/kometa/data/.pause-comics-backup"
+if [ "${COMICS:-1}" = "1" ] && [ -e "$PAUSE_COMICS" ]; then
+  notes+=("comics paused (retag batch)"); say "comics PAUSED (retag batch)"
+elif [ "${COMICS:-1}" = "1" ]; then
   if [ -d "$COMICS_SRC" ] && [ -n "$(ls -A "$COMICS_SRC" 2>/dev/null | head -1)" ]; then
     mirror comics "$COMICS_SRC" "$DEST/comics/" --exclude "@eaDir/" --exclude "#recycle/" --exclude ".DS_Store"
   else

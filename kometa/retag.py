@@ -27,13 +27,15 @@ The original keeps its mtime (On Deck and the shelf sort on it); only the size
 changes, and when even that doesn't, the mtime moves one second so the backup
 mirror still sees a new file.
 
-No scheduler job and no writing endpoint here yet: run_batch is called by hand
-(3e) until the full run (3f) is wired. The only route is a read-only preview.
+The standing job (retag_tick, behind retag_enabled) lives at the bottom; the full
+run (3f) is kometa/retag_batch.py, which reads from a snapshot, builds on Catbus and
+swaps through this module's swap(). The only route here is a read-only preview.
 """
 import hashlib
 import logging
 import os
 import shutil
+import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -57,7 +59,12 @@ COMICINFO = "ComicInfo.xml"
 LOCK_TIMEOUT_S = 900            # how long a swap waits for a running shelf scan
 MAX_CONSECUTIVE_FAILURES = 3    # three refusals in a row is a pattern, not three bad files
 FINAL = ("swapped", "skipped")
-STATES = ("pending", "built", "verified", "swapped", "skipped", "failed")
+STATES = ("pending", "built", "verified", "swapped", "skipped", "failed", "stale")
+# 'stale': the batch (kometa/retag_batch.py) found the original changed under its
+# build — never overwritten; a re-queue restarts it like a failed row
+# ONE retag job at a time: the scheduler tick and every batch phase take this
+# without waiting; whoever finds it held stands down
+JOB_LOCK = threading.Lock()
 
 
 class RetagError(RuntimeError):
@@ -847,6 +854,19 @@ def retag_tick(budget: int = TICK_BUDGET, path=None, runner=None) -> dict:
     path = path or DB_PATH
     if not enabled(path):
         return {"enabled": False}
+    # the full-library batch owns the journal while it's armed — between its phases
+    # too: a tick there would swap its verified rows before the user's OK
+    if db.get_config(path).get("retag_batch_armed", "0") == "1":
+        return {"enabled": True, "skipped": "the retag batch is armed"}
+    if not JOB_LOCK.acquire(blocking=False):
+        return {"enabled": True, "skipped": "a retag batch phase is running"}
+    try:
+        return _tick(budget, path, runner)
+    finally:
+        JOB_LOCK.release()
+
+
+def _tick(budget: int, path, runner) -> dict:
     requeued = requeue_changed(path=path)
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute(
