@@ -1354,7 +1354,8 @@ async function _loadBecause(exclude, attempt = 0) {
   _rowSig(app.querySelector('.sug-row'), sig);
 }
 
-// One ⋯ per card, one sheet: Read, the series behind it, Not now, read state.
+// One ⋯ per card, one sheet: Read, the series behind it, read state. No Close (outside
+// click and Esc do it) and no Not now (the card's own ✕ does it) — 2026-10-13.
 // Same shape as the reader's own ⋯ — tap the thing, get its actions.
 function _bookActions(c) {
   // A tracked series' issue: the series page's own modal, cover and details and
@@ -1394,10 +1395,8 @@ async function showBookModal(c) {
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       ${_wantBtnHtml({ book_id: c.book_id })}
       ${goSeries ? `<button class="btn btn-ghost" onclick="closeModal(); ${goSeries}">Go to series</button>` : ''}
-      ${c.dismissable ? `<button class="btn btn-ghost" onclick="closeModal(); _odDismiss(${c.book_id}, document.getElementById('od-${c.book_id}')?.querySelector('.od-menu'))">Not now</button>` : ''}
       <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${c.book_id}, ${completed ? 'false' : 'true'})">${completed ? 'Mark as unread' : 'Mark as read'}</button>
       <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>
     </div>`);
