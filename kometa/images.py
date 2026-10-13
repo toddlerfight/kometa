@@ -384,19 +384,9 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                             out.append((k, url, "trade"))
                             if len(out) >= limit:
                                 return out[:limit]
-            # ComicVine's originals (1f): last — the biggest files, and never on screen
-            # for an owned issue (its tile is the file's own page 1)
-            for r in conn.execute("""SELECT tracked_series_id AS sid, number, extra_json FROM issue_record
-                WHERE extra_json LIKE '%"cv_original": "http%' ORDER BY tracked_series_id, number"""):
-                url = json.loads(r["extra_json"] or "{}").get("cv_original")
-                k = cv_key(r["sid"], r["number"])
-                if url and _wants(have, k, url):
-                    out.append((k, url, "comicvine"))
-                    if len(out) >= limit:
-                        return out[:limit]
-            # Fandom galleries (1i-d): dead last, and only with Settings' 'Download
-            # gallery images' on — full galleries run to tens of GB, which waits for
-            # the cover store's move off ginbako's internal disk
+            # Fandom galleries (1i-d): only with Settings' 'Download gallery images' on.
+            # Ahead of ComicVine (2026-10-13): a gallery copy replaces a cover you SEE,
+            # ComicVine's original never shows for an owned issue — same pace either way
             if db.get_config(path).get("fandom_download", "0") == "1":
                 for r in conn.execute("""SELECT r.tracked_series_id AS sid, r.number, r.extra_json FROM issue_record r
                     JOIN tracked_series s ON s.id = r.tracked_series_id
@@ -409,6 +399,16 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                             out.append((k, url, "fandom"))
                             if len(out) >= limit:
                                 return out[:limit]
+            # ComicVine's originals (1f): last — the biggest files, and never on screen
+            # for an owned issue (its tile is the file's own page 1)
+            for r in conn.execute("""SELECT tracked_series_id AS sid, number, extra_json FROM issue_record
+                WHERE extra_json LIKE '%"cv_original": "http%' ORDER BY tracked_series_id, number"""):
+                url = json.loads(r["extra_json"] or "{}").get("cv_original")
+                k = cv_key(r["sid"], r["number"])
+                if url and _wants(have, k, url):
+                    out.append((k, url, "comicvine"))
+                    if len(out) >= limit:
+                        return out[:limit]
         except Exception as e:
             logger.info(f"Image trickle: extra sources skipped: {e}")
     return out[:limit]
