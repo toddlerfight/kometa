@@ -2329,9 +2329,10 @@ async function renderSeriesDetail(id) {
 
   const chips = [
     released > 0 ? `<span class="chip ${s.owned < released ? 'chip-missing' : 'chip-complete'}">${s.owned}/${released}</span>` : '',
-    s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>` : '',
-    // still going? (kometa/runstatus.py — Metron's word checked against our own dates)
-    s.run_status ? `<span class="chip chip-neutral" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : '',
+    // ONE status chip: what's coming when something is solicited, otherwise whether
+    // the run is still going (kometa/runstatus.py — Metron's word checked against our dates)
+    s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>`
+      : s.run_status ? `<span class="chip chip-upcoming" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : '',
     s.from_list_id ? `<a class="chip chip-collected" title="Tracked by a reading list's Get — pull list off, only what the list asked for" onclick="navigate('readlist', {id: ${s.from_list_id}})">◆ from a reading list</a>` : '',
     s.family_parent ? `<a class="chip chip-neutral" title="A special of this run" onclick="navigate('series-detail', {id: ${s.family_parent.id}})">part of ${esc(s.family_parent.title)}</a>` : '',
   ].filter(Boolean).join('');
@@ -5053,7 +5054,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
         <div class="issue-modal-series">${esc(s.title)}</div>
         <div class="issue-modal-meta">${esc([s.publisher, s.year_began].filter(Boolean).join(' · '))}</div>
         <div style="margin:8px 0">${chipMap[st] || ''}${s && s.run_status
-          ? ` <span class="chip chip-neutral" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : ''}</div>
+          ? ` <span class="chip chip-upcoming" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : ''}</div>
         ${dateHtml}
         ${hasLocgId ? `
         <div class="issue-modal-tabs" style="margin-top:12px">
