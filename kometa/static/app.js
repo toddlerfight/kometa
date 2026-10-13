@@ -4590,8 +4590,10 @@ function _marveldcTonight(cfg) {
 
 function _politeSourceSection(key, title, tag, cfg, extra = '') {
   const on = !!cfg[`${key}_enabled`];
+  // no login, so no test row to carry the dot: it sits in the head (kometa/health.py
+  // lights it when the source keeps failing). Fandom's pass field brings its own.
   return `<div class="settings-section ${on ? '' : 'section-off'}" id="sec-${key}" style="margin-top:32px">
-    ${_settingsSectionHead(title, tag, `t-${key}`, on)}
+    ${_settingsSectionHead(title, tag, `t-${key}`, on, key === 'fandom' ? '' : `dot-${key}`)}
     <div class="settings-section-body"><div class="settings-section-inner">
       <div class="settings-card">
         ${_requestsToday(cfg, key)}
@@ -4603,9 +4605,9 @@ function _politeSourceSection(key, title, tag, cfg, extra = '') {
 
 // One header row per toggleable section (sources / Prowlarr / Usenet / Torrent):
 // title + role tag + the enable toggle, underlined. Off folds the body; head stays.
-function _settingsSectionHead(title, tag, toggleId, on) {
+function _settingsSectionHead(title, tag, toggleId, on, dotId = '') {
   return `<div class="settings-section-head">
-    <span class="settings-section-title">${esc(title)}${tag ? ` <span class="settings-opt">${tag}</span>` : ''}</span>
+    <span class="settings-section-title">${esc(title)}${tag ? ` <span class="settings-opt">${tag}</span>` : ''}${dotId ? ` <span class="settings-dot" id="${dotId}"></span>` : ''}</span>
     ${_settingsToggle(toggleId, on, `${title} ${on ? 'enabled' : 'disabled'}`)}
   </div>`;
 }

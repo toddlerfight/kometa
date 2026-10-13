@@ -245,6 +245,8 @@ def _note_refusal(r):
     refused = r.status_code == 429 or (
         r.status_code == 403 and (r.headers.get("cf-mitigated") == "challenge"
                                   or "cloudflare" in (r.headers.get("server") or "").lower()))
+    from kometa import health
+    health.record("LOCG", "refused" if refused else "ok" if r.status_code < 500 else "error", str(r.status_code))
     if not refused:
         return
     # A 429 is 'slow down', not 'your pass is dead': keep it, just pause. Only a

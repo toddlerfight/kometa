@@ -520,6 +520,19 @@ def settings_attention() -> list[dict]:
             waiting = 0
         if waiting:
             out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass"})
+    # set up fine, failing anyway (kometa/health.py) — a switched-off source never nags
+    try:
+        from kometa import health
+        keys = {"metron": "metron_enabled", "locg": "locg_enabled", "gcd": "gcd_enabled", "comicvine": "comicvine_enabled",
+                "fandom": "fandom_enabled", "hardcover": "hardcover_enabled", "prh": "prh_enabled",
+                "openlibrary": "openlibrary_enabled", "cbr": "cbr_enabled", "marveldc": "marveldc_enabled"}
+        lit = {i["card"] for i in out}
+        for u in health.unwell(DB_PATH):
+            if on(keys.get(u["card"], "_")) and u["card"] not in lit:
+                out.append({"card": u["card"], "reason": u["reason"]})
+                lit.add(u["card"])
+    except Exception:
+        pass
     if on("prowlarr_enabled"):
         if not has("prowlarr_url", "prowlarr_apikey"):
             out.append({"card": "prowlarr", "reason": "not set up"})

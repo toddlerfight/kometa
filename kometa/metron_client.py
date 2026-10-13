@@ -139,6 +139,11 @@ def _note_refused(creds, code: int):
                  f"(or {AUTH_REFUSED_HOLD_S // 3600} h): three refusals is a 24-hour ban")
 
 
+def _health(outcome: str, detail: str | None = None):
+    from kometa import health
+    health.record("Metron", outcome, detail)
+
+
 def _get(path: str, **params) -> dict:
     creds = _creds()
     if not creds:
@@ -189,8 +194,10 @@ def _get(path: str, **params) -> dict:
                         reset = float(r.headers.get(f"X-Ratelimit-{scope}-Reset") or time.time() + 60)
                         _state["paused_until"] = max(_state["paused_until"], reset)
                         logger.warning(f"Metron: {scope.lower()} remaining {left} — pausing until its reset")
+                _health("ok")
                 return body
         except urllib.error.HTTPError as e:
+            _health("ok" if e.code == 404 else "refused" if e.code in (401, 403, 429) else "error", str(e.code))
             if e.code == 429:
                 retry = float(e.headers.get("Retry-After") or 60)
                 _state["paused_until"] = time.time() + retry
@@ -208,6 +215,7 @@ def _get(path: str, **params) -> dict:
             # Activity page "stalled". One unreachable now fails everyone fast for
             # UNREACHABLE_PAUSE_S; the next call after that probes again.
             _state["paused_until"] = time.time() + UNREACHABLE_PAUSE_S
+            _health("error", "unreachable")
             logger.warning(f"Metron unreachable ({e}) — not asking again for {UNREACHABLE_PAUSE_S}s")
             raise MetronUnavailable(f"Metron unreachable: {e}") from e
     finally:

@@ -161,6 +161,7 @@ class Limiter:
                 r = getattr(requests, method)(url, headers=headers, timeout=kw.pop("timeout", self.timeout_s), **kw)
             except requests.RequestException as e:
                 self._state["paused_until"] = time.time() + self.unreachable_pause_s
+                _health(self.name, "error", e.__class__.__name__)
                 raise SourceUnavailable(f"{self.name} unreachable: {e.__class__.__name__}")
             finally:
                 self._state["last"] = time.time()
@@ -172,13 +173,21 @@ class Limiter:
                     pause = self.refused_pause_s
                 self._state["paused_until"] = time.time() + pause
                 self._save()
+                _health(self.name, "refused", str(r.status_code))
                 logger.info(f"{self.name} refused us ({r.status_code}); resting {pause / 60:.0f} min")
                 raise SourceUnavailable(f"{self.name} refused us ({r.status_code})")
             if r.status_code >= 500:
                 self._state["paused_until"] = time.time() + self.unreachable_pause_s
                 self._save()
+                _health(self.name, "error", str(r.status_code))
                 raise SourceUnavailable(f"{self.name} answered {r.status_code}")
+            _health(self.name, "ok")
             return r
+
+
+def _health(source: str, outcome: str, detail: str | None = None):
+    from kometa import health                      # kometa/health.py: is it actually working?
+    health.record(source, outcome, detail)
 
 
 def enabled(key: str, path=None) -> bool:

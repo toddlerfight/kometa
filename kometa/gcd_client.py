@@ -15,6 +15,8 @@ from datetime import date
 
 import requests
 
+from kometa import health
+
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.comics.org/api/"
@@ -87,9 +89,12 @@ def _get(path: str, **params):
                              headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT_S)
         except requests.RequestException as e:
             _state["paused_until"] = time.time() + UNREACHABLE_PAUSE_S
+            health.record("GCD", "error", e.__class__.__name__)
             raise GCDUnavailable(f"GCD unreachable: {e.__class__.__name__}")
         finally:
             _state["last"] = time.time()
+        health.record("GCD", "ok" if r.status_code in (200, 404) else "refused" if r.status_code in (401, 403, 429) else "error",
+                      str(r.status_code))
         if r.status_code == 200:
             return r.json()
         if r.status_code == 404:

@@ -45,6 +45,11 @@ def wiki_for(publisher: str | None) -> str | None:
     return None
 
 
+def _health(outcome: str, detail: str | None = None):
+    from kometa import health
+    health.record("Fandom wikis", outcome, detail)
+
+
 def _get(host: str, **params) -> dict:
     """The one way to the wikis — one lock, one gap, one daily cap, one pause."""
     url = f"https://{host}/api.php?" + urllib.parse.urlencode({**params, "format": "json"})
@@ -63,12 +68,16 @@ def _get(host: str, **params) -> dict:
         _last["count"] += 1
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=25) as r:
-                return json.load(r)
+                body = json.load(r)
+            _health("ok")
+            return body
         except urllib.error.HTTPError as e:
             if e.code in (403, 429, 503):
                 _last["paused_until"] = time.time() + REFUSED_PAUSE_S
+            _health("ok" if e.code == 404 else "refused" if e.code in (403, 429) else "error", str(e.code))
             raise FandomUnavailable(f"{host}: {e}") from e
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
+            _health("error", e.__class__.__name__)
             raise FandomUnavailable(f"{host}: {e}") from e
 
 

@@ -46,3 +46,14 @@ def _finalize_inline(monkeypatch):
     that work inline so a poll call's effects are visible when it returns."""
     import kometa.acquisition as acquisition
     monkeypatch.setattr(acquisition, "FINALIZE_INLINE", True)
+
+
+@pytest.fixture(autouse=True)
+def _health_in_memory(monkeypatch):
+    """kometa/health.py records every request; outside its own tests that stays in
+    memory (no writes to whatever DB_PATH happens to be) and starts empty."""
+    from kometa import health
+    monkeypatch.setattr(health, "PERSIST", False)
+    health.reset()
+    yield
+    health.reset()

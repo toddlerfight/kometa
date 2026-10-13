@@ -45,8 +45,15 @@ class ComicVineClient:
         self.session.headers["User-Agent"] = _UA
 
     def _get(self, path: str, **params) -> dict:
+        from kometa import health
         params.update({"api_key": self.apikey, "format": "json"})
-        r = self.session.get(f"{_CV_BASE}/{path}", params=params, timeout=20)
+        try:
+            r = self.session.get(f"{_CV_BASE}/{path}", params=params, timeout=20)
+        except Exception as e:
+            health.record("ComicVine", "error", e.__class__.__name__)
+            raise
+        health.record("ComicVine", "ok" if r.status_code < 400 or r.status_code == 404
+                      else "refused" if r.status_code in (401, 403, 420, 429) else "error", str(r.status_code))
         r.raise_for_status()
         return r.json()
 
