@@ -152,6 +152,30 @@ def _parse_key(key: str) -> tuple[int, float] | None:
         return None
 
 
+# A stored cover's dHash, kept by (path, size, mtime): every gallery image used to
+# re-read and re-decode EVERY stored cover of its issue — dozens of multi-MB files
+# for a big launch — so a 30-minute pass managed one cover every ~25 s (10-14 06:45).
+_hashes: dict = {}
+
+
+def _stored_hash(p: str) -> int | None:
+    from kometa import coververify
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    k = (p, st.st_size, st.st_mtime)
+    if k not in _hashes:
+        try:
+            with open(p, "rb") as f:
+                _hashes[k] = coververify.dhash(f.read())
+        except OSError:
+            return None
+        if len(_hashes) > 50000:
+            _hashes.clear()
+    return _hashes[k]
+
+
 def closest_cover(series_id: int, number: float, h: int, path=None) -> str | None:
     """The key of the issue's stored cover that IS this picture (dHash within
     coververify.CLOSE) — the main, a catalogue variant, ComicVine's or PRH's —
@@ -168,11 +192,7 @@ def closest_cover(series_id: int, number: float, h: int, path=None) -> str | Non
         k = r["key"]
         if "/fandom/" in k or k.endswith("/file") or not os.path.exists(r["path"]):
             continue
-        try:
-            with open(r["path"], "rb") as f:
-                other = coververify.dhash(f.read())
-        except OSError:
-            continue
+        other = _stored_hash(r["path"])
         if other is None:
             continue
         d = coververify.hamming(h, other)
