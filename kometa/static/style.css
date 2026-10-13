@@ -2353,7 +2353,7 @@ body.touch .od-menu { opacity: .85; }
 .od-row + .od-row, .sug-row, .rel-row, .shelf-files { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); }
 .od-row + .od-row { margin-top: var(--sp-lg, 20px); }
 .trend-row { border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); }
-.trend-rank { left: 6px; right: auto; }
+.trend-rank { left: 6px; right: auto; transform: none; }   /* the base badge centres itself with translateX(-50%) — pinned left, that shoved it half off the card */
 
 /* --- favourites + ratings --- */
 .series-card-fav { position: absolute; top: 6px; left: 6px; color: var(--pink); font-size: 13px; text-shadow: 0 0 4px #000; }
