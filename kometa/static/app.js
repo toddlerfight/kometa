@@ -5023,12 +5023,12 @@ async function showIssueModal(seriesId, number, opts = {}) {
     // Kometa's own reader. (The Komga link went 2026-10-10.)
     footerAction = `<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
     // Opened from a book card (On Deck): the same modal, with the card's
-    // actions in the footer — the series behind it, Not now, read state.
+    // actions in the footer — the series behind it, read state. No Not now
+    // (the card's ✕ is the same call) and no Close (outside click / Esc).
     if (opts.book) {
       const b = opts.book;
       footerAction = `
         <button class="btn btn-ghost" onclick="closeModal(); navigate('series-detail', {id: ${seriesId}})">Go to series</button>
-        ${b.dismissable ? `<button class="btn btn-ghost" onclick="closeModal(); _odDismiss(${b.book_id}, document.getElementById('od-${b.book_id}')?.querySelector('.od-menu'))">Not now</button>` : ''}
         <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${b.book_id}, ${b.completed ? 'false' : 'true'})">${b.completed ? 'Mark as unread' : 'Mark as read'}</button>
         <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${b.book_id}})">Read</button>`;
     }
@@ -5079,7 +5079,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
       </div>
     </div>
     <div class="modal-footer" id="issue-modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+      ${opts.book ? '' : '<button class="btn btn-ghost" onclick="closeModal()">Close</button>'}
       ${_wantBtnHtml({ series_id: seriesId, number })}
       ${footerAction}
     </div>
