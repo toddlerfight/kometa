@@ -22,9 +22,25 @@ logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 COVERS_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "covers")
 FAIL_TTL_HOURS = 24
-TRICKLE_LIMIT = 60
+TRICKLE_LIMIT = 60             # tests' and callers' old single-queue cap; the scheduler runs the lanes
 TRICKLE_GAP_S = 0.5
 TRICKLE_MAX_FAILS = 5
+# One lane per image host, side by side (2026-10-13): the big commercial CDNs
+# go faster, the volunteer-run hosts stay as gentle as they've always been.
+# Each lane is a polite.Limiter — its own gap, a daily cap that survives
+# restarts, an hour's rest the moment the host says 403/429/503 — and stops
+# for the tick after TRICKLE_MAX_FAILS misses in a row (Metron's fail2ban
+# bans the house IP at 20 404s in 2 minutes; this never gets near it).
+#   host: (per 10-min tick, seconds between, per day)
+LANES = {
+    "static.wikia.nocookie.net": (120, 1.0, 3000),   # Fandom's CDN
+    "comicvine.gamespot.com":    (120, 1.0, 3000),   # Fandom/GameSpot's CDN
+    "s3.amazonaws.com":          (60, 1.5, 1500),    # LOCG's bucket: S3 copes, LOCG pays the egress
+    "static.metron.cloud":       (40, 2.0, 2000),    # volunteer project — no faster than before
+    "files1.comics.org":         (10, 5.0, 200),     # GCD, volunteer project
+}
+DEFAULT_LANE = (20, 3.0, 500)
+_lane_limiters: dict = {}
 EXT_TTL_HOURS = 24
 # Hosts whose images the catalogue cards carry; anything else is refused, this
 # is a cover proxy, not an open one.
@@ -414,9 +430,30 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
     return out[:limit]
 
 
-def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.sleep) -> int:
-    """Scheduler tick: fetch up to `limit` covers, a short gap between, stopping
-    after a run of failures (the CDN is down, not the one URL)."""
+def _lane_limiter(host: str):
+    from kometa import polite
+    from kometa.thumbnails import _img_session
+    if host not in _lane_limiters:
+        _, gap, cap = LANES.get(host, DEFAULT_LANE)
+        _lane_limiters[host] = polite.Limiter(f"Images {host}", min_interval_s=gap, daily_cap=cap,
+                                              refused_pause_s=3600, timeout_s=30,
+                                              user_agent=_img_session.headers["User-Agent"])
+    return _lane_limiters[host]
+
+
+def _lane_fetch(lim):
+    """http= for fetch_image: the bytes through this host's limiter; None on a miss.
+    A refusal / outage / spent day raises polite.SourceUnavailable — the lane stops."""
+    def get(url):
+        r = lim.get(url)
+        return r.content if r.status_code == 200 and r.content else None
+    return get
+
+
+def images_lanes(path=None, sleep=time.sleep) -> int:
+    """Scheduler tick: every host's lane at once, each at its own pace (LANES)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse
     path = path or DB_PATH
     try:
         pruned = prune_external(path)
@@ -424,17 +461,46 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
             logger.info(f"Image trickle: dropped {pruned} day-old catalogue cover(s)")
     except Exception as e:
         logger.info(f"Image trickle: prune skipped: {e}")
-    done, fails = 0, 0
+    room = sum(n for n, _, _ in LANES.values()) + DEFAULT_LANE[0] * 4
+    lanes: dict[str, list] = {}
+    for item in pending(path, limit=20000):
+        host = urlparse(item[1]).netloc
+        q = lanes.setdefault(host, [])
+        if len(q) < LANES.get(host, DEFAULT_LANE)[0]:
+            q.append(item)
+        if sum(len(v) for v in lanes.values()) >= room:
+            break
+    if not lanes:
+        return 0
+    def run(host):
+        lim = _lane_limiter(host)
+        if lim.spent():
+            return 0
+        return _run_lane(lanes[host], path, _lane_fetch(lim), sleep, gap=0, label=host)
+    with ThreadPoolExecutor(max_workers=len(lanes), thread_name_prefix="img-lane") as ex:
+        done = sum(ex.map(run, list(lanes)))
+    if done:
+        logger.info(f"Image lanes: {done} cover(s) fetched — " + ", ".join(f"{h} {len(v)}" for h, v in lanes.items()))
+    return done
+
+
+def _run_lane(items, path, http, sleep, gap: float = TRICKLE_GAP_S, label: str = "") -> int:
+    from kometa import polite
     from kometa.activity import yield_to_reader
-    for key, url, source in pending(path, limit=limit):
+    done, fails = 0, 0
+    for key, url, source in items:
         yield_to_reader(sleep)
-        if source == "fandom":
-            # hashed against the issue's covers before it's kept: a match is the
-            # same cover at a bigger size, not one more variant
-            from kometa import fandom_covers
-            row = fandom_covers.download(key, url, path, http=http)
-        else:
-            row = fetch_image(key, url, source, path, http=http)
+        try:
+            if source == "fandom":
+                # hashed against the issue's covers before it's kept: a match is the
+                # same cover at a bigger size, not one more variant
+                from kometa import fandom_covers
+                row = fandom_covers.download(key, url, path, http=http)
+            else:
+                row = fetch_image(key, url, source, path, http=http)
+        except polite.SourceUnavailable as e:
+            logger.info(f"Image lane {label}: {e}; stopping this tick")
+            break
         # a failed upgrade hands back the old row (file kept): still a failure
         # as far as "is the CDN down" goes
         if row and not row.get("failed_at"):
@@ -443,10 +509,25 @@ def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.
         else:
             fails += 1
             if fails >= TRICKLE_MAX_FAILS:
-                logger.info("Image trickle: too many failures in a row, stopping this tick")
+                logger.info(f"Image trickle{' ' + label if label else ''}: too many failures in a row, stopping this tick")
                 break
-        sleep(TRICKLE_GAP_S)
+        if gap:
+            sleep(gap)
     return done
+
+
+def images_trickle(limit: int = TRICKLE_LIMIT, path=None, http=None, sleep=time.sleep) -> int:
+    """One queue, `limit` covers, a short gap between, stopping after a run of
+    failures (the CDN is down, not the one URL). The scheduler runs images_lanes;
+    this stays for tests and one-off calls."""
+    path = path or DB_PATH
+    try:
+        pruned = prune_external(path)
+        if pruned:
+            logger.info(f"Image trickle: dropped {pruned} day-old catalogue cover(s)")
+    except Exception as e:
+        logger.info(f"Image trickle: prune skipped: {e}")
+    return _run_lane(pending(path, limit=limit), path, http, sleep)
 
 
 def store_size(path=None) -> dict:

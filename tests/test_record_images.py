@@ -164,3 +164,39 @@ def test_nothing_already_at_its_best_url_is_requeued(db_path, tmp_path, monkeypa
     calls.clear()
     assert im.images_trickle(limit=50, path=db_path, http=lambda u: (calls.append(u) or b"img"), sleep=lambda s: None) == 0
     assert calls == []
+
+
+class _Lim:
+    """A lane's limiter, no network: answers from `bodies`, or refuses."""
+    def __init__(self, bodies=None, refuse=False):
+        self.bodies, self.refuse, self.asked = bodies or {}, refuse, []
+
+    def spent(self):
+        return False
+
+    def get(self, url):
+        from kometa import polite
+        self.asked.append(url)
+        if self.refuse:
+            raise polite.SourceUnavailable("refused us (429)")
+        class R:
+            status_code = 200 if url in self.bodies else 404
+            content = self.bodies.get(url, b"")
+        return R()
+
+
+def test_lanes_run_each_host_at_its_own_pace_and_a_refusal_stops_only_its_own(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    monkeypatch.setattr(im, "LANES", {"fast.cdn": (3, 0, 100), "slow.org": (1, 0, 100)})
+    sid = db.add_series(title="X", publisher="P", folder_path=None, on_pull_list=False, path=db_path)
+    for n in range(1, 5):
+        db.upsert_issue_status(sid, float(n), "2020-01-01", 1, metron_image=f"https://fast.cdn/{n}.jpg", path=db_path)
+    sid2 = db.add_series(title="Y", publisher="P", folder_path=None, on_pull_list=False, path=db_path)
+    for n in range(1, 4):
+        db.upsert_issue_status(sid2, float(n), "2020-01-01", 1, metron_image=f"https://slow.org/{n}.jpg", path=db_path)
+    fast = _Lim({f"https://fast.cdn/{n}.jpg": b"img" for n in range(1, 5)})
+    slow = _Lim(refuse=True)
+    monkeypatch.setattr(im, "_lane_limiter", lambda host: {"fast.cdn": fast, "slow.org": slow}[host])
+    n = im.images_lanes(path=db_path, sleep=lambda s: None)
+    assert len(fast.asked) == 3                       # its per-tick share, not the whole queue
+    assert len(slow.asked) == 1 and n == 3            # refused once: that lane stops, the other doesn't care

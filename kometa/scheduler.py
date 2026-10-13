@@ -179,8 +179,9 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         logger.warning(f"Trades trickle not scheduled: {e}")
     # Cover art into the record's own store (kometa/images.py): a few dozen a tick.
     try:
-        from kometa.images import images_trickle
-        scheduler.add_job(images_trickle, IntervalTrigger(minutes=10), id="images_trickle",
+        # one lane per image host, each at its own polite pace (kometa/images.py LANES)
+        from kometa.images import images_lanes
+        scheduler.add_job(images_lanes, IntervalTrigger(minutes=10), id="images_trickle",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
