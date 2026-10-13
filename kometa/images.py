@@ -46,6 +46,8 @@ DEFAULT_LANE = (20, 3.0, 500)
 # rested the whole lane for an hour (2026-10-13 21:19). There, only 429/503 refuse.
 NOT_THERE_403 = {"s3.amazonaws.com"}
 _lane_limiters: dict = {}
+_lane_locks: dict = {}                 # one run per lane at a time: the tick and a paste-time burst never double up
+FANDOM_BURST = 1800                    # a pass lives 30 min; at 1/s this is all of it
 # Fandom's image CDN puts this house's IP behind a Cloudflare challenge (2026-10-13:
 # a 403 'Just a moment…' page for any script, any UA). Chrome is waved through on its
 # fingerprint and never holds a pass; Safari is challenged, solves it, and its
@@ -462,13 +464,38 @@ def _fandom_pass(path=None) -> tuple[str, str]:
     return (cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip()
 
 
-def fandom_pass_renewed():
-    """A new pass in Settings: the lane's rest from the old one's 403 is lifted."""
-    lim = _lane_limiters.get(FANDOM_HOST)
-    if lim is not None:
-        lim.resume()
-    else:
-        _lane_limiter(FANDOM_HOST).resume()
+def _lane_lock(host: str):
+    import threading
+    return _lane_locks.setdefault(host, threading.Lock())
+
+
+def fandom_pass_renewed(path=None, start: bool = True):
+    """A new pass: the lane's rest from the old one's 403 is lifted and the lane starts
+    NOW, running until the pass dies — waiting for the next 10-minute tick spent most
+    of the 30 minutes (06:16 10-14: 426 covers off a pass that could carry ~1,800)."""
+    _lane_limiter(FANDOM_HOST).resume()
+    if start:
+        import threading
+        threading.Thread(target=fandom_burst, args=(path,), name="fandom-burst", daemon=True).start()
+
+
+def fandom_burst(path=None, sleep=time.sleep) -> int:
+    """The Fandom lane alone, up to FANDOM_BURST covers, while the pass holds."""
+    from urllib.parse import urlparse
+    path = path or DB_PATH
+    lock = _lane_lock(FANDOM_HOST)
+    if not all(_fandom_pass(path)) or not lock.acquire(blocking=False):
+        return 0
+    try:
+        lim = _lane_limiter(FANDOM_HOST)
+        if lim.spent():
+            return 0
+        items = [i for i in pending(path, limit=20000) if urlparse(i[1]).netloc == FANDOM_HOST][:FANDOM_BURST]
+        done = _run_lane(items, path, _lane_fetch(lim, FANDOM_HOST, path), sleep, gap=0, label=FANDOM_HOST)
+        logger.info(f"Fandom burst: {done}/{len(items)} cover(s) fetched")
+        return done
+    finally:
+        lock.release()
 
 
 def _lane_fetch(lim, host: str = "", path=None):
@@ -520,10 +547,16 @@ def images_lanes(path=None, sleep=time.sleep) -> int:
     def run(host):
         if host == FANDOM_HOST and not all(_fandom_pass(path)):
             return 0                                  # no pass: a knock is a guaranteed 403
-        lim = _lane_limiter(host)
-        if lim.spent():
-            return 0
-        return _run_lane(lanes[host], path, _lane_fetch(lim, host, path), sleep, gap=0, label=host)
+        lock = _lane_lock(host)
+        if not lock.acquire(blocking=False):
+            return 0                                  # a burst has this lane already
+        try:
+            lim = _lane_limiter(host)
+            if lim.spent():
+                return 0
+            return _run_lane(lanes[host], path, _lane_fetch(lim, host, path), sleep, gap=0, label=host)
+        finally:
+            lock.release()
     hosts = list(lanes)
     with ThreadPoolExecutor(max_workers=len(hosts), thread_name_prefix="img-lane") as ex:
         got = dict(zip(hosts, ex.map(run, hosts)))

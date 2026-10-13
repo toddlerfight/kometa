@@ -612,13 +612,15 @@ def test_fandom_access():
             url = covers[0].get("url") if covers else None
     if not url:
         return {"ok": False, "error": "no gallery listed yet to test with"}
-    images.fandom_pass_renewed()
+    images.fandom_pass_renewed(DB_PATH, start=False)     # the test's own knock first; a pass that works starts the burst
     try:
         data = images._lane_fetch(images._lane_limiter(images.FANDOM_HOST), images.FANDOM_HOST, DB_PATH)(url)
     except polite.SourceUnavailable as e:
         return {"ok": False, "error": f"Fandom refused the pass — forgotten ({e})" if "(403)" in str(e) else str(e)}
-    return {"ok": True, "detail": f"Fandom accepted the pass ({len(data or b'') // 1024} KB image)"} if data \
-        else {"ok": False, "error": "Fandom answered, but not with an image"}
+    if not data:
+        return {"ok": False, "error": "Fandom answered, but not with an image"}
+    images.fandom_pass_renewed(DB_PATH)
+    return {"ok": True, "detail": f"Fandom accepted the pass ({len(data) // 1024} KB image) — downloading now"}
 
 
 # --- version ---
@@ -775,7 +777,7 @@ def update_config(req: ConfigRequest):
     db.set_config(updates, DB_PATH)
     if "fandom_cf_clearance" in updates:
         from kometa.images import fandom_pass_renewed
-        fandom_pass_renewed()
+        fandom_pass_renewed(DB_PATH)                       # the lane starts now, not at the next tick
     if "locg_cf_clearance" in updates:
         # the Settings field re-verifies on save (POST /api/test/locg) — one knock,
         # and if the pass works the pause lifts right there

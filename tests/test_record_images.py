@@ -174,7 +174,7 @@ class _Lim:
     def spent(self):
         return False
 
-    def get(self, url):
+    def get(self, url, headers=None):
         from kometa import polite
         self.asked.append(url)
         if self.refuse:
@@ -255,3 +255,18 @@ def test_s3s_403_is_a_missing_key_not_a_refusal(monkeypatch):
     assert 403 not in im._lane_limiter("s3.amazonaws.com").refused_statuses
     assert 403 in im._lane_limiter("static.metron.cloud").refused_statuses
     assert polite.REFUSED_STATUSES == (403, 429, 503)
+
+
+def test_a_fandom_burst_takes_its_lane_and_the_tick_stands_aside(db_path, tmp_path, monkeypatch):
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+    monkeypatch.setattr(im, "LANES", {im.FANDOM_HOST: (2, 0, 100)})
+    monkeypatch.setattr(im, "_lane_locks", {})
+    sid = db.add_series(title="X", publisher="P", folder_path=None, on_pull_list=False, path=db_path)
+    for n in range(1, 6):
+        db.upsert_issue_status(sid, float(n), "2020-01-01", 1, metron_image=f"https://{im.FANDOM_HOST}/{n}.jpg", path=db_path)
+    db.set_config({"fandom_cf_clearance": "abc", "fandom_user_agent": "Safari/605"}, db_path)
+    lim = _Lim({f"https://{im.FANDOM_HOST}/{n}.jpg?format=original": b"img" for n in range(1, 6)})
+    monkeypatch.setattr(im, "_lane_limiter", lambda host: lim)
+    with im._lane_lock(im.FANDOM_HOST):
+        assert im.images_lanes(path=db_path, sleep=lambda s: None) == 0          # the burst has it
+    assert im.fandom_burst(db_path, sleep=lambda s: None) >= 5                    # all of it, not the tick's 2
