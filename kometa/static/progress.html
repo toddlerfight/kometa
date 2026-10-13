@@ -85,6 +85,7 @@ async function renderLive() {
   let h;
   try { h = await getJSON('/api/harvest/progress'); } catch { return; }
   const o = h.owned_issues || {}, l = h.locg || {}, m = h.metron || {}, g = h.gcd || {};
+  const f = h.fandom || {}, md = h.marveldc || {};
   const pct = o.owned ? Math.round(100 * (o.catalogue || 0) / o.owned) : 0;
   const locg = l.locg_paused_until ? esc(l.locg_paused_until === 'switched off' ? 'switched off' : 'paused until ' + l.locg_paused_until)
     : (l.locg_pass_live ? `${n(l.locg_sweep_pending)} to go` : 'no pass');
@@ -103,6 +104,9 @@ async function renderLive() {
       ${stat('Metron today', m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`)}
       ${stat('LOCG sweep', locg)}
       ${stat('GCD', `${n(g.linked)} linked · ${n(g.ambiguous)} for you · ${n(g.filled)} issues`)}
+      ${stat('Fandom galleries', `${n(f.galleries)} issues · ${n(f.covers)} covers`)}
+      ${stat('Fandom images', f.download ? `${n(f.downloaded)} downloaded · ${n(f.upgrades)} upgrades` : 'off')}
+      ${stat('Marvel.com', `${n(md.matched)} of ${n(md.asked)} matched · ${n(md.kept)} kept · ${n(md.upgrades)} upgrades`)}
       ${stat('Covers to fetch or upgrade', n(h.images_pending))}
     </div>`;
 }

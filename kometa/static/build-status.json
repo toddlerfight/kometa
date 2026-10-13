@@ -1,6 +1,6 @@
 {
- "updated": "2026-10-13 18:00 AEST",
- "now": "Live: Marvel.com covers overnight; trade ratings on the book sheet; read-local-first built (off). Building: harvest health dot on the Settings badge.",
+ "updated": "2026-10-13 16:10 AEST",
+ "now": "Live: Marvel.com covers overnight; Fandom gallery images downloading; trade ratings on the book sheet; read-local-first built (off). Building: harvest health dot on the Settings badge.",
  "groups": [
   {
    "title": "Komga retirement",
@@ -105,8 +105,8 @@
     {
      "id": "1i-d",
      "label": "Fandom wikis (fullest variant galleries)",
-     "state": "done",
-     "note": "gallery lists saved; image downloads OFF until the covers move (2b/2d)"
+     "state": "running",
+     "note": "gallery lists: 1,161 issues, 2,581 covers (~half the owned Marvel/DC issues checked, rest in ~a day). Image downloads ON since 2026-10-13: ~5,000 images, ~3–4 GB on Catbus; same picture bigger = upgrade, new picture = variant"
     },
     {
      "id": "1i-e",
