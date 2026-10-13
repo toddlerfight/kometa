@@ -271,6 +271,19 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
   single grab's `storage` as the FILE path (not a dir), so finalize scans
   `dirname(storage)` when it's a file.
 
+## Browser passes and source health (2026-10-13)
+
+- **Fandom images** (`static.wikia.nocookie.net`) sit behind a Cloudflare challenge for this IP. Chrome is waved
+  through and never holds a pass; **Safari** is challenged and earns `cf_clearance`. Paste it in Settings → Fandom
+  (or in chat: `PATCH /api/config {"fandom_cf_clearance", "fandom_user_agent": <Safari's exact UA>}` then
+  `POST /api/test/fandom`). A pass lives **30 minutes**; the lane runs at 1/s while one is live, and a 403 forgets it.
+- **LOCG**: same routine, `locg_cf_clearance` + `locg_user_agent`, then `POST /api/test/locg`.
+- **Image downloads** run one lane per host (`kometa/images.py LANES`): own gap, daily cap, an hour's rest on
+  403/429/503. LOCG's S3 bucket says 403 for a missing key, so its lane only rests on 429/503.
+- **Source health** (`kometa/health.py`): every outside request reports ok/refused/error; 5+ failures in a row for
+  30+ min, or nothing working for a day, lights that source's Settings card. Watching logs from the Mac: give
+  `docker logs --since` a UTC time with a trailing `Z` — without it the host reads it as local time.
+
 ## Conventions
 
 - Extract a cohesive cluster, alias-import it back into `main` (`from kometa.x import

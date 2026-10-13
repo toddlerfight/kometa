@@ -33,7 +33,9 @@ TRICKLE_MAX_FAILS = 5
 # bans the house IP at 20 404s in 2 minutes; this never gets near it).
 #   host: (per 10-min tick, seconds between, per day)
 LANES = {
-    "static.wikia.nocookie.net": (120, 1.0, 3000),   # Fandom's CDN
+    # Fandom's CDN: a Safari pass lives 30 minutes (issued 21:16:17, refused 21:46:19), so
+    # while one is live the lane runs flat out at 1/s — ~600 a tick, not 120 a pass-third
+    "static.wikia.nocookie.net": (600, 1.0, 3000),
     "comicvine.gamespot.com":    (120, 1.0, 3000),   # Fandom/GameSpot's CDN
     "s3.amazonaws.com":          (60, 1.5, 1500),    # LOCG's bucket: S3 copes, LOCG pays the egress
     "static.metron.cloud":       (40, 2.0, 2000),    # volunteer project — no faster than before
