@@ -4375,7 +4375,11 @@ async function renderSettings() {
         ${_politeSourceSection('openlibrary', 'Open Library', 'book ratings', cfg)}
         ${_politeSourceSection('cbr', 'ComicBookRoundup', 'critic scores', cfg)}
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
-          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>`)}
+          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>
+          ${_settingsField('f-fandom-cf', 'cf_clearance cookie (images)', '', { set: cfg.fandom_cf_configured, ph: 'Safari → a Fandom image open → Develop → Storage → Cookies', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
+          <div class="settings-help">${cfg.fandom_cf_configured
+            ? `Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.fandom_user_agent))}. Forgotten the moment Fandom refuses it.`
+            : 'From Safari, with a Fandom image open (Chrome never gets one).'}</div>`)}
         <div class="settings-section ${cfg.marveldc_enabled ? '' : 'section-off'}" id="sec-marveldc" style="margin-top:32px">
           ${_settingsSectionHead('Marvel.com / DC.com', 'print covers, overnight', 't-marveldc', cfg.marveldc_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4448,9 +4452,10 @@ const _SETTINGS_FIELDS = {
   'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
   'f-hardcover-token': { card: 'hardcover', key: 'hardcover_token', test: 'hardcover', secret: true },
   'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
+  'f-fandom-cf':       { card: 'fandom',    key: 'fandom_cf_clearance', test: 'fandom', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover' };
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover', fandom: 'fandom' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
@@ -4741,6 +4746,7 @@ async function _settingsChanged(el) {
     body.locg_user_agent = navigator.userAgent;
     if (ua) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
   }
+  if (f.key === 'fandom_cf_clearance') body.fandom_user_agent = navigator.userAgent;   // same rule: the pasting browser
   try {
     const cfg = await api.patch('/api/config', body);
     // Settings autosave changes what the SERVER knows, but every render decision

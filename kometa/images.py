@@ -40,6 +40,9 @@ LANES = {
     "files1.comics.org":         (10, 5.0, 200),     # GCD, volunteer project
 }
 DEFAULT_LANE = (20, 3.0, 500)
+# S3 says 403 (not 404) for a key that isn't in the bucket — one missing LOCG cover
+# rested the whole lane for an hour (2026-10-13 21:19). There, only 429/503 refuse.
+NOT_THERE_403 = {"s3.amazonaws.com"}
 _lane_limiters: dict = {}
 # Fandom's image CDN puts this house's IP behind a Cloudflare challenge (2026-10-13:
 # a 403 'Just a moment…' page for any script, any UA). Chrome is waved through on its
@@ -192,8 +195,11 @@ def fetch_image(key: str, url: str | None, source: str, path=None, root: str | N
         except ValueError:
             pass
     dest = file_for(key, root)
+    from kometa.polite import SourceUnavailable
     try:
         data = (http or _download)(url)
+    except SourceUnavailable:
+        raise                    # the host is resting / refused us: the lane stops, this cover isn't failed
     except Exception as e:
         logger.info(f"Image {key}: fetch failed: {e}")
         data = None
@@ -444,7 +450,8 @@ def _lane_limiter(host: str):
         _, gap, cap = LANES.get(host, DEFAULT_LANE)
         _lane_limiters[host] = polite.Limiter(f"Images {host}", min_interval_s=gap, daily_cap=cap,
                                               refused_pause_s=3600, timeout_s=30,
-                                              user_agent=_img_session.headers["User-Agent"])
+                                              user_agent=_img_session.headers["User-Agent"],
+                                              refused_statuses=(429, 503) if host in NOT_THERE_403 else polite.REFUSED_STATUSES)
     return _lane_limiters[host]
 
 

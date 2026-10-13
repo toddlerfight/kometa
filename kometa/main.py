@@ -427,7 +427,8 @@ def disconnect_integration(integration: str):
     return get_config()
 
 
-_EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at", "locg_impersonate"]}
+_EXTRA_INTEGRATION_KEYS = {"locg": ["locg_cf_clearance", "locg_user_agent", "locg_cf_set_at", "locg_impersonate"],
+                           "fandom": ["fandom_cf_clearance", "fandom_user_agent", "fandom_cf_set_at"]}
 
 
 def _backup_last() -> dict:
@@ -508,6 +509,17 @@ def settings_attention() -> list[dict]:
         waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
         if waiting and not st.get("locg_pass_live"):
             out.append({"card": "locg", "reason": f"{waiting} waiting on a fresh pass"})
+    # Fandom's image CDN only lets a browser's pass through (kometa/images.py FANDOM_HOST):
+    # downloads on, covers waiting, no pass (never pasted, or forgotten after a 403)
+    if on("fandom_enabled") and cfg.get("fandom_download", "0") == "1" and not has("fandom_cf_clearance"):
+        try:
+            from kometa import fandom_covers
+            st = fandom_covers.status(DB_PATH)
+            waiting = max(0, (st.get("covers") or 0) - (st.get("downloaded") or 0))
+        except Exception:
+            waiting = 0
+        if waiting:
+            out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass"})
     if on("prowlarr_enabled"):
         if not has("prowlarr_url", "prowlarr_apikey"):
             out.append({"card": "prowlarr", "reason": "not set up"})
@@ -569,6 +581,31 @@ def test_locg_access():
         return {"ok": False, "error": f"LOCG refused the pass with every handshake ({tried})"}
     r = lc.probe()
     return {"ok": True, "detail": r["detail"]} if r["ok"] else {"ok": False, "error": r["detail"]}
+
+
+@app.post("/api/test/fandom")
+def test_fandom_access():
+    """Settings 'test' for the Fandom card: one gallery image through the lane, with
+    the pass. 200 = the pass works (the lane's rest lifts); 403 = it's forgotten."""
+    from kometa import images, polite
+    cf, ua = images._fandom_pass(DB_PATH)
+    if not (cf and ua):
+        return {"ok": False, "error": "no pass — paste cf_clearance from Safari with a Fandom image open"}
+    url = None
+    with db._connect(DB_PATH) as conn:
+        for (raw,) in conn.execute("""SELECT extra_json FROM issue_record WHERE extra_json LIKE '%"fandom": {%"covers": [{%' LIMIT 1"""):
+            import json as _json
+            covers = ((_json.loads(raw or "{}").get("fandom") or {}).get("covers") or [])
+            url = covers[0].get("url") if covers else None
+    if not url:
+        return {"ok": False, "error": "no gallery listed yet to test with"}
+    images.fandom_pass_renewed()
+    try:
+        data = images._lane_fetch(images._lane_limiter(images.FANDOM_HOST), images.FANDOM_HOST, DB_PATH)(url)
+    except polite.SourceUnavailable as e:
+        return {"ok": False, "error": f"Fandom refused the pass — forgotten ({e})" if "(403)" in str(e) else str(e)}
+    return {"ok": True, "detail": f"Fandom accepted the pass ({len(data or b'') // 1024} KB image)"} if data \
+        else {"ok": False, "error": "Fandom answered, but not with an image"}
 
 
 # --- version ---

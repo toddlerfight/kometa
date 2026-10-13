@@ -99,3 +99,14 @@ def test_no_komga_routes_or_disconnect(wired):
     assert not [p for p in paths if "komga" in p.lower()]
     with pytest.raises(main.HTTPException):
         main.disconnect_integration("komga")
+
+
+def test_fandom_downloads_waiting_with_no_pass_light_the_card(wired, monkeypatch):
+    from kometa import fandom_covers
+    monkeypatch.setattr(fandom_covers, "status", lambda path=None: {"covers": 10, "downloaded": 4})
+    assert "fandom" not in _cards(main.settings_attention())                  # downloads off: nothing to fix
+    db.set_config({"fandom_download": "1"}, wired)
+    item = next(i for i in main.settings_attention() if i["card"] == "fandom")
+    assert item["reason"].startswith("6 gallery images waiting")
+    db.set_config({"fandom_cf_clearance": "abc"}, wired)
+    assert "fandom" not in _cards(main.settings_attention())                  # a pass: quiet again

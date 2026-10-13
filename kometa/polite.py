@@ -54,7 +54,8 @@ class SourceUnavailable(RuntimeError):
 class Limiter:
     def __init__(self, name: str, min_interval_s: float, daily_cap: int, *,
                  refused_pause_s: float = 3 * 3600, unreachable_pause_s: float = 600,
-                 timeout_s: float = 30, user_agent: str = USER_AGENT):
+                 timeout_s: float = 30, user_agent: str = USER_AGENT,
+                 refused_statuses: tuple = REFUSED_STATUSES):
         self.name = name
         self.min_interval_s = min_interval_s
         self.daily_cap = daily_cap
@@ -62,6 +63,7 @@ class Limiter:
         self.unreachable_pause_s = unreachable_pause_s
         self.timeout_s = timeout_s
         self.user_agent = user_agent
+        self.refused_statuses = refused_statuses     # S3 answers 403 for a key that isn't there: not a refusal
         self.sleep = time.sleep
         self._lock = threading.Lock()
         self._state = {"last": 0.0, "day": "", "count": 0, "paused_until": 0.0}
@@ -163,7 +165,7 @@ class Limiter:
             finally:
                 self._state["last"] = time.time()
                 self._save()                        # the count (and any pause set below is saved too)
-            if r.status_code in REFUSED_STATUSES:
+            if r.status_code in self.refused_statuses:
                 try:
                     pause = float(r.headers.get("Retry-After") or self.refused_pause_s)
                 except (TypeError, ValueError, AttributeError):

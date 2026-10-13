@@ -235,3 +235,23 @@ def test_a_403_with_the_pass_forgets_it(db_path, tmp_path, monkeypatch):
     with pytest.raises(polite.SourceUnavailable):
         get(f"https://{im.FANDOM_HOST}/a.jpg")
     assert db.get_config(db_path).get("fandom_cf_clearance") == ""
+
+
+def test_a_resting_host_stops_the_lane_without_failing_the_cover(db_path, tmp_path, monkeypatch):
+    from kometa import polite
+    monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
+
+    def resting(url):
+        raise polite.SourceUnavailable("Images x paused")
+    import pytest
+    with pytest.raises(polite.SourceUnavailable):
+        im.fetch_image(im.issue_key(1, 1.0), "https://h/1.jpg", "locg", db_path, http=resting)
+    assert im.get(im.issue_key(1, 1.0), db_path) is None          # not marked failed for a day
+
+
+def test_s3s_403_is_a_missing_key_not_a_refusal(monkeypatch):
+    from kometa import polite
+    monkeypatch.setattr(im, "_lane_limiters", {})
+    assert 403 not in im._lane_limiter("s3.amazonaws.com").refused_statuses
+    assert 403 in im._lane_limiter("static.metron.cloud").refused_statuses
+    assert polite.REFUSED_STATUSES == (403, 429, 503)
