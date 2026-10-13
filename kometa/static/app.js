@@ -5052,7 +5052,8 @@ async function showIssueModal(seriesId, number, opts = {}) {
         <div class="issue-modal-num">${num}</div>
         <div class="issue-modal-series">${esc(s.title)}</div>
         <div class="issue-modal-meta">${esc([s.publisher, s.year_began].filter(Boolean).join(' · '))}</div>
-        <div style="margin:8px 0">${chipMap[st] || ''}</div>
+        <div style="margin:8px 0">${chipMap[st] || ''}${s && s.run_status
+          ? ` <span class="chip chip-neutral" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : ''}</div>
         ${dateHtml}
         ${hasLocgId ? `
         <div class="issue-modal-tabs" style="margin-top:12px">
