@@ -322,3 +322,28 @@ def test_because_ondeck_rows(db_path, monkeypatch):
     assert all(r["items"] and r["seed"]["supporters"] >= 3 for r in rows)
     monkeypatch.setattr(cp, "DB_PATH", db_path)
     assert [r["seed"]["series_id"] for r in cp.get_because_ondeck()["rows"]] == [sids["saga"], sids["eow"]]
+
+
+def test_a_page_that_always_500s_is_set_aside_after_three_tries(db_path):
+    """2026-10-14: profile user:4644 answered 500 every tick from 05:09 — nothing was
+    marked, so every tick asked for it again and the whole harvest stood still."""
+    _run(db_path, "Alpha", "alpha")
+    page = f"{R}alpha/1"
+
+    def broken(url):
+        raise polite.SourceUnavailable("ComicBookRoundup people answered 500")
+    for _ in range(2):
+        assert cp.tick(db_path, now=NIGHT, get=broken) == 0
+        assert cp.next_job(db_path)[1] == page                       # still the one to ask
+    assert cp.tick(db_path, now=NIGHT, get=broken) == 0
+    assert cp.next_job(db_path) is None or cp.next_job(db_path)[1] != page   # set aside: the harvest moves on
+
+
+def test_a_refusal_never_sets_a_page_aside(db_path):
+    _run(db_path, "Alpha", "alpha")
+
+    def refused(url):
+        raise polite.SourceUnavailable("ComicBookRoundup people refused us (429)")
+    for _ in range(5):
+        cp.tick(db_path, now=NIGHT, get=refused)
+    assert cp.next_job(db_path)[1] == f"{R}alpha/1"                  # their 'slow down', not the page's fault

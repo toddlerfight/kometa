@@ -376,6 +376,9 @@ def _ready(path):
     ensure_tables(path)
 
 
+POISON_TRIES = 3
+
+
 def tick(path=None, now: datetime | None = None, get=None) -> int:
     """Scheduler tick (every minute): outside the night window, switched off,
     resting or spent — nothing, not even a query. Otherwise ONE page.
@@ -396,6 +399,21 @@ def tick(path=None, now: datetime | None = None, get=None) -> int:
     except SourceUnavailable as e:
         with db._connect(path) as conn:
             _set_state(conn, "last_error", f"{_stamp()} {e}")
+            # One page that always 500s (user:4644, 2026-10-14) stopped every tick from
+            # 05:09 on — nothing marked, so the next tick asked for it again. The same
+            # page failing POISON_TRIES times in a row is unreadable; the harvest moves on.
+            key = f"{job[0]}:{job[1]}"
+            if " answered 5" in str(e):
+                n = int(_get_state(conn, "fail_count") or 0) + 1 if _get_state(conn, "fail_job") == key else 1
+                _set_state(conn, "fail_job", key)
+                _set_state(conn, "fail_count", n)
+                if n >= POISON_TRIES:
+                    if job[0] == "issue":
+                        _mark_page(conn, job[1], job[2], job[3], "unreadable", 0)
+                    else:
+                        conn.execute("UPDATE cbr_people SET fetched_at = ?, status = 'unreadable' WHERE person = ?", (_stamp(), job[1]))
+                    _set_state(conn, "fail_count", 0)
+                    logger.info(f"CBR people: {key} failed {n} times in a row — set aside as unreadable")
         logger.info(f"CBR people stopped this tick: {e}")
         return 0
     if r.status_code == 404:
