@@ -17,7 +17,7 @@ set -uo pipefail
 
 DEST="/Volumes/Voot II/Kometa-Backup"
 DB="$HOME/docker/apps/kometa/data/kometa.db"
-COVERS="$HOME/docker/apps/kometa/data/covers/"
+COVERS="/Volumes/Catbus/kometa/covers/"           # on Catbus since 2026-10-13 (bind-mounted to /data/covers)
 DOCKER="$HOME/docker/"
 COMICS_SRC="/Volumes/🧳/Comics/"
 KEEP_DB=14
@@ -72,8 +72,14 @@ mirror() {   # name src dst [extra rsync args...]
 }
 
 # 2. covers and the docker setup (the page cache rebuilds itself; never copy it)
-mirror covers "$COVERS" "$DEST/covers/"
+# Catbus unplugged = skip covers, loudly. Never mirror a missing or empty source with --delete.
+if mount | grep -q " on /Volumes/Catbus " && [ -n "$(ls -A "$COVERS" 2>/dev/null)" ]; then
+  mirror covers "$COVERS" "$DEST/covers/"
+else
+  ok=0; notes+=("covers skipped: Catbus not mounted or covers empty"); say "covers SKIPPED (Catbus not mounted / empty)"
+fi
 mirror docker "$DOCKER" "$DEST/docker/" --exclude "apps/kometa/data/page-cache/" --exclude "apps/kometa/data/covers/" \
+  --exclude "apps/kometa/data/covers.moved-*/" \
   --exclude "*.db-wal" --exclude "*.db-shm" --exclude ".voot-backup.db" --exclude ".DS_Store"
 
 # 3. the comics, from the NAS — the big one; incremental after the first night

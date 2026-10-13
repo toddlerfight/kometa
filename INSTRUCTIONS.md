@@ -338,7 +338,8 @@ Three copies of everything Kometa needs:
 
 - Host: `/Volumes/Catbus/kometa/page-cache` and `/Volumes/Catbus/kometa/cover-cache` → container `/data/page-cache`, `/data/cover-cache` (long-syntax binds in `~/docker/compose.yml`).
 - Both binds set `create_host_path: false`. If Catbus isn't mounted, kometa refuses to start with "bind source path does not exist" rather than Docker creating an empty folder under `/Volumes/Catbus` that squats the mount point. **Never** pre-create anything under `/Volumes`, and never start kometa before Catbus is up. Fix a refused start by mounting Catbus and then `docker compose up -d kometa`.
-- What stays on the internal disk: `kometa.db`, and `covers/`. That's the record's own cover store, kept for good, not regenerable, and mirrored to Voot II nightly.
+- What stays on the internal disk: `kometa.db` only.
+- **The record cover store `data/covers` moved to Catbus too (2026-10-13)**: `/Volumes/Catbus/kometa/covers` → `/data/covers`, same `create_host_path: false` bind. It is NOT regenerable (Marvel.com/PRH/CV originals), so it has three copies: Catbus, Voot II's `covers/` (02:00 — the script checks Catbus is mounted and non-empty before a `--delete` mirror, and skips loudly otherwise) and kometa's own 03:30 NAS backup. The pre-move internal copy sits at `data/covers.moved-20261013` until a backup has passed; then delete it.
 - Both caches rebuild themselves, so if Catbus dies, kometa runs again once the two folders exist on a mounted drive.
 - Speed check: `ops/bench-cache.py` (run in the container, see its docstring). Drop the VM cache first: `docker run --rm --privileged alpine sh -c "sync; echo 3 > /proc/sys/vm/drop_caches"`. The 2026-10-12 before/after results are in `data/bench/`.
 
