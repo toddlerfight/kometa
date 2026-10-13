@@ -19,6 +19,7 @@ from kometa.arcs import (
 from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
 from kometa.version import build_info as _build_info
 import kometa.db as db
+from kometa import runstatus
 from kometa.sources import (
     comics_root as _comics_root, comicvine as _comicvine,
 )
@@ -883,7 +884,7 @@ def get_series(series_id: int):
         i.pop("komga_book_id", None)
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id), **_family_for(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
-                **_summary(issues))
+                run_status=runstatus.compute(s, issues), **_summary(issues))
 
 
 

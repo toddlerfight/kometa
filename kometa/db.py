@@ -378,6 +378,13 @@ def _migrate(path=DB_PATH):
             # Metron's series type (One-Shot / Limited / Trade Paperback / …) —
             # what tells a one-file folder apart from a stub (kometa/singles.py)
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_type TEXT")
+        if "metron_status" not in series_cols:
+            # Metron's run status (Ongoing / Completed / Cancelled / Hiatus) and year
+            # ended, off the same series page metron_type comes from — the series
+            # page's run badge (kometa/runstatus.py). _at = when Metron was last asked
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_status TEXT")
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_year_end INTEGER")
+            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_status_at TEXT")
         if "from_list_id" not in series_cols:
             # the reading list whose 'Get' tracked this run (pull list off): the
             # series page says why it exists, and the Library counts it honestly
@@ -2137,6 +2144,13 @@ def set_metron_link(series_id, outcome, path=DB_PATH):
 def set_metron_type(series_id, series_type, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute("UPDATE tracked_series SET metron_type = ? WHERE id = ?", (series_type or "", series_id))
+
+
+def set_metron_status(series_id, status, year_end, path=DB_PATH):
+    from datetime import datetime, timezone
+    with _connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_status = ?, metron_year_end = ?, metron_status_at = ? WHERE id = ?",
+                     (status or "", year_end, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), series_id))
 
 
 def set_from_list(series_id, list_id, path=DB_PATH):

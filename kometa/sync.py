@@ -140,11 +140,15 @@ def sync_one(series: dict, force: bool = False):
                     if issue_map:
                         from datetime import datetime, timezone
                         db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
-                    if series.get("metron_type") is None:
+                    if series.get("metron_type") is None or series.get("metron_status_at") is None:
                         # once per series: what KIND of run this is (one-shot, limited,
-                        # trade…) — kometa/singles.py reads it to tell a stub from a book
+                        # trade…) — kometa/singles.py reads it to tell a stub from a book —
+                        # and, off the same page, whether it's still running (runstatus.py)
                         try:
-                            db.set_metron_type(series["id"], metron_client.series_detail(mid).get("type"), DB_PATH)
+                            d = metron_client.series_detail(mid)
+                            if series.get("metron_type") is None:
+                                db.set_metron_type(series["id"], d.get("type"), DB_PATH)
+                            db.set_metron_status(series["id"], d.get("status"), d.get("year_end"), DB_PATH)
                         except metron_client.MetronUnavailable:
                             pass
                 except metron_client.MetronUnavailable as e:

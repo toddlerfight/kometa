@@ -212,6 +212,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=3))
     except Exception as e:
         logger.warning(f"Issue-id harvest not scheduled: {e}")
+    # Run status (Ongoing / Completed / …) for the series page's badge: a few
+    # Metron series pages a tick, harvest share only (kometa/harvest.py status_tick).
+    try:
+        from kometa.harvest import status_tick
+        scheduler.add_job(_as_harvest(status_tick), IntervalTrigger(minutes=10), id="harvest_run_status",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=7))
+    except Exception as e:
+        logger.warning(f"Run status harvest not scheduled: {e}")
     # ComicVine's full-size covers: one request per 100 owned issues (kometa/harvest.py, 1f).
     try:
         from kometa.harvest import cv_covers_tick

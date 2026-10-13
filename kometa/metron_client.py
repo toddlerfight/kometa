@@ -364,7 +364,8 @@ def _extra(d: dict) -> dict:
 
 def series_detail(series_id: int) -> dict:
     """The run's own identity — what the tidy step names folders and files after.
-    {title, year, year_end, publisher, issue_count, type}."""
+    {title, year, year_end, publisher, issue_count, type, status}. status is Metron's
+    display name — Ongoing / Completed / Cancelled / Hiatus (Ongoing is its default)."""
     d = _get(f"series/{int(series_id)}/")
     pub = d.get("publisher")
     st = d.get("series_type")
@@ -375,5 +376,6 @@ def series_detail(series_id: int) -> dict:
         "publisher": pub.get("name") if isinstance(pub, dict) else pub,
         "issue_count": d.get("issue_count"),
         "type": st.get("name") if isinstance(st, dict) else st,
+        "status": d.get("status") if isinstance(d.get("status"), str) else None,
     }
 

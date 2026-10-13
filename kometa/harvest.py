@@ -130,6 +130,49 @@ def issue_ids_tick(limit: int = IDS_PER_TICK, path=None, sync=None) -> int:
     return done
 
 
+# --- run status (kometa/runstatus.py): Metron's Ongoing / Completed / … ----------
+STATUS_PER_TICK = 5           # one Metron request each; ~590 linked runs is about a day
+STATUS_RECHECK_DAYS = 30      # a run not yet finished is asked again monthly; a finished one never
+
+
+def status_candidates(path=None, limit: int = STATUS_PER_TICK) -> list[dict]:
+    """Metron-linked runs whose status was never asked, then unfinished ones gone
+    stale. Never asked first, most owned issues first within that."""
+    path = path or DB_PATH
+    from datetime import datetime, timedelta, timezone
+    stale = (datetime.now(timezone.utc) - timedelta(days=STATUS_RECHECK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(path) as conn:
+        ids = [r[0] for r in conn.execute("""
+            SELECT s.id FROM tracked_series s LEFT JOIN issue_status i ON i.tracked_series_id = s.id AND i.owned = 1
+            WHERE s.metron_series_id IS NOT NULL AND (s.kind IS NULL OR s.kind != 'arc')
+              AND (s.metron_status_at IS NULL
+                   OR (COALESCE(s.metron_status, '') NOT IN ('Completed', 'Cancelled') AND s.metron_status_at < ?))
+            GROUP BY s.id ORDER BY s.metron_status_at IS NOT NULL, COUNT(i.number) DESC, s.id LIMIT ?""", (stale, limit))]
+    return [s for s in (db.get_series_by_id(i, path) for i in ids) if s]
+
+
+def status_tick(limit: int = STATUS_PER_TICK, path=None, client=None) -> int:
+    """Scheduler tick (harvest traffic): a few runs' Metron status. Stops at the
+    harvest floor or Metron's first refusal — the one client, the one throttle."""
+    from kometa import metron_client
+    client = client or metron_client
+    path = path or DB_PATH
+    done = 0
+    for s in status_candidates(path, limit):
+        if not client.configured() or client.harvest_share_spent():
+            break
+        try:
+            d = client.series_detail(s["metron_series_id"])
+        except client.MetronUnavailable as e:
+            logger.info(f"Run status harvest paused: {e}")
+            break
+        if s.get("metron_type") is None:
+            db.set_metron_type(s["id"], d.get("type"), path)
+        db.set_metron_status(s["id"], d.get("status"), d.get("year_end"), path)
+        done += 1
+    return done
+
+
 # --- runs that may span more than one Metron series (db.metron_series_ids) -------
 def split_candidates(path=None, min_unmatched: int = 25, min_outside: int = 3) -> dict:
     """Local data only, no catalogue calls. 'outside': matched, but owned issues
