@@ -1,5 +1,6 @@
 """Reader smoke (docs/reader-spec.md step 1): Read button → pages → progress → back."""
 import re
+import time
 
 from playwright.sync_api import expect
 
@@ -27,9 +28,15 @@ def test_read_button_opens_reader_turns_pages_and_saves_progress(app, app_server
     expect(reader.locator("#rd-stage .rd-page")).to_have_attribute("alt", "Page 3")
 
     book_id = int(app.url.split("book=")[1])
-    app.wait_for_function(
-        f"fetch('/api/books/{book_id}').then(r=>r.json()).then(b=>b.progress && b.progress.page===3)",
-        polling=300, timeout=6000)
+    # polled from Python with evaluate (which awaits): wait_for_function never awaits a
+    # Promise, and a Promise is truthy, so the old wait passed with no progress saved at all
+    deadline = time.monotonic() + 6
+    while True:
+        progress = app.evaluate(f"async () => (await (await fetch('/api/books/{book_id}')).json()).progress")
+        if progress and progress.get("page") == 3:
+            break
+        assert time.monotonic() < deadline, f"progress never reached page 3: {progress}"
+        time.sleep(0.3)
 
     app.keyboard.press("Escape")
     expect(reader).to_be_hidden()
