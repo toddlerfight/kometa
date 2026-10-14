@@ -456,6 +456,18 @@ Catbus, checked by the user, and only then swapped onto the NAS.
     `rm -rf /Volumes/Catbus/kometa/retag`. Remove the bind before deleting the folder, so the container never
     holds a deleted mount.
 
+## Long jobs beside Kometa (2026-10-15)
+
+A job started with `docker exec -d kometa …` dies with every `compose restart` (every deploy) and can't be
+killed from inside the container (its own `/proc` doesn't show it; the image has no `pkill`). Run long
+read-only jobs (the library page check, scans) as a sibling container that shares Kometa's volumes instead:
+
+    docker run -d --name libcheck --volumes-from kometa --entrypoint sh docker-kometa \
+      -c "cd /app && nice -n 15 python /data/libcheck.py >> /data/libcheck.log 2>&1"
+
+`--volumes-from` carries `/comics`, `/downloads` and `/data`; `cd /app` (or `PYTHONPATH=/app`) is what makes
+`import kometa` work for a script living in `/data`. One-offs: the same with `--rm` and no `-d`.
+
 ## Accounts and login (2026-10-14)
 
 Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
