@@ -759,14 +759,24 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
 
 @router.get("/api/discover/community")
 def get_community(limit: int = 20):
-    return community(limit=max(1, min(int(limit), 100)))
+    from kometa.community_covers import enrich           # a cover and a way in for each pick
+    r = community(limit=max(1, min(int(limit), 100)))
+    enrich(r.get("items", []), DB_PATH)
+    return r
 
 
 @router.get("/api/discover/community/because")
 def get_because(series_id: int, limit: int = 12):
-    return because(series_id, limit=max(1, min(int(limit), 100)))
+    from kometa.community_covers import enrich
+    r = because(series_id, limit=max(1, min(int(limit), 100)))
+    enrich(r.get("items", []), DB_PATH)
+    return r
 
 
 @router.get("/api/discover/community/because-ondeck")
 def get_because_ondeck(limit: int = 12):
-    return {"rows": because_ondeck(limit=max(1, min(int(limit), 100)))}
+    from kometa.community_covers import enrich
+    rows = because_ondeck(limit=max(1, min(int(limit), 100)))
+    for r in rows:
+        enrich(r.get("items", []), DB_PATH)
+    return {"rows": rows}

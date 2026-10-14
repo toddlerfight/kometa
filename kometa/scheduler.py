@@ -222,6 +222,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=7))
     except Exception as e:
         logger.warning(f"Run status harvest not scheduled: {e}")
+    # Covers for the community picks (kometa/community_covers.py): a few Metron
+    # lookups a tick, harvest share only — only picks that were actually shown.
+    try:
+        from kometa.community_covers import tick as community_covers_tick
+        scheduler.add_job(_as_harvest(community_covers_tick), IntervalTrigger(minutes=10), id="harvest_community_covers",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=5))
+    except Exception as e:
+        logger.warning(f"Community covers not scheduled: {e}")
     # ComicVine's full-size covers: one request per 100 owned issues (kometa/harvest.py, 1f).
     try:
         from kometa.harvest import cv_covers_tick

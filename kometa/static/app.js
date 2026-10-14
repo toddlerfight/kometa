@@ -1193,10 +1193,14 @@ function _readerCard(it) {
   const title = it.year ? `${it.name} (${it.year})` : it.name;
   const sheet = JSON.stringify({ title: it.name, publisher: it.publisher_name || it.publisher || '', year: it.year,
     why: [it.label] }).replace(/"/g, '&quot;');
-  const go = `showCatalogueModal(${sheet})`;
-  return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}" title="${esc(it.label || title)}">
-    <div class="series-card-img-wrap"><div class="series-card-cover rl-nocover"></div>
-      <button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(it.name).replace(/"/g, '&quot;')})">FIND</button></div>
+  // a pick matched to one of YOUR series (kometa/community_covers.py) opens it; the rest open the catalogue sheet
+  const go = it.series_id ? `navigate('series-detail', {id: ${it.series_id}})` : `showCatalogueModal(${sheet})`;
+  const src = !it.cover ? '' : it.cover.startsWith('http') ? `/api/img?u=${encodeURIComponent(it.cover)}` : it.cover;
+  const cover = src ? `<img class="series-card-cover" src="${esc(src)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
+                    : '<div class="series-card-cover rl-nocover"></div>';
+  return `<div class="series-card rel-card${it.owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}" title="${esc(it.label || title)}">
+    <div class="series-card-img-wrap">${cover}
+      ${it.owned ? '' : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(it.name).replace(/"/g, '&quot;')})">FIND</button>`}</div>
     <div class="series-card-footer"><div class="series-card-title">${esc(it.name)}</div>
       <div class="series-card-count" style="color:var(--tq)">${it.supporters}</div></div>
     <div class="series-card-publisher u-truncate">${esc(it.publisher_name || it.publisher || '')}</div>
