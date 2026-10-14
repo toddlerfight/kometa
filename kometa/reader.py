@@ -127,19 +127,19 @@ class _Book:
         853 of them, 61 GB of page cache for books nobody had opened."""
         self.path = path
         self._zip = self._dir = self._rar = self._fh = None
-        # big reads: the share reaches the container over NFS, where every small
-        # read is a round trip — zipfile's default buffering made a file list 15 s
-        # and one page 10 s; 4 MB reads: 0.2 s and 1.6 s. ONE open: the magic is
-        # read off the same handle (it used to open twice, two round trips a page).
-        fh = open(path, "rb", buffering=READ_BUFFER)
-        magic = fh.read(4)
-        fh.seek(0)
+        # The magic comes off a small default-buffered open on purpose: reading it
+        # through the 4 MB handle fills that buffer at offset 0 and again at the
+        # central directory — 8.4 MB off the share per open instead of 4.2 (measured
+        # 2026-10-15). Two opens, one of them 8 KB, is the cheaper shape.
+        with open(path, "rb") as fh:
+            magic = fh.read(4)
         if magic[:2] == b"PK":
-            self._fh = fh
-            self._zip = zipfile.ZipFile(fh)
-            return
-        fh.close()
-        if magic == b"Rar!":
+            # big reads: the share reaches the container over NFS, where every
+            # small read is a round trip — zipfile's default buffering made a file
+            # list 15 s and one page 10 s; 4 MB reads: 0.2 s and 1.6 s
+            self._fh = open(path, "rb", buffering=READ_BUFFER)
+            self._zip = zipfile.ZipFile(self._fh)
+        elif magic == b"Rar!":
             out = _rar_dir(path, version)
             if whole or (os.path.isdir(out) and os.listdir(out)):
                 self._dir = _extract_rar(path, version)
