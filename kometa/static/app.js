@@ -4095,6 +4095,10 @@ function _actActionsHtml(q) {
   if (single && ['pending_usenet', 'pending_torrent', 'downloading', 'not_found', 'failed'].includes(q.state)) {
     btns = `<button class="btn btn-ghost btn-sm" onclick="tryGetComics(${q.id}, this)" title="Cancel the usenet/torrent job and fetch it from GetComics now">GetComics</button>` + btns;
   }
+  // the name guard said no (pages / ComicInfo named another series) and you've checked: it IS this issue
+  if (q.state !== 'done' && /pages are named|ComicInfo says this is/.test(q.error || '')) {
+    btns = `<button class="btn btn-ghost btn-sm" onclick="acceptName(${q.id}, this)" title="The name check turned this release away — accept it as this issue and fetch again">Right file</button>` + btns;
+  }
   return `${_actChip(q.state)}${btns}`;
 }
 
@@ -4103,6 +4107,21 @@ async function tryGetComics(id, btn) {
   btn.textContent = 'Asking…';
   try {
     await api.post(`/api/queue/${id}/try-getcomics`, {});
+    showToast('Cancelled the download — trying GetComics');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'GetComics';
+    showToast('Couldn’t switch to GetComics — ' + (e?.message || e), 'error');
+    return;
+  }
+  _activityPumpUntil = Date.now() + 30000;
+  _activitySig = null;
+  _refreshActivity();
+}
+async function acceptName(id, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Asking…';
+  try {
+    await api.post(`/api/queue/${id}/accept-name`, {});
     showToast('Cancelled the download — trying GetComics');
   } catch (e) {
     btn.disabled = false; btn.textContent = 'GetComics';

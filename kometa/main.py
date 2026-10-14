@@ -1983,6 +1983,26 @@ def try_getcomics(queue_id: int):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/queue/{queue_id}/accept-name", status_code=200)
+def accept_queue_name(queue_id: int):
+    """'It's the right file': the name guard turned a release away (its pages or
+    ComicInfo named another series — a scanner reusing the previous series' template
+    on a sequel), a person checked, and it IS this issue. Trust the name for THIS row
+    only, forget the releases it rejected, and go again. The number, season and
+    page-count guards still apply."""
+    with db._connect(DB_PATH) as conn:
+        row = conn.execute("SELECT id FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such queue item")
+    db.set_queue_meta(queue_id, {"accept_name": True}, path=DB_PATH)
+    with db._connect(DB_PATH) as conn:
+        conn.execute("UPDATE download_queue SET failed_sources = NULL, failed_channels = NULL WHERE id = ?", (queue_id,))
+    db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
+    db.reset_rl_attempts(queue_id, path=DB_PATH)
+    threading.Thread(target=_process_queue, daemon=True).start()
+    return {"ok": True}
+
+
 @app.post("/api/series/{series_id}/search-missing")
 def search_missing(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)

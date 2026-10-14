@@ -938,7 +938,7 @@ def _extract_rar_once(path: str) -> str | None:
 
 def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
                          extracted_dir: str | None = None, page_max: int | None = None,
-                         series_title: str | None = None) -> None:
+                         series_title: str | None = None, trust_name: bool = False) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
@@ -976,8 +976,12 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     # Batman #3 answers "is this issue 3?" perfectly well while being the wrong
     # comic entirely — which is exactly how one landed in the Infinity folder
     # and got the whole series renamed after it in Komga.
+    # trust_name: a person looked and said it's the right comic — the two NAME
+    # guards stand down for this row only (a scanner reused the previous series'
+    # page template on a sequel: Nice House by the Sea #11 paged as 'on the Lake',
+    # 2026-10-15). Number, season and page-count guards never stand down.
     cseries = _comicinfo_series(cxml)
-    if _series_disagrees(series_title, cseries):
+    if not trust_name and _series_disagrees(series_title, cseries):
         raise WrongIssueError(
             f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
     names = _page_names(path, extracted_dir)
@@ -985,7 +989,7 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     # ×53 landed as Die #1: no ComicInfo, the number matched, the title that
     # sold it said 'Die'. The pages never lied.
     pseries = _series_from_page_names(names)
-    if _series_disagrees(series_title, pseries):
+    if not trust_name and _series_disagrees(series_title, pseries):
         raise WrongIssueError(f"the pages are named {pseries!r}, expected {series_title!r}")
     problem = _page_sequence_problem(names) if names else None
     if problem:
@@ -1004,12 +1008,77 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
         raise WrongIssueError(f"{verdict} — not print issue #{int(issue_number)}")
 
 
+# WeTransfer hands a browser a page, not a file: the file comes from its own API
+# once you've asked nicely with the transfer id and the security hash from the
+# URL. GetComics' /dls/ hops land there for some posts (Killadelphia Vol 5, 2026-10-14:
+# the 'comic' that arrived was 31 KB of WeTransfer's HTML). This asks the API the
+# way the page's own JavaScript does and hands back the direct link.
+_WETRANSFER_RE = re.compile(r"https?://(?:www\.)?wetransfer\.com/downloads/([0-9a-f]+)/(?:([0-9a-f]+)/)?([0-9a-f]+)")
+
+
+def _final_hop(url: str, hops: int = 6) -> str:
+    """Follow redirects WITHOUT fetching a body (a /dls/ hop may end at a 500 MB
+    file): the last Location, or the URL itself."""
+    for _ in range(hops):
+        try:
+            r = requests.get(url, stream=True, timeout=60, headers=HEADERS, allow_redirects=False)
+            loc = r.headers.get("location")
+            r.close()
+        except requests.RequestException:
+            return url
+        if not loc or r.status_code not in (301, 302, 303, 307, 308):
+            return url
+        url = loc if "://" in loc else requests.compat.urljoin(url, loc)
+    return url
+
+
+def _resolve_wetransfer(page_url: str, session=None) -> str | None:
+    """The direct download link for a wetransfer.com/downloads/… URL, or None."""
+    m = _WETRANSFER_RE.match(page_url)
+    if not m:
+        return None
+    tid, recipient, sec = m.groups()
+    s = session or requests.Session()
+    s.headers.update(HEADERS)
+    page = s.get(page_url, timeout=60)
+    csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', page.text or "")
+    body = {"security_hash": sec, "intent": "entire_transfer"}
+    if recipient:
+        body["recipient_id"] = recipient
+    r = s.post(f"https://wetransfer.com/api/v4/transfers/{tid}/download", json=body, timeout=60,
+               headers={"X-Requested-With": "XMLHttpRequest", "X-CSRF-Token": csrf.group(1) if csrf else ""})
+    try:
+        link = r.json().get("direct_link")
+    except Exception:
+        link = None
+    if link:
+        logger.info("WeTransfer: resolved a transfer to its direct link")
+    return link
+
+
+_PIXELDRAIN_PAGE_RE = re.compile(r"https?://pixeldrain\.com/u/([A-Za-z0-9]+)")
+
+
+def _unwrap_hosted(url: str) -> str:
+    """A URL that lands on a hosting page gets swapped for the file behind it:
+    WeTransfer through its API, a Pixeldrain page through its file endpoint."""
+    hosted = ("getcomics.org/dls/", "wetransfer.com", "we.tl/", "pixeldrain.com/u/")
+    final = _final_hop(url) if any(h in url for h in hosted) else url
+    if "wetransfer.com/downloads/" in final:
+        return _resolve_wetransfer(final) or url
+    m = _PIXELDRAIN_PAGE_RE.match(final)
+    if m:
+        return f"https://pixeldrain.com/api/file/{m.group(1)}?download"
+    return url
+
+
 def _get_with_retries(url: str, label: str):
     """Streamed GET with the 3-attempt backoff both download paths use. Returns
     a live response the caller MUST close (use `with`). Connection/timeout woes
     retry; an HTTP error status raises immediately — after closing the response,
     because a leaked socket on the failure path is how you run out of file
     descriptors at 3am."""
+    url = _unwrap_hosted(url)
     last_exc = None
     for attempt in range(3):
         if attempt:
@@ -1105,6 +1174,7 @@ def download_issue(
     db_path: str | None = None,
     page_max: int | None = None,
     on_bytes_done=None,
+    trust_name: bool = False,
 ) -> str:
     """
     Download from url, place in library.
@@ -1213,7 +1283,7 @@ def download_issue(
             # The wrapper skipped the single-issue checks; the member doesn't.
             try:
                 _verify_single_issue(target, issue_number, os.path.basename(target),
-                                     page_max=page_max, series_title=title)
+                                     page_max=page_max, series_title=title, trust_name=trust_name)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(target)
                 raise
@@ -1225,7 +1295,7 @@ def download_issue(
             # reject the same bad content. Clean up the staging file on rejection.
             try:
                 _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
-                                     page_max=page_max, series_title=title)
+                                     page_max=page_max, series_title=title, trust_name=trust_name)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(staging_path)
                 raise

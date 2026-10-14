@@ -683,3 +683,68 @@ class TestOnlyComicsGetPlaced:
                 zf.writestr(f"{i:03d}.jpg", b"\xff\xd8 jpeg-ish" * 200)
         placed, dest, _ = self._go(tmp_path, monkeypatch, buf.getvalue())
         assert [os.path.basename(p) for p in placed] == ["Killadelphia Vol 05.cbz"]
+
+
+def test_trust_name_stands_down_only_the_name_guards(tmp_path):
+    """Nice House by the Sea #11 arrived with every page named 'The Nice House on
+    the Lake' (the scanner's template from the previous series). The guard rightly
+    refuses; a person who checked can say 'right file' — and the number guard still bites."""
+    import io, zipfile
+    def cbz(name, pages):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for p in pages:
+                zf.writestr(p, b"\xff\xd8\xff\xe0 jpeg-ish")
+        (tmp_path / name).write_bytes(buf.getvalue())
+        return str(tmp_path / name)
+    pages = [f"The Nice House on the Lake 011 (2026)-{i:03d}.jpg" for i in range(6)]
+    f = cbz("The Nice House by the Sea 011 (2026).cbz", pages)
+    with pytest.raises(WrongIssueError, match="pages are named"):
+        _verify_single_issue(f, 11.0, "The Nice House by the Sea 011 (2026).cbz", series_title="The Nice House by the Sea")
+    _verify_single_issue(f, 11.0, "The Nice House by the Sea 011 (2026).cbz", series_title="The Nice House by the Sea", trust_name=True)
+    with pytest.raises(WrongIssueError, match="file is #12"):
+        _verify_single_issue(f, 11.0, "The Nice House by the Sea #012.cbz", series_title="The Nice House by the Sea", trust_name=True)
+
+
+def test_wetransfer_page_resolves_to_its_direct_link(monkeypatch):
+    """GetComics' /dls/ hop landed on wetransfer.com; the 'comic' that arrived was
+    31 KB of HTML. The page's own API, asked the way its JavaScript asks, hands
+    over the file (Killadelphia Vol 5, 2026-10-14)."""
+    from kometa import downloader as dl
+    calls = {}
+    class R:
+        def __init__(self, text="", j=None): self.text, self._j = text, j
+        def json(self): return self._j
+    class S:
+        headers = {}
+        def get(self, url, **kw): calls["get"] = url; return R('<meta name="csrf-token" content="tok123">')
+        def post(self, url, json=None, headers=None, **kw):
+            calls["post"] = (url, json, headers); return R(j={"direct_link": "https://dl.wetransfer.com/file/abc.cbz"})
+    link = dl._resolve_wetransfer("https://wetransfer.com/downloads/3241ff06b18ca926978877fd2a24677320240218013425/da10c1", session=S())
+    assert link == "https://dl.wetransfer.com/file/abc.cbz"
+    url, body, hdrs = calls["post"]
+    assert url == "https://wetransfer.com/api/v4/transfers/3241ff06b18ca926978877fd2a24677320240218013425/download"
+    assert body == {"security_hash": "da10c1", "intent": "entire_transfer"} and hdrs["X-CSRF-Token"] == "tok123"
+    assert dl._resolve_wetransfer("https://example.com/not-wetransfer") is None
+    # a hop that lands anywhere else is left alone
+    monkeypatch.setattr(dl, "_final_hop", lambda u, hops=6: "https://files.example.com/comic.cbz")
+    assert dl._unwrap_hosted("https://getcomics.org/dls/xyz") == "https://getcomics.org/dls/xyz"
+
+
+def test_pixeldrain_button_goes_first_and_the_main_host_becomes_its_mirror(monkeypatch):
+    from kometa.getcomics_client import GetComicsClient
+    gc = GetComicsClient()
+    main = "https://getcomics.org/dls/MAIN"
+    gc._mirrors[main] = ["https://getcomics.org/dls/PIX", "https://getcomics.org/dls/MF"]
+    monkeypatch.setattr(gc, "mirror_urls", lambda h: ["https://pixeldrain.com/api/file/abc12?download", "https://download.mediafire.com/x.cbz"])
+    pick = gc._prefer_pixeldrain(main)
+    assert pick == "https://pixeldrain.com/api/file/abc12?download"
+    assert gc._mirrors[pick][0] == main            # the main host is now the fallback
+    monkeypatch.setattr(gc, "mirror_urls", lambda h: ["https://download.mediafire.com/x.cbz"])
+    assert gc._prefer_pixeldrain(main) == main     # no Pixeldrain: unchanged
+
+
+def test_a_pixeldrain_page_link_unwraps_to_its_file(monkeypatch):
+    from kometa import downloader as dl
+    monkeypatch.setattr(dl, "_final_hop", lambda u, hops=6: "https://pixeldrain.com/u/Zq9kL")
+    assert dl._unwrap_hosted("https://getcomics.org/dls/abc") == "https://pixeldrain.com/api/file/Zq9kL?download"

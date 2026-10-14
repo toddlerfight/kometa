@@ -423,6 +423,18 @@ class GetComicsClient:
                   if a.get_text(strip=True).lower() in wanted]
         self._mirrors[primary] = [h for _, h in sorted(picked, key=lambda x: x[0])]
 
+    def _prefer_pixeldrain(self, href: str) -> str:
+        """A post with a Pixeldrain button: take THAT first (a direct API, no Cloudflare
+        wall, no page to scrape; the house finds it faster and more reliable than the
+        main host — 2026-10-15). The main link becomes this pick's mirror, so a dead
+        Pixeldrain still falls back to it."""
+        for m in self.mirror_urls(href):
+            if "pixeldrain.com/api/file/" in m:
+                self._mirrors[m] = [href] + [x for x in self._mirrors.get(href, []) if x != m]
+                logger.info("GetComics: Pixeldrain first, main host as the mirror")
+                return m
+        return href
+
     def _get(self, url, **kw):
         """Every GetComics request goes through here: cooldown gate first,
         polite spacing second, and a real 429 arms the gate for everyone."""
@@ -754,7 +766,7 @@ class GetComicsClient:
                                     break
                                 group.append(g)
                         self._remember_mirrors(href, group)
-                        return href, None
+                        return self._prefer_pixeldrain(href), None
 
         # Strategy 2: any aio-button-center on the page with direct-download text
         for btn_wrap in body.find_all("div", {"class": "aio-button-center"}):
@@ -771,7 +783,7 @@ class GetComicsClient:
                 # MediaFire is a single group with two mirrors — keep them.
                 if len(self._mirrors[href]) > 2:
                     self._mirrors[href] = []
-                return href, None
+                return self._prefer_pixeldrain(href), None
 
         # Strategy 3: any link ending in a comic file extension
         for a in body.find_all("a", href=True):
