@@ -140,3 +140,29 @@ def test_page_two_is_not_asked_when_page_one_has_it(monkeypatch):
     monkeypatch.setattr(c, "_get", get)
     assert c._search_page("Deadpool #8 (2023)", "Deadpool", 8.0, 2023) == "https://getcomics.org/p/8"
     assert asked == ["https://getcomics.org"]
+
+
+# --- HD first -------------------------------------------------------------------
+
+def _two_group_post(first, second):
+    return f"""<section class="post-contents">
+      <p>Deadpool #8 ({first}) Language : English</p>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/{first}">DOWNLOAD NOW</a></div>
+      <hr/>
+      <p>Deadpool #8 ({second}) Language : English</p>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/{second}">Download Now</a></div>
+      <hr/></section>"""
+
+
+@pytest.mark.parametrize("first,second,want", [
+    ("SD-Digital", "HD-Digital", "HD-Digital"),
+    ("HD-Digital", "SD-Digital", "HD-Digital"),
+    ("HD-Upscaled", "SD-Digital", "SD-Digital"),
+    ("Digital", "Digital-Empire", "Digital"),
+])
+def test_hd_group_wins(monkeypatch, first, second, want):
+    c = gc.GetComicsClient()
+    monkeypatch.setattr(c, "_get", lambda url, **k: Resp(200, body=_two_group_post(first, second).encode()))
+    monkeypatch.setattr(c, "_prefer_pixeldrain", lambda href: href)
+    href, _ = c._extract_download("https://getcomics.org/marvel/deadpool-8-2023/")
+    assert href == f"https://getcomics.org/dls/{want}"

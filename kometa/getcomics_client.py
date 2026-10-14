@@ -44,6 +44,20 @@ def _mirror_kind(label: str) -> int | None:
     return None
 
 
+def _quality_rank(group_label: str) -> int:
+    """A download group's scan quality, lower is better: true HD, then a group
+    that doesn't say, then SD, then 'HD-Upscaled' (an SD scan blown up: bigger
+    file, no more detail, sometimes smeared)."""
+    t = group_label.upper()
+    if "UPSCALE" in t:
+        return 3
+    if re.search(r"\bHD\b", t):
+        return 0
+    if re.search(r"\bSD\b", t):
+        return 2
+    return 1
+
+
 def mediafire_direct(page_url: str) -> str | None:
     """MediaFire's file page carries a plain direct link on its download
     button — no account, no API. (2026-10-08: Deadly Duo #7 and the Hellboy
@@ -796,10 +810,12 @@ class GetComicsClient:
                 logger.info(f"GetComics: chunk #{hit[0]}-{hit[1]} for #{issue_number:g} {hit[2][:80]}")
                 return hit[2], None
 
-        # Strategy 1: find download groups — <p> containing "Language" marks a group
-        for p in body.find_all("p"):
-            if "Language" not in p.get_text():
-                continue
+        # Strategy 1: find download groups — <p> containing "Language" marks a group.
+        # HD first: posts carry an HD and an SD group side by side, and we took
+        # whichever came first. Stable sort, so a post with no labels keeps its order.
+        groups = [p for p in body.find_all("p") if "Language" in p.get_text()]
+        groups.sort(key=lambda p: _quality_rank(p.get_text(" ", strip=True)))
+        for p in groups:
             for sibling in p.next_siblings:
                 if not isinstance(sibling, Tag):
                     continue
