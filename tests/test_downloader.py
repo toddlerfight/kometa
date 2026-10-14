@@ -685,10 +685,9 @@ class TestOnlyComicsGetPlaced:
         assert [os.path.basename(p) for p in placed] == ["Killadelphia Vol 05.cbz"]
 
 
-def test_trust_name_stands_down_only_the_name_guards(tmp_path):
+def test_pages_named_for_another_series_are_refused(tmp_path):
     """Nice House by the Sea #11 arrived with every page named 'The Nice House on
-    the Lake' (the scanner's template from the previous series). The guard rightly
-    refuses; a person who checked can say 'right file' — and the number guard still bites."""
+    the Lake' (the scanner's template from the previous series). The guard refuses."""
     import io, zipfile
     def cbz(name, pages):
         buf = io.BytesIO()
@@ -701,9 +700,6 @@ def test_trust_name_stands_down_only_the_name_guards(tmp_path):
     f = cbz("The Nice House by the Sea 011 (2026).cbz", pages)
     with pytest.raises(WrongIssueError, match="pages are named"):
         _verify_single_issue(f, 11.0, "The Nice House by the Sea 011 (2026).cbz", series_title="The Nice House by the Sea")
-    _verify_single_issue(f, 11.0, "The Nice House by the Sea 011 (2026).cbz", series_title="The Nice House by the Sea", trust_name=True)
-    with pytest.raises(WrongIssueError, match="file is #12"):
-        _verify_single_issue(f, 11.0, "The Nice House by the Sea #012.cbz", series_title="The Nice House by the Sea", trust_name=True)
 
 
 def test_wetransfer_page_resolves_to_its_direct_link(monkeypatch):

@@ -1362,10 +1362,6 @@ select.settings-input {
 .nav-signout { margin-top: auto; opacity: .6; cursor: pointer; }
 .nav-signout:hover { opacity: 1; }
 .nav-signout[hidden] { display: none; }
-.act-link { display: inline-flex; gap: 6px; align-items: center; }
-.act-link-input { width: 180px; background: var(--su2); border: 1px solid var(--bd); color: var(--tp);
-  border-radius: var(--r-sm); padding: 4px 8px; font: inherit; font-size: var(--fs-label); }
-.act-link-input:focus { outline: none; border-color: var(--pri); }
 .acct-pw { color: var(--tp); font-weight: inherit; user-select: all; }   /* one tap selects the whole password */
 .acct-add { display: flex; align-items: center; gap: var(--sp-md); margin-top: 16px; }
 .acct-add .settings-input { flex: 1; }

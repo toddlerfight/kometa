@@ -421,14 +421,9 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
     Raises DuplicateIssueError up to the shared queue-loop handler unchanged
     (6h-park, not a 'try another source' case)."""
     set_search_status(qid, "GetComics…")
-    pinned = _pinned_url(item)
-    if pinned:
-        set_search_status(qid, "GetComics: your link…")
-        dl_url, hint_filename = pinned, None
-    else:
-        dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
-                                          status_fn=lambda s, qid=qid: set_search_status(qid, s),
-                                          exclude_urls=_failed_sources(item))
+    dl_url, hint_filename = gc.search(item["title"], item["issue_number"], store_date, series_year=item.get("year_began"),
+                                      status_fn=lambda s, qid=qid: set_search_status(qid, s),
+                                      exclude_urls=_failed_sources(item))
     if not dl_url:
         return False, None
 
@@ -464,7 +459,6 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
             db_path=DB_PATH,
             page_max=item.get("page_max"),
             on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
-            trust_name=_trust_name(item),
         )
 
     try:
@@ -950,25 +944,6 @@ def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
     db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
 
 
-def _pinned_url(item: dict) -> str | None:
-    """A link you handed the row (POST /api/queue/{id}/use-link): used instead of a
-    search, once — a rejected pinned link joins failed_sources like any other."""
-    try:
-        u = json.loads(item.get("meta_json") or "{}").get("pinned_url")
-    except Exception:
-        return None
-    return u if u and u not in _failed_sources(item) else None
-
-
-def _trust_name(item: dict) -> bool:
-    """The row's 'it's the right file' flag (POST /api/queue/{id}/accept-name): the
-    verifier's name guards stand down for this row; everything else still applies."""
-    try:
-        return bool(json.loads(item.get("meta_json") or "{}").get("accept_name"))
-    except Exception:
-        return False
-
-
 def try_getcomics_now(qid: int, background: bool = True) -> dict:
     """Activity's 'Try GetComics': you know it's there, usenet/torrent are sulking.
     Cancel whatever SAB/qBit job the row holds, then run the GetComics path for
@@ -1280,7 +1255,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         try:
             _verify_single_issue(target, issue_number, os.path.basename(target),
                                  extracted_dir=rar_dir, page_max=item.get("page_max"),
-                                 series_title=title, trust_name=_trust_name(item))
+                                 series_title=title)
         except IncompleteIssueError as e:
             # Right comic, holes in it. Unlike a wrong issue there's nothing to
             # learn about the ROW — only about this release — so burn the release,

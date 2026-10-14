@@ -938,7 +938,7 @@ def _extract_rar_once(path: str) -> str | None:
 
 def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
                          extracted_dir: str | None = None, page_max: int | None = None,
-                         series_title: str | None = None, trust_name: bool = False) -> None:
+                         series_title: str | None = None) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
@@ -976,12 +976,8 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     # Batman #3 answers "is this issue 3?" perfectly well while being the wrong
     # comic entirely — which is exactly how one landed in the Infinity folder
     # and got the whole series renamed after it in Komga.
-    # trust_name: a person looked and said it's the right comic — the two NAME
-    # guards stand down for this row only (a scanner reused the previous series'
-    # page template on a sequel: Nice House by the Sea #11 paged as 'on the Lake',
-    # 2026-10-15). Number, season and page-count guards never stand down.
     cseries = _comicinfo_series(cxml)
-    if not trust_name and _series_disagrees(series_title, cseries):
+    if _series_disagrees(series_title, cseries):
         raise WrongIssueError(
             f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
     names = _page_names(path, extracted_dir)
@@ -989,7 +985,7 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     # ×53 landed as Die #1: no ComicInfo, the number matched, the title that
     # sold it said 'Die'. The pages never lied.
     pseries = _series_from_page_names(names)
-    if not trust_name and _series_disagrees(series_title, pseries):
+    if _series_disagrees(series_title, pseries):
         raise WrongIssueError(f"the pages are named {pseries!r}, expected {series_title!r}")
     problem = _page_sequence_problem(names) if names else None
     if problem:
@@ -1174,7 +1170,6 @@ def download_issue(
     db_path: str | None = None,
     page_max: int | None = None,
     on_bytes_done=None,
-    trust_name: bool = False,
 ) -> str:
     """
     Download from url, place in library.
@@ -1283,7 +1278,7 @@ def download_issue(
             # The wrapper skipped the single-issue checks; the member doesn't.
             try:
                 _verify_single_issue(target, issue_number, os.path.basename(target),
-                                     page_max=page_max, series_title=title, trust_name=trust_name)
+                                     page_max=page_max, series_title=title)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(target)
                 raise
@@ -1295,7 +1290,7 @@ def download_issue(
             # reject the same bad content. Clean up the staging file on rejection.
             try:
                 _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
-                                     page_max=page_max, series_title=title, trust_name=trust_name)
+                                     page_max=page_max, series_title=title)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(staging_path)
                 raise
