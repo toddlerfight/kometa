@@ -4095,6 +4095,12 @@ function _actActionsHtml(q) {
   if (single && ['pending_usenet', 'pending_torrent', 'downloading', 'not_found', 'failed'].includes(q.state)) {
     btns = `<button class="btn btn-ghost btn-sm" onclick="tryGetComics(${q.id}, this)" title="Cancel the usenet/torrent job and fetch it from GetComics now">GetComics</button>` + btns;
   }
+  // you found the release yourself: paste the GetComics post (or a file link) and go
+  if (!['done', 'downloading', 'processing'].includes(q.state)) {
+    btns = `<span class="act-link"><input class="act-link-input" placeholder="paste a GetComics link" spellcheck="false"
+      onkeydown="if (event.key === 'Enter') useLink(${q.id}, this)">
+      <button class="btn btn-ghost btn-sm" onclick="useLink(${q.id}, this.previousElementSibling)">Use link</button></span>` + btns;
+  }
   // the name guard said no (pages / ComicInfo named another series) and you've checked: it IS this issue
   if (q.state !== 'done' && /pages are named|ComicInfo says this is/.test(q.error || '')) {
     btns = `<button class="btn btn-ghost btn-sm" onclick="acceptName(${q.id}, this)" title="The name check turned this release away — accept it as this issue and fetch again">Right file</button>` + btns;
@@ -4116,6 +4122,21 @@ async function tryGetComics(id, btn) {
   _activityPumpUntil = Date.now() + 30000;
   _activitySig = null;
   _refreshActivity();
+}
+async function useLink(id, input) {
+  const url = (input.value || '').trim();
+  if (!url) { input.focus(); return; }
+  input.disabled = true;
+  try {
+    await api.post(`/api/queue/${id}/use-link`, { url });
+    showToast('Fetching from your link', 'ok');
+    _activityPumpUntil = Date.now() + 30000;   // poll while the search runs (reference_activity_poll_parks)
+    _activitySig = null;
+    _refreshActivity();
+  } catch (e) {
+    showToast(e.message === '400' ? 'No download link on that page' : 'That didn’t take', 'error');
+    input.disabled = false;
+  }
 }
 async function acceptName(id, btn) {
   btn.disabled = true;

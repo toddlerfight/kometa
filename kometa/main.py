@@ -2003,6 +2003,41 @@ def accept_queue_name(queue_id: int):
     return {"ok": True}
 
 
+class UseLinkRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/queue/{queue_id}/use-link", status_code=200)
+def use_queue_link(queue_id: int, req: UseLinkRequest):
+    """'Use this link': you found the release yourself (a GetComics post, or a file
+    link on any host). A GetComics post is resolved to its download link here; a
+    trade row pins it as its pack, an issue row as its pinned link; the rejected
+    releases are forgotten and the row goes again. Everything else is as before —
+    the name/number/page guards and the hosted-page unwrapping (WeTransfer, Pixeldrain)."""
+    url = (req.url or "").strip()
+    if not url.startswith("http"):
+        raise HTTPException(400, "That isn't a link")
+    with db._connect(DB_PATH) as conn:
+        row = conn.execute("SELECT id, kind, issue_number FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such queue item")
+    resolved = url
+    if "getcomics.org/" in url and "/dls/" not in url:
+        from kometa.getcomics_client import GetComicsClient
+        num = row["issue_number"] if row["kind"] != "trade" else None
+        dl, _hint = GetComicsClient()._extract_download(url, issue_number=num if num not in (None, -1) else None)
+        if not dl:
+            raise HTTPException(400, "No download link on that page")
+        resolved = dl
+    db.set_queue_meta(queue_id, {"pack_url": resolved} if row["kind"] == "trade" else {"pinned_url": resolved}, path=DB_PATH)
+    with db._connect(DB_PATH) as conn:
+        conn.execute("UPDATE download_queue SET failed_sources = NULL, failed_channels = NULL WHERE id = ?", (queue_id,))
+    db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
+    db.reset_rl_attempts(queue_id, path=DB_PATH)
+    threading.Thread(target=_process_queue, daemon=True).start()
+    return {"ok": True, "resolved": resolved[:120]}
+
+
 @app.post("/api/series/{series_id}/search-missing")
 def search_missing(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)

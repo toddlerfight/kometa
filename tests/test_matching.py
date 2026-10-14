@@ -415,8 +415,9 @@ class TestGetComicsMirrorCapture:
     def test_pixeldrain_mirror_resolved_to_file_api(self, monkeypatch):
         gc = self._client(monkeypatch, {"https://getcomics.org/dls/PD": "https://pixeldrain.com/u/rs9cYYi5"})
         href, _ = gc._extract_download("https://getcomics.org/post")
-        assert href == "https://getcomics.org/dls/MAIN"
-        assert gc.mirror_urls(href) == ["https://pixeldrain.com/api/file/rs9cYYi5?download"]
+        # Pixeldrain goes FIRST (2026-10-15); the main host becomes its fallback
+        assert href == "https://pixeldrain.com/api/file/rs9cYYi5?download"
+        assert gc._mirrors[href][0] == "https://getcomics.org/dls/MAIN"
 
     def test_non_pixeldrain_redirect_yields_nothing(self, monkeypatch):
         gc = self._client(monkeypatch, {"https://getcomics.org/dls/PD": "https://getcomics.org"})
