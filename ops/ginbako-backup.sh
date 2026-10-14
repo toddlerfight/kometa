@@ -60,10 +60,16 @@ else
   rm -f "$TMPDB"
 fi
 
+# GNU rsync (Homebrew), never /usr/bin/rsync: since macOS 15 that's Apple's openrsync,
+# which with --backup silently skips --delete. A file gone from the library stayed on
+# Voot II forever and nothing landed in deleted/ (731 stale .cbr after the 2026-10-14
+# re-tag). No GNU rsync = the mirror refuses, loudly — a stale mirror looks just like a good one.
+RSYNC=/opt/homebrew/bin/rsync
 mirror() {   # name src dst [extra rsync args...]
   local name=$1 src=$2 dst=$3; shift 3
   local rc=0
-  /usr/bin/rsync -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" "$@" "$src" "$dst" >> "$LOG" 2>&1 || rc=$?
+  if [ ! -x "$RSYNC" ]; then ok=0; notes+=("$name: no GNU rsync at $RSYNC (brew install rsync)"); say "$name SKIPPED (no GNU rsync)"; return; fi
+  "$RSYNC" -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" "$@" "$src" "$dst" >> "$LOG" 2>&1 || rc=$?
   if [ $rc = 0 ]; then
     say "$name ok"
   else   # read rc, not $? — by the time the note was built, ok=0 had already reset it to 0
