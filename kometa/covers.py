@@ -139,10 +139,30 @@ def generate_for_book(book: dict, path=None, root: str | None = None) -> str | N
         key = file_key(sid, n)
         if cover_for_file(key, book["path"], path, root, note=f"book:{book['id']}"):
             _series_file_cover(sid, float(n), path, root)
+            _record_page_count(book, path)
             return key
         return None
     key = book_key(book["id"])
-    return key if cover_for_file(key, book["path"], path, root) else None
+    if cover_for_file(key, book["path"], path, root):
+        _record_page_count(book, path)
+        return key
+    return None
+
+
+def _record_page_count(book: dict, path) -> None:
+    """The archive's directory is in the OS cache right after the cover was
+    made: count the pages now so OPDS never has to open the file inside a feed."""
+    if book.get("page_count") or not book.get("id"):
+        return
+    try:
+        from kometa import reader
+        n = reader.count_pages(book["path"], reader._version(os.path.getsize(book["path"]), os.path.getmtime(book["path"])))
+    except Exception as e:
+        logger.info(f"Page count for book {book['id']} skipped: {e}")
+        return
+    if n:
+        with db._connect(path) as conn:
+            conn.execute("UPDATE books SET page_count = ? WHERE id = ? AND (page_count IS NULL OR page_count = 0)", (n, book["id"]))
 
 
 def generate_for_path(file_path: str, series_id: int | None = None, path=None, root: str | None = None) -> str | None:

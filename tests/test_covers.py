@@ -150,3 +150,11 @@ def test_a_cover_cut_off_halfway_is_refused_but_a_few_missing_bytes_are_fine(tmp
     assert rd.get_cover_bytes(comic("short.cbz", jpeg[:-4]))           # five bytes short: still a cover
     with pytest.raises(rd.TruncatedCover):
         rd.get_cover_bytes(comic("half.cbz", jpeg[: len(jpeg) // 3]))   # stops a third of the way down
+
+
+def test_making_a_cover_records_the_page_count_for_opds(store, tmp_path):
+    sid, books = _owned(store, tmp_path, numbers=(1,))
+    with db._connect(store) as c:
+        c.execute("UPDATE books SET page_count = NULL")
+    cv.generate_for_book(db.get_book(books[0]["id"], store), store)
+    assert db.get_book(books[0]["id"], store)["page_count"] == 2

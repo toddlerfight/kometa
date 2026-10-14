@@ -20,7 +20,10 @@ def a(db_path, monkeypatch):
     auth._seen.clear()
     auth._basic_seen.clear()
     monkeypatch.setattr(auth, "FAIL_PAUSE", 0)                    # the failed-login pause
+    monkeypatch.setattr(auth, "_ENABLED_TTL", 0)                  # the switch bites at once in tests
     auth._fails.clear()
+    auth._last_used.clear()
+    auth.forget_enabled()
     return db_path
 
 
@@ -415,3 +418,29 @@ def test_every_response_carries_the_hardening_headers(a, monkeypatch):
     assert r.headers["x-frame-options"] == "DENY"
     assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
     assert r.headers["referrer-policy"] == "same-origin"
+
+
+# --- the gate's DB work stays off the event loop -----------------------------------------------------
+def test_the_switch_is_remembered_for_a_moment(a, monkeypatch):
+    monkeypatch.setattr(auth, "_ENABLED_TTL", 60)
+    auth.forget_enabled()
+    assert auth.enabled() is False
+    db.set_config({"auth_enabled": "1"}, a)
+    assert auth.enabled() is False                                  # cached
+    auth.forget_enabled()
+    assert auth.enabled() is True
+
+
+def test_last_used_is_written_by_the_flusher_not_the_request(a):
+    auth.create_user("marcus", ADMIN_PW, "admin", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    tok = c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}).json()["token"]
+    assert c.get("/api/ondeck", headers={"authorization": f"Bearer {tok}"}).status_code == 200
+    with db._connect(a) as conn:
+        assert conn.execute("SELECT last_used FROM auth_tokens").fetchone()[0] is None
+    assert auth._last_used
+    assert auth.flush_last_used(a) == 1
+    with db._connect(a) as conn:
+        assert conn.execute("SELECT last_used FROM auth_tokens").fetchone()[0]
+    assert auth.flush_last_used(a) == 0

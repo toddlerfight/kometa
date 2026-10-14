@@ -254,6 +254,38 @@ def revoke_all(user_id: str, path=None) -> None:
 _seen: dict[str, float] = {}
 _seen_lock = threading.Lock()
 _TOKEN_TTL = 60
+# token_id -> last-used stamp, written in ONE transaction a minute by the flusher.
+# The write used to happen inside the request, on the event loop: when a background
+# job held SQLite's writer (a shelf scan, a sync), every request in the app waited.
+_last_used: dict[int, str] = {}
+_flusher_started = False
+
+
+def flush_last_used(path=None) -> int:
+    with _seen_lock:
+        pending = dict(_last_used)
+        _last_used.clear()
+    if not pending:
+        return 0
+    with db._connect(path or DB_PATH) as conn:
+        conn.executemany("UPDATE auth_tokens SET last_used = ? WHERE id = ?", [(ts, tid) for tid, ts in pending.items()])
+    return len(pending)
+
+
+def _ensure_flusher() -> None:
+    global _flusher_started
+    if _flusher_started:
+        return
+    _flusher_started = True
+
+    def loop():
+        while True:
+            time.sleep(_TOKEN_TTL)
+            try:
+                flush_last_used()
+            except Exception as e:
+                logger.info(f"auth: last_used flush failed: {e}")
+    threading.Thread(target=loop, daemon=True, name="auth-last-used").start()
 
 
 def user_for_token(token: str, path=None) -> dict | None:
@@ -272,7 +304,9 @@ def user_for_token(token: str, path=None) -> dict | None:
             if stale:
                 _seen[h] = now
         if stale:
-            conn.execute("UPDATE auth_tokens SET last_used = ? WHERE id = ?", (_now(), r["token_id"]))
+            with _seen_lock:
+                _last_used[r["token_id"]] = _now()
+            _ensure_flusher()
     return dict(r)
 
 
@@ -303,15 +337,28 @@ def _user_for_basic(header: str, path=None) -> dict | None:
     return u
 
 
+_ENABLED_TTL = 2.0
+_enabled_cache = {"ts": 0.0, "val": False}
+
+
 def enabled(path=None) -> bool:
-    """Read straight from the DB, NOT the config cache: the
-    switch is flipped by the CLI — another process — and the app's cached config
-    never heard about it. 2026-10-14: `enable on` printed 1 and every anonymous
-    request still walked in. `enable off` is the locked-out door, so it must bite live too.
-    One indexed read a request; SQLite on local disk doesn't notice."""
+    """Read from the DB, NOT the config cache: the switch is flipped by the CLI —
+    another process — and the app's cached config never heard about it. 2026-10-14:
+    `enable on` printed 1 and every anonymous request still walked in. Remembered
+    for two seconds only, so the gate isn't a DB read on every cached page."""
+    now = time.monotonic()
+    if path is None and now - _enabled_cache["ts"] < _ENABLED_TTL:
+        return _enabled_cache["val"]
     with db._connect(path or DB_PATH) as conn:
         r = conn.execute("SELECT value FROM config WHERE key = 'auth_enabled'").fetchone()
-    return bool(r) and r[0] == "1"
+    val = bool(r) and r[0] == "1"
+    if path is None:
+        _enabled_cache.update(ts=now, val=val)
+    return val
+
+
+def forget_enabled() -> None:
+    _enabled_cache["ts"] = 0.0
 
 
 # --- who may call what ------------------------------------------------------------------------------
@@ -375,18 +422,18 @@ class AuthGate:
             # the web app? No. It gets a green コメタ and a closed door; the web app is home or
             # tailnet only. And with login off, the tunnel carries nothing at all.
             path = scope.get("path", "")
-            if not enabled():
+            if not await self._enabled():
                 return await self.plain(send, 503, FRONT_PAGE)
             if not _app_path(path):
                 return await self.plain(send, 200 if path in ("/", "/index.html") else 404, FRONT_PAGE)
-        if not enabled():
+        if not await self._enabled():
             tok = _CURRENT.set(None)                       # the owner, admin — the old world
             try:
                 return await self.app(scope, receive, send)
             finally:
                 _CURRENT.reset(tok)
         method, path = scope["method"], scope.get("path", "")
-        user = self.identify(scope)
+        user = await run_in_threadpool(self.identify, scope)    # a DB read: never on the event loop
         tok = _CURRENT.set(user or ANONYMOUS)                  # never the admin by default once this is on
         try:
             if user is None and not _is_open(method, path):
@@ -396,6 +443,12 @@ class AuthGate:
             return await self.app(scope, receive, send)
         finally:
             _CURRENT.reset(tok)
+
+    @staticmethod
+    async def _enabled() -> bool:
+        if time.monotonic() - _enabled_cache["ts"] < _ENABLED_TTL:
+            return _enabled_cache["val"]
+        return await run_in_threadpool(enabled)
 
     @staticmethod
     def identify(scope) -> dict | None:

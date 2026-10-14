@@ -127,15 +127,19 @@ class _Book:
         853 of them, 61 GB of page cache for books nobody had opened."""
         self.path = path
         self._zip = self._dir = self._rar = self._fh = None
-        with open(path, "rb") as fh:
-            magic = fh.read(4)
+        # big reads: the share reaches the container over NFS, where every small
+        # read is a round trip — zipfile's default buffering made a file list 15 s
+        # and one page 10 s; 4 MB reads: 0.2 s and 1.6 s. ONE open: the magic is
+        # read off the same handle (it used to open twice, two round trips a page).
+        fh = open(path, "rb", buffering=READ_BUFFER)
+        magic = fh.read(4)
+        fh.seek(0)
         if magic[:2] == b"PK":
-            # big reads: the share reaches the container through OrbStack, where
-            # every small read is a slow round trip — zipfile's default buffering
-            # made a file list 15 s and one page 10 s; 4 MB reads: 0.2 s and 1.6 s
-            self._fh = open(path, "rb", buffering=READ_BUFFER)
-            self._zip = zipfile.ZipFile(self._fh)
-        elif magic == b"Rar!":
+            self._fh = fh
+            self._zip = zipfile.ZipFile(fh)
+            return
+        fh.close()
+        if magic == b"Rar!":
             out = _rar_dir(path, version)
             if whole or (os.path.isdir(out) and os.listdir(out)):
                 self._dir = _extract_rar(path, version)
@@ -144,6 +148,12 @@ class _Book:
                 self._rar = rarfile.RarFile(path)
         else:
             raise ValueError("not a zip or rar archive")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def names(self) -> list[str]:
         if self._zip:
@@ -195,6 +205,12 @@ def _scan_pages(path: str, version: str, dims: bool = True) -> list[list]:
         return pages
     finally:
         bk.close()
+
+
+def count_pages(path: str, version: str) -> int:
+    """How many pages the archive holds, from its directory alone (a CBR isn't unpacked)."""
+    with _Book(path, version, whole=False) as bk:
+        return len(bk.names())
 
 
 _dims_pool = None
@@ -264,21 +280,38 @@ def _bucket(w: int | None) -> int:
     return WIDTH_BUCKETS[-1]
 
 
-def _render(book: dict, index: int, width: int) -> bytes:
+def _draft(im, width: int) -> None:
+    """Let libjpeg decode at 1/2, 1/4 or 1/8 scale when the page is at least
+    twice the bucket: the DCT does the shrinking for free and LANCZOS below only
+    has a 2x image left to polish. A 480 cover from a 2000-px page: 28 ms → 6 ms.
+    Only JPEG has this; PNG/WebP pages decode in full as before."""
+    if im.format == "JPEG" and im.width >= 2 * width:
+        im.draft(im.mode if im.mode == "L" else "RGB", (width, max(1, round(im.height * width / im.width))))
+
+
+def _encode(im, width: int) -> bytes:
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    if im.width > width:
+        im = im.resize((width, max(1, round(im.height * width / im.width))), Image.LANCZOS)
+    buf = io.BytesIO()
+    # optimize=True keeps the ~14% size win; progressive=True on top of it cost
+    # 2x the encode time for nothing a reader can see (measured 18 ms vs 9 ms a page)
+    im.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
+
+
+def _render_from(bk: "_Book", book: dict, index: int, width: int) -> bytes:
     name = book["pages"][index][0]
-    bk = _Book(book["path"], _version(book["size"], book["mtime"]))
-    try:
-        with bk.open(name) as fh, Image.open(fh) as im:
-            im.load()
-            if im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
-            if im.width > width:
-                im = im.resize((width, max(1, round(im.height * width / im.width))), Image.LANCZOS)
-            buf = io.BytesIO()
-            im.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
-            return buf.getvalue()
-    finally:
-        bk.close()
+    with bk.open(name) as fh, Image.open(fh) as im:
+        _draft(im, width)
+        im.load()
+        return _encode(im, width)
+
+
+def _render(book: dict, index: int, width: int) -> bytes:
+    with _Book(book["path"], _version(book["size"], book["mtime"])) as bk:
+        return _render_from(bk, book, index, width)
 
 
 def _page_cache_path(book: dict, index: int, width: int) -> str:
@@ -322,29 +355,113 @@ def trim_cache() -> None:
     _evict_if_needed()
 
 
-def get_page_bytes(book: dict, index: int, width: int) -> bytes:
-    global _renders_since_evict
-    cp = _page_cache_path(book, index, width)
+# A page turn is up to six requests at once (the page, the preloads either side);
+# each used to open the archive, read its directory and throw away a 4 MB read
+# buffer that already held the NEXT pages — 4.2 MB off the share for a 0.3 MB page,
+# six times over. Now one cache miss opens the book once, serves the page, and a
+# helper thread keeps that same open book to render the next RENDER_AHEAD pages
+# into the cache. The preload requests find their page in flight and WAIT for it
+# instead of opening the file again.
+RENDER_AHEAD = 4
+_inflight: dict[tuple, threading.Event] = {}
+_inflight_lock = threading.Lock()
+
+
+def _page_key(book: dict, index: int, width: int) -> tuple:
+    return (book["id"], _version(book["size"], book["mtime"]), index, width)
+
+
+def _read_cached(book: dict, cp: str) -> bytes | None:
     try:
         with open(cp, "rb") as fh:
             data = fh.read()
-        try:
-            os.utime(os.path.join(PAGE_CACHE_DIR, str(book["id"])))
-        except OSError:
-            pass
-        return data
+    except OSError:
+        return None
+    try:
+        os.utime(os.path.join(PAGE_CACHE_DIR, str(book["id"])))
     except OSError:
         pass
-    data = _render(book, index, width)
+    return data
+
+
+def _write_cached(cp: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(cp), exist_ok=True)
     tmp = cp + f".{threading.get_ident()}.tmp"
     with open(tmp, "wb") as fh:
         fh.write(data)
     os.replace(tmp, cp)
+
+
+def _count_render() -> None:
+    global _renders_since_evict
     _renders_since_evict += 1
     if _renders_since_evict >= _EVICT_EVERY:
         _renders_since_evict = 0
         threading.Thread(target=_evict_if_needed, daemon=True).start()
+
+
+def _finish(key: tuple, ev: threading.Event) -> None:
+    with _inflight_lock:
+        if _inflight.get(key) is ev:
+            del _inflight[key]
+    ev.set()
+
+
+def _render_ahead(bk: "_Book", book: dict, width: int, claims: list[tuple[int, tuple, threading.Event]]) -> None:
+    try:
+        for index, key, ev in claims:
+            try:
+                _write_cached(_page_cache_path(book, index, width), _render_from(bk, book, index, width))
+                _count_render()
+            except Exception as e:
+                logger.info(f"Reader: render-ahead of page {index + 1} of book {book['id']} failed: {e}")
+            finally:
+                _finish(key, ev)
+    finally:
+        bk.close()
+
+
+def get_page_bytes(book: dict, index: int, width: int) -> bytes:
+    cp = _page_cache_path(book, index, width)
+    data = _read_cached(book, cp)
+    if data is not None:
+        return data
+    key = _page_key(book, index, width)
+    with _inflight_lock:
+        ev = _inflight.get(key)
+    if ev is not None:                      # a render-ahead, or a twin request, is on it: wait, don't reopen
+        ev.wait(120)
+        data = _read_cached(book, cp)
+        if data is not None:
+            return data
+    ev = threading.Event()                  # ours now, whatever happened before
+    with _inflight_lock:
+        _inflight[key] = ev
+    bk = None
+    try:
+        bk = _Book(book["path"], _version(book["size"], book["mtime"]))
+        data = _render_from(bk, book, index, width)
+        _write_cached(cp, data)
+        _count_render()
+    except BaseException:
+        if bk is not None:
+            bk.close()
+        raise
+    finally:
+        _finish(key, ev)
+    total = len(book.get("pages") or [])
+    claims = []
+    with _inflight_lock:
+        for i in range(index + 1, min(total, index + 1 + RENDER_AHEAD)):
+            k = _page_key(book, i, width)
+            if k in _inflight or os.path.exists(_page_cache_path(book, i, width)):
+                continue
+            e = _inflight[k] = threading.Event()
+            claims.append((i, k, e))
+    if claims:
+        threading.Thread(target=_render_ahead, args=(bk, book, width, claims), daemon=True, name="page-ahead").start()
+    else:
+        bk.close()
     return data
 
 
@@ -406,17 +523,12 @@ def get_cover_bytes(path: str) -> bytes:
             # a cut-off file (no end-of-image marker) gets its grey bottom measured.
             # (This used to flip Pillow's process-wide LOAD_TRUNCATED_IMAGES off and
             # on around a strict load — racing every other thread decoding pages.)
+            _draft(im, COVER_WIDTH)
             im.load()
             cut_off = raw[:2] == b"\xff\xd8" and b"\xff\xd9" not in raw[-2048:]
             if cut_off and _grey_bottom_fraction(im) > 0.2:
                 raise TruncatedCover(path)
-            if im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
-            if im.width > COVER_WIDTH:
-                im = im.resize((COVER_WIDTH, max(1, round(im.height * COVER_WIDTH / im.width))), Image.LANCZOS)
-            buf = io.BytesIO()
-            im.save(buf, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
-            data = buf.getvalue()
+            data = _encode(im, COVER_WIDTH)
     finally:
         bk.close()
     os.makedirs(os.path.dirname(cp), exist_ok=True)

@@ -158,3 +158,77 @@ def test_a_cut_short_first_page_is_not_served_as_the_cover(tmp_path, db_path, mo
     assert len(rd.get_cover_bytes(str(tmp_path / "good.cbz"))) > 100
     from PIL import ImageFile
     assert ImageFile.LOAD_TRUNCATED_IMAGES is True                       # the reader's leniency restored
+
+
+class TestRenderAhead:
+    """One cache miss opens the archive once and renders the next pages from that
+    same open book; a request for a page already in flight waits instead of reopening."""
+
+    def _book(self, shelf):
+        b = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        return db.get_book(b["id"], shelf[0])
+
+    @staticmethod
+    def _count_opens(monkeypatch):
+        opens = []
+        real = rd._Book
+
+        class Counting(real):
+            def __init__(self, *a, **k):
+                opens.append(1)
+                super().__init__(*a, **k)
+        monkeypatch.setattr(rd, "_Book", Counting)
+        return opens
+
+    @staticmethod
+    def _join_ahead():
+        import threading
+        for t in threading.enumerate():
+            if t.name == "page-ahead":
+                t.join(30)
+
+    def test_one_open_serves_the_page_and_fills_the_next_four(self, shelf, monkeypatch):
+        book = self._book(shelf)
+        opens = self._count_opens(monkeypatch)
+        rd._inflight.clear()
+        data = rd.get_page_bytes(book, 0, 1080)
+        self._join_ahead()
+        with Image.open(io.BytesIO(data)) as im:
+            assert im.size[0] == 1080
+        cached = [i for i in range(10) if __import__("os").path.exists(rd._page_cache_path(book, i, 1080))]
+        assert cached == [0, 1, 2, 3, 4]
+        assert sum(opens) == 1
+        assert not rd._inflight
+
+    def test_a_page_in_flight_is_waited_for_not_reopened(self, shelf, monkeypatch):
+        import threading
+        book = self._book(shelf)
+        opens = self._count_opens(monkeypatch)
+        key = rd._page_key(book, 3, 1080)
+        ev = threading.Event()
+        rd._inflight[key] = ev
+        got = []
+        t = threading.Thread(target=lambda: got.append(rd.get_page_bytes(book, 3, 1080)))
+        t.start()
+        t.join(0.3)
+        assert t.is_alive() and not got                              # waiting on the render in flight
+        rd._write_cached(rd._page_cache_path(book, 3, 1080), b"rendered-elsewhere")
+        rd._finish(key, ev)
+        t.join(5)
+        assert got == [b"rendered-elsewhere"] and sum(opens) == 0
+
+    def test_pages_are_baseline_jpegs_decoded_at_draft_scale(self, shelf, monkeypatch):
+        book = self._book(shelf)
+        rd._inflight.clear()
+        from PIL import JpegImagePlugin
+        drafts = []
+        real = JpegImagePlugin.JpegImageFile.draft                   # the JPEG plugin overrides Image.draft
+        monkeypatch.setattr(JpegImagePlugin.JpegImageFile, "draft", lambda im, mode, size: (drafts.append(size), real(im, mode, size))[1])
+        data = rd._render(book, 0, 480)                               # 1600-wide source, 480 bucket
+        self._join_ahead()
+        with Image.open(io.BytesIO(data)) as im:
+            assert im.size[0] == 480 and not im.info.get("progressive")
+        assert drafts and drafts[0][0] == 480
+        drafts.clear()
+        rd._render(book, 0, 1080)                                     # 1600 < 2 x 1080: no draft, full decode
+        assert not drafts

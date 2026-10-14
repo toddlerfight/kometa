@@ -10,12 +10,14 @@ pipeline. pse:lastRead reports what the web reader knows; PSE page fetches
 do NOT write progress yet — that's the next, separate decision.
 """
 import logging
+import contextvars
 import os
 import re
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
 from fastapi import APIRouter, HTTPException, Response
+from starlette.background import BackgroundTask
 from fastapi.responses import FileResponse
 
 import kometa.db as db
@@ -64,6 +66,14 @@ def _nav_entry(eid: str, title: str, href: str, summary: str = "", kind: str = A
             + (f'<content type="text">{escape(summary)}</content>' if summary else '') + '</entry>')
 
 
+# Page counts learned while a feed is being built, written in ONE transaction at
+# the end of it (a 100-book series used to be 100 commits, each waiting on
+# whatever background job held the writer). The covers trickle now records the
+# count for every new book as it makes the cover, so this path is for books the
+# shelf knew before 2026-10-15 and nobody has opened.
+_COUNTS_PENDING: contextvars.ContextVar[list | None] = contextvars.ContextVar("opds_counts", default=None)
+
+
 def _page_count(b: dict, path) -> int:
     """The reader fills page_count the first time a book is opened; almost every
     book on a fresh shelf hasn't been. PSE needs a count up front, so an
@@ -76,9 +86,19 @@ def _page_count(b: dict, path) -> int:
     n = sum(1 for x in names if x.lower().endswith(_IMAGE_EXTS)
             and not x.startswith("__MACOSX") and not os.path.basename(x).startswith("."))
     if n:
-        with db._connect(path) as conn:
-            conn.execute("UPDATE books SET page_count = ? WHERE id = ? AND (page_count IS NULL OR page_count = 0)", (n, b["id"]))
+        pending = _COUNTS_PENDING.get()
+        if pending is not None:
+            pending.append((n, b["id"]))
+        else:
+            _write_counts([(n, b["id"])], path)
     return n
+
+
+def _write_counts(rows: list[tuple[int, int]], path) -> None:
+    if not rows:
+        return
+    with db._connect(path) as conn:
+        conn.executemany("UPDATE books SET page_count = ? WHERE id = ? AND (page_count IS NULL OR page_count = 0)", rows)
 
 
 def _label(b: dict) -> str:
@@ -145,8 +165,15 @@ def _books_sql(path, where: str, params: tuple, order: str, limit: int | None = 
 
 def _entries(books: list[dict], path) -> list[str]:
     prog = _progress_for([b["id"] for b in books], path)
-    return [book_entry(b, b.get("series_title") or _YEAR.sub("", os.path.basename(os.path.dirname(b["path"]))),
-                       prog.get(b["id"]), path) for b in books]
+    pending: list[tuple[int, int]] = []
+    tok = _COUNTS_PENDING.set(pending)
+    try:
+        out = [book_entry(b, b.get("series_title") or _YEAR.sub("", os.path.basename(os.path.dirname(b["path"]))),
+                          prog.get(b["id"]), path) for b in books]
+    finally:
+        _COUNTS_PENDING.reset(tok)
+    _write_counts(pending, path)
+    return out
 
 
 # --- feeds ------------------------------------------------------------------------
@@ -443,8 +470,14 @@ async def api_page(book_id: int, page: int, maxWidth: int | None = None):
         except Exception as e:
             logger.warning(f"OPDS: page {page} of book {book_id} failed: {e}")
             raise HTTPException(422, "This page can't be rendered")
+    # the bytes go out first; the progress write (a DB commit that may wait on a
+    # background writer) follows in a background task on the threadpool
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"},
+                    background=BackgroundTask(_note_quietly, book, page))
+
+
+def _note_quietly(book: dict, page: int) -> None:
     try:
-        await run_in_threadpool(note_page_read, book, page)
+        note_page_read(book, page)
     except Exception as e:
-        logger.info(f"OPDS: progress for book {book_id} not saved: {e}")
-    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+        logger.info(f"OPDS: progress for book {book['id']} not saved: {e}")
