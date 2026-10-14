@@ -7,6 +7,14 @@ let _issueModalPollTimer = null;
 // feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
 const STAGGER_MS = 40;
 
+// Out in the last 7 days, today included (local dates, 'YYYY-MM-DD…').
+function _thisWeek(d) {
+  if (!d) return false;
+  const iso = t => { const x = new Date(t); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  const day = String(d).slice(0, 10), now = Date.now();
+  return day <= iso(now) && day >= iso(now - 6 * 86400000);
+}
+
 // Signed out (accounts on, the session gone): back to / — which is the sign-in page now.
 function _signedOut(r) { if (r.status === 401) location.replace('/'); }
 
@@ -782,7 +790,7 @@ function _renderBrowseResults(quiet = false) {
     if (q && !s.title.toLowerCase().includes(q) && !(s.kind !== 'shelf' && why[s.id])) return false;
     // Pull list = what you're pulling that has something still to come, like the
     // Pull list section — not every pulled run whether or not anything's out
-    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && s.next_upcoming)) return false;
+    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && (s.next_upcoming || _thisWeek(s.calendar_date)))) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
     // folded under its run — unless you searched, or asked for what you're pulling:
@@ -820,7 +828,9 @@ function _renderBrowseResults(quiet = false) {
   // the date a card shows and sorts by: the calendar (this week's release, else the
   // next) — except on the Pull list, where it's the NEXT issue still to come: a
   // series that came out last Wednesday and has #25 next month is next month's
-  const dateOf = s => toggles.pulling ? s.next_upcoming : s.calendar_date;
+  // ...unless it came out THIS week: the issue that just landed is the one you go
+  // looking for, so it stays this week's until next Wednesday (2026-10-14)
+  const dateOf = s => toggles.pulling ? (_thisWeek(s.calendar_date) ? s.calendar_date : s.next_upcoming) : s.calendar_date;
   browseState._dateOf = dateOf;
   const latest = (list, f) => list.reduce((m, x) => { const v = f(x); return v && (!m || v > m) ? v : m; }, null);
   const soonest = list => list.reduce((m, x) => x.calendar_date && (!m || x.calendar_date < m) ? x.calendar_date : m, null);
