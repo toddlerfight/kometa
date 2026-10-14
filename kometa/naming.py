@@ -301,7 +301,7 @@ def scan_folder_volume_entries(folder_path: str) -> list[tuple[int, str]]:
 
 # Words that mark a DIFFERENT collected edition of the same volume number — an
 # "Absolute Vol. 1" is not a "Vol. 1 TP", no matter what the vol digit says.
-_EDITION_WORDS = ("absolute", "omnibus", "deluxe", "compendium")
+_EDITION_WORDS = ("absolute", "omnibus", "deluxe", "compendium", "premiere")   # Premiere HC ≠ the TPB of the same vol
 
 
 def edition_keywords(name: str) -> frozenset:

@@ -188,6 +188,11 @@ class TestEditionKeywords:
     def test_omnibus_and_deluxe_detected(self):
         assert naming.edition_keywords("Saga Deluxe Omnibus Vol 2") == {"deluxe", "omnibus"}
 
+    def test_premiere_is_its_own_edition(self):
+        # a Premiere HC collects two TPBs: 'Black Science Premiere Vol 01' must not claim 'Black Science Vol. 1 TPB'
+        assert naming.edition_keywords("Black Science Premiere Vol 01.cbz") == {"premiere"}
+        assert naming.edition_keywords("Black Science Vol. 1 TPB") == frozenset()
+
     def test_volume_entries_carry_names(self, tmp_path):
         (tmp_path / "Transmetropolitan v01 - Back On the Street.cbz").write_bytes(b"x")
         (tmp_path / "Absolute Transmetropolitan v01.cbz").write_bytes(b"x")

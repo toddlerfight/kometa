@@ -745,6 +745,8 @@ def fill_trades(series, force: bool = False, path=None, search=None, issues=None
     from kometa import locg_client
     trades: list[dict] = []
     metron_out: Exception | None = None
+    locg_out: Exception | None = None
+    locg_closed = False
     if series.get("metron_series_id"):
         try:
             trades = _metron_trades(series, search=search, issues=issues, detail=detail)
@@ -758,6 +760,7 @@ def fill_trades(series, force: bool = False, path=None, search=None, issues=None
     if locg_id:
         is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
         if not is_open:
+            locg_closed = True
             from kometa import topup
             topup.enqueue("trades", str(series["id"]), path)
         if is_open:
@@ -768,10 +771,19 @@ def fill_trades(series, force: bool = False, path=None, search=None, issues=None
                 fetch = locg_fetch or (lambda lid: _sync.select_editions(_sync.get_trades_anon(lid)))
                 trades = _merge_locg(trades, fetch(locg_id))
             except Exception as e:
+                locg_out = e
                 logger.info(f"Trades: LOCG skipped for {series.get('title')!r}: {e}")
     if metron_out is not None and not trades:
         raise metron_out
     stand_in = metron_out is not None          # LOCG's list only: Metron's half is still owed
+    # A refetch that came back thinner than what's held — empty, or shorter while a
+    # source was paused or refusing — keeps the cached list. 2026-10-15: a forced refresh
+    # with LOCG's pass expired wrote [] over a 3-trade list and 1 over a 13-trade one.
+    held = (db.get_trades(series["id"], path) or {}).get("trades") or []
+    thinner = len(trades) < len(held) and (metron_out is not None or locg_out is not None or locg_closed)
+    if held and (not trades or thinner):
+        logger.info(f"Trades: kept the cached {len(held)} for {series.get('title')!r} — the refetch gave {len(trades)}")
+        return held
     if not trades and not force:
         cached = db.get_trades(series["id"], path)
         if cached and cached["trades"]:
