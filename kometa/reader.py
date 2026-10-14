@@ -470,6 +470,8 @@ def _book_or_404(book_id: int) -> dict:
     book = db.get_book(book_id, DB_PATH)
     if not book:
         raise HTTPException(404, "No such book")
+    if book.get("missing_at"):
+        raise HTTPException(404, "File is gone from the shelf")      # never touch the share for it
     return book
 
 

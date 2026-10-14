@@ -69,7 +69,7 @@ def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
     with db._connect(path) as conn:
         rows = conn.execute("""
             SELECT b.*, p.page, p.updated_at FROM read_progress p JOIN books b ON b.id = p.book_id
-            WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ?
+            WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ? AND b.missing_at IS NULL
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
         return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
 
@@ -79,6 +79,7 @@ def _series_groups(conn, reader_id):
     rows = conn.execute("""
         SELECT b.*, p.completed, p.updated_at, p.page FROM books b
         LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+        WHERE b.missing_at IS NULL
         ORDER BY b.number IS NULL, b.number, b.path""", (reader_id,)).fetchall()
     groups: dict[tuple, list] = {}
     for r in rows:
@@ -177,7 +178,7 @@ def recent_added(reader_id=None, path=None) -> list[dict]:
         rows = conn.execute("""
             SELECT b.*, p.completed FROM books b
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-            WHERE COALESCE(p.completed, 0) = 0
+            WHERE COALESCE(p.completed, 0) = 0 AND b.missing_at IS NULL
             ORDER BY b.mtime DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
         return _one_per_series(conn, rows, mtime="mtime")
 
@@ -192,7 +193,7 @@ def recent_released(reader_id=None, path=None) -> list[dict]:
             SELECT b.*, i.store_date, p.completed FROM issue_status i
             JOIN books b ON b.tracked_series_id = i.tracked_series_id AND b.number = i.number
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-            WHERE i.owned = 1 AND i.store_date IS NOT NULL AND COALESCE(p.completed, 0) = 0
+            WHERE i.owned = 1 AND i.store_date IS NOT NULL AND COALESCE(p.completed, 0) = 0 AND b.missing_at IS NULL
             ORDER BY i.store_date DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
         return _one_per_series(conn, rows, store_date="store_date")
 
@@ -316,7 +317,7 @@ def quick_reads(reader_id=None, path=None, seen: set | None = None) -> list[dict
             for b in conn.execute(f"""
                 SELECT b.*, p.updated_at FROM books b
                 LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-                WHERE b.tracked_series_id IN ({",".join("?" * len(chunk))}) AND b.number IS NOT NULL
+                WHERE b.tracked_series_id IN ({",".join("?" * len(chunk))}) AND b.number IS NOT NULL AND b.missing_at IS NULL
                 ORDER BY b.number, b.path""", (reader_id, *chunk)):
                 by_run.setdefault(b["tracked_series_id"], []).append(b)
         for r in runs:

@@ -396,6 +396,10 @@ def _migrate(path=DB_PATH):
         book_cols = [r[1] for r in conn.execute("PRAGMA table_info(books)")]
         if book_cols and "shelf_series_id" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN shelf_series_id INTEGER")
+        if book_cols and "missing_at" not in book_cols:
+            # a READ book whose folder vanished is kept for its history (a parked or
+            # renamed folder comes back) — but flagged, so nothing offers it or opens it
+            conn.execute("ALTER TABLE books ADD COLUMN missing_at TEXT")
         rp_cols = [r[1] for r in conn.execute("PRAGMA table_info(read_progress)")]
         if "dismissed" not in rp_cols:
             # On Deck 'not now': hidden from Continue reading, place kept; any
@@ -1964,7 +1968,8 @@ def index_books(rows, path=DB_PATH):
                 size = excluded.size, mtime = excluded.mtime,
                 number = COALESCE(excluded.number, books.number),
                 shelf_series_id = excluded.shelf_series_id,
-                tracked_series_id = COALESCE(excluded.tracked_series_id, books.tracked_series_id)
+                tracked_series_id = COALESCE(excluded.tracked_series_id, books.tracked_series_id),
+                missing_at = NULL
         """, rows)
 
 
@@ -2005,6 +2010,12 @@ def forget_missing_books(shelf_series_id, present_paths, path=DB_PATH, keep_read
             # its history is still there (a parked or renamed folder)
             marks = ",".join("?" * len(ids))
             read = {r[0] for r in conn.execute(f"SELECT DISTINCT book_id FROM read_progress WHERE book_id IN ({marks})", ids)}
+            if read:
+                # kept, but flagged: On Deck and the reader skip it. 2026-10-15 a kept
+                # ghost (Batman Beyond #38, its folder deleted) sat on On Deck, and
+                # 'remove' opened the vanished file over NFS and hung the whole box
+                rm = ",".join("?" * len(read))
+                conn.execute(f"UPDATE books SET missing_at = COALESCE(missing_at, datetime('now')) WHERE id IN ({rm})", list(read))
             ids = [i for i in ids if i not in read]
         if ids:
             _forget_book_ids(conn, ids)

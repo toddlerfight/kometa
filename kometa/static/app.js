@@ -5805,3 +5805,18 @@ async function _setBookMark(bookId, patch, row) {
     if (row) row.outerHTML = _markRowHtml({ id: bookId, ...r });
   } catch { showToast('Couldn’t save that', 'error'); }
 }
+
+
+// Sign out: this browser's session only (POST /api/auth/logout revokes its token and
+// drops the cookie), then the sign-in page. Shown only when login is on — with it
+// off, everyone is the admin and there's nothing to sign out of.
+async function signOut() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+  location.replace('/');
+}
+(async () => {
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.auth_enabled) document.getElementById('nav-signout')?.removeAttribute('hidden');
+  } catch {}
+})();

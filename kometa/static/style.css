@@ -1358,6 +1358,10 @@ select.settings-input {
 .acct-actions:empty { display: none; }
 .acct-remove[data-armed="1"] { color: var(--pink); }
 /* Activity: paste-a-link on a row that's stuck — a GetComics post or a file link */
+/* Sign out: the sidebar's last item, pushed to the bottom, quieter than the views */
+.nav-signout { margin-top: auto; opacity: .6; cursor: pointer; }
+.nav-signout:hover { opacity: 1; }
+.nav-signout[hidden] { display: none; }
 .act-link { display: inline-flex; gap: 6px; align-items: center; }
 .act-link-input { width: 180px; background: var(--su2); border: 1px solid var(--bd); color: var(--tp);
   border-radius: var(--r-sm); padding: 4px 8px; font: inherit; font-size: var(--fs-label); }
