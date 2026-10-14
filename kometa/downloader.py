@@ -89,6 +89,8 @@ def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
     252 MB sitting in /downloads looking like a download that had landed."""
     done, resp, tries = 0, r, 0
     url = getattr(r, "url", None)
+    req = getattr(r, "request", None)
+    sent = {k: v for k, v in (getattr(req, "headers", None) or HEADERS).items() if k.lower() != "range"}
     try:
         with open(staging_path, "wb") as f:
             while True:
@@ -108,7 +110,7 @@ def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
                         resp.close()
                     time.sleep(3 * tries)
                     resp = requests.get(url, stream=True, timeout=120, allow_redirects=True,
-                                        headers={**HEADERS, "Range": f"bytes={done}-"})
+                                        headers={**sent, "Range": f"bytes={done}-"})
                     if resp.status_code != 206:                 # the host won't resume: give up as before
                         resp.close()
                         raise
@@ -1053,18 +1055,31 @@ def _resolve_wetransfer(page_url: str, session=None) -> str | None:
 
 
 _PIXELDRAIN_PAGE_RE = re.compile(r"https?://pixeldrain\.com/u/([A-Za-z0-9]+)")
+_PIXELDRAIN_LIST_RE = re.compile(r"https?://pixeldrain\.com/l/([A-Za-z0-9]+)")
+_MEDIAFIRE_PAGE_RE = re.compile(r"https?://(?:www\.)?mediafire\.com/file/")
 
 
 def _unwrap_hosted(url: str) -> str:
     """A URL that lands on a hosting page gets swapped for the file behind it:
     WeTransfer through its API, a Pixeldrain page through its file endpoint."""
-    hosted = ("getcomics.org/dls/", "wetransfer.com", "we.tl/", "pixeldrain.com/u/")
+    hosted = ("getcomics.org/dls/", "wetransfer.com", "we.tl/", "pixeldrain.com/", "mediafire.com/file/")
     final = _final_hop(url) if any(h in url for h in hosted) else url
     if "wetransfer.com/downloads/" in final:
         return _resolve_wetransfer(final) or url
     m = _PIXELDRAIN_PAGE_RE.match(final)
     if m:
         return f"https://pixeldrain.com/api/file/{m.group(1)}?download"
+    m = _PIXELDRAIN_LIST_RE.match(final)
+    if m:
+        # a Pixeldrain FOLDER: the whole list comes down as one zip, and the pack
+        # path unpacks it like any other multi-issue archive
+        return f"https://pixeldrain.com/api/list/{m.group(1)}/zip"
+    if _MEDIAFIRE_PAGE_RE.match(final):
+        from kometa.getcomics_client import mediafire_direct
+        try:
+            return mediafire_direct(final) or url
+        except Exception:
+            return url
     return url
 
 
@@ -1074,13 +1089,27 @@ def _get_with_retries(url: str, label: str):
     retry; an HTTP error status raises immediately — after closing the response,
     because a leaked socket on the failure path is how you run out of file
     descriptors at 3am."""
+    from kometa import flaresolverr
     url = _unwrap_hosted(url)
     last_exc = None
+    headers = HEADERS
     for attempt in range(3):
         if attempt:
             time.sleep(5 * attempt)
         try:
-            r = requests.get(url, stream=True, timeout=120, headers=HEADERS, allow_redirects=True)
+            r = requests.get(url, stream=True, timeout=120, headers=headers, allow_redirects=True)
+            if flaresolverr.is_challenge(r) and flaresolverr.enabled():
+                # Cloudflare wall (fs2.comicfiles.ru): let the headless browser on
+                # the NAS earn a pass, then knock again wearing it. Straight at the
+                # final URL, so the cookie can't get lost in a redirect.
+                wall = r.url
+                r.close()
+                cleared = flaresolverr.headers_for(wall, HEADERS)
+                if cleared:
+                    headers = cleared
+                    r = requests.get(wall, stream=True, timeout=120, headers=headers, allow_redirects=True)
+                    if flaresolverr.is_challenge(r):
+                        flaresolverr.forget(wall)      # pass already rotted: next try solves fresh
             try:
                 r.raise_for_status()
             except BaseException:

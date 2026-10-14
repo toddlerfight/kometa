@@ -26,6 +26,50 @@ GC_DIRECT_TERMS = (
 # file API make the list — Mega/Mediafire/Terabox want a browser.
 _PIXELDRAIN_RE = re.compile(r'https?://pixeldrain\.com/u/([A-Za-z0-9]+)')
 _MEDIAFIRE_RE = re.compile(r'https?://(?:www\.)?mediafire\.com/file(?:_premium)?/')
+_WETRANSFER_HOP_RE = re.compile(r'https?://(?:www\.)?(?:wetransfer\.com|we\.tl)/')
+
+# A group's buttons, best first. Pixeldrain is a straight API; MediaFire a page
+# with one link on it; WeTransfer wants its API asked politely. The main host is
+# tried separately (it's the primary link). MEGA is missing on purpose: since
+# 2026-10 its API answers every public-file request with -6, from any IP.
+_MIRROR_KINDS = (("pixeldrain", ("pixeldrain", "pixel drain")), ("mediafire", ("mediafire",)),
+                 ("wetransfer", ("wetransfer", "we transfer")))
+
+
+def _mirror_kind(label: str) -> int | None:
+    label = label.strip().lower()
+    for i, (_, terms) in enumerate(_MIRROR_KINDS):
+        if any(label == t or label.startswith(t + " ") for t in terms):
+            return i
+    return None
+
+
+def mediafire_direct(page_url: str) -> str | None:
+    """MediaFire's file page carries a plain direct link on its download
+    button — no account, no API. (2026-10-08: Deadly Duo #7 and the Hellboy
+    Yule Cat both sat behind the fs2 wall with a MediaFire button right there.)
+    Some pages hide it: in a window.location line, or base64'd in the button's
+    data-scrambled-url (Kapowarr found both)."""
+    import base64
+    r = requests.get(page_url, headers={"User-Agent": HEADERS.get("User-Agent", "Mozilla/5.0")}, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+    a = soup.find("a", id="downloadButton") or soup.find("a", href=re.compile(r"^https?://download\d*\.mediafire\.com/"))
+    href = a.get("href") if a else None
+    if href and href.startswith("http"):
+        return href
+    m = re.search(r'https?://download\d*\.mediafire\.com/[^"\'\s]+', r.text)
+    if m:
+        return m.group(0)
+    scrambled = a.get("data-scrambled-url") if a else None
+    if scrambled:
+        try:
+            out = base64.b64decode(scrambled).decode("utf-8")
+            if out.startswith("http"):
+                return out
+        except Exception:
+            pass
+    return None
 
 _ISSUE_NUM_RE   = re.compile(r'#(\d+(?:\.\d+)?)')
 # the end of a range can be a point-one: 'Fear Itself #1 – 7.3' ends at #7.3, not #7
@@ -388,6 +432,9 @@ class GetComicsClient:
                     direct = self._mediafire_direct(loc)
                     if direct:
                         out.append(direct)
+                    continue
+                if _WETRANSFER_HOP_RE.match(loc) or "pixeldrain.com/l/" in loc:
+                    out.append(loc)        # the downloader knows how to open these
             except GCRateLimitError:
                 raise
             except Exception as e:
@@ -395,33 +442,24 @@ class GetComicsClient:
         return out
 
     def _mediafire_direct(self, page_url: str) -> str | None:
-        """MediaFire's file page carries a plain direct link on its download
-        button — no account, no API. (2026-10-08: Deadly Duo #7 and the Hellboy
-        Yule Cat both sat behind the fs2 wall with a MediaFire button right there.)"""
-        r = requests.get(page_url, headers={"User-Agent": HEADERS.get("User-Agent", "Mozilla/5.0")}, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "lxml")
-        a = soup.find("a", id="downloadButton") or soup.find("a", href=re.compile(r"^https?://download\d*\.mediafire\.com/"))
-        href = a.get("href") if a else None
-        if not href:
-            m = re.search(r'https?://download\d*\.mediafire\.com/[^"\'\s]+', r.text)
-            href = m.group(0) if m else None
-        return href
+        return mediafire_direct(page_url)
 
     def _remember_mirrors(self, primary: str, scope) -> None:
         """scope: a tag (searched with its descendants) or a list of sibling tags —
         a post's buttons are siblings, so 'same group' means the whole run.
-        Pixeldrain first (a direct API, no page to scrape), then MediaFire."""
+        Every host in the group, best first (_MIRROR_KINDS). Returns the most
+        buttons any one host had: more than one means several groups got mixed."""
         tags = scope if isinstance(scope, list) else [scope]
         links = []
         for t in tags:
             links += [a for a in t.select("a[href]")]
             if t.name == "a" and t.get("href"):
                 links.append(t)
-        wanted = {"pixeldrain": 0, "mediafire": 1}
-        picked = [(wanted[a.get_text(strip=True).lower()], a["href"]) for a in links
-                  if a.get_text(strip=True).lower() in wanted]
+        picked = [(k, a["href"]) for a in links
+                  if (k := _mirror_kind(a.get_text(strip=True))) is not None]
         self._mirrors[primary] = [h for _, h in sorted(picked, key=lambda x: x[0])]
+        per_kind = [sum(1 for k, _ in picked if k == i) for i in range(len(_MIRROR_KINDS))]
+        return max(per_kind, default=0)
 
     def _prefer_pixeldrain(self, href: str) -> str:
         """A post with a Pixeldrain button: take THAT first (a direct API, no Cloudflare
@@ -552,18 +590,34 @@ class GetComicsClient:
                     return url, fname
         return None, None
 
-    def _search_pack_page(self, query: str, title_norm: str, last_issue: int,
-                          series_year) -> str | None:
+    def _search_articles(self, query: str, what: str, page: int = 1) -> tuple[list | None, bool]:
+        """One page of GetComics search results: (articles, more_pages). News and
+        Sponsored posts are dropped: they name series without carrying them.
+        None on a failed request (rate limits still raise)."""
+        url = BASE if page == 1 else f"{BASE.rstrip('/')}/page/{page}/"
         try:
-            r = self._get(BASE, params={"s": query})
+            r = self._get(url, params={"s": query})
             r.raise_for_status()
         except GCRateLimitError:
             raise
         except Exception as e:
-            logger.warning(f"GetComics pack search request failed: {e}")
-            return None
+            logger.warning(f"GetComics {what} request failed: {e}")
+            return None, False
         soup = BeautifulSoup(r.text, "lxml")
+        out = []
         for article in soup.find_all("article", {"class": "post"}):
+            cat = article.find("a", {"class": "post-category"})
+            if cat and cat.get_text(strip=True) in ("News", "Sponsored"):
+                continue
+            out.append(article)
+        nums = soup.find_all(["a", "span"], {"class": "page-numbers"})
+        more = bool(nums) and not (nums[-1].name == "span" and "current" in (nums[-1].get("class") or []))
+        return out, more
+
+    def _search_pack_page(self, query: str, title_norm: str, last_issue: int,
+                          series_year) -> str | None:
+        articles, _ = self._search_articles(query, "pack search")
+        for article in articles or []:
             h1 = article.find("h1", {"class": "post-title"})
             a = h1.find("a") if h1 else None
             if not a:
@@ -618,16 +672,8 @@ class GetComicsClient:
         return None, None
 
     def _search_trade_page(self, query: str, title_norm: str, vol, vol_range, loose: bool = False) -> str | None:
-        try:
-            r = self._get(BASE, params={"s": query})
-            r.raise_for_status()
-        except GCRateLimitError:
-            raise
-        except Exception as e:
-            logger.warning(f"GetComics trade search request failed: {e}")
-            return None
-        soup = BeautifulSoup(r.text, "lxml")
-        for article in soup.find_all("article", {"class": "post"}):
+        articles, _ = self._search_articles(query, "trade search")
+        for article in articles or []:
             h1 = article.find("h1", {"class": "post-title"})
             a = h1.find("a") if h1 else None
             if not a:
@@ -642,22 +688,30 @@ class GetComicsClient:
 
     def _search_page(self, query: str, title: str, issue_number: float,
                      series_year=None, packs: list | None = None) -> str | None:
-        try:
-            r = self._get(BASE, params={"s": query})
-            r.raise_for_status()
-        except GCRateLimitError:
-            raise
-        except Exception as e:
-            logger.warning(f"GetComics search request failed: {e}")
+        articles, more = self._search_articles(query, "search")
+        if articles is None:
             return None
-
-        soup = BeautifulSoup(r.text, "lxml")
-        articles = soup.find_all("article", {"class": "post"})
         if not articles:
             logger.info(f"GetComics: no articles on search page for {query!r}")
             return None
 
         title_norm = _normalize(title)
+
+        def _explicit(arts):
+            for article in arts:
+                h1 = article.find("h1", {"class": "post-title"})
+                a = h1.find("a") if h1 else None
+                if a:
+                    text = _drop_volume_tag(a.get_text(strip=True), series_year)
+                    if _series_matches(title_norm, _normalize(text)) and _post_covers_issue(text, issue_number) is True:
+                        return True
+            return False
+
+        # An older issue of a long run can sit on page 2 behind a wall of newer
+        # posts. Only asked for when page 1 has no post naming this issue.
+        if more and not _explicit(articles):
+            page2, _ = self._search_articles(query, "search", page=2)
+            articles = articles + (page2 or [])
 
         # Park any pack post that covers us for the caller's last-resort pass —
         # only after every query's single-issue tiers have come up dry.
@@ -784,11 +838,10 @@ class GetComicsClient:
             text = a.get_text(strip=True).lower()
             if any(t in text for t in GC_DIRECT_TERMS):
                 logger.info(f"GetComics: strategy-2 direct download {href[:80]}")
-                self._remember_mirrors(href, body)
                 # whole-page scan: TWO of the same kind means several download
-                # groups and we can't tell whose is whose. One Pixeldrain plus one
-                # MediaFire is a single group with two mirrors — keep them.
-                if len(self._mirrors[href]) > 2:
+                # groups and we can't tell whose is whose. One of each is a single
+                # group with several mirrors — keep them.
+                if self._remember_mirrors(href, body) > 1:
                     self._mirrors[href] = []
                 return self._prefer_pixeldrain(href), None
 

@@ -361,6 +361,20 @@ def test_prowlarr(req: TestProwlarrRequest):
         return {"ok": False, "error": str(e)}
 
 
+class TestFlareSolverrRequest(BaseModel):
+    url: str | None = None
+
+
+@app.post("/api/test/flaresolverr")
+def test_flaresolverr(req: TestFlareSolverrRequest):
+    url = req.url or _stored("flaresolverr_url")
+    if not url:
+        return {"ok": False, "error": "Not configured"}
+    from kometa import flaresolverr
+    ok, detail = flaresolverr.test(url)
+    return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+
+
 class TestComicVineRequest(BaseModel):
     apikey: str | None = None
 
@@ -411,6 +425,7 @@ _INTEGRATION_KEYS = {
     "sabnzbd":   ["sab_url", "sab_apikey"],
     "qbit":      ["qbit_url", "qbit_user", "qbit_pass"],
     "prowlarr":  ["prowlarr_url", "prowlarr_apikey"],
+    "flaresolverr": ["flaresolverr_url"],
     "comicvine": ["cv_api_key"],
     "gcd":       ["gcd_user", "gcd_pass"],
     "hardcover": ["hardcover_token"],
@@ -699,6 +714,8 @@ def get_config():
         "prowlarr_url":        cfg.get("prowlarr_url", ""),
         "prowlarr_apikey":     "",
         "prowlarr_configured": bool(cfg.get("prowlarr_url", "") and cfg.get("prowlarr_apikey", "")),
+        "flaresolverr_url":    cfg.get("flaresolverr_url", ""),
+        "flaresolverr_configured": bool(cfg.get("flaresolverr_url", "")),
         "cv_api_key":          "",
         "comicvine_configured": bool(cfg.get("cv_api_key", "")),
         # Integration/search toggles — absent = enabled (existing installs unchanged).
@@ -762,6 +779,7 @@ class ConfigRequest(BaseModel):
     qbit_pass:          str | None = None
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
+    flaresolverr_url:   str | None = None   # Cloudflare challenge solver (NAS :8191)
     cv_api_key:         str | None = None
     prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle

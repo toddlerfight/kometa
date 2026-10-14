@@ -4465,6 +4465,10 @@ async function renderSettings() {
           ${_settingsHeader('Library harvest', '', 'harvest')}
           <div id="harvest-progress"></div>
         </div>
+        <div class="settings-card" style="margin-top:32px">
+          ${_settingsHeader('FlareSolverr', 'cloudflare', 'flaresolverr', true, cfg.flaresolverr_configured)}
+          ${_settingsField('f-flaresolverr-url', 'Server URL', cfg.flaresolverr_url, { ph: 'http://host:8191' })}
+        </div>
         <div class="settings-section ${cfg.prowlarr_enabled ? '' : 'section-off'}" id="sec-prowlarr" style="margin-top:32px">
           ${_settingsSectionHead('Prowlarr', 'engine', 't-prowlarr', cfg.prowlarr_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4597,6 +4601,7 @@ const _SETTINGS_FIELDS = {
   'f-qbit-user':       { card: 'qbit',     key: 'qbit_user',        test: 'qbit' },
   'f-qbit-pass':       { card: 'qbit',     key: 'qbit_pass',        test: 'qbit', secret: true },
   'f-prowlarr-url':    { card: 'prowlarr', key: 'prowlarr_url',     test: 'prowlarr' },
+  'f-flaresolverr-url': { card: 'flaresolverr', key: 'flaresolverr_url', test: 'flaresolverr' },
   'f-prowlarr-apikey': { card: 'prowlarr', key: 'prowlarr_apikey',  test: 'prowlarr', secret: true },
   'f-cv-apikey':       { card: 'comicvine', key: 'cv_api_key',      test: 'comicvine', secret: true },
   'f-metron-token':    { card: 'metron',    key: 'metron_token',    test: 'metron', secret: true },
@@ -4607,7 +4612,7 @@ const _SETTINGS_FIELDS = {
   'f-fandom-cf':       { card: 'fandom',    key: 'fandom_cf_clearance', test: 'fandom', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover', fandom: 'fandom' };
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', flaresolverr: 'flaresolverr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover', fandom: 'fandom' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
