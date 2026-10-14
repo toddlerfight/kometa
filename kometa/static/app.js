@@ -1005,11 +1005,12 @@ async function renderOnDeck() {
   const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
   const read = c => `navigate('read', {book: ${c.book_id}})`;
   const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
-  const bookCard = (c, tag) => `
+  const bookCard = (c, tag, dismissable) => `
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
-        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
+        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
+        ${dismissable ? `<button class="od-x" title="Mark as read" aria-label="Mark as read" onclick="event.stopPropagation(); _odMarkRead(${c.book_id}, ${c.progress ? c.progress.page : 1})">✕</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
@@ -1056,7 +1057,7 @@ async function renderOnDeck() {
       ${cards.length ? `<div class="issue-grid od-grid">${cards.join('')}</div>` : `<div class="od-empty">${empty}</div>`}
     </div>`;
   setApp(
-    row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c, null)),
+    row('Continue reading', 'where you left off, most recent first', d.continue.map(c => bookCard(c, null, true)),
         'Nothing in progress. Open anything in the Library and it shows up here.') +
     ((d.want || []).length ? row('Want to read', '', d.want.map(wantCard), '') : '') +
     row('Next', 'the next unread issue in series you’ve finished something of', d.next.map(c => bookCard(c, 'Next')),
@@ -1357,8 +1358,7 @@ async function _loadBecause(exclude, attempt = 0) {
 }
 
 // One ⋯ per card, one sheet: Read, the series behind it, read state. No Close (outside
-// click and Esc do it) and no Not now at all (2026-10-14): Mark as read is how a book
-// leaves Continue reading.
+// click and Esc do it) and no Not now (2026-10-13). The card's ✕ is Mark as read (10-14).
 // Same shape as the reader's own ⋯ — tap the thing, get its actions.
 function _bookActions(c) {
   // A tracked series' issue: the series page's own modal, cover and details and
@@ -1445,6 +1445,24 @@ async function _bookSetRead(bookId, read) {
     showToast(read ? 'Marked as read' : 'Marked as unread');
     if (currentView === 'ondeck') renderOnDeck();
   } catch (e) { showToast('Couldn’t change that', 'error'); }
+}
+
+// The ✕ on a Continue reading tile = Mark as read (2026-10-14: no more 'Not now' —
+// a book leaves Continue reading by being read). Undo on the toast puts your place
+// back exactly where it was, not on page 1.
+async function _odMarkRead(bookId, page) {
+  const tile = document.getElementById(`od-${bookId}`);
+  const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  try {
+    const b = await api.get(`/api/books/${bookId}`);
+    await api.put(`/api/books/${bookId}/progress`, { page: b.page_count || 1, completed: true, updated_at: stamp() });
+  } catch (e) { showToast('Couldn\u2019t change that', 'error'); return; }
+  await _animateTileOut(tile);
+  showToastAction('Marked as read', 'Undo', async () => {
+    try { await api.put(`/api/books/${bookId}/progress`, { page, completed: false, updated_at: stamp() }); }
+    catch { showToast('Couldn\u2019t undo that', 'error'); return; }
+    if (currentView === 'ondeck') renderOnDeck();
+  });
 }
 
 // The reverse of _animateTileOut: a tile arrives small and clear, then settles.
