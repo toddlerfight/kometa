@@ -24,7 +24,6 @@ from kometa.naming import norm_key, parse_issue_number
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
-COMICS_CATEGORIES = (7030,)                 # Newznab 'Books/Comics' — NOT used to filter: indexers don't tag consistently
 MIN_COVER = 5                               # a pack must fill this many gaps…
 MIN_SHARE = 0.30                            # …or this share of them
 MAX_INSPECT = 8                             # file lists fetched per hunt (each is one indexer grab of metadata)

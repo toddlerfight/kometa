@@ -55,7 +55,6 @@ router = APIRouter()
 DB_PATH = db.DB_PATH
 
 SITE = "https://comicbookroundup.com"
-REVIEWS = "/comic-books/reviews/"
 DEFAULT_HOURS = "0-0"                      # all day: a website, not a fish and chip shop (start == end)
 TOP_ISSUES = 3                # most-reviewed issues per run, beside #1
 MIN_OVERLAP = 2               # linked runs a person must have scored before their profile is worth a request
@@ -467,11 +466,6 @@ def report(path=None) -> dict:
             "scores": n_scores, "requests_today": limiter.budget(), "last_error": last_error,
             "hours": f"{start}-{end}",
             "enabled": enabled("cbr_enabled", path) and enabled("cbr_people_enabled", path)}
-
-
-@router.get("/api/harvest/cbr-people-report")
-def get_report():
-    return report()
 
 
 # --- readers like you -------------------------------------------------------------------

@@ -219,7 +219,6 @@ def apply(ids: list[int], title: str | None = None, order: str | list[int] = "ye
     p = plan(ids, title, order, path)
     target = p["target"]
     os.makedirs(target, exist_ok=True)
-    first = db.get_series_by_id(p["items"][0]["id"], path)
     new_id = db.add_series(title=p["title"], publisher=p["publisher"], folder_path=target,
                            year_began=p["items"][0]["year"], on_pull_list=False, path=path)
     db.set_match_status(new_id, "manual", path)

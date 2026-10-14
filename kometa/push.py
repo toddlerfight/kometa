@@ -288,11 +288,3 @@ def push_status():
     cfg = db.get_config(DB_PATH)
     return {"configured": configured(), "scope": cfg.get("push_scope") or "pull",
             "enabled": cfg.get("push_enabled", "1") != "0", "devices": devs}
-
-
-@router.post("/api/push/test")
-def push_test():
-    if not configured():
-        raise HTTPException(409, "Push isn't set up: key or ids missing")
-    return send({"aps": {"alert": {"title": "Kometa", "body": "Test from Kometa — push works"}, "sound": "default"},
-                 "kind": "test"}, reader_id=current_reader())          # your own devices, nobody else's

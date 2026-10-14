@@ -361,8 +361,6 @@ def lookup(series_id: int, number: float, path=None, budget: int = DETAIL_BUDGET
     with db._connect(path) as conn:
         r = conn.execute("SELECT candidates_json, fetched_at, strategy FROM trade_lookup WHERE issue_key = ?", (key,)).fetchone()
         s = conn.execute("SELECT title, year_began FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
-        i = conn.execute("SELECT store_date, metron_issue_id FROM issue_status WHERE tracked_series_id = ? AND number = ?",
-                         (series_id, number)).fetchone()
     if r and r["fetched_at"] and r["fetched_at"] > (datetime.now(timezone.utc) - timedelta(days=LOOKUP_TTL_DAYS)).strftime("%Y-%m-%d"):
         cands = json.loads(r["candidates_json"] or "[]")
         # a hit stands; an empty answer only stands if today's strategy gave it
@@ -963,7 +961,3 @@ def api_decline(qid: int):
     return decline(qid)
 
 
-@router.post("/api/trade-fill/run")
-def api_run():
-    """Run one pass now (the scheduler does this every 10 minutes)."""
-    return run_pass()

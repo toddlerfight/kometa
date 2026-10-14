@@ -19,7 +19,6 @@ button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
   --su1:   #111111;
   --su2:   #1a1a1a;
   --su3:   #2a2a2a;
-  --su4:   #353535;
   /* borders */
   --bd:    #2a2a2a;
   --bd-l:  #3a3a3a;
@@ -67,7 +66,6 @@ button, a, .series-card, .issue-tile, .issue-tab, .pull-row, .nav-item,
   --app-pad: 24px;
   /* overlays & effects */
   --scrim:    rgba(0,0,0,.75);
-  --hairline: rgba(255,255,255,.2);
   --shadow:   rgba(0,0,0,.5);
   /* motion — durations + easing curves */
   --ease-out:    cubic-bezier(.22,.61,.36,1);
@@ -2352,7 +2350,6 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-x:hover { background: var(--pink); color: var(--ink, #000); }
 
 /* a tile on its way out: fade and shrink before the neighbours slide in */
-.od-entering { opacity: 0 !important; transform: scale(.88); transition: none !important; }
 .od-card { transition: opacity var(--t-mid) var(--ease-out), transform var(--t-mid) var(--ease-out); }
 .od-leaving { opacity: 0 !important; transform: scale(.88); transition: opacity var(--t-mid) var(--ease-in), transform var(--t-mid) var(--ease-in); pointer-events: none; }
 

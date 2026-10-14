@@ -65,7 +65,6 @@ DOWNLOADS_PER_TICK = 4        # CDN images per tick
 RECHECK_DAYS = 60             # an unmatched issue is asked again after this; a matched one never
 MAX_BYTES = 40 * 1024 * 1024
 SHAPE_REST_S = 6 * 3600       # the search/page no longer reads as expected: rest, don't mis-record
-DC_PAGES_CARRY_UPC = False    # probed 2026-10-12: they don't, so DC issues are never asked
 
 marvel = Limiter("Marvel.com", min_interval_s=60.0, daily_cap=400, refused_pause_s=3600,
                  timeout_s=30, user_agent=USER_AGENT)
@@ -313,7 +312,7 @@ def candidates(path=None, limit: int = 20) -> list[dict]:
     """Owned Marvel issues whose record carries a UPC and that Marvel.com hasn't
     been asked about (a match: never again; a miss: not within RECHECK_DAYS).
     Pull list first, then the newest store date. DC runs are skipped: their
-    pages carry no UPC to check against (DC_PAGES_CARRY_UPC)."""
+    pages carry no UPC to check against (probed 2026-10-12), so DC issues are never asked."""
     path = path or DB_PATH
     from kometa import fandom_client, fandom_covers, record
     record.ensure_tables(path)
@@ -331,7 +330,7 @@ def candidates(path=None, limit: int = 20) -> list[dict]:
         except (TypeError, ValueError):
             continue
         site = fandom_client.wiki_for(r["publisher"] or extra.get("publisher"))
-        if site != "marvel" and not (site == "dc" and DC_PAGES_CARRY_UPC):
+        if site != "marvel":
             continue
         if not norm_upc(extra.get("upc")):
             continue

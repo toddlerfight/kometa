@@ -1482,16 +1482,6 @@ async function _odMarkRead(bookId, page) {
   });
 }
 
-// The reverse of _animateTileOut: a tile arrives small and clear, then settles.
-function _animateTileIn(tile) {
-  if (!tile) return;
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) return;
-  tile.classList.add('od-entering');
-  void tile.offsetWidth;
-  tile.classList.remove('od-entering');
-}
-
 // A tile leaves a grid the way an Activity row leaves a list: it fades and
 // shrinks (--t-mid), then the tiles after it slide into the gap (--t-slow,
 // --ease-out) instead of jumping — FLIP: measure, remove, measure, play the

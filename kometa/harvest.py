@@ -173,37 +173,6 @@ def status_tick(limit: int = STATUS_PER_TICK, path=None, client=None) -> int:
     return done
 
 
-# --- runs that may span more than one Metron series (db.metron_series_ids) -------
-def split_candidates(path=None, min_unmatched: int = 25, min_outside: int = 3) -> dict:
-    """Local data only, no catalogue calls. 'outside': matched, but owned issues
-    run past the Metron run's numbers (Fables #150–162 beyond a run that ends at
-    #149) — a continuation under another Metron series, or a wrong match.
-    'unmatched': no Metron run and a long one on the shelf (Fantastic Four
-    #61–611). Suggestions for a person to confirm; nothing is linked from here."""
-    path = path or DB_PATH
-    with db._connect(path) as conn:
-        rows = [dict(r) for r in conn.execute("""
-            SELECT s.id, s.title, s.publisher, s.metron_series_id, s.metron_extra_ids,
-                   SUM(i.owned) AS owned,
-                   SUM(CASE WHEN i.owned = 1 AND i.metron_issue_id IS NULL THEN 1 ELSE 0 END) AS owned_no_id,
-                   MIN(CASE WHEN i.owned = 1 THEN i.number END) AS owned_lo, MAX(CASE WHEN i.owned = 1 THEN i.number END) AS owned_hi,
-                   MIN(CASE WHEN i.metron_issue_id IS NOT NULL THEN i.number END) AS metron_lo,
-                   MAX(CASE WHEN i.metron_issue_id IS NOT NULL THEN i.number END) AS metron_hi
-            FROM tracked_series s JOIN issue_status i ON i.tracked_series_id = s.id
-            WHERE s.kind IS NULL OR s.kind != 'arc'
-            GROUP BY s.id HAVING owned > 0""")]
-    outside = [r for r in rows if r["metron_series_id"] and r["metron_lo"] is not None and r["owned_no_id"] >= min_outside
-               and (r["owned_lo"] < r["metron_lo"] or r["owned_hi"] > r["metron_hi"])]
-    unmatched = [r for r in rows if not r["metron_series_id"] and r["owned"] >= min_unmatched]
-    return {"outside": sorted(outside, key=lambda r: -r["owned_no_id"]),
-            "unmatched": sorted(unmatched, key=lambda r: -r["owned"])}
-
-
-@router.get("/api/harvest/split-candidates")
-def get_split_candidates():
-    return split_candidates()
-
-
 # --- ComicVine's full-size covers (1f) ----------------------------------------------
 CV_BATCH = 100
 
@@ -577,21 +546,3 @@ def gcd_status(path=None) -> dict:
     return out
 
 
-def gcd_candidates(path=None) -> list[dict]:
-    """Runs GCD couldn't place on its own, with what it offered — for a person to
-    pick (PATCH /api/series/{id}/locg {"gcd_id": N}, or 0 for 'not on GCD')."""
-    path = path or DB_PATH
-    with db._connect(path) as conn:
-        rows = [dict(r) for r in conn.execute("""
-            SELECT s.id, s.title, s.publisher, s.folder_path, s.gcd_candidates_json,
-                   SUM(CASE WHEN i.owned = 1 THEN 1 ELSE 0 END) AS owned
-            FROM tracked_series s LEFT JOIN issue_status i ON i.tracked_series_id = s.id
-            WHERE s.gcd_link = 'ambiguous' GROUP BY s.id ORDER BY owned DESC, s.title""")]
-    for r in rows:
-        r["candidates"] = json.loads(r.pop("gcd_candidates_json") or "[]")
-    return rows
-
-
-@router.get("/api/harvest/gcd-candidates")
-def get_gcd_candidates():
-    return gcd_candidates()

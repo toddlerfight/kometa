@@ -3,7 +3,6 @@ search/URL strings. Text in, value out (plus directory scans that read names
 and, for ownership, cheaply confirm a file isn't a hollow shell). No DB, no
 clients, no app state — trivially testable in isolation.
 """
-import functools
 import os
 import re
 import subprocess

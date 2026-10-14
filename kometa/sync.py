@@ -20,7 +20,7 @@ from kometa.naming import (
     norm_key as _norm_name, OWNED_EXTS,
 )
 from kometa.locg_client import (
-    get_issues_anon, get_trades_anon, select_editions, find_series_id_anon,
+    get_issues_anon, get_trades_anon, find_series_id_anon,      # get_trades_anon: tests patch it here (a seam, not dead)
 )
 import kometa.db as db
 

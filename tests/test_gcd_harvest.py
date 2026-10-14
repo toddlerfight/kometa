@@ -224,7 +224,6 @@ def test_link_tick_writes_outcomes_most_owned_first(gcd_db):
     assert (get(a)["gcd_link"], get(a)["gcd_series_id"]) == ("linked", 11)
     assert get(b)["gcd_link"] == "ambiguous" and len(json.loads(get(b)["gcd_candidates_json"])) == 5
     assert get(d)["gcd_link"] == "none" and get(c)["gcd_link"] is None
-    assert [r["id"] for r in harvest.gcd_candidates(gcd_db)] == [b]
     assert harvest.gcd_link_tick(limit=3, path=gcd_db, client=fake) == 0     # asked once, remembered
 
 

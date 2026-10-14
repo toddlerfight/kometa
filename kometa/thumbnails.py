@@ -23,7 +23,6 @@ import requests as _requests
 from fastapi import APIRouter, HTTPException, Request, Response
 
 import kometa.db as db
-from kometa.naming import parse_issue_number as _parse_issue_number
 
 logger = logging.getLogger(__name__)
 
@@ -121,28 +120,6 @@ def _cached_image_response(url: str, max_age: int = 2592000):
 _THUMB_MISS_TTL = 6 * 3600  # seconds
 _thumb_misses: dict = {}
 
-
-def _cached_bytes(cache_key: str, fetch, max_age: int = 2592000):
-    """Disk-cache image bytes under a stable key (not a URL). `fetch` is a
-    zero-arg callable returning (bytes, content_type) or None. This is what lets
-    a remote image be pulled ONCE and then served off disk forever — without it
-    every grid render fires a live round-trip per cover and the threadpool
-    drowns. Returns a Response or None (caller decides the fallback)."""
-    headers = {"Cache-Control": f"public, max-age={max_age}"}
-    path = _cache_path(cache_key)
-    cached = _read_cached(path)
-    if cached:                                      # cache hit — serve from disk
-        return Response(content=cached, media_type=_img_ct(cached), headers=headers)
-    try:                                            # miss — fetch once, store, serve
-        got = fetch()
-        if got:
-            data, ct = got
-            if data:
-                _write_cached(path, data)
-                return Response(content=data, media_type=ct or _img_ct(data), headers=headers)
-    except Exception:
-        pass
-    return None
 
 
 # Covers in the browser: a day, then refetched in the background while the old

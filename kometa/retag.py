@@ -59,7 +59,6 @@ COMICINFO = "ComicInfo.xml"
 LOCK_TIMEOUT_S = 900            # how long a swap waits for a running shelf scan
 MAX_CONSECUTIVE_FAILURES = 3    # three refusals in a row is a pattern, not three bad files
 FINAL = ("swapped", "skipped")
-STATES = ("pending", "built", "verified", "swapped", "skipped", "failed", "stale")
 # 'stale': the batch (kometa/retag_batch.py) found the original changed under its
 # build — never overwritten; a re-queue restarts it like a failed row
 # ONE retag job at a time: the scheduler tick and every batch phase take this
@@ -793,14 +792,6 @@ def enqueue(book_ids, queued_for: str, path=None) -> int:
         _set(bid, path, queued_for=queued_for)
         n += 1
     return n
-
-
-def enqueue_all(path=None) -> int:
-    """Step 3f — only on the user's go: every book in a tracked series."""
-    path = path or DB_PATH
-    with db._connect(path) as conn:
-        ids = [r[0] for r in conn.execute("SELECT id FROM books WHERE tracked_series_id IS NOT NULL ORDER BY id")]
-    return enqueue(ids, "run", path)
 
 
 def _record_ready(book: dict, path) -> bool:

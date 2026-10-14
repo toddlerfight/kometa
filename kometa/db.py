@@ -53,15 +53,6 @@ def init_db(path=DB_PATH):
 
             -- A Komga book id outlives the file behind it: replace a coverless
             -- #015 with a whole one at the same path and Komga keeps the id, so
-            -- '/api/book/<id>/thumbnail' kept serving the old cover — from our
-            -- disk cache, and from every browser told to hold it for 30 days.
-            -- The version (file mtime + size, as Komga reports them) rides on
-            -- the URL and the cache key, so a new file is a new cover.
-            CREATE TABLE IF NOT EXISTS komga_book_version (
-                book_id TEXT PRIMARY KEY,
-                v       TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS trades_cache (
                 tracked_series_id INTEGER PRIMARY KEY REFERENCES tracked_series(id),
                 data_json         TEXT NOT NULL,
@@ -195,15 +186,6 @@ def _connect(path=DB_PATH):
     finally:
         _local.depth[path] = depth
 
-
-def forget_connections(path=None):
-    """Drop this thread's cached connection(s) — for a DB file that was replaced
-    on disk (a restore) and for tests that swap the file under the same path."""
-    conns = getattr(_local, "conns", None) or {}
-    for p in [path] if path else list(conns):
-        c = conns.pop(p, None)
-        if c is not None:
-            c.close()
 
 
 def _migrate(path=DB_PATH):
