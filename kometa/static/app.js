@@ -4583,14 +4583,16 @@ function _settingsField(id, label, value, opts = {}) {
         ${_testControls(opts.test.cardId, opts.test.configured)}
       </div>`
     : `<label class="settings-field-label u-label" for="${id}">${label}</label>`;
-  // secret: 'mask' — hidden on screen like a password, but a TEXT input: a
-  // pasted cookie is not a password, and type=password had Safari offering to
-  // invent a strong one for it. The data-* attrs wave off 1Password/LastPass.
+  // secret: 'mask' — a pasted browser pass (cf_clearance): a plain TEXT input,
+  // shown as typed. Not a password, and Safari treats ANY hidden input as one —
+  // type=password invented a strong one, -webkit-text-security dots still had
+  // it offering to save (2026-10-14). It never round-trips, so it's on screen
+  // only while you paste. The data-* attrs wave off 1Password/LastPass.
   const mask = f.secret === 'mask';
   return `
     <div class="settings-field">
       ${labelRow}
-      <input class="settings-input${mask ? ' settings-input-mask' : ''}" id="${id}"
+      <input class="settings-input" id="${id}"
         type="${secret && !mask ? 'password' : 'text'}"
         value="${esc(value || '')}" data-last="${esc(value || '')}"
         placeholder="${esc(ph)}"

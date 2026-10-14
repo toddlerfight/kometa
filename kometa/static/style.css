@@ -2235,8 +2235,6 @@ body:has(.rd-stage) { overscroll-behavior: none; }
 .shelf-files-head { color: var(--tq); margin-bottom: 12px; }
 
 /* --- settings: masked text input (a pasted cookie, not a password) --- */
-.settings-input-mask { -webkit-text-security: disc; }
-.settings-input-mask::placeholder { -webkit-text-security: none; }
 
 /* --- Needs matching: the in-tray, not the shelf --- */
 .nm-intro { color: var(--tq); font-size: 13px; margin-bottom: var(--sp-md); }
