@@ -1326,6 +1326,20 @@ select.settings-input {
 .settings-help.ok  { color: var(--pri); }
 .settings-help.bad { color: var(--pink); }
 .settings-input.input-bad { border-color: var(--pink); }
+/* What's wrong + what to do: a list at the top of Settings (tap = jump to the
+   card) and the same words inside the card. Pink rail = needs you. */
+.settings-attn { display: flex; flex-direction: column; gap: 8px; margin-bottom: 40px; }
+.settings-attn[hidden] { display: none; }
+.settings-attn-row, .settings-attn-note {
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 10px 12px; border-left: 2px solid var(--pink); background: var(--pink-d);
+  border-radius: var(--r-sm); font: inherit; font-size: var(--fs-body); color: var(--tp);
+}
+.settings-attn-row { border-top: 0; border-right: 0; border-bottom: 0; cursor: pointer; width: 100%; }
+.settings-attn-note { margin-bottom: 20px; }
+.settings-attn-title { font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-wide); }
+.settings-attn-reason { color: var(--pink); }
+.settings-attn-fix { color: var(--tq); }
 
 @media (max-width: 760px) {
   .settings-grid { grid-template-columns: 1fr; }

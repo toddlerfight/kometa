@@ -80,6 +80,12 @@ def test_settings_badge_shows_an_unwell_source_only_while_its_switched_on(h, db_
     for _ in range(6):
         h["now"] += 600
         health.record("ComicBookRoundup", "error", "timeout", db_path)
-    assert any(i["card"] == "cbr" for i in main.settings_attention())
+    [cbr] = [i for i in main.settings_attention() if i["card"] == "cbr"]
+    assert cbr["title"] == "ComicBookRoundup" and "retrying" in cbr["fix"]
+    for _ in range(6):
+        h["now"] += 600
+        health.record("Images files1.comics.org", "refused", "403", db_path)
+    [gcd] = [i for i in main.settings_attention() if i["card"] == "gcd"]
+    assert gcd["reason"].startswith("Cover images from files1.comics.org: refusing us") and "backs off" in gcd["fix"]
     db.set_config({"cbr_enabled": "0"}, db_path)
     assert not any(i["card"] == "cbr" for i in main.settings_attention())

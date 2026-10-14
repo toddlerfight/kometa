@@ -18,9 +18,11 @@ least UNWELL_AFTER_S old — one bad minute isn't news, an evening of it is — 
 nothing has worked in a day while it kept trying.
 """
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import kometa.db as db
 
@@ -103,7 +105,8 @@ def record(source: str, outcome: str, detail: str | None = None, path=None) -> N
 
 
 def _when(ts: float) -> str:
-    return datetime.fromtimestamp(ts, timezone.utc).astimezone().strftime("%-d %b %H:%M")
+    # the container lives in UTC; the man reading the dot lives in Brisbane
+    return datetime.fromtimestamp(ts, timezone.utc).astimezone(ZoneInfo(os.environ.get("KOMETA_TZ", "Australia/Brisbane"))).strftime("%-d %b %H:%M")
 
 
 def unwell(path=None, now: float | None = None) -> list[dict]:
@@ -122,9 +125,10 @@ def unwell(path=None, now: float | None = None) -> list[dict]:
         if not (failing_long or dry_day):
             continue
         what = "refusing us" if s["kind"] == "refused" else "failing"
-        reason = f"{source}: {what} since {_when(s['first_bad'])} ({s['streak']} in a row"
+        name = f"Cover images from {source[7:]}" if source.startswith("Images ") else source
+        reason = f"{name}: {what} since {_when(s['first_bad'])} ({s['streak']} in a row"
         reason += f", last: {s['detail']})" if s["detail"] else ")"
-        out.append({"card": CARDS.get(source, "harvest"), "source": source, "reason": reason})
+        out.append({"card": CARDS.get(source, "harvest"), "source": source, "kind": s["kind"], "reason": reason})
     return out
 
 

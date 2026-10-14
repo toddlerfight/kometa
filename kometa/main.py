@@ -482,6 +482,33 @@ def _marveldc_tonight() -> dict | None:
         return None
 
 
+# Each Settings card's name, and what to DO about a dot — the reason alone said
+# what broke, on hover, which an iPad never does
+_ATTN_TITLES = {
+    "root": "Comics Library", "metron": "Metron", "comicvine": "ComicVine", "gcd": "Grand Comics Database",
+    "hardcover": "Hardcover", "locg": "League of Comic Geeks", "fandom": "Fandom wikis",
+    "prh": "Penguin Random House", "openlibrary": "Open Library", "cbr": "ComicBookRoundup",
+    "marveldc": "Marvel.com / DC.com", "prowlarr": "Prowlarr", "sabnzbd": "Usenet (SABnzbd)",
+    "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest",
+}
+_FIX_LOCG_PASS = ("In Chrome, open leagueofcomicgeeks.com, then DevTools › Application › Cookies; "
+                  "copy cf_clearance and paste it into the League of Comic Geeks card.")
+_FIX_FANDOM_PASS = ("In Safari, open any Fandom cover image, then Develop › Show Web Inspector › Storage › Cookies; "
+                    "copy cf_clearance and paste it into the Fandom wikis card.")
+
+
+def _attn_fix(card: str, kind: str | None) -> str:
+    """How to fix an unwell source (kometa/health.py): a pass you can renew, or a wait."""
+    if card == "locg" and kind == "refused":
+        return _FIX_LOCG_PASS
+    if card == "fandom" and kind == "refused":
+        return _FIX_FANDOM_PASS
+    if kind == "refused":
+        return ("Nothing to do yet: Kometa backs off and tries again on its own. Still here tomorrow = "
+                "they're blocking us on purpose; switch the source off to stop it.")
+    return "Their side is down or timing out. Nothing to do: Kometa keeps retrying and the dot clears itself."
+
+
 def settings_attention() -> list[dict]:
     """Everything in Settings that's waiting on YOU — the nav badge's count and
     each card's red dot. Only states you can fix from Settings; a source that's
@@ -492,27 +519,32 @@ def settings_attention() -> list[dict]:
     out = []
     root = _comics_root()
     if not (os.path.isdir(root) and os.access(root, os.W_OK)):
-        out.append({"card": "root", "reason": "comics folder missing or read-only"})
+        out.append({"card": "root", "reason": "comics folder missing or read-only",
+                    "fix": "Check the NAS is up and its comics share is mounted on ginbako, then reload."})
     if on("metron_enabled"):
         from kometa import metron_client
         creds = metron_client._creds()
         if not creds:
-            out.append({"card": "metron", "reason": "no API token"})
+            out.append({"card": "metron", "reason": "no login", "fix": "Add your Metron username and password in the Metron card."})
         elif metron_client._refused(creds):
-            out.append({"card": "metron", "reason": "Metron refused the token"})
+            out.append({"card": "metron", "reason": "Metron refused the login",
+                        "fix": "Re-enter your Metron password in the Metron card; it may have changed on metron.cloud."})
     if on("comicvine_enabled") and not has("cv_api_key"):
-        out.append({"card": "comicvine", "reason": "no API key"})
+        out.append({"card": "comicvine", "reason": "no API key",
+                    "fix": "Paste a key from comicvine.gamespot.com/api into the ComicVine card, or switch ComicVine off."})
     if on("gcd_enabled") and not has("gcd_user", "gcd_pass"):
-        out.append({"card": "gcd", "reason": "no login"})
+        out.append({"card": "gcd", "reason": "no login",
+                    "fix": "Add your comics.org login in the Grand Comics Database card, or switch it off."})
     if on("hardcover_enabled") and not has("hardcover_token"):
-        out.append({"card": "hardcover", "reason": "no API token"})
+        out.append({"card": "hardcover", "reason": "no API token",
+                    "fix": "Paste a token from hardcover.app › Settings › API into the Hardcover card, or switch it off."})
     # PRH, Open Library and ComicBookRoundup need no login — nothing for you to fix,
     # so never a dot (a refusal just rests that source; the harvest card shows it)
     if on("locg_enabled"):
         st = _locg_status()
         waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
         if waiting and not st.get("locg_pass_live"):
-            out.append({"card": "locg", "reason": f"{waiting} waiting on a fresh pass"})
+            out.append({"card": "locg", "reason": f"{waiting} lookups waiting on a fresh pass", "fix": _FIX_LOCG_PASS})
     # Fandom's image CDN only lets a browser's pass through (kometa/images.py FANDOM_HOST):
     # downloads on, covers waiting, no pass (never pasted, or forgotten after a 403)
     if on("fandom_enabled") and cfg.get("fandom_download", "0") == "1" and not has("fandom_cf_clearance"):
@@ -523,7 +555,8 @@ def settings_attention() -> list[dict]:
         except Exception:
             waiting = 0
         if waiting:
-            out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass"})
+            out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass",
+                            "fix": _FIX_FANDOM_PASS})
     # set up fine, failing anyway (kometa/health.py) — a switched-off source never nags
     try:
         from kometa import health
@@ -533,17 +566,19 @@ def settings_attention() -> list[dict]:
         lit = {i["card"] for i in out}
         for u in health.unwell(DB_PATH):
             if on(keys.get(u["card"], "_")) and u["card"] not in lit:
-                out.append({"card": u["card"], "reason": u["reason"]})
+                out.append({"card": u["card"], "reason": u["reason"], "fix": _attn_fix(u["card"], u.get("kind"))})
                 lit.add(u["card"])
     except Exception:
         pass
     if on("prowlarr_enabled"):
         if not has("prowlarr_url", "prowlarr_apikey"):
-            out.append({"card": "prowlarr", "reason": "not set up"})
+            out.append({"card": "prowlarr", "reason": "not set up", "fix": "Fill in the Prowlarr URL and API key, or switch Prowlarr off."})
         if on("usenet_enabled") and not has("sab_url", "sab_apikey"):
-            out.append({"card": "sabnzbd", "reason": "not set up"})
+            out.append({"card": "sabnzbd", "reason": "not set up", "fix": "Fill in the SABnzbd URL and API key, or switch Usenet off."})
         if on("torrent_enabled") and not has("qbit_url", "qbit_user"):
-            out.append({"card": "qbit", "reason": "not set up"})
+            out.append({"card": "qbit", "reason": "not set up", "fix": "Fill in the qBittorrent URL and login, or switch Torrents off."})
+    for i in out:
+        i["title"] = _ATTN_TITLES.get(i["card"], i["card"])
     return out
 
 

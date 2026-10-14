@@ -3716,6 +3716,47 @@ async function _updateSettingsBadge() {
     const dot = document.getElementById(`dot-${it.card}`);
     if (dot) { dot.className = 'settings-dot bad'; dot.title = it.reason; }
   }
+  _renderSettingsAttention(items);
+}
+
+// Settings open: what's wrong and what to do, in words at the top of the page
+// and again inside the card itself. A red dot with a hover tooltip told an iPad
+// nothing. Tap a row at the top to jump to its card.
+const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'harvest-progress' };
+function _attnTarget(card) {
+  const id = _ATTN_SECTION[card];
+  const el = (id && document.getElementById(id)) || document.getElementById(`sec-${card}`)
+    || document.getElementById(`dot-${card}`);
+  return el ? (el.closest('.settings-section') || el.closest('.settings-card')) : null;
+}
+function _renderSettingsAttention(items) {
+  const top = document.getElementById('settings-attn');
+  if (!top) return;
+  document.querySelectorAll('.settings-attn-note').forEach(n => n.remove());
+  top.hidden = !items.length;
+  top.innerHTML = items.map((it, i) => `
+    <button class="settings-attn-row" onclick="_attnJump(${i})">
+      <span class="settings-attn-title">${esc(it.title || it.card)}</span>
+      <span class="settings-attn-reason">${esc(it.reason)}</span>
+      ${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}
+    </button>`).join('');
+  top._items = items;
+  for (const it of items) {
+    const host = _attnTarget(it.card);
+    if (!host) continue;
+    const note = document.createElement('div');
+    note.className = 'settings-attn-note';
+    note.innerHTML = `<span class="settings-attn-reason">${esc(it.reason)}</span>${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}`;
+    const head = host.querySelector(':scope > .settings-section-head, :scope > .settings-card-header');
+    head ? head.after(note) : host.prepend(note);
+  }
+}
+function _attnJump(i) {
+  const it = document.getElementById('settings-attn')?._items?.[i];
+  const host = it && _attnTarget(it.card);
+  if (!host) return;
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  host.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) _updateActivityBadge(); });
 
@@ -4302,6 +4343,7 @@ async function renderSettings() {
   const cfg = await api.get('/api/config');
 
   setApp(`
+    <div class="settings-attn" id="settings-attn" hidden></div>
     <div class="settings-grid">
       <div>
         <div class="settings-card">
