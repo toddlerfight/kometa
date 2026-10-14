@@ -190,9 +190,11 @@ def revoke_all(user_id: str, path=None) -> None:
     _seen.clear()
 
 
-# token → user, for a minute: a reader turning pages sends a request a second and
-# each one shouldn't cost a DB round trip. Revokes clear it outright.
-_seen: dict[str, tuple[float, dict]] = {}
+# A token is checked against the DB on EVERY request — an indexed read on a kept-open
+# connection, cheap — so a revoke from anywhere (the CLI is another process) bites at
+# once. What's remembered for a minute is only the last-used stamp: a reader turning
+# pages shouldn't write to the DB once a second.
+_seen: dict[str, float] = {}
 _seen_lock = threading.Lock()
 _TOKEN_TTL = 60
 
@@ -201,21 +203,20 @@ def user_for_token(token: str, path=None) -> dict | None:
     if not token:
         return None
     h = _token_hash(token)
-    with _seen_lock:
-        hit = _seen.get(h)
-        if hit and time.monotonic() - hit[0] < _TOKEN_TTL:
-            return hit[1]
     ensure_tables(path)
     with db._connect(path or DB_PATH) as conn:
         r = conn.execute("""SELECT u.*, t.id AS token_id FROM auth_tokens t JOIN users u ON u.id = t.user_id
                             WHERE t.hash = ? AND u.disabled = 0""", (h,)).fetchone()
-        if r:
-            conn.execute("UPDATE auth_tokens SET last_used = ? WHERE id = ?", (_now(), r["token_id"]))
-    u = dict(r) if r else None
-    if u:
+        if not r:
+            return None
+        now = time.monotonic()
         with _seen_lock:
-            _seen[h] = (time.monotonic(), u)
-    return u
+            stale = now - _seen.get(h, 0) >= _TOKEN_TTL
+            if stale:
+                _seen[h] = now
+        if stale:
+            conn.execute("UPDATE auth_tokens SET last_used = ? WHERE id = ?", (_now(), r["token_id"]))
+    return dict(r)
 
 
 def user_for_password(username: str, password: str, path=None) -> dict | None:

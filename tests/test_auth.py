@@ -265,3 +265,13 @@ def test_every_reader_route_on_the_list_is_a_real_route():
 def _sample(path: str) -> str:
     import re
     return re.sub(r"\{[^}]+\}", "1", path)
+
+
+def test_a_revoke_from_another_process_bites_at_once(a):
+    """The CLI revokes in its own process; the server must not keep honouring the token from memory."""
+    t = auth.create_user("tess", "secret99", "reader", a)
+    tok = auth.issue_token(t["id"], "phone", a)
+    assert auth.user_for_token(tok, a)
+    with db._connect(a) as conn:                                          # what the CLI does, behind the server's back
+        conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (t["id"],))
+    assert auth.user_for_token(tok, a) is None
