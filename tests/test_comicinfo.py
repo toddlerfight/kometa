@@ -71,6 +71,13 @@ def test_a_trade_gets_its_own_comicinfo(db_path, monkeypatch):
                          "desc": "Kieron Gillen and Stephanie Hans' complete fantasy-horror epic."}], db_path)
     book = {"tracked_series_id": sid, "number": None, "path": "/comics/Image Comics/Die/DIE HC (2022).cbz"}
     f = _parse(ci.for_book(book, db_path, page_count=520))
-    assert (f["Series"], f["Number"], f["Format"], f["GTIN"], f["PageCount"]) == ("Die", "1", "Hardcover", "9781534323001", "520")
+    # no Number: other readers group by series + number, and 'Die #1' filed the HC beside issue #1 (2026-10-14)
+    assert "Number" not in f and "Volume" not in f
+    assert (f["Series"], f["Title"], f["Format"], f["GTIN"], f["PageCount"]) == ("Die", "DIE HC", "Hardcover", "9781534323001", "520")
     assert f["Summary"].endswith("Collects Die #1, Die #2") and f["Year"] == "2022"
     assert ci.for_book(dict(book, path="/comics/Image Comics/Die/Something Else.cbz"), db_path) is None
+
+
+def test_a_numbered_trade_carries_its_volume_not_a_number():
+    f = ci.trade_fields({"title": "Saga", "publisher": "Image Comics"}, {"title": "Saga Vol. 2", "vol": 2, "format": "tpb"})
+    assert f["Volume"] == "2" and "Number" not in f and f["Format"] == "TPB"

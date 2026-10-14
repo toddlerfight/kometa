@@ -170,9 +170,10 @@ def for_issue(series_id: int, number: float, path=None, page_count: int | None =
 
 # --- collected editions --------------------------------------------------------------
 def trade_fields(series: dict, t: dict, page_count: int | None = None) -> dict:
-    """A trade's ComicInfo: the series it collects, its volume as the number, its
-    format, ISBN, and what it collects in the summary. Trade records carry no
-    credits — none are invented."""
+    """A trade's ComicInfo: the series it collects, its VOLUME (never a Number —
+    readers group by series + number, so 'Number 1' filed DIE HC as issue #1 beside
+    Die #001; 2026-10-14), its format, ISBN, and what it collects in the summary.
+    Trade records carry no credits — none are invented."""
     vol = t.get("vol")
     y, mo, d = _date({"store_date": t.get("store_date")})
     collects = [f"{c.get('series') or ''} #{c.get('number')}".strip() for c in (t.get("collects") or [])
@@ -184,7 +185,7 @@ def trade_fields(series: dict, t: dict, page_count: int | None = None) -> dict:
     f = {
         "Title": t.get("subtitle") or t.get("edition_title") or t.get("title"),
         "Series": series.get("title"),
-        "Number": _number(vol) if vol is not None else "1",
+        "Volume": _number(vol) if vol is not None else "",
         "Summary": summary,
         "Notes": "Tagged by Kometa (collected edition). " + "; ".join(ids),
         "Year": y, "Month": mo, "Day": d,
