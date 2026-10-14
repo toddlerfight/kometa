@@ -247,7 +247,14 @@ def _user_for_basic(header: str, path=None) -> dict | None:
 
 
 def enabled(path=None) -> bool:
-    return db.get_config(path or DB_PATH).get("auth_enabled", "0") == "1"
+    """Read straight from the DB, NOT the config cache: the
+    switch is flipped by the CLI — another process — and the app's cached config
+    never heard about it. 2026-10-14: `enable on` printed 1 and every anonymous
+    request still walked in. `enable off` is the locked-out door, so it must bite live too.
+    One indexed read a request; SQLite on local disk doesn't notice."""
+    with db._connect(path or DB_PATH) as conn:
+        r = conn.execute("SELECT value FROM config WHERE key = 'auth_enabled'").fetchone()
+    return bool(r) and r[0] == "1"
 
 
 # --- who may call what ------------------------------------------------------------------------------

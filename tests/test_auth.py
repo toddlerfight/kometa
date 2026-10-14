@@ -287,3 +287,18 @@ def test_a_reader_reads_issue_details_from_the_record_and_never_fetches(a, monke
     issue = {"tracked_series_id": series, "number": 3.0, "store_date": "2026-01-07"}
     assert record.details(issue, a, stored_only=True)["record"] is False       # nothing kept: empty, no fetch
     assert record.variants(issue, a, stored_only=True) == {"covers": [], "source": None, "record": False}
+
+
+def test_the_switch_bites_without_a_restart(tmp_path):
+    """The CLI flips auth_enabled from another process; the app's config cache must not hide it."""
+    a = str(tmp_path / "a.db")
+    db.init_db(a)
+    db.get_config(a)                       # the app has its config cached
+    import sqlite3
+    with sqlite3.connect(a) as c:          # the CLI, elsewhere
+        c.execute("INSERT INTO config (key, value) VALUES ('auth_enabled', '1') "
+                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    assert auth.enabled(a)
+    with sqlite3.connect(a) as c:
+        c.execute("UPDATE config SET value = '0' WHERE key = 'auth_enabled'")
+    assert not auth.enabled(a)
