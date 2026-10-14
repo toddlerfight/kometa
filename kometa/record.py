@@ -445,10 +445,17 @@ def backlog(path=None) -> dict:
 
 
 # --- the interaction path: the issue modal -------------------------------------------
-def details(issue: dict, path=None) -> dict:
+def details(issue: dict, path=None, stored_only: bool = False) -> dict:
     """What the modal's Details tab shows, from the record. Absent → today's
-    resolver answers AND fills the record; old → answer now, refresh behind."""
+    resolver answers AND fills the record; old → answer now, refresh behind.
+    stored_only (a reader, not the admin): what's kept, and nothing more — a
+    tester browsing must never spend Metron's or LOCG's budget."""
     path = path or DB_PATH
+    if stored_only:
+        row = get_issue(issue["tracked_series_id"], issue["number"], path) or {}
+        return {"desc": row.get("desc") or "", "credits": row.get("credits") or [], "source": row.get("source"),
+                "arcs": row.get("arcs") or [], "store_date": row.get("store_date") or issue.get("store_date"),
+                "record": bool(row)}
     from kometa import localfirst
     if localfirst.enabled(path):
         return localfirst.details(issue, path)                   # 5a–5c: record → our ComicInfo → online, off by default
@@ -585,12 +592,15 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
     return covers
 
 
-def variants(issue: dict, path=None) -> dict:
+def variants(issue: dict, path=None, stored_only: bool = False) -> dict:
     """The Variants tab: the record now, a refresh behind when it's old or the
-    issue is new; today's live resolver only when the record holds nothing."""
+    issue is new; today's live resolver only when the record holds nothing.
+    stored_only (a reader): the record's covers or none — never a fetch."""
     path = path or DB_PATH
     sid, number = issue["tracked_series_id"], issue["number"]
     row = get_issue(sid, number, path)
+    if stored_only:
+        return {"covers": (row or {}).get("covers") or [], "source": (row or {}).get("source"), "record": bool(row)}
     if row and row.get("variants_at") and row.get("covers"):
         if not _variants_fresh(row):
             threading.Thread(target=lambda: _safe_variants(sid, number, path), daemon=True).start()

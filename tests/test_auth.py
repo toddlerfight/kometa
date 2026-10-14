@@ -275,3 +275,15 @@ def test_a_revoke_from_another_process_bites_at_once(a):
     with db._connect(a) as conn:                                          # what the CLI does, behind the server's back
         conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (t["id"],))
     assert auth.user_for_token(tok, a) is None
+
+
+def test_a_reader_reads_issue_details_from_the_record_and_never_fetches(a, monkeypatch, series):
+    """Summary, credits and covers for YondeB's Issue details sheet: the admin's path may fill from a
+    catalogue; a reader's answers from what's stored — a tester must not spend Metron's budget."""
+    from kometa import issue_meta, record
+    assert auth.reader_may("GET", f"/api/series/{series}/issues/3/locg-details")
+    monkeypatch.setattr(issue_meta, "details_for", lambda *x, **k: (_ for _ in ()).throw(AssertionError("fetched")))
+    monkeypatch.setattr(record, "fill_variants", lambda *x, **k: (_ for _ in ()).throw(AssertionError("fetched")))
+    issue = {"tracked_series_id": series, "number": 3.0, "store_date": "2026-01-07"}
+    assert record.details(issue, a, stored_only=True)["record"] is False       # nothing kept: empty, no fetch
+    assert record.variants(issue, a, stored_only=True) == {"covers": [], "source": None, "record": False}

@@ -258,7 +258,7 @@ READER_GET = [re.compile(p) for p in (
     r"/api/version", r"/api/auth/me", r"/api/me/.*",
     r"/api/series", rf"/api/series/{_R}",
     rf"/api/series/{_R}/(status|thumbnail|related|top-rated|trades|arcs)",
-    rf"/api/series/{_R}/issues/{_R}/(book|thumbnail|variants)",
+    rf"/api/series/{_R}/issues/{_R}/(book|thumbnail|variants|locg-details)",
     r"/api/shelf", rf"/api/shelf/{_R}", rf"/api/shelf/{_R}/cover",
     rf"/api/books/{_R}", rf"/api/books/{_R}/(cover|pages/{_R}|next|community)",
     r"/api/cover-store/.*", r"/api/cover-upgrade/.*", r"/api/img",

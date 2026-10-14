@@ -2036,13 +2036,15 @@ def get_issue_locg_details(series_id: int, number: float):
         if not localfirst.enabled(DB_PATH):
             raise HTTPException(404)
     try:
-        d = record.details(issue, DB_PATH)        # the local record first; a catalogue only to fill it
+        from kometa.auth import is_admin
+        d = record.details(issue, DB_PATH, stored_only=not is_admin())   # a reader never triggers a catalogue fetch
     except Exception as e:
         raise HTTPException(502, "Details fetch failed") from e
     # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
     # the stored snapshot, never a fetch on open
     row = record.get_issue(series_id, number, DB_PATH) or {}
     return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source"), "record": d.get("record"),
+            "store_date": d.get("store_date") or issue.get("store_date"),   # YondeB's Issue details header
             "community": row.get("community") or None}
 
 
@@ -2076,7 +2078,8 @@ def get_issue_variants(series_id: int, number: float):
         return {"covers": [], "locg_issue_id": None, "selected_ids": sel_ids, "primary_id": primary}
     from kometa import record
     try:
-        data = record.variants(issue, DB_PATH)           # the local record first; a catalogue only to fill it
+        from kometa.auth import is_admin
+        data = record.variants(issue, DB_PATH, stored_only=not is_admin())   # a reader: the record or nothing
         covers = [dict(c) for c in data.get("covers", [])]
         from kometa import coverupgrade, images
         for c in covers:                                 # the large view: a stored bigger copy of the SAME image
