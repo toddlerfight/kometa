@@ -51,10 +51,10 @@ def ensure_tables(path=None):
 
 # --- is the book open? -----------------------------------------------------------------
 def _progress_age_s(book_id: int, path) -> float | None:
-    from kometa.reader import READER_ID
+    from kometa.auth import current_reader
     with db._connect(path) as conn:
         r = conn.execute("SELECT updated_at FROM read_progress WHERE reader_id = ? AND book_id = ?",
-                         (READER_ID, book_id)).fetchone()
+                         (current_reader(), book_id)).fetchone()
     if not r or not r["updated_at"]:
         return None
     try:

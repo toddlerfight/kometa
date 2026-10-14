@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import kometa.db as db
+from kometa.auth import current_reader, is_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,6 +42,9 @@ def ensure_tables(path=None):
         conn.execute("""CREATE TABLE IF NOT EXISTS push_devices (
             token TEXT PRIMARY KEY, env TEXT NOT NULL DEFAULT 'sandbox', name TEXT, app TEXT,
             seen_at TEXT DEFAULT (datetime('now')), dead_at TEXT)""")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(push_devices)")}
+        if "reader_id" not in cols:                     # 2026-10-14: a device belongs to someone
+            conn.execute("ALTER TABLE push_devices ADD COLUMN reader_id TEXT NOT NULL DEFAULT 'me'")
 
 
 def _key_path(path=None) -> str:
@@ -87,16 +91,19 @@ def _post(url: str, headers: dict, body: bytes):
     return cr.post(url, headers=headers, data=body, timeout=15, http_version=CurlHttpVersion.V2_0)
 
 
-def send(payload: dict, path=None, post=None) -> dict:
-    """One payload to every live device. Returns {sent, failed, dead}. A token Apple
-    calls Unregistered / BadDeviceToken is marked dead and never tried again."""
+def send(payload: dict, path=None, post=None, reader_id: str | None = None) -> dict:
+    """One payload to every live device — or only one person's. Returns {sent, failed,
+    dead}. A token Apple calls Unregistered / BadDeviceToken is marked dead and never
+    tried again."""
     path = path or DB_PATH
     ensure_tables(path)
     if not configured(path):
         return {"sent": 0, "failed": 0, "dead": 0, "error": "not configured"}
     post = post or _post
     with db._connect(path) as conn:
-        devices = [dict(r) for r in conn.execute("SELECT token, env FROM push_devices WHERE dead_at IS NULL")]
+        devices = [dict(r) for r in conn.execute(
+            "SELECT token, env FROM push_devices WHERE dead_at IS NULL AND (? IS NULL OR reader_id = ?)",
+            (reader_id, reader_id))]
     body = json.dumps(payload, separators=(",", ":")).encode()
     out = {"sent": 0, "failed": 0, "dead": 0}
     for d in devices:
@@ -130,8 +137,9 @@ def send(payload: dict, path=None, post=None) -> dict:
 
 # --- what landed -----------------------------------------------------------------------
 def issue_landed(series_id: int, number, path=None):
-    """Called once per finished download (db.complete_download). Pull-list series
-    only; batched — the send waits for BATCH_S of quiet."""
+    """Called once per finished download (db.complete_download). Batched — the send
+    waits for BATCH_S of quiet — and sorted out per person at the send: who cares
+    about this series is a question for each reader, not for the landing."""
     global _timer
     path = path or DB_PATH
     try:
@@ -139,8 +147,8 @@ def issue_landed(series_id: int, number, path=None):
         if cfg.get("push_enabled", "1") == "0" or not configured(path):
             return
         with db._connect(path) as conn:
-            s = conn.execute("SELECT title, on_pull_list FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
-        if not s or ((cfg.get("push_scope") or "pull") == "pull" and not s["on_pull_list"]):
+            s = conn.execute("SELECT title FROM tracked_series WHERE id = ?", (series_id,)).fetchone()
+        if not s:
             return
         with _lock:
             _pending.append({"series_id": series_id, "number": number, "title": s["title"]})
@@ -203,11 +211,47 @@ def flush(path=None, post=None) -> dict | None:
         if k not in seen:
             seen.add(k)
             uniq.append(it)
-    for it in uniq[:MAX_BATCH_IDS]:                       # indexed now, so the tap (reader or row) finds them
-        it["book_id"] = _book_id(it["series_id"], it["number"])
-    res = send(build_payload(uniq), path, post)
-    logger.info(f"Push: {len(uniq)} landed → {res}")
-    return res
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        owners = [r[0] for r in conn.execute("SELECT DISTINCT reader_id FROM push_devices WHERE dead_at IS NULL")]
+    total = {"sent": 0, "failed": 0, "dead": 0}
+    for rid in owners:                                   # each person: their series, their devices, one buzz
+        mine = [it for it in uniq if it["series_id"] in interested(rid, path)]
+        if not mine:
+            continue
+        for it in mine[:MAX_BATCH_IDS]:                  # indexed now, so the tap (reader or row) finds them
+            if "book_id" not in it:
+                it["book_id"] = _book_id(it["series_id"], it["number"])
+        res = send(build_payload(mine), path, post, reader_id=rid)
+        for k in total:
+            total[k] += res.get(k, 0)
+    logger.info(f"Push: {len(uniq)} landed → {total}")
+    return total
+
+
+def interested(reader_id: str, path=None) -> set[int]:
+    """The series a landing should buzz this person for. The admin: the pull list
+    (push_scope 'pull', the default) or everything ('all'). A reader: their own pull
+    list, plus — unless their pref push.reading is off — what they're reading or
+    have favourited."""
+    from kometa import auth
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        if reader_id == auth.OWNER:
+            if (db.get_config(path).get("push_scope") or "pull") == "all":
+                return {r[0] for r in conn.execute("SELECT id FROM tracked_series")}
+            return {r[0] for r in conn.execute("SELECT id FROM tracked_series WHERE on_pull_list = 1")}
+    ids = auth.pull_ids(reader_id, path)
+    if auth.get_prefs(reader_id, path).get("push.reading", True):
+        from kometa import marks
+        marks.ensure_tables(path)                        # made on first use; a reader may beat it here
+        with db._connect(path) as conn:
+            ids |= {r[0] for r in conn.execute("""SELECT DISTINCT b.tracked_series_id FROM read_progress p
+                JOIN books b ON b.id = p.book_id WHERE p.reader_id = ? AND b.tracked_series_id IS NOT NULL""", (reader_id,))}
+            ids |= {r[0] for r in conn.execute("""SELECT target_id FROM marks
+                WHERE reader_id = ? AND kind = 'series' AND favourite = 1""", (reader_id,))}
+    return ids
 
 
 # --- routes -------------------------------------------------------------------------------
@@ -226,10 +270,11 @@ def register_device(req: DeviceRequest):
     env = req.env if req.env in HOSTS else "sandbox"
     ensure_tables()
     with db._connect(DB_PATH) as conn:
-        conn.execute("""INSERT INTO push_devices (token, env, name, app, seen_at, dead_at)
-            VALUES (?, ?, ?, ?, datetime('now'), NULL)
+        conn.execute("""INSERT INTO push_devices (token, env, name, app, seen_at, dead_at, reader_id)
+            VALUES (?, ?, ?, ?, datetime('now'), NULL, ?)
             ON CONFLICT(token) DO UPDATE SET env = excluded.env, name = excluded.name, app = excluded.app,
-                seen_at = excluded.seen_at, dead_at = NULL""", (tok, env, req.name, req.app))
+                seen_at = excluded.seen_at, dead_at = NULL, reader_id = excluded.reader_id""",
+                     (tok, env, req.name, req.app, current_reader()))      # whoever's signed in on it now
     return {"ok": True}
 
 
@@ -237,8 +282,9 @@ def register_device(req: DeviceRequest):
 def push_status():
     ensure_tables()
     with db._connect(DB_PATH) as conn:
-        devs = [dict(r) for r in conn.execute(
-            "SELECT substr(token, 1, 8) AS token, env, name, seen_at, dead_at FROM push_devices ORDER BY seen_at DESC")]
+        devs = [dict(r) for r in conn.execute(           # yours; the admin sees everyone's
+            "SELECT substr(token, 1, 8) AS token, env, name, seen_at, dead_at, reader_id FROM push_devices "
+            "WHERE ? OR reader_id = ? ORDER BY seen_at DESC", (int(is_admin()), current_reader()))]
     cfg = db.get_config(DB_PATH)
     return {"configured": configured(), "scope": cfg.get("push_scope") or "pull",
             "enabled": cfg.get("push_enabled", "1") != "0", "devices": devs}
@@ -249,4 +295,4 @@ def push_test():
     if not configured():
         raise HTTPException(409, "Push isn't set up: key or ids missing")
     return send({"aps": {"alert": {"title": "Kometa", "body": "Test from Kometa — push works"}, "sound": "default"},
-                 "kind": "test"})
+                 "kind": "test"}, reader_id=current_reader())          # your own devices, nobody else's

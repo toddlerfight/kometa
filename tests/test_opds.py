@@ -141,3 +141,9 @@ def test_a_pse_page_is_served_and_its_page_list_read_on_first_open(db_path, tmp_
     assert db.get_book(ids[0], db_path)["page_count"]                          # the page list landed
     again = asyncio.run(op.api_page(ids[0], 0, maxWidth=400))                   # from the cache this time
     assert again.body == resp.body
+
+
+def test_every_feed_says_it_is_a_kometa(db_path, monkeypatch):
+    """YondeB connects to any OPDS address; this link is how it knows to switch to the full app."""
+    monkeypatch.setattr(op, "DB_PATH", db_path)
+    assert f'rel="{op.KOMETA_API_REL}" href="/api"' in op.root_feed()

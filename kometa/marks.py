@@ -16,10 +16,10 @@ from pydantic import BaseModel
 
 import kometa.db as db
 
+from kometa.auth import current_reader
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
-READER_ID = "me"
 KINDS = ("book", "series")
 
 
@@ -37,7 +37,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def get_mark(kind: str, target_id: int, path=None, reader_id=READER_ID) -> dict:
+def get_mark(kind: str, target_id: int, path=None, reader_id=None) -> dict:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -47,8 +48,9 @@ def get_mark(kind: str, target_id: int, path=None, reader_id=READER_ID) -> dict:
 
 
 def set_mark(kind: str, target_id: int, favourite: bool | None = None, rating: int | None = None,
-             clear_rating: bool = False, path=None, reader_id=READER_ID) -> dict:
+             clear_rating: bool = False, path=None, reader_id=None) -> dict:
     """Change what's given, keep the rest. rating 1–5; clear_rating drops it."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     if kind not in KINDS:
         raise ValueError(kind)
@@ -68,8 +70,9 @@ def set_mark(kind: str, target_id: int, favourite: bool | None = None, rating: i
     return {"favourite": fav, "rating": rat}
 
 
-def marks_for(kind: str, path=None, reader_id=READER_ID) -> dict[int, dict]:
+def marks_for(kind: str, path=None, reader_id=None) -> dict[int, dict]:
     """{target_id: {favourite, rating}} for everything marked of one kind."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -77,8 +80,9 @@ def marks_for(kind: str, path=None, reader_id=READER_ID) -> dict[int, dict]:
             "SELECT target_id, favourite, rating FROM marks WHERE reader_id = ? AND kind = ?", (reader_id, kind))}
 
 
-def series_rating(series_id: int, path=None, reader_id=READER_ID) -> dict:
+def series_rating(series_id: int, path=None, reader_id=None) -> dict:
     """The series' own rating, else the mean of its rated issues (one decimal)."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     own = get_mark("series", series_id, path, reader_id)
     with db._connect(path) as conn:
@@ -89,8 +93,9 @@ def series_rating(series_id: int, path=None, reader_id=READER_ID) -> dict:
     return {"favourite": own["favourite"], "rating": own["rating"], "rating_derived": derived, "rated_issues": len(rows)}
 
 
-def rated_series(path=None, reader_id=READER_ID) -> dict[int, float]:
+def rated_series(path=None, reader_id=None) -> dict[int, float]:
     """{series_id: rating} — own rating, else derived — for ranking anchors."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     out = {sid: float(m["rating"]) for sid, m in marks_for("series", path, reader_id).items() if m["rating"]}
     with db._connect(path) as conn:
@@ -101,9 +106,10 @@ def rated_series(path=None, reader_id=READER_ID) -> dict[int, float]:
     return out
 
 
-def favourites(path=None, reader_id=READER_ID) -> list[dict]:
+def favourites(path=None, reader_id=None) -> list[dict]:
     """On Deck's Favourites row: starred series (as series tiles) then starred
     books (as book tiles), newest star first."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     from kometa.ondeck import _card
@@ -126,9 +132,10 @@ def favourites(path=None, reader_id=READER_ID) -> list[dict]:
 
 
 # --- next in series: what the end screen counts down to ------------------------------
-def next_in_series(book_id: int, path=None, reader_id=READER_ID) -> dict:
+def next_in_series(book_id: int, path=None, reader_id=None) -> dict:
     """The book after this one in its folder, or why there isn't one:
     {status: 'book', book_id, title, label} | {status: 'upcoming'|'not_owned'|'downloading'|'queued'|'end', label}."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     b = db.get_book(book_id, path)
     if not b:

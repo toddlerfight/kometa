@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Response
 
 import kometa.db as db
+from kometa.auth import current_reader
 from kometa.naming import PIPELINE_EXTS
 from kometa import sources
 from kometa.naming import parse_issue_number
@@ -232,8 +233,8 @@ def list_shelf():
     """Untracked series on the shelf (tracked ones are /api/series), plus the
     Reading flags for tracked series so the Library chip covers both."""
     return {
-        "series": db.list_shelf(rd.READER_ID, untracked_only=True, path=DB_PATH),
-        "tracked_reading": db.reading_by_tracked_series(rd.READER_ID, DB_PATH),
+        "series": db.list_shelf(current_reader(), untracked_only=True, path=DB_PATH),
+        "tracked_reading": db.reading_by_tracked_series(current_reader(), DB_PATH),
         "last_scan": _last_scan or None,
     }
 
@@ -259,7 +260,7 @@ def shelf_detail(shelf_id: int):
     # and a file that vanished since says so when it's opened. A check per row
     # was 544 round trips to the share for one Uncanny X-Men page view.
     books = []
-    for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"]):
+    for b in _sorted_books(db.shelf_books(shelf_id, current_reader(), DB_PATH), s["title"]):
         books.append({
             "id": b["id"],
             "number": b["number"],
@@ -277,7 +278,7 @@ def _first_book(shelf_id: int) -> dict | None:
     if not s:
         return None
     # the first one still on disk — asked lazily, so it's one check, not one per book
-    return next((b for b in _sorted_books(db.shelf_books(shelf_id, rd.READER_ID, DB_PATH), s["title"])
+    return next((b for b in _sorted_books(db.shelf_books(shelf_id, current_reader(), DB_PATH), s["title"])
                  if os.path.exists(b["path"])), None)
 
 

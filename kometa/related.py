@@ -24,12 +24,12 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException
 
 import kometa.db as db
+from kometa.auth import current_reader
 from kometa.naming import norm_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
-READER_ID = "me"
 SIGNAL_TTL_DAYS = 30
 RECENT_DAYS = 60
 _ROLE_WEIGHT = {"writer": 3.0, "story": 3.0, "script": 3.0, "plot": 2.0, "artist": 2.0, "penciller": 2.0,
@@ -257,7 +257,7 @@ def _recent_series(path, days: int = RECENT_DAYS) -> list[int]:
         return [r[0] for r in conn.execute("""
             SELECT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id
             WHERE p.reader_id = ? AND p.updated_at >= ? AND b.tracked_series_id IS NOT NULL
-            GROUP BY b.tracked_series_id ORDER BY MAX(p.updated_at) DESC LIMIT 20""", (READER_ID, since))]
+            GROUP BY b.tracked_series_id ORDER BY MAX(p.updated_at) DESC LIMIT 20""", (current_reader(), since))]
 
 
 _lists_cache = {"at": 0.0, "path": None, "value": None}
@@ -408,7 +408,7 @@ def because_rows(max_rows: int = 2, min_items: int = 4, path=None, exclude=None,
     titles = {s["id"]: s["title"] for s in db.get_all_series(path)}
     with db._connect(path) as conn:
         started = {r[0] for r in conn.execute(
-            "SELECT DISTINCT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id WHERE p.reader_id = ?", (READER_ID,))}
+            "SELECT DISTINCT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id WHERE p.reader_id = ?", (current_reader(),))}
     used = {f"s:{x}" for x in (exclude or [])} | {f"s:{x}" for x in seeds}
     rows, pending = [], False
     for seed in seeds:

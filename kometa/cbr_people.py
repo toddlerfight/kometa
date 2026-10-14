@@ -531,7 +531,8 @@ def seed_weights(path=None) -> dict[int, float]:
     """{tracked_series_id: weight} for every run that says something about you
     (zero-weight runs left out). Read live on every call — a rating added this
     minute counts this minute. Read-only on marks / read_progress / books / issue_status."""
-    from kometa.marks import READER_ID, rated_series
+    from kometa.marks import rated_series
+    from kometa.auth import current_reader
     path = path or DB_PATH
     tier: dict[int, float] = {}
 
@@ -543,11 +544,11 @@ def seed_weights(path=None) -> dict[int, float]:
         for sid in owned_ids:
             lift(sid, W_OWNED)
         for r in conn.execute("""SELECT DISTINCT b.tracked_series_id FROM read_progress p JOIN books b ON b.id = p.book_id
-                WHERE p.reader_id = ? AND p.completed = 1""", (READER_ID,)):
+                WHERE p.reader_id = ? AND p.completed = 1""", (current_reader(),)):
             lift(r[0], W_READ)
         for r in conn.execute("""SELECT target_id FROM marks WHERE reader_id = ? AND kind = 'series' AND favourite = 1
                 UNION SELECT b.tracked_series_id FROM marks m JOIN books b ON b.id = m.target_id
-                WHERE m.reader_id = ? AND m.kind = 'book' AND m.favourite = 1""", (READER_ID, READER_ID)):
+                WHERE m.reader_id = ? AND m.kind = 'book' AND m.favourite = 1""", (current_reader(), current_reader())):
             lift(r[0], W_FAVOURITE)
     for sid in currently_reading(path):
         lift(sid, W_ONDECK)

@@ -211,6 +211,10 @@ class _RequestWrap:
 
 
 app.add_middleware(_RequestWrap)
+# outermost: who's asking, and may they (kometa/auth.py). Off by default — everyone is the admin.
+from kometa.auth import AuthGate, router as _auth_router  # noqa: E402
+app.add_middleware(AuthGate)
+app.include_router(_auth_router)
 
 # Cover-art pipeline (thumbnail routes + disk cache) lives in kometa/thumbnails —
 # fully self-contained; nothing else in the app imports from it.

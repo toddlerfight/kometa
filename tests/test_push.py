@@ -116,3 +116,32 @@ def test_device_registration_is_idempotent_and_revives(setup, db_path):
     not_hex = "zz" * 32
     with pytest.raises(Exception):
         push.register_device(push.DeviceRequest(token=not_hex))
+
+
+def test_each_person_gets_their_own_landings_on_their_own_devices(setup, db_path, monkeypatch):
+    """You: your pull list. A reader: their pull list + what they're reading. One buzz each."""
+    from kometa import auth
+    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    auth._ready.clear()
+    monkeypatch.setattr(push, "BATCH_S", 999)
+    monkeypatch.setattr(push, "_book_id", lambda s, n: None)
+    pulled = db.add_series(title="Pulled", publisher="Marvel", folder_path="/c/p", path=db_path)
+    theirs = db.add_series(title="Tess Pulls", publisher="Image", folder_path="/c/t", path=db_path)
+    reading = db.add_series(title="Tess Reads", publisher="DC", folder_path="/c/r", path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET on_pull_list = (id = ?)", (pulled,))
+    tess = auth.create_user("tess", "secret99", "reader", db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("INSERT INTO reader_pull (reader_id, series_id, added_at) VALUES (?, ?, 'x')", (tess["id"], theirs))
+        bid = conn.execute("INSERT INTO books (path, tracked_series_id, number) VALUES ('/c/r/1.cbz', ?, 1)", (reading,)).lastrowid
+    db.set_progress(tess["id"], bid, 3, False, "2026-10-14T00:00:00Z", db_path)
+    _dev(db_path, "aa" * 32)                                                    # the owner's
+    with db._connect(db_path) as conn:
+        conn.execute("INSERT INTO push_devices (token, env, reader_id) VALUES (?, 'sandbox', ?)", ("bb" * 32, tess["id"]))
+    for s in (pulled, theirs, reading):
+        push.issue_landed(s, 2.0, db_path)
+    push._timer.cancel()
+    got = {}
+    push.flush(db_path, post=lambda u, h, body: got.setdefault(u.rsplit("/", 1)[1][:4], json.loads(body)) and R(200) or R(200))
+    assert got["aaaa"]["aps"]["alert"]["body"] == "Pulled #2"
+    assert got["bbbb"]["aps"]["alert"]["body"] == "Tess Pulls #2, Tess Reads #2"

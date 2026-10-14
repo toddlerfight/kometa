@@ -31,6 +31,7 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import kometa.db as db
+from kometa.auth import current_reader
 from kometa.naming import find_issue_file, _IMAGE_EXTS
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,6 @@ router = APIRouter()
 DB_PATH = db.DB_PATH
 
 # One reader today. Everything is keyed by it so a second one is data, not schema.
-READER_ID = "me"
 
 # Finished = within the last N pages. Pages-from-end, not a percentage: backmatter
 # (ads, letters, a variant cover) is a roughly fixed number of pages, and 90% is
@@ -453,7 +453,7 @@ def _book_payload(book: dict) -> dict:
         # wide = a two-page spread drawn as one image: shown on its own, never paired
         "pages": [{"w": w, "h": h, "wide": bool(w and h and w > h)} for _, w, h in book["pages"]],
         "finish_within_pages": FINISH_WITHIN_PAGES,
-        "progress": db.get_progress(READER_ID, book["id"], DB_PATH),
+        "progress": db.get_progress(current_reader(), book["id"], DB_PATH),
         **_mark(book["id"]),
     }
 
@@ -605,7 +605,7 @@ def put_progress(book_id: int, req: ProgressRequest):
     if not _ISO_UTC.match(req.updated_at):
         raise HTTPException(422, "updated_at must be UTC ISO-8601, e.g. 2026-10-08T09:30:00Z")
     completed = req.completed if req.completed is not None else is_finished(req.page, book["page_count"])
-    ok, stored = db.set_progress(READER_ID, book_id, req.page, completed, req.updated_at, DB_PATH)
+    ok, stored = db.set_progress(current_reader(), book_id, req.page, completed, req.updated_at, DB_PATH)
     if not ok:
         raise HTTPException(409, detail={"error": "stale", "progress": stored})
     return {"progress": stored}

@@ -23,8 +23,6 @@ from collections import defaultdict
 import kometa.db as db
 from kometa import sources
 from kometa.naming import norm_key, parse_issue_number, _safe, OWNED_EXTS
-from kometa.reader import READER_ID
-
 logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH

@@ -20,15 +20,16 @@ from fastapi.responses import FileResponse
 
 import kometa.db as db
 
+from kometa.auth import current_reader
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
-READER_ID = "me"
 PAGE = 100
 NAV = "application/atom+xml;profile=opds-catalog;kind=navigation"
 ACQ = "application/atom+xml;profile=opds-catalog;kind=acquisition"
 MEDIA = {".cbz": "application/vnd.comicbook+zip", ".cbr": "application/vnd.comicbook-rar",
          ".cb7": "application/x-7z-compressed", ".pdf": "application/pdf"}
+KOMETA_API_REL = "https://kometa.dev/rel/api"   # other OPDS apps ignore a rel they don't know
 _YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
 
 
@@ -52,6 +53,8 @@ def _feed(kind: str, fid: str, title: str, links: list[str], entries: list[str],
             f'<link rel="self" href={quoteattr(self_href)} type={quoteattr(kind)}/>\n'
             f'<link rel="start" href="/opds" type={quoteattr(NAV)}/>\n'
             f'<link rel="search" href="/opds/opensearch.xml" type="application/opensearchdescription+xml"/>\n'
+            # YondeB reads this: an OPDS server that's a Kometa gets the full app, not just the feeds
+            f'<link rel="{KOMETA_API_REL}" href="/api" type="application/json"/>\n'
             + "\n".join(links) + "\n" + "\n".join(entries) + "\n</feed>")
 
 
@@ -128,7 +131,7 @@ def _progress_for(book_ids: list[int], path) -> dict[int, dict]:
         q = ",".join("?" * len(book_ids))
         return {r["book_id"]: dict(r) for r in conn.execute(
             f"SELECT book_id, page, completed, updated_at FROM read_progress WHERE reader_id = ? AND book_id IN ({q})",
-            (READER_ID, *book_ids))}
+            (current_reader(), *book_ids))}
 
 
 def _books_sql(path, where: str, params: tuple, order: str, limit: int | None = None) -> list[dict]:
@@ -259,7 +262,7 @@ def favourites_feed(path=None) -> str:
             else:
                 r = conn.execute("""SELECT b.id FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
                     WHERE b.tracked_series_id = ? AND COALESCE(p.completed, 0) = 0 AND b.number IS NOT NULL
-                    ORDER BY b.number LIMIT 1""", (READER_ID, f["series_id"])).fetchone()
+                    ORDER BY b.number LIMIT 1""", (current_reader(), f["series_id"])).fetchone()
                 if r:
                     ids.append(r["id"])
     ids = list(dict.fromkeys(ids))
@@ -270,12 +273,13 @@ def favourites_feed(path=None) -> str:
 PREFETCH_LAG = 3
 
 
-def note_page_read(book: dict, page0: int, path=None, reader_id=READER_ID) -> None:
+def note_page_read(book: dict, page0: int, path=None, reader_id=None) -> None:
     """Kavita's rule, with a lag: Panels fetches a few pages ahead of where you
     are (six in one burst, seen 2026-10-09), so the saved page trails the fetched
     one by PREFETCH_LAG. Never moves backwards, never un-finishes a book.
     Fetching the last page counts as finishing — a prefetch gets there only
     when you're already in the back matter."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     count = book.get("page_count") or 0
     if count <= 0:
@@ -306,7 +310,7 @@ def keep_reading_feed(path=None) -> str:
         books = [dict(r) for r in conn.execute("""
             SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id, b.tracked_series_id, s.title AS series_title
             FROM read_progress p JOIN books b ON b.id = p.book_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
-            WHERE p.reader_id = ? AND p.completed = 0 ORDER BY p.updated_at DESC LIMIT 50""", (READER_ID,))]
+            WHERE p.reader_id = ? AND p.completed = 0 ORDER BY p.updated_at DESC LIMIT 50""", (current_reader(),))]
     return _feed(ACQ, "urn:kometa:opds:keep-reading", "Keep reading", [], _entries(books, path), "/opds/keep-reading")
 
 

@@ -18,8 +18,7 @@ import time
 import kometa.db as db
 from kometa import sources
 from kometa.naming import norm_key, parse_issue_number, OWNED_EXTS
-from kometa.reader import READER_ID
-
+from kometa.auth import current_reader
 logger = logging.getLogger(__name__)
 
 DB_PATH = db.DB_PATH
@@ -52,7 +51,7 @@ def find_twins(path=None) -> list[dict]:
     for s in series:
         by_key.setdefault(_key(s["title"]), s)
     out = []
-    for sh in db.list_shelf(READER_ID, untracked_only=True, path=path):
+    for sh in db.list_shelf(current_reader(), untracked_only=True, path=path):
         k = _key(sh["title"])
         if _GENERIC.match(k):
             continue
@@ -84,7 +83,7 @@ def find_twins(path=None) -> list[dict]:
             if twin["id"] in seen or os.path.realpath(twin["folder_path"]) == os.path.realpath(keeper["folder_path"]):
                 continue
             seen.add(twin["id"])
-            sh = next((x for x in db.list_shelf(READER_ID, untracked_only=False, path=path)
+            sh = next((x for x in db.list_shelf(current_reader(), untracked_only=False, path=path)
                        if os.path.realpath(x["folder_path"]) == os.path.realpath(twin["folder_path"])), None)
             if not sh:
                 continue

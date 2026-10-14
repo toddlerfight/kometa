@@ -18,6 +18,7 @@ import threading
 import time
 
 import kometa.db as db
+from kometa.auth import current_reader
 from kometa.naming import norm_key, _pub_key
 from kometa.locg_client import search_series_strict
 
@@ -74,7 +75,7 @@ def import_new_folders() -> list[int]:
     # under both IDW and Mirage) — a second folder must not mint a twin series.
     # It stays on the shelf, readable, and is logged for the file-tidy task.
     taken = {norm_key(s["title"]) for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"}
-    for s in db.list_shelf("me", untracked_only=True, path=DB_PATH):
+    for s in db.list_shelf(current_reader(), untracked_only=True, path=DB_PATH):
         title = _clean_title(s["title"])
         if norm_key(title) in taken:
             logger.info(f"Shelf import: duplicate folder {s['folder_path']!r} — a series named "

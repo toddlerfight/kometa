@@ -27,12 +27,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 import kometa.db as db
+from kometa.auth import current_reader
 from kometa.naming import norm_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
-READER_ID = "me"
 
 
 # --- storage ----------------------------------------------------------------------
@@ -343,7 +343,7 @@ def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: 
 
 
 def _books(shelf_id: int, path) -> list[dict]:
-    rows = db.shelf_books(shelf_id, READER_ID, path)
+    rows = db.shelf_books(shelf_id, current_reader(), path)
     # one book per number: the CBZ beats the CBR, else the newest file. The
     # Midnight Circus folder holds '#001 (2013).cbz' AND '#001.cbz'.
     # an 'Annual 001' filed in the run's folder parses as #1 too: the plain
@@ -380,7 +380,7 @@ def _by_file(path, names: list[str]) -> dict[str, dict]:
             SELECT b.id, b.path, b.number, b.page_count, b.size, b.mtime, b.shelf_series_id, b.tracked_series_id,
                    p.page AS progress_page, p.completed, p.updated_at
             FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-        """, (READER_ID,)):
+        """, (current_reader(),)):
             bn = os.path.basename(r["path"])
             if bn in want and bn not in out:
                 out[bn] = dict(r)
@@ -464,7 +464,7 @@ def _covering_book(series_id: int, number: float, path) -> dict | None:
             return None
         b = conn.execute("""SELECT b.*, p.page AS progress_page, p.completed, p.updated_at FROM books b
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ? WHERE b.path = ?""",
-                         (READER_ID, r["covered_by"])).fetchone()
+                         (current_reader(), r["covered_by"])).fetchone()
     return _book_view(dict(b)) if b else None
 
 
@@ -490,7 +490,7 @@ def _trade_index(path) -> dict[str, list[dict]]:
             SELECT b.id, b.path, b.number, b.page_count, b.size, b.mtime, b.shelf_series_id, b.tracked_series_id,
                    p.page AS progress_page, p.completed, p.updated_at
             FROM books b LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-            WHERE b.number IS NULL""", (READER_ID,)):
+            WHERE b.number IS NULL""", (current_reader(),)):
             stem = os.path.splitext(os.path.basename(r["path"]))[0]
             # both the name as filed and the name with its tail trimmed:
             # 'Fables - The Deluxe Edition - Book 09' answers to either

@@ -7,25 +7,28 @@ let _issueModalPollTimer = null;
 // feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
 const STAGGER_MS = 40;
 
+// Signed out (accounts on, the session gone): back to / — which is the sign-in page now.
+function _signedOut(r) { if (r.status === 401) location.replace('/'); }
+
 const api = {
   get(url) {
-    return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    return fetch(url).then(r => { _signedOut(r); if (!r.ok) throw new Error(r.status); return r.json(); });
   },
   post(url, body) {
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.status === 204 ? null : r.json(); });
+      .then(r => { _signedOut(r); if (!r.ok) throw new Error(r.status); return r.status === 204 ? null : r.json(); });
   },
   patch(url, body) {
     return fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      .then(r => { _signedOut(r); if (!r.ok) throw new Error(r.status); return r.json(); });
   },
   put(url, body) {
     return fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+      .then(r => { _signedOut(r); if (!r.ok) throw new Error(r.status); return r.json(); });
   },
   del(url) {
     return fetch(url, { method: 'DELETE' }).then(r => {
-      if (!r.ok) throw new Error(r.status);
+      _signedOut(r); if (!r.ok) throw new Error(r.status);
       return r.status === 204 ? null : r.json().catch(() => null);
     });
   },

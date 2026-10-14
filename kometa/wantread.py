@@ -19,8 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import kometa.db as db
-from kometa.reader import READER_ID
-
+from kometa.auth import current_reader
 router = APIRouter()
 DB_PATH = db.DB_PATH
 
@@ -60,7 +59,8 @@ def _target(book_id=None, series_id=None, number=None, path=None) -> tuple:
     return None, int(series_id), (float(number) if number is not None else None)
 
 
-def items(path=None, reader_id=READER_ID) -> list[dict]:
+def items(path=None, reader_id=None) -> list[dict]:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -69,13 +69,15 @@ def items(path=None, reader_id=READER_ID) -> list[dict]:
             (reader_id,))]
 
 
-def find(book_id=None, series_id=None, number=None, path=None, reader_id=READER_ID) -> dict | None:
+def find(book_id=None, series_id=None, number=None, path=None, reader_id=None) -> dict | None:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     t = _target(book_id, series_id, number, path)
     return next((i for i in items(path, reader_id) if (i["book_id"], i["series_id"], i["number"]) == t), None)
 
 
-def add(book_id=None, series_id=None, number=None, path=None, reader_id=READER_ID) -> dict:
+def add(book_id=None, series_id=None, number=None, path=None, reader_id=None) -> dict:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     bid, sid, n = _target(book_id, series_id, number, path)
@@ -85,16 +87,18 @@ def add(book_id=None, series_id=None, number=None, path=None, reader_id=READER_I
     return find(book_id, series_id, number, path, reader_id)
 
 
-def remove(want_id: int, path=None, reader_id=READER_ID) -> None:
+def remove(want_id: int, path=None, reader_id=None) -> None:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
         conn.execute("DELETE FROM want_to_read WHERE id = ? AND reader_id = ?", (want_id, reader_id))
 
 
-def row(path=None, reader_id=READER_ID) -> list[dict]:
+def row(path=None, reader_id=None) -> list[dict]:
     """On Deck's Want to read cards, in the order you added them. Finished
     entries are dropped here, as the row is built."""
+    reader_id = reader_id or current_reader()
     from kometa.ondeck import _card
     path = path or DB_PATH
     ensure_tables(path)

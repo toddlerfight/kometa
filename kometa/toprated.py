@@ -27,8 +27,7 @@ import json
 from fastapi import APIRouter
 
 import kometa.db as db
-from kometa.reader import READER_ID
-
+from kometa.auth import current_reader
 router = APIRouter()
 DB_PATH = db.DB_PATH
 
@@ -158,10 +157,11 @@ def _read_state(conn, ids: list[int], reader_id: str) -> dict[int, tuple[int, in
     return out
 
 
-def picks(reader_id=READER_ID, path=None, limit: int = PICKS_LIMIT) -> list[dict]:
+def picks(reader_id=None, path=None, limit: int = PICKS_LIMIT) -> list[dict]:
     """Your owned runs, by community score, minus the ones you've read to the
     end. Unread and part-read both stay; part-read wins a tie (you liked it
     enough to start). Fewer than PICKS_MIN and there's no row."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     from kometa import record
     record.ensure_tables(path)

@@ -25,8 +25,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter
 
 import kometa.db as db
-from kometa.reader import READER_ID
-
+from kometa.auth import current_reader
 router = APIRouter()
 DB_PATH = db.DB_PATH
 CONTINUE_DAYS = 30
@@ -62,7 +61,8 @@ def _card(conn, b, progress=None, **extra) -> dict:
             "progress": progress, **extra}
 
 
-def continue_reading(reader_id=READER_ID, now=None, path=None) -> list[dict]:
+def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     now = now or datetime.now(timezone.utc)
     since = (now - timedelta(days=CONTINUE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -89,7 +89,8 @@ def _series_groups(conn, reader_id):
     return groups
 
 
-def up_next(reader_id=READER_ID, path=None, groups=None) -> list[dict]:
+def up_next(reader_id=None, path=None, groups=None) -> list[dict]:
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     out = []
     with db._connect(path) as conn:
@@ -109,9 +110,10 @@ def up_next(reader_id=READER_ID, path=None, groups=None) -> list[dict]:
     return out[:ROW_LIMIT]
 
 
-def coming_soon(reader_id=READER_ID, path=None, groups=None) -> list[dict]:
+def coming_soon(reader_id=None, path=None, groups=None) -> list[dict]:
     """Series you're reading and caught up on (every numbered owned book
     finished) whose issue list has something you don't own yet."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     out = []
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -165,10 +167,11 @@ def _one_per_series(conn, rows, **field) -> list[dict]:
     return out
 
 
-def recent_added(reader_id=READER_ID, path=None) -> list[dict]:
+def recent_added(reader_id=None, path=None) -> list[dict]:
     """What landed on the shelf lately, by the FILE's own timestamp (the index
     date lies: the whole shelf was indexed this week). One card per series,
     its newest file, unread only — seven Deadly Duo issues in a night is one card."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     with db._connect(path) as conn:
         rows = conn.execute("""
@@ -179,9 +182,10 @@ def recent_added(reader_id=READER_ID, path=None) -> list[dict]:
         return _one_per_series(conn, rows, mtime="mtime")
 
 
-def recent_released(reader_id=READER_ID, path=None) -> list[dict]:
+def recent_released(reader_id=None, path=None) -> list[dict]:
     """Owned issues by RELEASE date (the catalogue's store date), newest first,
     unread only, one card per series. What came out lately that you have."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     with db._connect(path) as conn:
         rows = conn.execute("""
@@ -198,10 +202,11 @@ def _skey(series_id, shelf_id):
     return ("t", series_id) if series_id else ("s", shelf_id)
 
 
-def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None) -> list[dict]:
+def list_rows(reader_id=None, now=None, path=None, seen: set | None = None) -> list[dict]:
     """'Next on {list}' for the lists you've been reading from lately: the entries
     from the first unfinished one on, in order. Owned entries are book cards;
     gaps are gap cards (the list page is where you deal with them)."""
+    reader_id = reader_id or current_reader()
     from kometa.related import _resolved_lists
     path = path or DB_PATH
     now = now or datetime.now(timezone.utc)
@@ -249,10 +254,11 @@ def list_rows(reader_id=READER_ID, now=None, path=None, seen: set | None = None)
     return rows
 
 
-def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None, groups=None) -> list[dict]:
+def rediscover(reader_id=None, now=None, path=None, seen: set | None = None, groups=None) -> list[dict]:
     """Series you read and then left: last touched 180+ days ago, unread books
     still here. The card is where you'd pick up — the stalled book, else the
     one after the last you finished. Most recently abandoned first."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     now = now or datetime.now(timezone.utc)
     before = (now - timedelta(days=REDISCOVER_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -286,9 +292,10 @@ def rediscover(reader_id=READER_ID, now=None, path=None, seen: set | None = None
     return out
 
 
-def quick_reads(reader_id=READER_ID, path=None, seen: set | None = None) -> list[dict]:
+def quick_reads(reader_id=None, path=None, seen: set | None = None) -> list[dict]:
     """Complete runs of ≤12 issues you've never opened: every catalogue issue
     owned, nothing still to come, no page of it read. Newest files first."""
+    reader_id = reader_id or current_reader()
     path = path or DB_PATH
     seen = seen if seen is not None else set()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -330,7 +337,7 @@ def quick_reads(reader_id=READER_ID, path=None, seen: set | None = None) -> list
 def dismiss_book(book_id: int, undo: int = 0):
     """'Not now' on Continue reading. Place kept; cleared by the next read."""
     from fastapi import HTTPException
-    if not db.set_dismissed(READER_ID, book_id, not undo, DB_PATH):
+    if not db.set_dismissed(current_reader(), book_id, not undo, DB_PATH):
         raise HTTPException(404, "No progress for that book")
     return {"ok": True, "dismissed": not undo}
 
@@ -341,7 +348,7 @@ def on_deck():
     from kometa.wantread import row as want_row
     # the whole shelf with progress, read once and shared (it was read three times)
     with db._connect(DB_PATH) as conn:
-        groups = _series_groups(conn, READER_ID)
+        groups = _series_groups(conn, current_reader())
     d = {"continue": continue_reading(), "next": up_next(groups=groups), "soon": coming_soon(groups=groups),
          "released": recent_released(), "added": recent_added(), "favourites": favourites(), "want": want_row()}
     # a series shows in one row only: the task rows claim theirs first
