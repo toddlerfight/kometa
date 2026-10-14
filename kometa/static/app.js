@@ -4095,11 +4095,10 @@ function _actActionsHtml(q) {
   if (single && ['pending_usenet', 'pending_torrent', 'downloading', 'not_found', 'failed'].includes(q.state)) {
     btns = `<button class="btn btn-ghost btn-sm" onclick="tryGetComics(${q.id}, this)" title="Cancel the usenet/torrent job and fetch it from GetComics now">GetComics</button>` + btns;
   }
-  // you found the release yourself: paste the GetComics post (or a file link) and go
-  if (!['done', 'downloading', 'processing'].includes(q.state)) {
-    btns = `<span class="act-link"><input class="act-link-input" placeholder="paste a GetComics link" spellcheck="false"
-      onkeydown="if (event.key === 'Enter') useLink(${q.id}, this)">
-      <button class="btn btn-ghost btn-sm" onclick="useLink(${q.id}, this.previousElementSibling)">Use link</button></span>` + btns;
+  // you found the release yourself: only where the search came up short (failed /
+  // not found), and folded behind one button — the box opens when you ask for it
+  if (['failed', 'not_found'].includes(q.state)) {
+    btns = `<span class="act-link"><button class="btn btn-ghost btn-sm" onclick="openUseLink(${q.id}, this)">Use link</button></span>` + btns;
   }
   // the name guard said no (pages / ComicInfo named another series) and you've checked: it IS this issue
   if (q.state !== 'done' && /pages are named|ComicInfo says this is/.test(q.error || '')) {
@@ -4122,6 +4121,13 @@ async function tryGetComics(id, btn) {
   _activityPumpUntil = Date.now() + 30000;
   _activitySig = null;
   _refreshActivity();
+}
+function openUseLink(id, btn) {
+  const wrap = btn.parentElement;
+  wrap.innerHTML = `<input class="act-link-input" placeholder="paste a GetComics link" spellcheck="false"
+    onkeydown="if (event.key === 'Enter') useLink(${id}, this); if (event.key === 'Escape') _refreshActivity()">
+    <button class="btn btn-ghost btn-sm" onclick="useLink(${id}, this.previousElementSibling)">Go</button>`;
+  wrap.querySelector('input').focus();
 }
 async function useLink(id, input) {
   const url = (input.value || '').trim();
