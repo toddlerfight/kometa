@@ -537,6 +537,7 @@ def _migrate(path=DB_PATH):
             conn.executescript("""
                 CREATE INDEX IF NOT EXISTS idx_books_tracked ON books(tracked_series_id, number);
                 CREATE INDEX IF NOT EXISTS idx_books_shelf ON books(shelf_series_id, number);
+                CREATE INDEX IF NOT EXISTS idx_books_mtime ON books(mtime);
             """)
 
 

@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import re
 import logging
@@ -207,12 +208,27 @@ class _RequestWrap:
         path, qs = scope.get("path", ""), scope.get("query_string", b"")
         versioned = path.endswith((".js", ".css")) and (qs.startswith(b"v=") or b"&v=" in qs)
 
+        inm = next((v for k, v in scope.get("headers", []) if k.lower() == b"if-none-match"), b"")
+        not_modified = False
+
         async def send_wrapped(message):
+            nonlocal not_modified
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 if versioned:
                     headers = [(k, v) for k, v in headers if k.lower() != b"cache-control"] + [(b"cache-control", self.IMMUTABLE)]
-                message = {**message, "headers": headers + self.HARDEN}
+                # A cover the browser already holds (its ETag matches) goes back as
+                # 304 with no body: the daily revalidation of ~800 Library tiles used
+                # to re-send every one of them in full.
+                etag = next((v for k, v in headers if k.lower() == b"etag"), None)
+                if inm and etag and message.get("status") == 200 and etag in inm.split(b","):
+                    not_modified = True
+                    headers = [(k, v) for k, v in headers if k.lower() not in (b"content-length", b"content-type")]
+                    message = {**message, "status": 304, "headers": headers + self.HARDEN}
+                else:
+                    message = {**message, "headers": headers + self.HARDEN}
+            elif message["type"] == "http.response.body" and not_modified:
+                message = {**message, "body": b""}
             await send(message)
 
         token = INTERACTIVE.set(True)
@@ -917,16 +933,42 @@ def _newest_file_at() -> dict[int, str]:
         return {}
 
 
+# The family map (which special belongs to which run) is a whole-library
+# computation: every series' counts aggregated over 27k issue rows, then the title
+# matching. It was rebuilt for EVERY series page — 17.7 of the page's 17.8 ms.
+# Now it's kept for five minutes, or until the series table changes shape (a
+# series added, removed or re-synced), whichever comes first.
+_family_cache = {"ts": 0.0, "fp": None, "rows": {}}
+_FAMILY_TTL = 300
+
+
+def _family_fingerprint() -> tuple:
+    with db._connect(DB_PATH) as conn:
+        return tuple(conn.execute("SELECT COUNT(*), MAX(id), MAX(last_synced) FROM tracked_series").fetchone())
+
+
+def _family_rows() -> dict:
+    from kometa.family import attach_families
+    fp = _family_fingerprint()
+    now = time.time()
+    if _family_cache["fp"] == fp and now - _family_cache["ts"] < _FAMILY_TTL:
+        return _family_cache["rows"]
+    summaries = db.get_all_series_summaries(DB_PATH)
+    rows = [dict(s, **summaries.get(s["id"], {})) for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
+    rows = {r["id"]: r for r in attach_families(rows)}
+    _family_cache.update(ts=now, fp=fp, rows=rows)
+    return rows
+
+
+def forget_families() -> None:
+    _family_cache["ts"] = 0.0
+
+
 def _family_for(series_id: int) -> dict:
     """The series' family for its page: the parent (if it is a special) and its
     specials (if it is a run), as light rows the cards can draw."""
-    # what families need — series and their counts — not the whole Library build
-    # (marks, ratings, newest files, franchises) the page threw away
-    from kometa.family import attach_families
     try:
-        summaries = db.get_all_series_summaries(DB_PATH)
-        rows = [dict(s, **summaries.get(s["id"], {})) for s in db.get_all_series(DB_PATH) if s.get("kind") != "arc"]
-        rows = {r["id"]: r for r in attach_families(rows)}
+        rows = _family_rows()
     except Exception:
         return {"family_parent": None, "family_children": []}
     me = rows.get(series_id)
@@ -2191,7 +2233,8 @@ def get_cover_upgrade(key: str):
     with open(p, "rb") as fh:
         data = fh.read()
     from fastapi.responses import Response
-    return Response(content=data, media_type=images._ct(data), headers={"Cache-Control": "public, max-age=86400"})
+    return Response(content=data, media_type=images._ct(data),
+                    headers={"Cache-Control": "public, max-age=86400", "ETag": images.file_etag(p)})
 
 
 @app.get("/api/cover-store/{key:path}")

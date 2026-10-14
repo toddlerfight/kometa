@@ -283,13 +283,14 @@ def parse_volume_number(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def scan_folder_volume_entries(folder_path: str) -> list[tuple[int, str]]:
+def scan_folder_volume_entries(folder_path: str, names: list[str] | None = None) -> list[tuple[int, str]]:
     """(volume, lowercased filename) pairs for the collected editions on disk.
     The name rides along so callers can tell EDITIONS apart — an Absolute Vol 1
-    and a plain Vol 1 TPB share a volume number but are different books."""
+    and a plain Vol 1 TPB share a volume number but are different books.
+    names: a listing the caller already has (one NFS readdir, not three)."""
     entries = []
     try:
-        for name in os.listdir(folder_path):
+        for name in (names if names is not None else os.listdir(folder_path)):
             if os.path.splitext(name)[1].lower() in OWNED_EXTS:
                 v = parse_volume_number(name)
                 if v is not None:

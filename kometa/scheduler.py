@@ -74,7 +74,11 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # a long sync plus the trickles sleeping on a reader left the 5-second pollers
     # nowhere to run ("maximum number of running instances reached", all day).
     from apscheduler.executors.pool import ThreadPoolExecutor as _Pool
-    scheduler = BackgroundScheduler(timezone=TZ, executors={"default": _Pool(10), "fast": _Pool(3)})
+    # "yielding": the jobs that call yield_to_reader() and can park for up to ten
+    # minutes while someone reads. Nine of them on the default pool meant a reading
+    # session held most of its threads doing nothing, and sync, the release retries
+    # and the lighter trickles waited behind them (coalesce drops the missed ticks).
+    scheduler = BackgroundScheduler(timezone=TZ, executors={"default": _Pool(10), "fast": _Pool(3), "yielding": _Pool(4)})
 
     # misfire_grace_time: apscheduler's default is 1 SECOND — a container
     # restart (i.e. every deploy) straddling a fire time silently DROPS that
@@ -181,7 +185,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     try:
         # one lane per image host, each at its own polite pace (kometa/images.py LANES)
         from kometa.images import images_lanes
-        scheduler.add_job(images_lanes, IntervalTrigger(minutes=10), id="images_trickle",
+        scheduler.add_job(images_lanes, IntervalTrigger(minutes=10), id="images_trickle", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=4))
     except Exception as e:
@@ -190,7 +194,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # and CPU only, so a bigger bite per tick (kometa/covers.py).
     try:
         from kometa.covers import covers_trickle
-        scheduler.add_job(covers_trickle, IntervalTrigger(minutes=5), id="covers_trickle",
+        scheduler.add_job(covers_trickle, IntervalTrigger(minutes=5), id="covers_trickle", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=1))
     except Exception as e:
@@ -267,7 +271,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         try:
             import importlib
             mod = importlib.import_module(f"kometa.{mod_name}")
-            scheduler.add_job(mod.tick, IntervalTrigger(minutes=10), id=job_id,
+            scheduler.add_job(mod.tick, IntervalTrigger(minutes=10), id=job_id, executor="yielding",
                               replace_existing=True, coalesce=True, max_instances=1,
                               next_run_time=datetime.now(TZ) + timedelta(minutes=offset))
         except Exception as e:
@@ -295,7 +299,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # re-checks — a few files per tick, and nothing at all unless retag_enabled = '1'.
     try:
         from kometa.retag import retag_tick
-        scheduler.add_job(retag_tick, IntervalTrigger(minutes=10), id="retag",
+        scheduler.add_job(retag_tick, IntervalTrigger(minutes=10), id="retag", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=7))
     except Exception as e:
@@ -312,7 +316,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # Covers go home to the series folders on the NAS as they arrive (kometa/coverhome.py, 2e).
     try:
         from kometa.coverhome import sync_tick as coverhome_tick
-        scheduler.add_job(coverhome_tick, IntervalTrigger(minutes=30), id="coverhome_sync",
+        scheduler.add_job(coverhome_tick, IntervalTrigger(minutes=30), id="coverhome_sync", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=9))
     except Exception as e:
@@ -363,7 +367,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # tick stops at the first refusal (kometa/locg_sweep.py).
     try:
         from kometa.locg_sweep import scheduled_tick as locg_sweep_tick
-        scheduler.add_job(locg_sweep_tick, IntervalTrigger(minutes=10), id="locg_sweep",
+        scheduler.add_job(locg_sweep_tick, IntervalTrigger(minutes=10), id="locg_sweep", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=8))
     except Exception as e:
@@ -371,7 +375,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # The record and the cover store copied to the NAS every night (kometa/backup.py).
     try:
         from kometa.backup import nightly as nightly_backup
-        scheduler.add_job(nightly_backup, CronTrigger(hour=3, minute=30, timezone=TZ), id="nightly_backup",
+        scheduler.add_job(nightly_backup, CronTrigger(hour=3, minute=30, timezone=TZ), id="nightly_backup", executor="yielding",
                           replace_existing=True, coalesce=True, max_instances=1, misfire_grace_time=3600)
     except Exception as e:
         logger.warning(f"Nightly backup not scheduled: {e}")

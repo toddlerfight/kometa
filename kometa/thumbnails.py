@@ -165,7 +165,8 @@ def _store_response(key: str, source: str, max_age: int = COVER_MAX_AGE) -> Resp
     if not data:
         return None
     return Response(content=data, media_type=_img_ct(data),
-                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk", "X-Kometa-Source": source})
+                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk", "X-Kometa-Source": source,
+                             "ETag": images.file_etag(p)})
 
 
 def _tag(resp, source: str):

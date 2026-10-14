@@ -323,5 +323,9 @@ def _cover_response(path: str):
         raise
     except Exception:
         raise HTTPException(422, "Cover can't be rendered")
-    return Response(content=data, media_type="image/jpeg",
-                    headers={"Cache-Control": "private, max-age=86400"})
+    headers = {"Cache-Control": "private, max-age=86400"}
+    cp = rd.cover_cache_path(path)
+    if cp:
+        from kometa.images import file_etag
+        headers["ETag"] = file_etag(cp)
+    return Response(content=data, media_type="image/jpeg", headers=headers)

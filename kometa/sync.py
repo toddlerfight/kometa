@@ -235,13 +235,13 @@ def sync_one_guarded(series: dict, fn=None) -> bool:
     return True
 
 
-def _scan_folder_edition_names(folder_path: str) -> dict[str, str]:
+def _scan_folder_edition_names(folder_path: str, listing: list[str] | None = None) -> dict[str, str]:
     """Normalized stem → file name of NON-volume-numbered comic files on disk —
     the ownership key for no-volume editions (OGNs, Compendiums, year HCs) that
     carry no volume number for scan_folder_volumes to see."""
     names: dict[str, str] = {}
     try:
-        for name in os.listdir(folder_path):
+        for name in (listing if listing is not None else os.listdir(folder_path)):
             stem, ext = os.path.splitext(name)
             if ext.lower() in OWNED_EXTS and _parse_volume_number(name) is None:
                 # the year a file carries ('DIE HC (2022)') is not part of the edition's name
@@ -261,8 +261,15 @@ def enrich_trades(series: dict, trades: list[dict],
     landed: {lowercased file name: edition id} for the trades Kometa downloaded
     itself (db.landed_trade_files) — the surest word on which edition a file IS."""
     folder = series.get("folder_path")
-    vol_entries = _scan_folder_volume_entries(folder) if folder else []
-    owned_names = _scan_folder_edition_names(folder) if folder else {}
+    # ONE directory listing (an NFS readdir each) feeds all three views below
+    listing: list[str] = []
+    if folder:
+        try:
+            listing = os.listdir(folder)
+        except OSError:
+            listing = []
+    vol_entries = _scan_folder_volume_entries(folder, listing) if folder else []
+    owned_names = _scan_folder_edition_names(folder, listing) if folder else {}
 
     # Volume ownership is EDITION-AWARE: the trade's special-edition words
     # (absolute/omnibus/…) must equal the file's, or a plain Vol 1 TPB on disk
@@ -273,11 +280,7 @@ def enrich_trades(series: dict, trades: list[dict],
     # scan_folder_volume_entries lowercases its names for the keyword compare;
     # the file we stamp must be the REAL name, or the shelf page's dedupe and
     # the reader's book lookup (both exact-string) never find it.
-    real_names = {}
-    try:
-        real_names = {n.lower(): n for n in os.listdir(folder)} if folder else {}
-    except OSError:
-        pass
+    real_names = {n.lower(): n for n in listing}
 
     def _vol_files(vol, kws):
         return [real_names.get(name, name) for v, name in vol_entries if v == vol and _edition_keywords(name) == kws]

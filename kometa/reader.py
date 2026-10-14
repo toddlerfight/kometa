@@ -58,8 +58,11 @@ JPEG_QUALITY = 85
 
 PAGE_CACHE_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "page-cache")
 PAGE_CACHE_MAX_BYTES = int(float(os.environ.get("KOMETA_PAGE_CACHE_GB", "20")) * 1024 ** 3)
-_EVICT_EVERY = 200          # check the cache size every N fresh renders
-_renders_since_evict = 0
+# Running total of the page cache, kept from each write; the full walk (one stat
+# per cached page — ~100k of them at 20 GB) now happens once at startup to seed
+# the total, when the total crosses the cap, and on the 6-hourly trim. It used to
+# run every 200 fresh renders, i.e. most often while someone was reading.
+_cache_bytes: int | None = None
 _evict_lock = threading.Lock()
 
 
@@ -346,8 +349,24 @@ def _evict_if_needed():
                     break
                 shutil.rmtree(p, ignore_errors=True)
                 total -= size
+            _set_cache_bytes(total)
         except Exception as e:
             logger.warning(f"Reader: page-cache eviction failed: {e}")
+
+
+def _set_cache_bytes(total: int) -> None:
+    global _cache_bytes
+    _cache_bytes = max(0, int(total))
+
+
+def _note_cache_write(n: int) -> None:
+    global _cache_bytes
+    if _cache_bytes is None:
+        threading.Thread(target=_evict_if_needed, daemon=True, name="page-cache-seed").start()
+        return
+    _cache_bytes += n
+    if _cache_bytes > PAGE_CACHE_MAX_BYTES:
+        threading.Thread(target=_evict_if_needed, daemon=True, name="page-cache-evict").start()
 
 
 def trim_cache() -> None:
@@ -390,14 +409,11 @@ def _write_cached(cp: str, data: bytes) -> None:
     with open(tmp, "wb") as fh:
         fh.write(data)
     os.replace(tmp, cp)
+    _note_cache_write(len(data))
 
 
 def _count_render() -> None:
-    global _renders_since_evict
-    _renders_since_evict += 1
-    if _renders_since_evict >= _EVICT_EVERY:
-        _renders_since_evict = 0
-        threading.Thread(target=_evict_if_needed, daemon=True).start()
+    pass                        # the byte counter in _write_cached decides when to evict now
 
 
 def _finish(key: tuple, ev: threading.Event) -> None:
@@ -495,6 +511,15 @@ def _cover_cache_path(path: str, version: str) -> str:
     job (kometa/retag.py) carries it across a rewrite with this same name."""
     key = re.sub(r"[^A-Za-z0-9]", "_", path)[-120:]
     return os.path.join(PAGE_CACHE_DIR, "_covers", f"{key}-{version}-{COVER_WIDTH}.jpg")
+
+
+def cover_cache_path(path: str) -> str | None:
+    """Where get_cover_bytes keeps this file's cover, if the file is there."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return _cover_cache_path(path, _version(st.st_size, st.st_mtime))
 
 
 def get_cover_bytes(path: str) -> bytes:

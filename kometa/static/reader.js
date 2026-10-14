@@ -1297,6 +1297,7 @@ async function _rlPollGetMissing(listId) {
   // left running while you browsed stamped 'Looking for packs…' on all of them
   const here = currentView === 'readlist' && currentParams.id === listId;
   const btn = here ? document.getElementById('rl-getmissing') : null;
+  if (document.hidden) { setTimeout(() => _rlPollGetMissing(listId), 10000); return; }
   let st;
   try { st = await api.get(`/api/readlists/${listId}/get-missing`); } catch { return; }
   if (btn) {

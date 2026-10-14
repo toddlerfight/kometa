@@ -128,6 +128,9 @@ window.addEventListener('popstate', e => {
 // renderer asking "is #browse-search already here?" can't be fooled by a corpse.
 
 const _motionOK = () => !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+// A poller that keeps going from a backgrounded tab is a request the server answers
+// for nobody. Returns true when the caller should just reschedule and do nothing.
+const _tabHidden = () => document.hidden === true;
 
 let _histIdx = (history.state && history.state.idx) || 0;
 const _vt = { gen: 0, ghost: null, t0: 0, dir: 'fwd', inTimer: null, dogTimer: null };
@@ -1505,8 +1508,11 @@ function _animateTileOut(tile) {
     setTimeout(() => {
       tile.remove();
       let moving = 0;
+      // read every "after" rect BEFORE the first write: a read after a write forces a
+      // synchronous layout, and this loop used to do that once per tile
+      const after = new Map(others.map(el => [el, el.getBoundingClientRect()]));
       for (const el of others) {
-        const a = before.get(el), b = el.getBoundingClientRect();
+        const a = before.get(el), b = after.get(el);
         const dx = a.left - b.left, dy = a.top - b.top;
         if (!dx && !dy) continue;
         moving++;
@@ -1796,6 +1802,8 @@ async function _mergeTwin(shelfId, seriesId) {
 let _collectionsPoll = null;
 async function _loadCollections() {
   clearTimeout(_collectionsPoll);
+  if (currentView !== 'singles') return;
+  if (_tabHidden()) { _collectionsPoll = setTimeout(_loadCollections, 10000); return; }
   let r;
   try { r = await api.get('/api/report/collections'); } catch { return; }
   if (currentView !== 'singles') return;
@@ -3057,7 +3065,7 @@ function wizardPickSeries(idx) {
   document.getElementById('modal').innerHTML = `
     <div class="modal-title">Add ${isArc ? 'Story Arc' : 'Series'}</div>
     <div class="wizard-series-preview">
-      <img class="wizard-result-thumb" src="${esc(r.cover || r.image || '')}" alt="" onerror="this.style.opacity=0">
+      <img class="wizard-result-thumb" src="${esc(r.cover || r.image || '')}" alt="" loading="lazy" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
         <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
         <div class="wizard-result-meta">${isArc ? 'Story arc' : esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
@@ -3338,6 +3346,7 @@ function _trackTileDownload(seriesId, number, title) {
   _tilePolls.add(key);
 
   const tick = async () => {
+    if (_tabHidden()) { setTimeout(tick, 10000); return; }     // lid closed: ask again in a while, not every 2.5 s
     let qs;
     try { qs = await api.get(`/api/series/${seriesId}/issues/${number}/queue-status`); }
     catch { _tilePolls.delete(key); return; }
@@ -4003,7 +4012,7 @@ function _actCoverMiss(img, fallback) {
 function _actThumb(q) {
   if (!q.tracked_series_id) return '';
   const seriesThumb = `/api/series/${q.tracked_series_id}/thumbnail?fast=1`;
-  const img = (src, fallback) => `<img src="${esc(src)}" alt="" onerror="_actCoverMiss(this, ${fallback ? `'${fallback}'` : 'null'})">`;
+  const img = (src, fallback) => `<img src="${esc(src)}" alt="" loading="lazy" onerror="_actCoverMiss(this, ${fallback ? `'${fallback}'` : 'null'})">`;
   if (q.kind === 'trade') {
     // A proposal shows the cover of what actually came back; otherwise the
     // trade's own LOCG cover (stashed in meta), falling back to the series.
@@ -4626,7 +4635,10 @@ async function _backupNow(btn) {
   btn.disabled = true; btn.textContent = 'backing up…';
   try {
     await api.post('/api/backup', {});
+    const until = Date.now() + 30 * 60 * 1000;               // a hung backup is not an endless 3 s poll
     const poll = setInterval(async () => {
+      if (_tabHidden()) return;
+      if (Date.now() > until) { clearInterval(poll); btn.disabled = false; btn.textContent = 'back up now'; return; }
       try {
         const st = await api.get('/api/backup');
         if (st.running) return;

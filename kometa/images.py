@@ -292,7 +292,7 @@ def serve(key: str, url: str | None, source: str, path=None, max_age: int = 8640
         if data:
             return Response(content=data, media_type=_ct(data),
                             headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800",
-                                     "X-Kometa-Image": "upgrade"})
+                                     "X-Kometa-Image": "upgrade", "ETag": file_etag(better)})
     url = best_url(url)
     row = get(key, path)
     hit = row and row.get("url") == url and row.get("path") and os.path.exists(row["path"])
@@ -307,7 +307,8 @@ def serve(key: str, url: str | None, source: str, path=None, max_age: int = 8640
     if not data:
         return None
     return Response(content=data, media_type=_ct(data),
-                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk" if hit else "fetched"})
+                    headers={"Cache-Control": f"public, max-age={max_age}, stale-while-revalidate=604800", "X-Kometa-Image": "disk" if hit else "fetched",
+                             "ETag": file_etag(row["path"])})
 
 
 # --- catalogue covers: a day on disk, then gone ----------------------------------------
@@ -325,6 +326,16 @@ def ext_allowed(url: str) -> bool:
 def ext_key(url: str) -> str:
     import hashlib
     return "ext/" + hashlib.sha1(url.encode()).hexdigest()
+
+
+def file_etag(p: str) -> str:
+    """A strong-enough validator for a stored image: size and mtime of the file.
+    The browser sends it back as If-None-Match; the request wrapper answers 304."""
+    try:
+        st = os.stat(p)
+        return f'"{st.st_size:x}-{int(st.st_mtime):x}"'
+    except OSError:
+        return ""
 
 
 def _fresh(row: dict | None, hours: int) -> bool:
