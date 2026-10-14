@@ -452,3 +452,24 @@ Catbus, checked by the user, and only then swapped onto the NAS.
     remove the `/retag` bind from `compose.yml` and run `docker compose up -d kometa`, then
     `rm -rf /Volumes/Catbus/kometa/retag`. Remove the bind before deleting the folder, so the container never
     holds a deleted mount.
+
+## Accounts and login (2026-10-14)
+
+Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
+
+- **Switch:** config `auth_enabled` ("0" = everyone is the admin, the old world; "1" = every request shows a credential).
+  `docker exec kometa python -m kometa.auth enable on|off` (refuses `on` with no admin account).
+- **Accounts:** `docker exec -it kometa python -m kometa.auth add <username> [--admin]` (asks the password, no echo),
+  `… list`, `… password <username>` (signs every device out), `… revoke-all <username>`. The first admin claims
+  the existing `me` reading state. Run these from a shell ON ginbako: a multi-line `ssh … '…'` pasted from chat
+  wraps and runs the wrong thing.
+- **Locked out:** the CLI needs no login — `password` or `enable off` from ginbako.
+- **Claude's token:** `~/.kometa-claude-token` on ginbako (600), made with `… token marcus claude-code`. With login
+  on, every API call from automation sends `Authorization: Bearer $(cat ~/.kometa-claude-token)` — run curls on
+  ginbako (`ssh … 'T=$(cat ~/.kometa-claude-token); curl -H "Authorization: Bearer $T" http://127.0.0.1:6969/…'`).
+- **Clients:** web = the /login page (cookie, a year); YondeB = Settings › Server (token in the Keychain);
+  OPDS apps = Basic (username + password). A reader account gets the shelf and its own reading state only; the
+  web app is admin only.
+- **Turn-on order:** install the current YondeB everywhere → admin account → sign in on web, YondeB (each device),
+  Panels → `enable on` → sign in on the iPad home-screen web app (it shows the sign-in page) → only then expose
+  it (Cloudflare tunnel hostname + Access on the web app, never /api or /opds).
