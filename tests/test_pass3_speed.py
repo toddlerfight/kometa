@@ -77,3 +77,14 @@ def test_on_deck_queries_leave_the_page_lists_behind():
     import kometa.ondeck as od
     src = inspect.getsource(od)
     assert "SELECT b.*" not in src and "pages_json" not in od.BOOK_COLS
+
+
+def test_the_reading_map_has_a_route_of_its_own(db_path, monkeypatch):
+    import kometa.shelf as shelf
+    from kometa import auth
+    monkeypatch.setattr(main, "DB_PATH", db_path)
+    monkeypatch.setattr(shelf, "DB_PATH", db_path)
+    monkeypatch.setattr(auth, "DB_PATH", db_path)          # the gate reads its switch from the test DB, not the real one
+    auth.forget_enabled()
+    r = TestClient(main.app).get("/api/shelf/reading")
+    assert r.status_code == 200 and "tracked_reading" in r.json() and "series" not in r.json()

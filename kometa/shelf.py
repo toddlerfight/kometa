@@ -239,6 +239,13 @@ def list_shelf():
     }
 
 
+@router.get("/api/shelf/reading")
+def shelf_reading():
+    """The reading map alone, for YondeB's Library: it was pulling the whole shelf
+    (every untracked series again) to read this one key, on every load."""
+    return {"tracked_reading": db.reading_by_tracked_series(current_reader(), DB_PATH)}
+
+
 @router.post("/api/shelf/scan")
 def rescan_shelf():
     scan_in_background()
