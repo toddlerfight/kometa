@@ -12,6 +12,7 @@ It flips on once the owner has signed in everywhere. Locked out? From ginbako:
     docker exec -it kometa python -m kometa.auth password <username>
 """
 import argparse
+import asyncio
 import base64
 import contextvars
 import getpass
@@ -28,6 +29,7 @@ from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -40,6 +42,57 @@ OWNER = "me"                     # the reader id every pre-accounts row already 
 COOKIE = "kometa_session"
 COOKIE_AGE = 365 * 24 * 3600
 SCRYPT = dict(n=2 ** 14, r=8, p=1, dklen=32)
+MIN_PW = {"admin": 10, "reader": 6}
+
+# --- failed-login throttle ------------------------------------------------------------------------
+# The login route is the ONE door open to the whole internet (the tunnel carries
+# /api). Before this, a wrong guess cost the guesser half a second and cost US a
+# threadpool worker for that half second: forty parallel connections = eighty
+# guesses a second AND every sync route stalled for everyone. Now a wrong guess
+# is counted per username and per client IP; after FAIL_FREE misses the key is
+# locked for a doubling wait, 1 s → 2 → 4 … up to FAIL_LOCK_MAX, and a locked
+# key gets a 429 without touching scrypt. A right password clears both keys.
+# In-memory, so a restart forgives everyone — fine, the lock is seconds to minutes.
+FAIL_FREE = 5
+FAIL_LOCK_MAX = 900
+FAIL_PAUSE = 0.5                 # the old half-second, now awaited, not slept on a worker
+_fails: dict[str, tuple[int, float]] = {}       # key -> (misses, locked_until monotonic)
+_fails_lock = threading.Lock()
+
+
+def _fail_keys(username: str, ip: str) -> list[str]:
+    return [f"u:{(username or '').strip().lower()[:80]}", f"ip:{ip or '?'}"]
+
+
+def locked_for(username: str, ip: str) -> int:
+    """Seconds a login for this username / from this IP must still wait; 0 = go ahead."""
+    now = time.monotonic()
+    with _fails_lock:
+        return max([0] + [int(until - now) + 1 for k in _fail_keys(username, ip)
+                          if (until := _fails.get(k, (0, 0.0))[1]) > now])
+
+
+def note_failure(username: str, ip: str) -> None:
+    now = time.monotonic()
+    with _fails_lock:
+        for k in _fail_keys(username, ip):
+            n = _fails.get(k, (0, 0.0))[0] + 1
+            wait = min(FAIL_LOCK_MAX, 2 ** (n - FAIL_FREE)) if n >= FAIL_FREE else 0
+            _fails[k] = (n, now + wait)
+        if len(_fails) > 10000:                      # a flood of made-up names: keep the newest
+            for k in list(_fails)[:5000]:
+                _fails.pop(k, None)
+
+
+def clear_failures(username: str, ip: str) -> None:
+    with _fails_lock:
+        for k in _fail_keys(username, ip):
+            _fails.pop(k, None)
+
+
+def client_ip(request: Request) -> str:
+    """Cloudflare stamps the real client on the tunnel; at home it's the socket."""
+    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
 
 # who this request is: a contextvar, so it rides into the threadpool (same trick as
 # kometa.interactive). Outside a request — scheduler jobs, threads — it's the owner.
@@ -147,8 +200,8 @@ def create_user(username: str, password: str, role: str = "reader", path=None) -
     after gets a fresh id. Usernames are case-insensitive and unique."""
     ensure_tables(path)
     username = username.strip()
-    if not username or len(password) < 6 or role not in ("admin", "reader"):
-        raise ValueError("a username, a password of 6+ characters, and role admin or reader")
+    if not username or role not in ("admin", "reader") or len(password) < MIN_PW[role]:
+        raise ValueError(f"a username, a password of {MIN_PW[role]}+ characters, and role admin or reader")
     if find_user(username, path):
         raise ValueError(f"{username} already exists")
     owner_free = not any(u["id"] == OWNER for u in list_users(path))
@@ -160,8 +213,11 @@ def create_user(username: str, password: str, role: str = "reader", path=None) -
 
 
 def set_password(user_id: str, password: str, path=None) -> None:
-    if len(password) < 6:
-        raise ValueError("6+ characters")
+    with db._connect(path or DB_PATH) as conn:
+        r = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+    need = MIN_PW.get(r[0] if r else "reader", 6)
+    if len(password) < need:
+        raise ValueError(f"{need}+ characters")
     with db._connect(path or DB_PATH) as conn:
         conn.execute("UPDATE users SET pw_hash = ? WHERE id = ?", (hash_password(password), user_id))
     revoke_all(user_id, path)                       # a new password signs every device out
@@ -188,6 +244,7 @@ def revoke_all(user_id: str, path=None) -> None:
     with db._connect(path or DB_PATH) as conn:
         conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (user_id,))
     _seen.clear()
+    _basic_seen.clear()              # an OPDS app on the old password stops at once, not in a minute
 
 
 # A token is checked against the DB on EVERY request — an indexed read on a kept-open
@@ -389,11 +446,17 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/api/auth/login")
-def login(req: LoginRequest, request: Request):
-    u = user_for_password(req.username, req.password)
+async def login(req: LoginRequest, request: Request):
+    ip = client_ip(request)
+    wait = locked_for(req.username, ip)
+    if wait:
+        raise HTTPException(429, "Too many tries — wait a bit", headers={"Retry-After": str(wait)})
+    u = await run_in_threadpool(user_for_password, req.username, req.password)   # scrypt, ~50 ms, off the loop
     if not u:
-        time.sleep(0.5)                                        # a guesser waits; a person doesn't notice
+        note_failure(req.username, ip)
+        await asyncio.sleep(FAIL_PAUSE)                        # a guesser waits; a person doesn't notice; no worker held
         raise HTTPException(401, "That username and password don't match")
+    clear_failures(req.username, ip)
     token = issue_token(u["id"], req.device or request.headers.get("user-agent", "")[:80])
     resp = JSONResponse({"token": token, "user": _public(u)})
     resp.set_cookie(COOKIE, token, max_age=COOKIE_AGE, httponly=True, samesite="lax",

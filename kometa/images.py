@@ -59,6 +59,11 @@ EXT_TTL_HOURS = 24
 # Hosts whose images the catalogue cards carry; anything else is refused, this
 # is a cover proxy, not an open one.
 EXT_HOSTS = ("static.metron.cloud", "metron.cloud", "s3.amazonaws.com", "comicvine.gamespot.com")
+# s3.amazonaws.com is everyone's bucket; only LOCG's is a cover source
+_EXT_PATH_PREFIX = {"s3.amazonaws.com": "/comicgeeks/"}
+# A cover is a few hundred KB; the biggest print-quality scan we keep is under 3 MB.
+# Anything past this is not a cover, whatever the host says.
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 _KEY_RE = re.compile(r"^[A-Za-z0-9_.:\-]+(?:/[A-Za-z0-9_.:\-]+)*$")
 # LOCG's S3 covers come in small-/medium-/large-; large- (600px) is the top of
 # the ladder (original-/xlarge- are 403). The store was keeping 170px medium-
@@ -167,12 +172,35 @@ def local_path(key: str, path=None) -> str | None:
     return None
 
 
+def _is_image(data: bytes) -> bool:
+    return (data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n"
+            or data[:3] == b"GIF" or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"))
+
+
 def _download(url: str) -> bytes | None:
+    """Streamed, capped at MAX_IMAGE_BYTES, and only ever an image: the public
+    /api/img proxy used to buffer whatever a reader token pointed it at and write
+    it to /data, where the database lives."""
     from kometa.thumbnails import _img_session
-    r = _img_session.get(url, timeout=20)
-    if r.ok and r.content:
-        return r.content
-    return None
+    with _img_session.get(url, timeout=20, stream=True) as r:
+        if not r.ok:
+            return None
+        try:
+            if int(r.headers.get("content-length") or 0) > MAX_IMAGE_BYTES:
+                logger.info(f"Image {url[:80]}: declared {r.headers.get('content-length')} bytes, over the cap")
+                return None
+        except ValueError:
+            pass
+        buf = bytearray()
+        for chunk in r.iter_content(65536):
+            buf += chunk
+            if len(buf) > MAX_IMAGE_BYTES:
+                logger.info(f"Image {url[:80]}: over {MAX_IMAGE_BYTES} bytes, dropped")
+                return None
+    data = bytes(buf)
+    if not data or not _is_image(data):
+        return None
+    return data
 
 
 def fetch_image(key: str, url: str | None, source: str, path=None, root: str | None = None, http=None,
@@ -289,7 +317,9 @@ def ext_allowed(url: str) -> bool:
         u = urlparse(url)
     except Exception:
         return False
-    return u.scheme in ("http", "https") and (u.hostname or "") in EXT_HOSTS
+    host = u.hostname or ""
+    return (u.scheme in ("http", "https") and host in EXT_HOSTS
+            and u.path.startswith(_EXT_PATH_PREFIX.get(host, "/")))
 
 
 def ext_key(url: str) -> str:
@@ -304,6 +334,25 @@ def _fresh(row: dict | None, hours: int) -> bool:
         return datetime.utcnow() - datetime.strptime(row["fetched_at"], "%Y-%m-%d %H:%M:%S") < timedelta(hours=hours)
     except ValueError:
         return False
+
+
+# How many NEW external images one account may pull in an hour. A page of catalogue
+# cards is a few dozen; a script walking S3 is not. Keyed by user id, in memory.
+EXT_FETCH_BUDGET = 600
+_ext_budget: dict[str, tuple[int, int]] = {}       # user -> (hour bucket, fetches)
+
+
+def ext_budget_ok(user_id: str) -> bool:
+    hour = int(time.time() // 3600)
+    bucket, n = _ext_budget.get(user_id, (hour, 0))
+    if bucket != hour:
+        bucket, n = hour, 0
+    _ext_budget[user_id] = (bucket, n + 1)
+    return n < EXT_FETCH_BUDGET
+
+
+def ext_cached(url: str, path=None) -> bool:
+    return _fresh(get(ext_key(url), path or DB_PATH), EXT_TTL_HOURS)
 
 
 def serve_external(url: str, path=None, http=None) -> Response | None:

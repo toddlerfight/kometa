@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from contextlib import asynccontextmanager
 
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -166,6 +166,11 @@ app = FastAPI(lifespan=lifespan)
 # files are already compressed; gzipping them again only burns CPU, so they join
 # Starlette's exclusion list (checked per response; test_gzip pins this).
 import starlette.middleware.gzip as _gzip  # noqa: E402
+import warnings  # noqa: E402
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)     # defusedxml still touches cElementTree on import
+    import defusedxml  # noqa: E402
+    defusedxml.defuse_stdlib()   # ComicInfo/CBL come out of archives strangers made: no entity tricks, no external refs
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 _gzip.DEFAULT_EXCLUDED_CONTENT_TYPES = ("text/event-stream", "image/", "video/", "audio/", "font/",
                                         "application/zip", "application/x-cbz", "application/x-cbr",
@@ -186,6 +191,11 @@ class _RequestWrap:
       revalidated by heuristic on every load."""
 
     IMMUTABLE = b"public, max-age=31536000, immutable"
+    # Belt and braces for the one surface the internet can reach: no MIME sniffing,
+    # no framing, no referrer leaking the LAN address. Nothing here changes how
+    # the app itself works; it only closes doors a browser would otherwise leave ajar.
+    HARDEN = [(b"x-content-type-options", b"nosniff"), (b"x-frame-options", b"DENY"),
+              (b"content-security-policy", b"frame-ancestors 'none'"), (b"referrer-policy", b"same-origin")]
 
     def __init__(self, app):
         self.app = app
@@ -198,9 +208,11 @@ class _RequestWrap:
         versioned = path.endswith((".js", ".css")) and (qs.startswith(b"v=") or b"&v=" in qs)
 
         async def send_wrapped(message):
-            if versioned and message["type"] == "http.response.start":
-                headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"cache-control"]
-                message = {**message, "headers": headers + [(b"cache-control", self.IMMUTABLE)]}
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if versioned:
+                    headers = [(k, v) for k, v in headers if k.lower() != b"cache-control"] + [(b"cache-control", self.IMMUTABLE)]
+                message = {**message, "headers": headers + self.HARDEN}
             await send(message)
 
         token = INTERACTIVE.set(True)
@@ -300,6 +312,15 @@ def _stored(key: str) -> str:
     return db.get_config(DB_PATH).get(key, "")
 
 
+def _redact(msg, *secrets: str | None) -> str:
+    """An error from requests repeats the URL it tried, api key and all. Not in our answers."""
+    out = str(msg)
+    for s in secrets:
+        if s and len(s) > 3:
+            out = out.replace(s, "***")
+    return out
+
+
 class TestSabRequest(BaseModel):
     url: str | None = None
     apikey: str | None = None
@@ -318,7 +339,7 @@ def test_sab(req: TestSabRequest):
             return {"ok": False, "error": data.get("error", "API rejected")}
         return {"ok": True}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _redact(e, apikey)}
 
 
 class TestQbitRequest(BaseModel):
@@ -339,7 +360,7 @@ def test_qbit(req: TestQbitRequest):
         ok, detail = QBittorrentClient(url, user, password).test()
         return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _redact(e, password)}
 
 
 class TestProwlarrRequest(BaseModel):
@@ -358,7 +379,7 @@ def test_prowlarr(req: TestProwlarrRequest):
         ok, detail = ProwlarrClient(url, apikey).test()
         return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _redact(e, apikey)}
 
 
 class TestFlareSolverrRequest(BaseModel):
@@ -684,12 +705,17 @@ def test_fandom_access():
 # --- version ---
 
 @app.get("/api/version")
-def get_version():
+def get_version(request: Request):
     """What commit is this, and is the running process actually it?
 
     The honest answer to "did my deploy land", which nothing else here could
-    give you.
+    give you. From the internet with no token it says only that a Kometa lives
+    here (YondeB's probe wants a `sha` key, nothing more): the exact commit of a
+    public repo is a map for anyone hunting a known bug.
     """
+    from kometa.auth import via_tunnel, ANONYMOUS, current_user
+    if via_tunnel(request.scope) and current_user() is ANONYMOUS:
+        return {"app": "kometa", "sha": ""}
     return _build_info()
 
 
@@ -2071,6 +2097,10 @@ def external_image(u: str):
     from kometa import images
     if not u or not images.ext_allowed(u):
         raise HTTPException(400, "Not an allowed image host")
+    if not images.ext_cached(u, DB_PATH):
+        from kometa.auth import current_user
+        if not images.ext_budget_ok(current_user()["id"]):
+            raise HTTPException(429, "Too many new images this hour")
     resp = images.serve_external(u, DB_PATH)
     if resp is None:
         raise HTTPException(404)

@@ -19,7 +19,8 @@ def a(db_path, monkeypatch):
     auth._ready.clear()
     auth._seen.clear()
     auth._basic_seen.clear()
-    monkeypatch.setattr(auth.time, "sleep", lambda s: None)       # the failed-login pause
+    monkeypatch.setattr(auth, "FAIL_PAUSE", 0)                    # the failed-login pause
+    auth._fails.clear()
     return db_path
 
 
@@ -122,7 +123,7 @@ def _app():
     return app
 
 
-ADMIN_PW, WRONG = "hunter22", "nope"
+ADMIN_PW, WRONG = "hunter2222", "nope"
 
 
 def test_off_is_the_old_world_everyone_is_the_admin(a):
@@ -133,7 +134,7 @@ def test_off_is_the_old_world_everyone_is_the_admin(a):
 
 
 def test_the_first_admin_claims_the_owners_reading_and_readers_get_their_own(a):
-    admin = auth.create_user("marcus", "hunter22", "admin", a)
+    admin = auth.create_user("marcus", "hunter2222", "admin", a)
     tester = auth.create_user("Tess", "secret99", "reader", a)
     assert admin["id"] == "me"
     assert tester["id"].startswith("u-tess-")
@@ -142,7 +143,7 @@ def test_the_first_admin_claims_the_owners_reading_and_readers_get_their_own(a):
 
 
 def test_on_nobody_gets_in_without_a_credential(a):
-    auth.create_user("marcus", "hunter22", "admin", a)
+    auth.create_user("marcus", "hunter2222", "admin", a)
     db.set_config({"auth_enabled": "1"}, a)
     c = TestClient(_app())
     assert c.get("/api/ondeck").status_code == 401
@@ -155,7 +156,7 @@ def test_on_nobody_gets_in_without_a_credential(a):
 
 
 def test_login_gives_a_token_and_a_cookie_and_the_token_works(a):
-    auth.create_user("marcus", "hunter22", "admin", a)
+    auth.create_user("marcus", "hunter2222", "admin", a)
     db.set_config({"auth_enabled": "1"}, a)
     c = TestClient(_app())
     assert c.post("/api/auth/login", json={"username": "marcus", "password": WRONG}).status_code == 401
@@ -170,7 +171,7 @@ def test_login_gives_a_token_and_a_cookie_and_the_token_works(a):
 
 
 def test_a_reader_reads_and_cannot_touch_the_admin_side(a):
-    auth.create_user("marcus", "hunter22", "admin", a)
+    auth.create_user("marcus", "hunter2222", "admin", a)
     t = auth.create_user("tess", "secret99", "reader", a)
     db.set_config({"auth_enabled": "1"}, a)
     h = {"Authorization": f"Bearer {auth.issue_token(t['id'], 'phone', a)}"}
@@ -234,7 +235,7 @@ def test_prefs_merge_and_a_null_deletes(a):
 
 
 def test_the_last_admin_cannot_be_demoted_or_deleted(a):
-    auth.create_user("marcus", "hunter22", "admin", a)
+    auth.create_user("marcus", "hunter2222", "admin", a)
     c = TestClient(_app())                                               # auth off: the caller is the admin
     assert c.patch("/api/users/me", json={"role": "reader"}).status_code == 409
     assert c.delete("/api/users/me").status_code == 409
@@ -331,3 +332,86 @@ def test_with_login_off_the_tunnel_carries_nothing(a):
     assert c.get("/api/ondeck").status_code == 200                                   # home: the old world
     assert c.get("/api/ondeck", headers=CF).status_code == 503
     assert c.get("/opds", headers=CF).status_code == 503
+
+
+# --- failed-login throttle (the one door the internet can reach) -----------------------------------
+def _ip(ip):
+    return {"cf-connecting-ip": ip}
+
+
+def test_five_misses_lock_the_name_and_the_ip(a):
+    auth.create_user("marcus", ADMIN_PW, "admin", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    for _ in range(auth.FAIL_FREE):
+        assert c.post("/api/auth/login", json={"username": "marcus", "password": WRONG}, headers=_ip("1.2.3.4")).status_code == 401
+    r = c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}, headers=_ip("1.2.3.4"))
+    assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1      # even the RIGHT password waits now
+    # the name is locked from anywhere, and the IP is locked for any name
+    assert c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}, headers=_ip("9.9.9.9")).status_code == 429
+    assert c.post("/api/auth/login", json={"username": "someone", "password": WRONG}, headers=_ip("1.2.3.4")).status_code == 429
+    # a different name from a different address is untouched
+    assert c.post("/api/auth/login", json={"username": "someone", "password": WRONG}, headers=_ip("9.9.9.9")).status_code == 401
+
+
+def test_a_right_password_before_the_lock_clears_the_count(a):
+    auth.create_user("marcus", ADMIN_PW, "admin", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    for _ in range(auth.FAIL_FREE - 1):
+        c.post("/api/auth/login", json={"username": "marcus", "password": WRONG}, headers=_ip("1.2.3.4"))
+    assert c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}, headers=_ip("1.2.3.4")).status_code == 200
+    assert not any(k.endswith("marcus") or k.endswith("1.2.3.4") for k in auth._fails)
+
+
+def test_the_lock_doubles_and_caps(a):
+    for n in range(auth.FAIL_FREE + 12):
+        auth.note_failure("x", "1.1.1.1")
+    assert auth.locked_for("x", "1.1.1.1") <= auth.FAIL_LOCK_MAX + 1
+    assert auth.locked_for("x", "1.1.1.1") > 60
+
+
+def test_admin_passwords_are_ten_plus_readers_six(a):
+    with pytest.raises(ValueError):
+        auth.create_user("boss", "short123", "admin", a)
+    auth.create_user("boss", "longenough1", "admin", a)
+    t = auth.create_user("tess", "secret", "reader", a)
+    with pytest.raises(ValueError):
+        auth.set_password(OWNER_ID := "me", "nine_char", a)
+    auth.set_password(t["id"], "sixsix", a)
+
+
+def test_a_password_change_drops_a_cached_basic_pair_at_once(a):
+    t = auth.create_user("tess", "secret99", "reader", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    basic = "Basic " + base64.b64encode(b"tess:secret99").decode()
+    assert c.get("/opds", headers={"authorization": basic}).status_code == 200
+    auth.set_password(t["id"], "newpass77", a)
+    assert c.get("/opds", headers={"authorization": basic}).status_code == 401
+
+
+# --- what the public address gives away --------------------------------------------------------------
+def test_version_through_the_tunnel_is_blank_until_signed_in(a, monkeypatch):
+    import kometa.main as main
+    monkeypatch.setattr(main, "DB_PATH", a)
+    auth.create_user("marcus", ADMIN_PW, "admin", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(main.app)
+    anon = c.get("/api/version", headers=_ip("1.2.3.4")).json()
+    assert anon == {"app": "kometa", "sha": ""}                            # YondeB wants a sha key, nothing more
+    home = c.get("/api/version").json()
+    assert home.get("sha") not in ("", None)
+    tok = c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}).json()["token"]
+    signed = c.get("/api/version", headers={"authorization": f"Bearer {tok}", **_ip("1.2.3.4")}).json()
+    assert signed["sha"] == home["sha"]
+
+
+def test_every_response_carries_the_hardening_headers(a, monkeypatch):
+    import kometa.main as main
+    monkeypatch.setattr(main, "DB_PATH", a)
+    r = TestClient(main.app).get("/api/version")
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["referrer-policy"] == "same-origin"
