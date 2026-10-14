@@ -639,3 +639,47 @@ def test_a_dropped_download_resumes_where_it_stopped(tmp_path, monkeypatch):
     dest = tmp_path / "Saga 001.cbz"
     dl._stream_to(First(), str(dest), len(body))
     assert dest.read_bytes() == body and asked == ["bytes=40-"]
+
+
+class TestOnlyComicsGetPlaced:
+    """2026-10-08: a mirror answered a trade download with its WeTransfer upload page
+    (31 KB of HTML) and download_trade placed it as 'Killadelphia Vol 05.cbz' — past
+    the <1 KB guard, owned forever. Every download must be a comic archive first."""
+
+    class _Resp:
+        def __init__(self, body, name):
+            self.body, self.url = body, "https://mirror.example/x"
+            self.headers = {"content-disposition": f'attachment; filename="{name}"', "content-length": str(len(body))}
+            self.status_code = 200
+
+        def iter_content(self, chunk_size=65536):
+            yield self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _go(self, tmp_path, monkeypatch, body, name="Killadelphia Vol 05.cbz"):
+        from kometa import downloader, sources
+        stage = tmp_path / "stage"
+        stage.mkdir()
+        monkeypatch.setattr(sources, "staging_dir", lambda: str(stage))
+        monkeypatch.setattr(downloader, "_get_with_retries", lambda url, what: self._Resp(body, name))
+        dest = tmp_path / "Killadelphia"
+        return downloader.download_trade("https://mirror.example/x", str(dest), hint_filename=name), dest, stage
+
+    def test_a_web_page_is_never_placed(self, tmp_path, monkeypatch):
+        page = b"<!DOCTYPE html><html><head><title>WeTransfer | Send Large Files Fast</title></head>" + b" " * 30000
+        with pytest.raises(ValueError, match="web page.*WeTransfer"):
+            self._go(tmp_path, monkeypatch, page)
+        assert not list((tmp_path / "Killadelphia").glob("*")) and not list((tmp_path / "stage").glob("*"))
+
+    def test_a_real_trade_still_lands(self, tmp_path, monkeypatch):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for i in range(3):
+                zf.writestr(f"{i:03d}.jpg", b"\xff\xd8 jpeg-ish" * 200)
+        placed, dest, _ = self._go(tmp_path, monkeypatch, buf.getvalue())
+        assert [os.path.basename(p) for p in placed] == ["Killadelphia Vol 05.cbz"]

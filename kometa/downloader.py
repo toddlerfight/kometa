@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Path/name helpers live in naming now (next to scan_folder_numbers); imported
 # back here so existing call sites — and acquisition's imports — stay unchanged.
 from kometa.naming import (_safe, _resolve_dir, _season_from_entries,
-                           _season_from_title, OWNED_EXTS, PIPELINE_EXTS,
+                           _season_from_title, OWNED_EXTS, PIPELINE_EXTS, _IMAGE_EXTS,
                            parse_issue_number, parse_volume_number,
                            scan_folder_numbers,
                            canonical_issue_filename, format_issue_number,
@@ -48,6 +48,36 @@ RESUMES = 4
 
 class IncompleteDownloadError(RuntimeError):
     """The connection kept dropping and the file never finished."""
+
+
+# What a comic file's first bytes look like. Anything else is not a comic — the
+# usual impostor is a web page: a mirror's landing page (WeTransfer, 2026-10-08:
+# a 31 KB 'Killadelphia Vol 05.cbz' that was its upload page) sails past a
+# size check and gets counted as owned forever.
+_ARCHIVE_MAGIC = (b"PK\x03\x04", b"Rar!\x1a\x07", b"7z\xbc\xaf\x27\x1c", b"%PDF")
+
+
+def _must_be_comic(path: str) -> None:
+    """Raise ValueError unless `path` is an archive with something to read in it:
+    an image, or (a pack) another comic file. Cheap: the magic bytes, and for a
+    ZIP its directory."""
+    with open(path, "rb") as f:
+        head = f.read(512)
+    if not head.startswith(_ARCHIVE_MAGIC):
+        sniff = head.lstrip()[:200].lower()
+        if sniff.startswith((b"<!doctype", b"<html", b"<?xml", b"{")) or b"<html" in sniff:
+            m = re.search(rb"<title[^>]*>([^<]{1,80})", head, re.I)
+            what = f" ({m.group(1).decode('utf-8', 'replace').strip()})" if m else ""
+            raise ValueError(f"Got a web page{what}, not a comic")
+        raise ValueError(f"Not a comic archive (starts {head[:8]!r})")
+    if head.startswith(b"PK"):
+        try:
+            with zipfile.ZipFile(path) as zf:
+                names = [n.lower() for n in zf.namelist()]
+        except zipfile.BadZipFile as e:
+            raise ValueError(f"Broken ZIP: {e}")
+        if not any(n.endswith(_IMAGE_EXTS + tuple(PIPELINE_EXTS)) for n in names):
+            raise ValueError("A ZIP with no pages or comics in it")
 
 
 def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
@@ -1135,6 +1165,11 @@ def download_issue(
     if size < 1024:
         os.remove(staging_path)
         raise ValueError(f"Downloaded file too small ({size} bytes) — likely an error page")
+    try:
+        _must_be_comic(staging_path)
+    except ValueError:
+        os.remove(staging_path)
+        raise
 
     # RAR/CBR: pay the full bsdtar extract ONCE, right here. Verification and
     # variant injection below both read this dir instead of each re-extracting
@@ -1303,6 +1338,11 @@ def download_trade(
     if size < 1024:
         os.remove(staging_path)
         raise ValueError(f"Downloaded file too small ({size} bytes) — likely an error page")
+    try:
+        _must_be_comic(staging_path)
+    except ValueError:
+        os.remove(staging_path)
+        raise
 
     dest_path = os.path.join(dest_dir, _safe(filename))
     if os.path.exists(dest_path):
