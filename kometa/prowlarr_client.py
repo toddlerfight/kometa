@@ -186,6 +186,11 @@ def _drop_year_mismatches(results: list[dict], title: str, series_year,
     only reject releases older than the series, and a same-named later volume
     (New Avengers 2013 vs the 2025 relaunch) walks straight in. Pack searches
     have no single issue date and pass None, keeping the lower-bound-only rule."""
+    if not series_year:
+        # 'Rumble (2017)' with no stored year: the name tag IS the year. The scorer
+        # now ignores that tag, so this is the only thing keeping 2014 out.
+        m = re.search(r"\(((?:19|20)\d{2})\D*\)\s*$", title or "")
+        series_year = int(m.group(1)) if m else series_year
     kept = [r for r in results
             if not year_mismatch(r.get("title", ""), series_year, store_date=store_date)]
     if len(kept) < len(results):

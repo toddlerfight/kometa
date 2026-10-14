@@ -751,7 +751,14 @@ class GetComicsClient:
                     continue
                 if sibling.name == "hr":
                     break
-                for btn_wrap in sibling.find_all("div", {"class": "aio-button-center"}):
+                # The button div is often the sibling ITSELF, not a child of it.
+                # find_all only digs downward, so it walked straight past every
+                # button on the page, fell to strategy 2, saw two groups, binned
+                # every mirror, and slammed into the fs2 wall. Deadpool #8-#10,
+                # 2026-10-15. Look at the thing in front of you first.
+                wraps = ([sibling] if sibling.name == "div" and "aio-button-center" in (sibling.get("class") or [])
+                         else sibling.find_all("div", {"class": "aio-button-center"}))
+                for btn_wrap in wraps:
                     a = btn_wrap.find("a", href=True)
                     if not a:
                         continue

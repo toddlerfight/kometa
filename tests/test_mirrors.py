@@ -39,3 +39,47 @@ def test_mirror_urls_resolves_both_kinds(monkeypatch):
     monkeypatch.setattr(c, "_get", lambda url, **k: H(hops[url]))
     monkeypatch.setattr(c, "_mediafire_direct", lambda url: "https://download1.mediafire.com/q/yule.cbr")
     assert c.mirror_urls("main") == ["https://pixeldrain.com/api/file/AbC123?download", "https://download1.mediafire.com/q/yule.cbr"]
+
+
+def test_two_group_post_keeps_the_first_groups_mirrors(monkeypatch):
+    """Deadpool #8 (2023), 2026-10-15: HD and SD groups, buttons as bare siblings of
+    the Language line. The first group's Pixeldrain wins; the SD group stays out."""
+    post = """<section class="post-contents">
+      <p>Deadpool #8 (HD-Digital) Language : English</p>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/MAIN">DOWNLOAD NOW</a></div>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/PD">PIXELDRAIN</a></div>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/MF">MEDIAFIRE</a></div>
+      <hr/>
+      <p>Deadpool #8 (SD-Digital) Language : English</p>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/SD">Download Now</a></div>
+      <p></p><div class="aio-button-center"><a href="https://getcomics.org/dls/MF2">MEDIAFIRE</a></div>
+      <hr/></section>"""
+
+    class R:
+        def __init__(self, text="", loc=""):
+            self.text, self.headers, self.status_code = text, {"location": loc}, 200
+        def raise_for_status(self): pass
+    hops = {"https://getcomics.org/dls/PD": "https://pixeldrain.com/u/Dp8"}
+    c = gc.GetComicsClient()
+    monkeypatch.setattr(c, "_get", lambda url, **k: R(loc=hops[url]) if url in hops else R(text=post))
+    monkeypatch.setattr(c, "_mediafire_direct", lambda url: None)
+    href, _ = c._extract_download("https://getcomics.org/marvel/deadpool-8-2023/")
+    assert href == "https://pixeldrain.com/api/file/Dp8?download"
+    assert c._mirrors[href][0] == "https://getcomics.org/dls/MAIN"
+    assert "https://getcomics.org/dls/MF2" not in c._mirrors["https://getcomics.org/dls/MAIN"]
+
+
+def test_year_tagged_series_name_still_scores():
+    """Deadpool (2023), 2026-10-15: usenet had the issue, scored it 0, the row went
+    to GetComics and died on the fs2 wall."""
+    from kometa.usenet_client import _nzb_score, _pack_score
+    assert _nzb_score("Deadpool 008 (2023) (Digital) (Zone-Empire)", "Deadpool (2023)", 8.0) == 15
+    assert _nzb_score("Batman 151 (2024) (Digital)", "Batman- One Dark Knight (2021-)", 151.0) == 0
+    assert _nzb_score("Rumble 003 (2017) (Digital)", "Rumble (2017)", 3.0) == 15
+
+
+def test_year_guard_falls_back_to_the_name_tag():
+    from kometa.prowlarr_client import _drop_year_mismatches
+    rs = [{"title": "Rumble 003 (2014) (Digital)"}, {"title": "Rumble 003 (2017) (Digital)"}]
+    kept = _drop_year_mismatches(rs, "Rumble (2017)", None, store_date="2017-08-01")
+    assert [r["title"] for r in kept] == ["Rumble 003 (2017) (Digital)"]

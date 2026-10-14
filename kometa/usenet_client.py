@@ -126,10 +126,23 @@ def _fold(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
 
 
+_SERIES_YEAR_TAIL_RE = re.compile(r"\s*\((?:19|20)\d{2}(?:\s*-\s*(?:(?:19|20)\d{2})?)?\)\s*$")
+
+
+def _series_name(series: str) -> str:
+    """'Deadpool (2023)' -> 'Deadpool'. The year tag is how WE tell volumes apart;
+    a release says 'Deadpool 008 (2023)', year AFTER the number. Leave the tag on
+    and the name never leads, every release scores zero, and thirty series
+    (both Batmans, Avengers 2018, Deadpool 2023) go blind on usenet AND torrents.
+    The year is still enforced, by _drop_year_mismatches."""
+    return _SERIES_YEAR_TAIL_RE.sub("", series or "").strip() or (series or "")
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     """Score an NZB title for relevance. Higher is better; 0 disqualifies."""
     if _looks_non_comic(nzb_title):
         return 0
+    series = _series_name(series)
     t = _norm(_fold(nzb_title))
     s = _norm(_fold(series))
     num_int = int(issue_number) if issue_number == int(issue_number) else issue_number
@@ -172,6 +185,7 @@ _COMIC_EVIDENCE_RE = re.compile(r'\b(cbr|cbz|comics?|digital|tpb|graphic novel|v
 def _pack_score(nzb_title: str, series: str, size: int, missing: int | None = None) -> int:
     if _looks_non_comic(nzb_title):
         return 0
+    series = _series_name(series)
     t = _norm(nzb_title)
     s = _norm(series)
     if not s or not re.search(rf"(?<![a-z0-9]){re.escape(s)}(?![a-z0-9])", t):
