@@ -491,8 +491,8 @@ _ATTN_TITLES = {
     "marveldc": "Marvel.com / DC.com", "prowlarr": "Prowlarr", "sabnzbd": "Usenet (SABnzbd)",
     "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest",
 }
-_FIX_LOCG_PASS = ("In Chrome, open leagueofcomicgeeks.com, then DevTools › Application › Cookies; "
-                  "copy cf_clearance and paste it below.")
+_FIX_LOCG_PASS = ("In Safari, open leagueofcomicgeeks.com, then Develop › Show Web Inspector › Storage › Cookies; "
+                  "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 _FIX_FANDOM_PASS = ("In Safari, open any Fandom cover image, then Develop › Show Web Inspector › Storage › Cookies; "
                     "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 
