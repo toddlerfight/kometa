@@ -1302,6 +1302,7 @@ select.settings-input {
 .settings-dot.testing { border-color: var(--amb); }
 .settings-dot.ok      { border-color: var(--pri);  background: var(--pri); }
 .settings-dot.bad     { border-color: var(--pink); background: var(--pink); }
+.settings-dot.warn    { border-color: var(--amb);  background: var(--amb); }
 .settings-dot.ok  { color: var(--pri); }
 .settings-dot.cfg { color: var(--tq); }
 .settings-dot.bad { color: var(--pink); }
@@ -1342,6 +1343,9 @@ select.settings-input {
 .settings-attn-title { font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-wide); }
 .settings-attn-reason { color: var(--pink); }
 .settings-attn-fix { color: var(--tq); }
+/* their side, nothing for you to do: amber, on its own card only, never counted */
+.settings-attn-note.wait { border-left-color: var(--amb); background: var(--amb-d); }
+.settings-attn-note.wait .settings-attn-reason { color: var(--amb); }
 
 @media (max-width: 760px) {
   .settings-grid { grid-template-columns: 1fr; }

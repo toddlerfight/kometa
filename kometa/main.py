@@ -492,21 +492,22 @@ _ATTN_TITLES = {
     "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest",
 }
 _FIX_LOCG_PASS = ("In Chrome, open leagueofcomicgeeks.com, then DevTools › Application › Cookies; "
-                  "copy cf_clearance and paste it into the League of Comic Geeks card.")
+                  "copy cf_clearance and paste it below.")
 _FIX_FANDOM_PASS = ("In Safari, open any Fandom cover image, then Develop › Show Web Inspector › Storage › Cookies; "
-                    "copy cf_clearance and paste it into the Fandom wikis card.")
+                    "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 
 
-def _attn_fix(card: str, kind: str | None) -> str:
-    """How to fix an unwell source (kometa/health.py): a pass you can renew, or a wait."""
+def _attn_fix(card: str, kind: str | None) -> tuple[str, str]:
+    """(level, fix) for an unwell source (kometa/health.py). Always 'wait': amber on
+    its own card, never counted. The badge is for what Settings itself can fix (a
+    login, a key); a browser pass means leaving Settings, so it says how and waits."""
     if card == "locg" and kind == "refused":
-        return _FIX_LOCG_PASS
+        return "wait", _FIX_LOCG_PASS
     if card == "fandom" and kind == "refused":
-        return _FIX_FANDOM_PASS
+        return "wait", _FIX_FANDOM_PASS
     if kind == "refused":
-        return ("Nothing to do yet: Kometa backs off and tries again on its own. Still here tomorrow = "
-                "they're blocking us on purpose; switch the source off to stop it.")
-    return "Their side is down or timing out. Nothing to do: Kometa keeps retrying and the dot clears itself."
+        return "wait", "Nothing to do: Kometa backs off and tries again on its own."
+    return "wait", "Their side is down or timing out. Kometa keeps retrying."
 
 
 def settings_attention() -> list[dict]:
@@ -544,7 +545,8 @@ def settings_attention() -> list[dict]:
         st = _locg_status()
         waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
         if waiting and not st.get("locg_pass_live"):
-            out.append({"card": "locg", "reason": f"{waiting} lookups waiting on a fresh pass", "fix": _FIX_LOCG_PASS})
+            out.append({"card": "locg", "reason": f"{waiting} lookups waiting on a fresh pass", "fix": _FIX_LOCG_PASS,
+                        "level": "wait"})
     # Fandom's image CDN only lets a browser's pass through (kometa/images.py FANDOM_HOST):
     # downloads on, covers waiting, no pass (never pasted, or forgotten after a 403)
     if on("fandom_enabled") and cfg.get("fandom_download", "0") == "1" and not has("fandom_cf_clearance"):
@@ -556,7 +558,7 @@ def settings_attention() -> list[dict]:
             waiting = 0
         if waiting:
             out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass",
-                            "fix": _FIX_FANDOM_PASS})
+                            "fix": _FIX_FANDOM_PASS, "level": "wait"})
     # set up fine, failing anyway (kometa/health.py) — a switched-off source never nags
     try:
         from kometa import health
@@ -566,7 +568,8 @@ def settings_attention() -> list[dict]:
         lit = {i["card"] for i in out}
         for u in health.unwell(DB_PATH):
             if on(keys.get(u["card"], "_")) and u["card"] not in lit:
-                out.append({"card": u["card"], "reason": u["reason"], "fix": _attn_fix(u["card"], u.get("kind"))})
+                level, fix = _attn_fix(u["card"], u.get("kind"))
+                out.append({"card": u["card"], "reason": u["reason"], "fix": fix, "level": level})
                 lit.add(u["card"])
     except Exception:
         pass
@@ -579,6 +582,7 @@ def settings_attention() -> list[dict]:
             out.append({"card": "qbit", "reason": "not set up", "fix": "Fill in the qBittorrent URL and login, or switch Torrents off."})
     for i in out:
         i["title"] = _ATTN_TITLES.get(i["card"], i["card"])
+        i.setdefault("level", "fix")
     return out
 
 

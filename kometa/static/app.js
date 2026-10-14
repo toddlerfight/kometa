@@ -3707,14 +3707,16 @@ async function _updateSettingsBadge() {
   if (document.hidden) return;
   let items;
   try { items = await api.get('/api/settings/attention'); } catch { return; }
+  // only what YOU can fix counts; 'wait' (their side) is amber on its own card
+  const mine = items.filter(it => it.level !== 'wait');
   const el = document.getElementById('settings-badge');
   if (el) {
-    el.textContent = items.length || '';
-    el.className = 'nav-badge' + (items.length ? ' red' : '');
+    el.textContent = mine.length || '';
+    el.className = 'nav-badge' + (mine.length ? ' red' : '');
   }
   for (const it of items) {
     const dot = document.getElementById(`dot-${it.card}`);
-    if (dot) { dot.className = 'settings-dot bad'; dot.title = it.reason; }
+    if (dot) { dot.className = `settings-dot ${it.level === 'wait' ? 'warn' : 'bad'}`; dot.title = it.reason; }
   }
   _renderSettingsAttention(items);
 }
@@ -3733,19 +3735,20 @@ function _renderSettingsAttention(items) {
   const top = document.getElementById('settings-attn');
   if (!top) return;
   document.querySelectorAll('.settings-attn-note').forEach(n => n.remove());
-  top.hidden = !items.length;
-  top.innerHTML = items.map((it, i) => `
+  const mine = items.filter(it => it.level !== 'wait');
+  top.hidden = !mine.length;
+  top.innerHTML = mine.map((it, i) => `
     <button class="settings-attn-row" onclick="_attnJump(${i})">
       <span class="settings-attn-title">${esc(it.title || it.card)}</span>
       <span class="settings-attn-reason">${esc(it.reason)}</span>
       ${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}
     </button>`).join('');
-  top._items = items;
+  top._items = mine;
   for (const it of items) {
     const host = _attnTarget(it.card);
     if (!host) continue;
     const note = document.createElement('div');
-    note.className = 'settings-attn-note';
+    note.className = `settings-attn-note${it.level === 'wait' ? ' wait' : ''}`;
     note.innerHTML = `<span class="settings-attn-reason">${esc(it.reason)}</span>${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}`;
     const head = host.querySelector(':scope > .settings-section-head, :scope > .settings-card-header');
     head ? head.after(note) : host.prepend(note);
