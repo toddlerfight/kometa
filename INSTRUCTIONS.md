@@ -483,13 +483,14 @@ Kometa is reachable away from home at `https://$KOMETA_PUBLIC_HOST` (real name i
   Its token is `KOMETA_TUNNEL_TOKEN` in `~/docker/.env` (mode 600), never in compose or this repo. Same compose
   network as Kometa, so the dashboard route is **Published application** `$KOMETA_PUBLIC_HOST` → `http://kometa:6969`.
   Token rotation: dashboard › Tunnels › Kometa › Refresh token, then update `.env` and `docker compose up -d kometa-tunnel`.
-- **Access (Zero Trust › Access controls › Applications)**, two self-hosted apps on the same hostname:
-  - `kometa web`: the whole hostname, policy **Allow** emails = the owner's, One-time PIN, 1-month session.
-    The web app is admin-only; nobody else gets past Cloudflare.
-  - `kometa apps`: paths `api` and `opds`, policy **Bypass** Everyone. YondeB and OPDS readers can't do Cloudflare's
-    browser login, so these skip it. Kometa's own login is what guards them (401 without a token / Basic).
+- **The public address carries the apps, nothing else** (kometa/auth.py `AuthGate`, `via_tunnel`): a request with
+  `Cf-Connecting-IP` (Cloudflare stamps it, a client can't strip it) that isn't `/api/…` or `/opds/…` gets
+  `FRONT_PAGE`, a green コメタ and nowhere to go. That's 200 at `/` and 404 elsewhere, even with an admin token.
+  The web app is home or tailnet only. With login OFF, the tunnel gets 503 for everything.
+- **Access (Zero Trust › Access controls › Applications):** only `kometa apps` (paths `api` and `opds`, **Bypass**
+  Everyone). YondeB and OPDS readers can't do Cloudflare's browser login. Kometa's login guards them. There's no
+  Access app on the bare hostname: the front page has nothing behind it.
 - **Check after any change** (from off the LAN or anywhere):
-  `/` and `/login` → 302 to `*.cloudflareaccess.com`; `/api/version` → 200; `/api/series` and `/opds` → 401;
+  `/` → 200 with only コメタ; `/login` and `/app.js` → 404; `/api/version` → 200; `/api/series` and `/opds` → 401;
   the same two with `Authorization: Bearer <token>` → 200.
-- Never add a path to the Bypass app that serves the web UI. Never turn Kometa login off while the tunnel is up:
-  the Bypass paths would then be open to the internet.
+- Never widen `_app_path` to anything that serves the web UI.

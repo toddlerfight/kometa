@@ -288,6 +288,17 @@ def reader_may(method: str, path: str) -> bool:
     return any(p.fullmatch(f"{method} {path}") for p in READER_WRITE)
 
 
+def via_tunnel(scope) -> bool:
+    """Came in through Cloudflare (the public address). Cloudflare stamps every request
+    with Cf-Connecting-IP and a client can't strip it; home and tailnet never carry it."""
+    return any(k.lower() == b"cf-connecting-ip" for k, _ in scope.get("headers", []))
+
+
+def _app_path(path: str) -> bool:
+    """What the public address is for: YondeB and OPDS readers."""
+    return any(path == p or path.startswith(p + "/") for p in ("/api", "/opds"))
+
+
 def _is_open(method: str, path: str) -> bool:
     return any(p.fullmatch(f"{'GET' if method == 'HEAD' else method} {path}") for p in OPEN)
 
@@ -302,6 +313,15 @@ class AuthGate:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        if via_tunnel(scope):
+            # The public address carries the apps and nothing else. Wave the whole internet at
+            # the web app? No. It gets a green コメタ and a closed door; the web app is home or
+            # tailnet only. And with login off, the tunnel carries nothing at all.
+            path = scope.get("path", "")
+            if not enabled():
+                return await self.plain(send, 503, FRONT_PAGE)
+            if not _app_path(path):
+                return await self.plain(send, 200 if path in ("/", "/index.html") else 404, FRONT_PAGE)
         if not enabled():
             tok = _CURRENT.set(None)                       # the owner, admin — the old world
             try:
@@ -334,6 +354,14 @@ class AuthGate:
         except Exception:
             return None
         return user_for_token(c[COOKIE].value) if COOKIE in c else None
+
+    @staticmethod
+    async def plain(send, code: int, html: str):
+        body = html.encode()
+        await send({"type": "http.response.start", "status": code,
+                    "headers": [(b"content-type", b"text/html; charset=utf-8"),
+                                (b"content-length", str(len(body)).encode()), (b"cache-control", b"no-store")]})
+        await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     async def refuse(scope, send, code: int):
@@ -567,6 +595,9 @@ const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'ap
 body:JSON.stringify({username:d.get('username'),password:d.get('password'),device:'web'})});
 if(r.ok){location.replace('/')}else{document.getElementById('e').textContent=(await r.json()).detail||'No'}};
 </script>""")
+
+# the public address, anywhere but /api and /opds: the name, nowhere to go
+FRONT_PAGE = _PAGE.replace("__BODY__", """<h1 style="font-size:40px;margin:0">コメタ</h1>""")
 
 NOT_ADMIN_PAGE = _PAGE.replace("__BODY__", """<div class="box"><h1>コメタ</h1>
 <p>This account reads in YondeB or an OPDS app.</p>

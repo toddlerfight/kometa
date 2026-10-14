@@ -302,3 +302,32 @@ def test_the_switch_bites_without_a_restart(tmp_path):
     with sqlite3.connect(a) as c:
         c.execute("UPDATE config SET value = '0' WHERE key = 'auth_enabled'")
     assert not auth.enabled(a)
+
+
+CF = {"Cf-Connecting-IP": "203.0.113.9"}
+
+
+def test_through_the_tunnel_the_web_app_is_a_closed_door(a):
+    """The public address carries /api and /opds; anything else is the name and nowhere to go —
+    even with an admin's own token. Home and tailnet (no Cf header) are untouched."""
+    auth.create_user("marcus", ADMIN_PW, "admin", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    tok = c.post("/api/auth/login", json={"username": "marcus", "password": ADMIN_PW}).json()["token"]
+    front = c.get("/", headers=CF)
+    assert front.status_code == 200 and "コメタ" in front.text and "Sign in" not in front.text and "<form" not in front.text
+    assert c.get("/login", headers=CF).status_code == 404
+    assert c.get("/app.js", headers={**CF, "Authorization": f"Bearer {tok}"}).status_code == 404
+    assert "コメタ" in c.get("/", headers={**CF, "Authorization": f"Bearer {tok}"}).text     # even signed in: the name only
+    anon = TestClient(_app())                                                         # no cookie from the login above
+    assert anon.get("/api/ondeck", headers=CF).status_code == 401                    # the apps' door: Kometa's login
+    assert anon.get("/api/ondeck", headers={**CF, "Authorization": f"Bearer {tok}"}).status_code == 200
+    assert anon.get("/opds", headers=CF).status_code == 401
+    assert c.get("/", headers={"Authorization": f"Bearer {tok}"}).json() == {"web": True}   # home: the web app
+
+
+def test_with_login_off_the_tunnel_carries_nothing(a):
+    c = TestClient(_app())
+    assert c.get("/api/ondeck").status_code == 200                                   # home: the old world
+    assert c.get("/api/ondeck", headers=CF).status_code == 503
+    assert c.get("/opds", headers=CF).status_code == 503
