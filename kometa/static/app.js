@@ -3634,6 +3634,97 @@ function _startBadgePolling() {
   _attentionTimer = setInterval(_updateSettingsBadge, 120000);
 }
 
+// Accounts (kometa/auth.py /api/users): who can sign in, and on what. Readers read in
+// YondeB or an OPDS app; the web app is the admin's alone. A new reader or a new
+// password gets a generated one, shown here ONCE to send on — the server keeps a hash.
+// The admin's own row has no new-password / sign-out-everywhere: either would sign out
+// this very browser mid-click. That's the CLI's job (INSTRUCTIONS, Accounts and login).
+const _ACCT_WORDS = ['comet', 'panel', 'inker', 'gutter', 'splash', 'letter', 'cover', 'spine', 'issue', 'arc', 'bleed', 'tone'];
+function _acctPassword() {
+  const r = crypto.getRandomValues(new Uint32Array(4));
+  return [0, 1, 2].map(i => _ACCT_WORDS[r[i] % _ACCT_WORDS.length]).join('-') + '-' + (10 + r[3] % 90);
+}
+function _acctWhen(s) {
+  if (!s) return 'never';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  return isNaN(d) ? s : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+let _acctNote = null;          // {id, text}: the one-time password line under that account
+async function _renderAccounts() {
+  const el = document.getElementById('accounts');
+  if (!el) return;
+  let users;
+  try { users = await api.get('/api/users'); } catch { el.innerHTML = '<div class="settings-help bad">Couldn’t load accounts</div>'; return; }
+  el.innerHTML = users.map(u => {
+    const toks = u.tokens || [];
+    const last = toks.map(t => t.last_used).filter(Boolean).sort().pop();
+    const admin = u.role === 'admin';
+    return `<div class="acct-row${u.disabled ? ' acct-off' : ''}">
+      <div class="acct-head">
+        <span class="acct-name">${esc(u.username)}</span>
+        <span class="settings-opt">${admin ? 'admin' : 'reader'}${u.disabled ? ' · off' : ''}</span>
+        <span class="acct-meta">${toks.length} device${toks.length === 1 ? '' : 's'} · last used ${esc(_acctWhen(last))}</span>
+      </div>
+      ${toks.length ? `<div class="acct-devices">${toks.map(t => `<div class="acct-device">
+        <span>${esc(t.name || 'unnamed')} · ${esc(_acctWhen(t.last_used))}</span>
+        <button class="btn-link" onclick="_acctDo('device', '${u.id}', ${t.id}, this)">sign out</button></div>`).join('')}</div>` : ''}
+      <div class="acct-actions">
+        ${admin ? '' : `<button class="btn-link" onclick="_acctDo('password', '${u.id}', null, this)">new password</button>
+        ${toks.length ? `<button class="btn-link" onclick="_acctDo('signout', '${u.id}', null, this)">sign out everywhere</button>` : ''}
+        <button class="btn-link" onclick="_acctDo('${u.disabled ? 'on' : 'off'}', '${u.id}', null, this)">${u.disabled ? 'turn on' : 'turn off'}</button>
+        <button class="btn-link acct-remove" onclick="_acctDo('remove', '${u.id}', null, this)">remove</button>`}
+      </div>
+      ${_acctNote && _acctNote.id === u.id ? `<div class="settings-help ok">${esc(_acctNote.label)}: <b class="acct-pw">${esc(_acctNote.pw)}</b> — ${esc(_acctNote.tail)}</div>` : ''}
+    </div>`;
+  }).join('') + `
+    <div class="acct-add">
+      <input class="settings-input" id="acct-new" placeholder="new reader’s username" autocomplete="off" autocapitalize="none" spellcheck="false"
+        onkeydown="if (event.key === 'Enter') _acctAdd()">
+      <button class="btn-link" onclick="_acctAdd()">add reader</button>
+    </div>
+    <div class="settings-help" id="acct-msg"></div>`;
+}
+async function _acctAdd() {
+  const inp = document.getElementById('acct-new');
+  const name = (inp?.value || '').trim();
+  if (!name) return;
+  const pw = _acctPassword();
+  try {
+    const u = await api.post('/api/users', { username: name, password: pw, role: 'reader' });
+    _acctNote = { id: u.id, label: 'Their password', pw, tail: 'send it with the server address; it isn’t shown again.' };
+    _renderAccounts();
+  } catch (e) { _acctMsg(e.message === '400' ? 'That username is taken' : 'Couldn’t add that reader', true); }
+}
+function _acctMsg(t, bad = false) {
+  const m = document.getElementById('acct-msg');
+  if (m) { m.textContent = t; m.className = 'settings-help' + (bad ? ' bad' : ''); }
+}
+// remove: tap twice (no browser confirm dialogs in this app) — the first tap arms it for 3 s
+async function _acctDo(what, id, tokenId, btn) {
+  try {
+    if (what === 'remove') {
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1'; btn.textContent = 'remove — sure?';
+        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'remove'; } }, 3000);
+        return;
+      }
+      await api.del(`/api/users/${id}`);
+    } else if (what === 'password') {
+      const pw = _acctPassword();
+      await api.patch(`/api/users/${id}`, { password: pw });
+      _acctNote = { id, label: 'New password', pw, tail: 'every device of theirs is signed out; it isn’t shown again.' };
+    } else if (what === 'signout') {
+      const users = await api.get('/api/users');
+      for (const t of (users.find(u => u.id === id)?.tokens || [])) await api.del(`/api/users/${id}/tokens/${t.id}`);
+    } else if (what === 'device') {
+      await api.del(`/api/users/${id}/tokens/${tokenId}`);
+    } else if (what === 'off' || what === 'on') {
+      await api.patch(`/api/users/${id}`, { disabled: what === 'off' });
+    }
+    _renderAccounts();
+  } catch (e) { _acctMsg(e.message === '409' ? 'That would leave no admin' : 'That didn’t work', true); }
+}
+
 // Library harvest (kometa/harvest.py): every background fill added up — the
 // record, LOCG's sweep, the image store, today's Metron allowance. Numbers only.
 let _harvestTimer = null;
@@ -4367,6 +4458,10 @@ async function renderSettings() {
           ${_settingsField('f-sync-hours', 'Hours (24h, comma-separated)', cfg.sync_hours)}
         </div>
         <div class="settings-card" style="margin-top:32px">
+          ${_settingsHeader('Accounts', 'who signs in', 'accounts')}
+          <div id="accounts"></div>
+        </div>
+        <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('Library harvest', '', 'harvest')}
           <div id="harvest-progress"></div>
         </div>
@@ -4470,6 +4565,7 @@ async function renderSettings() {
     </div>
   `);
   _updateRootStatus(cfg.comics_root_ok);
+  _renderAccounts();
   _updateSettingsBadge();
   _startHarvestPoll();
   // Sections that load already-off start collapsed WITHOUT animation (no

@@ -1345,6 +1345,21 @@ select.settings-input {
 .settings-attn-fix { color: var(--tq); }
 /* their side, nothing for you to do: amber, on its own card only, never counted */
 .settings-attn-note.wait { border-left-color: var(--amb); background: var(--amb-d); }
+/* Accounts: one block per account — name + role + devices line, its devices, its actions */
+.acct-row { padding: 12px 0; border-bottom: 1px solid var(--bd); font-size: var(--fs-body); }
+.acct-row:first-child { padding-top: 0; }
+.acct-head { display: flex; align-items: baseline; gap: var(--sp-sm); flex-wrap: wrap; }
+.acct-name { color: var(--tp); font-weight: 700; }
+.acct-meta { color: var(--tq); margin-left: auto; }
+.acct-off .acct-name { color: var(--tq); }
+.acct-devices { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.acct-device { display: flex; justify-content: space-between; gap: var(--sp-md); color: var(--tq); }
+.acct-actions { display: flex; gap: var(--sp-md); margin-top: 8px; flex-wrap: wrap; }
+.acct-actions:empty { display: none; }
+.acct-remove[data-armed="1"] { color: var(--pink); }
+.acct-pw { color: var(--tp); font-weight: inherit; user-select: all; }   /* one tap selects the whole password */
+.acct-add { display: flex; align-items: center; gap: var(--sp-md); margin-top: 16px; }
+.acct-add .settings-input { flex: 1; }
 .settings-attn-note.wait .settings-attn-reason { color: var(--amb); }
 
 @media (max-width: 760px) {
