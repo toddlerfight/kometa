@@ -475,3 +475,21 @@ Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
 - **Turn-on order:** install the current YondeB everywhere → admin account → sign in on web, YondeB (each device),
   Panels → `enable on` → sign in on the iPad home-screen web app (it shows the sign-in page) → only then expose
   it (Cloudflare tunnel hostname + Access on the web app, never /api or /opds).
+
+## Public access: Cloudflare Tunnel + Access (2026-10-14)
+
+Kometa is reachable away from home at `https://$KOMETA_PUBLIC_HOST` (real name in `.env`, never here).
+- **Tunnel:** the `kometa-tunnel` service in ginbako's `~/docker/compose.yml` (`cloudflare/cloudflared`, `tunnel --no-autoupdate run`).
+  Its token is `KOMETA_TUNNEL_TOKEN` in `~/docker/.env` (mode 600), never in compose or this repo. Same compose
+  network as Kometa, so the dashboard route is **Published application** `$KOMETA_PUBLIC_HOST` → `http://kometa:6969`.
+  Token rotation: dashboard › Tunnels › Kometa › Refresh token, then update `.env` and `docker compose up -d kometa-tunnel`.
+- **Access (Zero Trust › Access controls › Applications)**, two self-hosted apps on the same hostname:
+  - `kometa web`: the whole hostname, policy **Allow** emails = the owner's, One-time PIN, 1-month session.
+    The web app is admin-only; nobody else gets past Cloudflare.
+  - `kometa apps`: paths `api` and `opds`, policy **Bypass** Everyone. YondeB and OPDS readers can't do Cloudflare's
+    browser login, so these skip it. Kometa's own login is what guards them (401 without a token / Basic).
+- **Check after any change** (from off the LAN or anywhere):
+  `/` and `/login` → 302 to `*.cloudflareaccess.com`; `/api/version` → 200; `/api/series` and `/opds` → 401;
+  the same two with `Authorization: Bearer <token>` → 200.
+- Never add a path to the Bypass app that serves the web UI. Never turn Kometa login off while the tunnel is up:
+  the Bypass paths would then be open to the internet.
