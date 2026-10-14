@@ -467,6 +467,8 @@ Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
 - **Claude's token:** `~/.kometa-claude-token` on ginbako (600), made with `… token marcus claude-code`. With login
   on, every API call from automation sends `Authorization: Bearer $(cat ~/.kometa-claude-token)` — run curls on
   ginbako (`ssh … 'T=$(cat ~/.kometa-claude-token); curl -H "Authorization: Bearer $T" http://127.0.0.1:6969/…'`).
+  `… password marcus` signs out every device of marcus, this token included: reissue it straight after
+  (`umask 077; docker exec kometa python -m kometa.auth token marcus claude > ~/.kometa-claude-token`).
 - **Clients:** web = the /login page (cookie, a year); YondeB = Settings › Server (token in the Keychain);
   OPDS apps = Basic (username + password). A reader account gets the shelf and its own reading state only; the
   web app is admin only.
