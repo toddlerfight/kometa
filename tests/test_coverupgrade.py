@@ -130,7 +130,7 @@ def test_variants_large_view_gets_the_linked_bigger_copy(store, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", store)
     monkeypatch.setattr(kdb, "get_issues_for_series", lambda sid, p: [{"number": 1.0, "metron_issue_id": 5, "tracked_series_id": sid}])
     monkeypatch.setattr(kdb, "get_variant_prefs", lambda *a: None)
-    monkeypatch.setattr(record, "variants", lambda issue, p: {"covers": [{"id": "B", "thumb": "t", "large": "l"},
+    monkeypatch.setattr(record, "variants", lambda issue, p, stored_only=False: {"covers": [{"id": "B", "thumb": "t", "large": "l"},
                                                                       {"id": "C", "thumb": "t2", "large": "l2"}]})
     covers = main.get_issue_variants(12, 1.0)["covers"]
     assert covers[0]["big"] == "/api/cover-upgrade/issue/12/1/variant/B" and "big" not in covers[1]
