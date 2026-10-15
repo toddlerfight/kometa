@@ -386,7 +386,7 @@ def wired(tmp_path, monkeypatch):
 
 def test_settings_round_trip(wired):
     cfg = main.get_config()
-    assert cfg["marveldc_enabled"] is True and cfg["marveldc_hours"] == "23-7"     # on tonight, by default
+    assert cfg["marveldc_enabled"] is True and cfg["marveldc_hours"] == "0-0"      # all day, by default (marveldc.DEFAULT_HOURS)
     assert cfg["extra_budgets"]["marveldc"]["cap"] == 400
     assert {"requests", "matched", "kept"} <= set(cfg["marveldc_tonight"])
     cfg = main.update_config(main.ConfigRequest(marveldc_enabled="0", marveldc_hours="22 - 6"))

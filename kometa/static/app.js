@@ -3731,9 +3731,22 @@ function _startHarvestPoll() {
   clearInterval(_harvestTimer);
   _renderHarvest();
   _harvestTimer = setInterval(() => {
-    if (currentView !== 'settings' || !document.getElementById('harvest-progress')) return clearInterval(_harvestTimer);
+    if (currentView !== 'activity' || !document.getElementById('harvest-progress')) return clearInterval(_harvestTimer);
     if (!document.hidden) _renderHarvest();
   }, 60000);
+}
+
+// Background sources that need nothing from you: named once so you know they exist,
+// 'resting' when one has backed off. Their numbers live on Activity (the harvest board).
+function _quietSourcesLine(cfg) {
+  const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup', marveldc: 'Marvel.com / DC.com' };
+  const b = cfg.extra_budgets || {};
+  const resting = Object.keys(names).filter(k => b[k] && b[k].paused).map(k => names[k]);
+  return `Running quietly in the background: ${Object.values(names).join(', ')}.${resting.length ? ` Resting: ${esc(resting.join(', '))}.` : ''}`;
+}
+// the board itself: appended under the Activity list
+function _harvestCardHtml() {
+  return `<div class="settings-card act-harvest">${_settingsHeader('Library harvest', 'background', 'harvest')}<div id="harvest-progress"></div></div>`;
 }
 
 async function _renderHarvest() {
@@ -3828,7 +3841,7 @@ function _renderSettingsAttention(items) {
   const mine = items.filter(it => it.level !== 'wait');
   top.hidden = !mine.length;
   top.innerHTML = mine.map((it, i) => `
-    <button class="settings-attn-row" onclick="_attnJump(${i})">
+    <button class="settings-attn-row${it.level === 'broken' ? ' broken' : ''}" onclick="_attnJump(${i})">
       <span class="settings-attn-title">${esc(it.title || it.card)}</span>
       <span class="settings-attn-reason">${esc(it.reason)}</span>
       ${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}
@@ -3838,7 +3851,7 @@ function _renderSettingsAttention(items) {
     const host = _attnTarget(it.card);
     if (!host) continue;
     const note = document.createElement('div');
-    note.className = `settings-attn-note${it.level === 'wait' ? ' wait' : ''}`;
+    note.className = `settings-attn-note${it.level === 'wait' ? ' wait' : it.level === 'broken' ? ' broken' : ''}`;
     note.innerHTML = `<span class="settings-attn-reason">${esc(it.reason)}</span>${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}`;
     const head = host.querySelector(':scope > .settings-section-head, :scope > .settings-card-header');
     head ? head.after(note) : host.prepend(note);
@@ -4165,7 +4178,8 @@ function _buildActivityHtml(queue) {
       <div class="act-empty-icon">◌</div>
       <div class="act-empty-msg">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
       <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
-    </div>`);
+    </div>${_harvestCardHtml()}`);
+    _startHarvestPoll();
     return;
   }
 
@@ -4182,7 +4196,8 @@ function _buildActivityHtml(queue) {
     </div>`;
   }
   html += '</div>';
-  setApp(html);
+  setApp(html + _harvestCardHtml());
+  _startHarvestPoll();
 }
 
 // Crossfade a text swap instead of hard-cutting it. No-op when nothing changed.
@@ -4437,13 +4452,16 @@ async function renderSettings() {
 
   setApp(`
     <div class="settings-attn" id="settings-attn" hidden></div>
+    <div class="settings-help settings-quiet">${_quietSourcesLine(cfg)}</div>
     <div class="settings-grid">
       <div>
         <div class="settings-card">
           ${_settingsHeader('Comics Library', 'required', 'library')}
           <div class="settings-field">
             <label class="settings-field-label u-label" for="ff-root">Library path</label>
-            ${folderField('root', cfg.comics_root, 'fs', async (path) => {
+            ${cfg.comics_root_ok
+              ? `<div class="settings-help" id="ff-root">${esc(cfg.comics_root || '')} <span style="color:var(--tq)">· the container's mount, set in compose</span></div>`
+              : folderField('root', cfg.comics_root, 'fs', async (path) => {
               const c = await api.patch('/api/config', { comics_root: path });
               _appConfig = { ..._appConfig, comics_root: path, comics_root_ok: c.comics_root_ok };
               _updateRootStatus(c.comics_root_ok);
@@ -4459,10 +4477,6 @@ async function renderSettings() {
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('Accounts', 'who signs in', 'accounts')}
           <div id="accounts"></div>
-        </div>
-        <div class="settings-card" style="margin-top:32px">
-          ${_settingsHeader('Library harvest', '', 'harvest')}
-          <div id="harvest-progress"></div>
         </div>
         <div class="settings-card" style="margin-top:32px">
           ${_settingsHeader('FlareSolverr', 'cloudflare', 'flaresolverr', true, cfg.flaresolverr_configured)}
@@ -4525,24 +4539,12 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
-        ${_politeSourceSection('prh', 'Penguin Random House', 'print covers', cfg)}
-        ${_politeSourceSection('openlibrary', 'Open Library', 'book ratings', cfg)}
-        ${_politeSourceSection('cbr', 'ComicBookRoundup', 'critic scores', cfg)}
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
           `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>
           ${_settingsField('f-fandom-cf', 'cf_clearance cookie (images)', '', { set: cfg.fandom_cf_configured, ph: 'Safari → a Fandom image open → Develop → Storage → Cookies', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
           <div class="settings-help">${cfg.fandom_cf_configured
             ? `Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.fandom_user_agent))}. Forgotten the moment Fandom refuses it.`
             : 'From Safari, with a Fandom image open (Chrome never gets one).'}</div>`)}
-        <div class="settings-section ${cfg.marveldc_enabled ? '' : 'section-off'}" id="sec-marveldc" style="margin-top:32px">
-          ${_settingsSectionHead('Marvel.com / DC.com', 'print covers, overnight', 't-marveldc', cfg.marveldc_enabled)}
-          <div class="settings-section-body"><div class="settings-section-inner">
-            <div class="settings-card">
-              ${_settingsField('f-marveldc-hours', 'Hours it may run (24h, from-to)', cfg.marveldc_hours, { ph: '23-7' })}
-              ${_marveldcTonight(cfg)}
-            </div>
-          </div></div>
-        </div>
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4570,13 +4572,12 @@ async function renderSettings() {
   _updateRootStatus(cfg.comics_root_ok);
   _renderAccounts();
   _updateSettingsBadge();
-  _startHarvestPoll();
   // Sections that load already-off start collapsed WITHOUT animation (no
   // fold-in flash on entering Settings). Prowlarr is the master — off folds the
   // whole usenet+torrent branch it wraps.
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
-  for (const k of ['prh', 'openlibrary', 'cbr', 'fandom', 'hardcover', 'marveldc']) {
+  for (const k of ['fandom', 'hardcover']) {
     if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
   }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
@@ -4593,7 +4594,6 @@ async function renderSettings() {
 // integration to re-verify after the value changes.
 const _SETTINGS_FIELDS = {
   'f-sync-hours':  { card: 'schedule',  key: 'sync_hours' },
-  'f-marveldc-hours': { card: 'marveldc', key: 'marveldc_hours' },
   'f-sab-url':     { card: 'sabnzbd',   key: 'sab_url',          test: 'sabnzbd' },
   'f-sab-apikey':  { card: 'sabnzbd',   key: 'sab_apikey',       test: 'sabnzbd', secret: true },
   'f-qbit-url':        { card: 'qbit',     key: 'qbit_url',         test: 'qbit' },
@@ -4618,7 +4618,9 @@ function _backupLine(cfg) {
   const l = cfg.backup_last || {};
   const when = l.started_at ? new Date(l.started_at).toLocaleString('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never';
   const what = l.ok ? ` · ${(l.db_bytes / 1e6).toFixed(1)} MB database${l.covers_copied ? `, ${l.covers_copied} covers` : ''}` : (l.error ? ` · failed: ${esc(l.error)}` : '');
-  return `Backup to the NAS nightly at 3:30 · last ${esc(when)}${what} <button class="btn-link" onclick="_backupNow(this)">back up now</button>`;
+  const stale = l.started_at && (Date.now() - new Date(l.started_at)) > 30 * 3600 * 1000;
+  const flag = !l.ok && l.error ? ' <span style="color:var(--pink)">failed</span>' : stale ? ' <span style="color:var(--amb)">· no run since then</span>' : '';
+  return `Backup to the NAS nightly at 3:30 · last ${esc(when)}${what}${flag} <button class="btn-link" onclick="_backupNow(this)">back up now</button>`;
 }
 
 async function _backupNow(btn) {
@@ -4780,15 +4782,11 @@ const _SOURCE_TOGGLES = {
   't-locg':      { key: 'locg_enabled',      section: 'sec-locg',      label: 'League of Comic Geeks' },
   't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
   't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
-  't-prh':       { key: 'prh_enabled',       section: 'sec-prh',       label: 'Penguin Random House' },
-  't-openlibrary': { key: 'openlibrary_enabled', section: 'sec-openlibrary', label: 'Open Library' },
-  't-cbr':       { key: 'cbr_enabled',       section: 'sec-cbr',       label: 'ComicBookRoundup' },
   't-fandom':    { key: 'fandom_enabled',    section: 'sec-fandom',    label: 'Fandom wikis' },
   // a flag inside the Fandom card, nothing to fold: downloads stay off until the
   // cover store leaves ginbako's internal disk
   't-fandom-download': { key: 'fandom_download', section: null, label: 'Fandom gallery downloads' },
   't-hardcover': { key: 'hardcover_enabled', section: 'sec-hardcover', label: 'Hardcover' },
-  't-marveldc':  { key: 'marveldc_enabled',  section: 'sec-marveldc',  label: 'Marvel.com / DC.com' },
   't-prowlarr':  { key: 'prowlarr_enabled',  section: 'sec-prowlarr',  label: 'Prowlarr' },
   't-usenet':    { key: 'usenet_enabled',    section: 'sec-usenet',    label: 'Usenet' },
   't-torrent':   { key: 'torrent_enabled',   section: 'sec-torrent',   label: 'Torrents' },

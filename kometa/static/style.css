@@ -1336,6 +1336,10 @@ select.settings-input {
 }
 .settings-attn-row { border-top: 0; border-right: 0; border-bottom: 0; cursor: pointer; width: 100%; }
 .settings-attn-note { margin-bottom: 20px; }
+/* a hand-off: set up fine, failing anyway, and only a code change fixes it */
+.settings-attn-row.broken .settings-attn-fix, .settings-attn-note.broken .settings-attn-fix { color: var(--pink); }
+.settings-quiet { margin: -24px 0 32px; color: var(--tq); }
+.act-harvest { margin-top: 32px; }
 /* a jump from the list lands the card's heading below the top bar, not under it */
 .settings-section, .settings-card { scroll-margin-top: 88px; }
 .settings-attn-title { font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-wide); }

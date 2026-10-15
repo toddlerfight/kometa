@@ -130,6 +130,15 @@ def _download_cover(cover) -> bytes | None:
     """Plain requests, no scraper — the covers sit on public S3 (LOCG) or
     static.metron.cloud, and neither has a Cloudflare bouncer. `cover` is a
     cover dict carrying its own `large` URL (Metron), or a bare LOCG id."""
+    if isinstance(cover, dict) and cover.get("store"):
+        # a copy Kometa already holds (a Fandom gallery scan): the file, not a fetch
+        from kometa import images
+        p = images.local_path(cover["store"])
+        try:
+            with open(p, "rb") as fh:
+                return fh.read()
+        except (OSError, TypeError):
+            return None
     url = cover.get("large") if isinstance(cover, dict) and cover.get("large") else \
         S3_LARGE.format(cover["id"] if isinstance(cover, dict) else cover)
     try:

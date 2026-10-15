@@ -128,7 +128,8 @@ def unwell(path=None, now: float | None = None) -> list[dict]:
         name = f"Cover images from {source[7:]}" if source.startswith("Images ") else source
         reason = f"{name}: {what} since {_when(s['first_bad'])} ({s['streak']} in a row"
         reason += f", last: {s['detail']})" if s["detail"] else ")"
-        out.append({"card": CARDS.get(source, "harvest"), "source": source, "kind": s["kind"], "reason": reason})
+        out.append({"card": CARDS.get(source, "harvest"), "source": source, "kind": s["kind"], "reason": reason,
+                    "dry_day": bool(dry_day)})
     return out
 
 

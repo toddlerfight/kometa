@@ -19,7 +19,11 @@ import kometa.db as db
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
-SOURCES = ("marveldc",)          # whose bigger copies stand in for the originals
+# Whose bigger copies stand in for the originals. PRH and Fandom were harvested for
+# months and never shown (2026-10-15 audit): 123 print covers and 3,641 gallery scans
+# sitting in the store. A same-picture copy now links as `big`; a Fandom scan that
+# is its own picture lists in the Variants tab (fandom_entries).
+SOURCES = ("marveldc", "prh", "fandom")
 
 
 def ensure_tables(path=None):
@@ -166,6 +170,28 @@ def own_entries(series_id: int, number: float, path=None) -> list[dict]:
         out.append({"id": f"marvel-{vid}", "name": f"Marvel.com variant {vid}", "thumb": f"/api/cover-store/{k}?w=400",
                     "large": i["url"], "big": f"/api/cover-store/{k}", "type": "cover", "source": "marvel.com",
                     "local": None})
+    return out
+
+
+def fandom_entries(series_id: int, number: float, path=None) -> list[dict]:
+    """Fandom gallery scans downloaded for this issue that aren't a copy of a catalogue
+    cover (those already show as `big` on it): the textless and alternate covers, as
+    Variants-tab entries. `store` names our stored file — picking one injects THAT
+    copy, since the wiki's CDN won't hand the injector anything."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    prefix = f"issue/{int(series_id)}/{number:g}/fandom/"
+    with db._connect(path) as conn:
+        linked = {r[0] for r in conn.execute("SELECT DISTINCT better FROM cover_upgrade WHERE better LIKE ?", (prefix + "%",))}
+        rows = conn.execute("SELECT key, path FROM image_record WHERE key LIKE ? AND path IS NOT NULL", (prefix + "%",)).fetchall()
+    out = []
+    for r in rows:
+        if r["key"] in linked or not os.path.exists(r["path"]):
+            continue
+        name = r["key"][len(prefix):]
+        out.append({"id": f"fandom-{name}", "name": name.replace("_", " "), "thumb": f"/api/cover-store/{r['key']}?w=400",
+                    "large": f"/api/cover-store/{r['key']}", "big": f"/api/cover-store/{r['key']}", "store": r["key"],
+                    "type": "cover", "source": "fandom"})
     return out
 
 

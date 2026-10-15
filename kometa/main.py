@@ -541,25 +541,60 @@ _ATTN_TITLES = {
     "hardcover": "Hardcover", "locg": "League of Comic Geeks", "fandom": "Fandom wikis",
     "prh": "Penguin Random House", "openlibrary": "Open Library", "cbr": "ComicBookRoundup",
     "marveldc": "Marvel.com / DC.com", "prowlarr": "Prowlarr", "sabnzbd": "Usenet (SABnzbd)",
-    "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest",
+    "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest", "backup": "Backup",
 }
+# Level 'broken': set up fine, failing anyway, and nothing in Settings can change it —
+# a hand-off, not an instruction. Counted on the badge like a fix, so it isn't missed.
+_TELL = "Nothing to change here — tell Claude: "
 _FIX_LOCG_PASS = ("In Safari, open leagueofcomicgeeks.com, then Develop › Show Web Inspector › Storage › Cookies; "
                   "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 _FIX_FANDOM_PASS = ("In Safari, open any Fandom cover image, then Develop › Show Web Inspector › Storage › Cookies; "
                     "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 
 
-def _attn_fix(card: str, kind: str | None) -> tuple[str, str]:
-    """(level, fix) for an unwell source (kometa/health.py). Always 'wait': amber on
-    its own card, never counted. The badge is for what Settings itself can fix (a
-    login, a key); a browser pass means leaving Settings, so it says how and waits."""
+def _attn_fix(card: str, kind: str | None, dry_day: bool = False) -> tuple[str, str]:
+    """(level, fix) for an unwell source (kometa/health.py). A refusal is 'wait':
+    amber on its own card, never counted — Kometa backs off by itself. A source
+    that has FAILED (not refused) for a whole day is 'broken': their page shape
+    changed, or ours did, and only a code change fixes it."""
     if card == "locg" and kind == "refused":
         return "wait", _FIX_LOCG_PASS
     if card == "fandom" and kind == "refused":
         return "wait", _FIX_FANDOM_PASS
     if kind == "refused":
         return "wait", "Nothing to do: Kometa backs off and tries again on its own."
+    if dry_day:
+        return "broken", _TELL + "this source has been failing for a day; its page may have changed."
     return "wait", "Their side is down or timing out. Kometa keeps retrying."
+
+
+def _broken_items() -> list[dict]:
+    """What only a code change can fix: the nightly backup not landing, Marvel.com
+    matching nothing. Worded as a hand-off ('tell Claude'), counted like a fix."""
+    out = []
+    try:
+        from kometa import backup
+        b = backup.last(DB_PATH)
+        started = b.get("started_at") or ""
+        age_h = None
+        try:
+            age_h = (datetime.now(timezone.utc) - datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds() / 3600
+        except ValueError:
+            pass
+        if b and not b.get("ok"):
+            out.append({"card": "backup", "reason": f"last backup failed: {str(b.get('error') or '')[:80]}", "fix": _TELL + "the nightly backup is failing.", "level": "broken"})
+        elif age_h is not None and age_h > 30:
+            out.append({"card": "backup", "reason": f"no backup since {started[:10]}", "fix": _TELL + "the nightly backup hasn't run.", "level": "broken"})
+    except Exception:
+        pass
+    try:
+        t = _marveldc_tonight() or {}
+        if (t.get("asked") or 0) >= 50 and not t.get("matched"):
+            out.append({"card": "marveldc", "reason": f"Marvel.com matched 0 of {t['asked']} issues tonight",
+                        "fix": _TELL + "Marvel.com's pages may have changed shape.", "level": "broken"})
+    except Exception:
+        pass
+    return out
 
 
 def settings_attention() -> list[dict]:
@@ -574,6 +609,7 @@ def settings_attention() -> list[dict]:
     if not (os.path.isdir(root) and os.access(root, os.W_OK)):
         out.append({"card": "root", "reason": "comics folder missing or read-only",
                     "fix": "Check the NAS is up and its comics share is mounted on ginbako, then reload."})
+    out += _broken_items()
     if on("metron_enabled"):
         from kometa import metron_client
         creds = metron_client._creds()
@@ -620,7 +656,7 @@ def settings_attention() -> list[dict]:
         lit = {i["card"] for i in out}
         for u in health.unwell(DB_PATH):
             if on(keys.get(u["card"], "_")) and u["card"] not in lit:
-                level, fix = _attn_fix(u["card"], u.get("kind"))
+                level, fix = _attn_fix(u["card"], u.get("kind"), u.get("dry_day", False))
                 out.append({"card": u["card"], "reason": u["reason"], "fix": fix, "level": level})
                 lit.add(u["card"])
     except Exception:
@@ -785,7 +821,7 @@ def get_config():
         "hardcover_enabled":   cfg.get("hardcover_enabled", "1") != "0",
         # Marvel.com print covers (1i-e): night only, on by default (the user's call, 2026-10-12)
         "marveldc_enabled":    cfg.get("marveldc_enabled", "1") != "0",
-        "marveldc_hours":      cfg.get("marveldc_hours") or "23-7",
+        "marveldc_hours":      cfg.get("marveldc_hours") or "0-0",     # marveldc.DEFAULT_HOURS: all day
         "marveldc_tonight":    _marveldc_tonight(),
         "extra_budgets":       _extra_budgets(),
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
@@ -2216,6 +2252,7 @@ def get_issue_variants(series_id: int, number: float):
             if c.get("id") and coverupgrade.better_path(k, DB_PATH):
                 c["big"] = f"/api/cover-upgrade/{k}"
         covers += coverupgrade.own_entries(series_id, number, DB_PATH)   # Marvel.com's print-size variants
+        covers += coverupgrade.fandom_entries(series_id, number, DB_PATH)   # the wiki galleries' textless/alternate scans
         return {"covers": covers, "locg_issue_id": locg_issue_id, "source": data.get("source"),
                 "selected_ids": sel_ids, "primary_id": primary, "record": data.get("record")}
     except Exception as e:

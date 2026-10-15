@@ -110,3 +110,31 @@ def test_fandom_downloads_waiting_with_no_pass_light_the_card(wired, monkeypatch
     assert item["reason"].startswith("6 gallery images waiting")
     db.set_config({"fandom_cf_clearance": "abc"}, wired)
     assert "fandom" not in _cards(main.settings_attention())                  # a pass: quiet again
+
+
+# --- what only a code change can fix: counted, worded as a hand-off --------------------
+def test_a_failed_or_stale_backup_is_a_hand_off(wired):
+    import json
+    assert "backup" not in _cards(main.settings_attention())
+    db.set_config({"backup_last": json.dumps({"started_at": "2026-10-01T17:30:00Z", "ok": True})}, wired)
+    item = next(i for i in main.settings_attention() if i["card"] == "backup")
+    assert item["level"] == "broken" and "no backup since 2026-10-01" in item["reason"] and "tell Claude" in item["fix"]
+    db.set_config({"backup_last": json.dumps({"started_at": "2026-10-01T17:30:00Z", "ok": False, "error": "disk full"})}, wired)
+    item = next(i for i in main.settings_attention() if i["card"] == "backup")
+    assert "failed: disk full" in item["reason"]
+
+
+def test_marvel_matching_nothing_is_a_hand_off(wired, monkeypatch):
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})
+    item = next(i for i in main.settings_attention() if i["card"] == "marveldc")
+    assert item["level"] == "broken" and "0 of 100" in item["reason"]
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 30, "kept": 12})
+    assert "marveldc" not in _cards(main.settings_attention())
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 10, "matched": 0, "kept": 0})   # too few to judge
+    assert "marveldc" not in _cards(main.settings_attention())
+
+
+def test_a_source_failing_for_a_day_is_broken_but_a_refusal_waits():
+    assert main._attn_fix("prh", "error", dry_day=True)[0] == "broken"
+    assert main._attn_fix("prh", "refused", dry_day=True)[0] == "wait"
+    assert main._attn_fix("prh", "error", dry_day=False)[0] == "wait"

@@ -63,15 +63,16 @@ def test_activity_reconciles_rows_in_place(app):
 
 def test_settings_renders_and_autosaves(app):
     app.locator('.nav-item[data-view="settings"]').click()
-    field = app.locator("#ff-root")            # the aligned folder field's input
-    expect(field).to_be_visible()
-    # The autosave REALLY saves — this test mutates shared session config, so
-    # the new value must be a directory that exists or comics_root_ok flips
-    # false and the wizard test (which runs after) gets the setup screen.
+    # The library path is a status line now (2026-10-15): the container's mount,
+    # editable only when the folder is missing. Autosave is checked on Sync Schedule
+    # instead — and the value written must stay valid for the wizard test after it.
+    expect(app.locator("#ff-root")).to_be_visible()
+    expect(app.locator("input#ff-root")).to_have_count(0)
+    field = app.locator("#f-sync-hours")
     with app.expect_request(
         lambda r: "/api/config" in r.url and r.method == "PATCH", timeout=10000
     ):
-        field.fill("/tmp")
+        field.fill("4,12,17")                       # a CHANGE, or autosave has nothing to send
         field.blur()
 
 
@@ -89,26 +90,16 @@ def test_source_toggles_render_and_flip(app):
     expect(app.locator('#sec-usenet.section-off')).to_have_count(1)
 
 
-def test_polite_sources_have_cards_with_toggles(app):
-    # PRH / Open Library / ComicBookRoundup (harvest 1i): no login, so each card is
-    # a toggle plus today's allowance; off folds it like every other source.
+def test_quiet_sources_are_a_line_not_cards_and_the_board_is_on_activity(app):
+    # PRH / Open Library / ComicBookRoundup / Marvel.com need nothing from you (2026-10-15):
+    # one line names them; their numbers (the harvest board) moved to Activity.
     app.locator('.nav-item[data-view="settings"]').click()
-    for key in ('prh', 'openlibrary', 'cbr'):
-        expect(app.locator(f'#t-{key}')).to_be_checked()
-        expect(app.locator(f'#sec-{key} .settings-stat b')).to_contain_text(' of ')
-    with app.expect_request(
-        lambda r: '/api/config' in r.url and r.method == 'PATCH', timeout=10000
-    ):
-        app.locator('#t-cbr').uncheck()
-    expect(app.locator('#sec-cbr.section-off')).to_have_count(1)
+    expect(app.locator('.settings-quiet')).to_contain_text('ComicBookRoundup')
+    for key in ('prh', 'openlibrary', 'cbr', 'marveldc'):
+        expect(app.locator(f'#sec-{key}')).to_have_count(0)
+    expect(app.locator('#harvest-progress')).to_have_count(0)
+    app.locator('.nav-item[data-view="activity"]').click()
     expect(app.locator('#harvest-progress')).to_contain_text('ComicBookRoundup')
-
-
-def test_marvel_card_has_toggle_hours_and_tonight(app):
-    # Marvel.com / DC.com (harvest 1i-e): on by default, a night window you can
-    # edit, tonight's counts, and a row on the harvest card.
-    app.locator('.nav-item[data-view="settings"]').click()
-    expect(app.locator('#t-marveldc')).to_be_checked()
-    expect(app.locator('#f-marveldc-hours')).to_have_value('23-7')
-    expect(app.locator('#sec-marveldc .settings-stat').first).to_contain_text(' of ')
     expect(app.locator('#harvest-progress')).to_contain_text('Marvel.com')
+
+
