@@ -124,25 +124,35 @@ def scan_shelf(root: str | None = None) -> dict:
         # a folder the walk didn't see AND that's really not there: its unread books
         # go too (read ones keep their history; one that merely failed to list keeps all)
         with db._connect(DB_PATH) as conn:
+            total_series = conn.execute("SELECT COUNT(*) FROM shelf_series").fetchone()[0]
             vanished = [(r["id"], r["folder_path"]) for r in conn.execute(
                 "SELECT id, folder_path FROM shelf_series WHERE scanned_at IS NOT ?", (stamp,))]
-        for vid, vfolder in vanished:
-            if not os.path.isdir(vfolder):
-                gone += db.forget_missing_books(vid, [], DB_PATH, keep_read=True)
-        pruned = db.prune_shelf(stamp, DB_PATH)
-        # rows already cut loose from any folder (pruned before books were) whose
-        # file is really gone and that nobody read: nothing points at them
-        with db._connect(DB_PATH) as conn:
-            loose = [(r["id"], r["path"]) for r in conn.execute("""
-                SELECT b.id, b.path FROM books b LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
-                WHERE s.id IS NULL AND NOT EXISTS (SELECT 1 FROM read_progress p WHERE p.book_id = b.id)""")]
-        # …or that sits in a folder the shelf skips on purpose (_misgrabbed, .parked)
-        quarantined = lambda fp: any(_skip(part) for part in os.path.relpath(fp, root).split(os.sep)[:-1])
-        dead = [i for i, fp in loose if quarantined(fp) or not os.path.exists(fp)]
-        if dead:
+        # A share hiccup can make a whole swathe of folders read as 'gone' in one scan.
+        # Real removals trickle in; a mass vanish is the mount, not the user. Circuit-break:
+        # skip the destructive prune/forget this scan rather than forget hundreds of books —
+        # the next clean scan re-stamps them and nothing is lost.
+        if total_series and len(vanished) > max(10, int(total_series * 0.25)):
+            logger.error(f"Shelf: {len(vanished)}/{total_series} series vanished at once — "
+                         f"likely a mount glitch; skipping prune/forget this scan")
+            pruned = 0
+        else:
+            for vid, vfolder in vanished:
+                if not os.path.isdir(vfolder):
+                    gone += db.forget_missing_books(vid, [], DB_PATH, keep_read=True)
+            pruned = db.prune_shelf(stamp, DB_PATH)
+            # rows already cut loose from any folder (pruned before books were) whose
+            # file is really gone and that nobody read: nothing points at them
             with db._connect(DB_PATH) as conn:
-                db._forget_book_ids(conn, dead)
-            gone += len(dead)
+                loose = [(r["id"], r["path"]) for r in conn.execute("""
+                    SELECT b.id, b.path FROM books b LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
+                    WHERE s.id IS NULL AND NOT EXISTS (SELECT 1 FROM read_progress p WHERE p.book_id = b.id)""")]
+            # …or that sits in a folder the shelf skips on purpose (_misgrabbed, .parked)
+            quarantined = lambda fp: any(_skip(part) for part in os.path.relpath(fp, root).split(os.sep)[:-1])
+            dead = [i for i, fp in loose if quarantined(fp) or not os.path.exists(fp)]
+            if dead:
+                with db._connect(DB_PATH) as conn:
+                    db._forget_book_ids(conn, dead)
+                gone += len(dead)
         healed = db.reparse_null_numbers(DB_PATH)      # names that parse now (renamed, re-titled)
         if healed:
             logger.info(f"Shelf scan: {healed} book(s) given the number their name now carries")

@@ -46,6 +46,17 @@ def trash_series(series_id: int, root: str | None = None) -> dict:
     if not s:
         raise TrashError("No such series")
     folder = s.get("folder_path")
+    if folder and not os.path.isdir(folder):
+        # folder_path is set but the folder isn't readable — genuinely gone, or the share
+        # dropped. If the comics root itself can't be read, the mount is down: refuse,
+        # rather than delete the DB row and strand the files (they'd come back as an
+        # untracked series on remount).
+        try:
+            root_live = os.path.isdir(root) and any(os.scandir(root))
+        except OSError:
+            root_live = False
+        if not root_live:
+            raise TrashError("Comics share looks down — can't read the folder to bin it. Try again once the mount is back.")
     if not folder or not os.path.isdir(folder):
         db.dequeue_waiting_series(series_id, DB_PATH)
         db.remove_series(series_id, DB_PATH)

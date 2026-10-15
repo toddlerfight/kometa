@@ -1190,6 +1190,7 @@ def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
             ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
                 state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
                 error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
+                retry_after = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE retry_after END,
                 updated_at = datetime('now')
         """, (tracked_series_id, issue_number))
 
@@ -1538,8 +1539,24 @@ def plain_error(err):
     return _KEYS.sub(r"\1…", err)
 
 
+# How long a not_found issue sits out of the automatic sweep before it's searched
+# again. Without it, a permanently-unavailable issue (rare variant, OOP indie) was
+# re-queued and re-searched across the whole cascade on every sweep, forever. A manual
+# re-queue (queue_issue / requeue_not_found) clears retry_after, so "search again" is
+# instant; only the automatic sweep (get_missing_for_monitored) honours the cooldown.
+NOT_FOUND_RETRY_DAYS = 3
+
+
 def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, retry_after=None, path=DB_PATH):
     with _connect(path) as conn:
+        if state == "not_found" and retry_after is None:
+            conn.execute("""
+                UPDATE download_queue SET state=?, source_url=COALESCE(?,source_url),
+                    filename=COALESCE(?,filename), error=?, retry_after=datetime('now', ?),
+                    updated_at=datetime('now')
+                WHERE id=?
+            """, (state, source_url, filename, plain_error(error), f'+{NOT_FOUND_RETRY_DAYS} days', queue_id))
+            return
         conn.execute("""
             UPDATE download_queue SET
                 state       = ?,
@@ -1774,7 +1791,10 @@ def get_missing_for_monitored(path=DB_PATH):
                   SELECT 1 FROM download_queue q
                   WHERE q.tracked_series_id = s.id
                     AND q.issue_number = i.number
-                    AND q.state NOT IN ('failed', 'not_found')
+                    AND (q.state NOT IN ('failed', 'not_found')
+                         -- a not_found row still in its back-off window holds the issue out
+                         -- of the auto sweep (see NOT_FOUND_RETRY_DAYS); failed still blocks
+                         OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now')))
               )
         """)]
 

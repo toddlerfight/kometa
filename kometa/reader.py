@@ -32,7 +32,13 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import kometa.db as db
 from kometa.auth import current_reader
-from kometa.naming import find_issue_file, _IMAGE_EXTS
+from kometa.naming import find_issue_file, _IMAGE_EXTS, OWNED_EXTS, PIPELINE_EXTS
+
+# Formats that count as owned (naming.OWNED_EXTS) but the reader can't page — .cb7,
+# .cbt, .pdf. The shelf deliberately doesn't index them (they'd be dead tiles), so a
+# Read reaches them via find_issue_file; say plainly it's a format thing, not a corrupt
+# file or a missing one.
+_UNREADABLE_EXTS = OWNED_EXTS - PIPELINE_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +259,10 @@ def ensure_book(path: str, tracked_series_id=None, number=None, quick: bool = Fa
         st = os.stat(path)
     except OSError:
         raise HTTPException(404, "File is gone from the shelf")
+    if os.path.splitext(path)[1].lower() in _UNREADABLE_EXTS:
+        ext = os.path.splitext(path)[1].lower()
+        raise HTTPException(415, f"This issue is a {ext} file — the reader opens .cbz, .cbr, .zip and .rar. "
+                                 "It's owned on disk, just not viewable here.")
     existing = db.get_book_by_path(path, DB_PATH)
     if existing and existing["size"] == st.st_size and existing["mtime"] == st.st_mtime and existing["pages"]:
         if quick and not _sizes_known(existing["pages"]):
