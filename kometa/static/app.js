@@ -4565,7 +4565,7 @@ async function renderSettings() {
         </div>
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
           `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>
-          ${_settingsField('f-fandom-cf', 'cf_clearance cookie (images)', '', { set: cfg.fandom_cf_configured, ph: 'cf_clearance', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
+          ${_settingsField('f-fandom-cf', 'Access token (images)', '', { set: cfg.fandom_cf_configured, ph: 'token', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
           ${cfg.fandom_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}`)}
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
@@ -4580,7 +4580,7 @@ async function renderSettings() {
           ${_settingsSectionHead('League of Comic Geeks', 'variants, top-ups', 't-locg', cfg.locg_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
           <div class="settings-card">
-          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'cf_clearance', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
+          ${_settingsField('f-locg-cf', 'Access token', '', { set: cfg.locg_cf_configured, ph: 'token', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
           <div class="settings-help" id="locg-topup-status">${_locgTopupLine(cfg)}</div>
           ${cfg.locg_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}
           </div></div>
@@ -4707,11 +4707,10 @@ function _settingsField(id, label, value, opts = {}) {
         ${_testControls(opts.test.cardId, opts.test.configured)}
       </div>`
     : `<label class="settings-field-label u-label" for="${id}">${label}</label>`;
-  // secret: 'mask' — a pasted browser pass (cf_clearance): a plain TEXT input,
-  // shown as typed. Not a password, and Safari treats ANY hidden input as one —
-  // type=password invented a strong one, -webkit-text-security dots still had
-  // it offering to save (2026-10-14). It never round-trips, so it's on screen
-  // only while you paste. The data-* attrs wave off 1Password/LastPass.
+  // secret: 'mask' — a token field: a plain TEXT input, shown as typed. Not a
+  // password; type=password made Safari invent a strong one and -webkit-text-security
+  // dots still had it offering to save (2026-10-14). It never round-trips, so it's on
+  // screen only while you enter it. The data-* attrs wave off 1Password/LastPass.
   const mask = f.secret === 'mask';
   return `
     <div class="settings-field">
@@ -4917,16 +4916,12 @@ async function _settingsChanged(el) {
 
   const body = { [f.key]: val };
   if (f.key === 'locg_cf_clearance') {
-    // the pass is bound to the browser it was issued to — if you're pasting it
-    // from that same browser (the normal case), its UA is right here
-    // ALWAYS the browser you're pasting from — a stale Safari string left in the
-    // field sent a Chrome cookie with a Safari identity, refused every time
-    // (2026-10-08 19:15). Edit the field afterwards if you really mean to.
+    // record this browser's UA alongside the token, so the two stay matched
     const ua = document.getElementById('f-locg-ua');
     body.locg_user_agent = navigator.userAgent;
     if (ua) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
   }
-  if (f.key === 'fandom_cf_clearance') body.fandom_user_agent = navigator.userAgent;   // same rule: the pasting browser
+  if (f.key === 'fandom_cf_clearance') body.fandom_user_agent = navigator.userAgent;   // same: record this browser's UA
   try {
     const cfg = await api.patch('/api/config', body);
     // Settings autosave changes what the SERVER knows, but every render decision

@@ -212,10 +212,10 @@ def _process_queue_locked():
     gc = GetComicsClient()
     downloaded_urls = set()
     # A multi-item batch (arc fulfill, deep pull-list catch-up) processing
-    # back-to-back is exactly the burst pattern that tips a GetComics file-host
-    # mirror into Cloudflare's bot-challenge mode — confirmed live: a 31-issue
-    # storyline fulfill got 8 clean comicfiles.ru downloads, then a hard wall for
-    # the rest of the session, still up an hour later. A couple of seconds between
+    # back-to-back is the burst pattern that gets a GetComics file-host mirror to
+    # start refusing — confirmed live: a 31-issue storyline fulfill got 8 clean
+    # comicfiles.ru downloads, then refusals for the rest of the session, still up
+    # an hour later. A couple of seconds between
     # items costs nothing on the common single-item case (pace=False, no sleep)
     # and meaningfully de-bursts a multi-item run without touching source order.
     pace = len(items) > 1
@@ -390,8 +390,8 @@ def _fallback_usenet_torrent(item, qid, nzb_search_fn, nzb_name) -> bool:
 # An issue this old has had months to propagate through usenet retention and
 # torrent seeding — GetComics' one real edge (same-day/same-week posting) is
 # gone by then, but its file-host mirrors are the one link in the cascade a
-# big batch can burst into a Cloudflare wall (comicfiles.ru, live tonight: 8
-# clean downloads then a hard block that held for over an hour). A story-arc
+# big batch can get refused (comicfiles.ru, live tonight: 8 clean downloads then
+# a block that held for over an hour). A story-arc
 # fulfill is exactly a batch of legacy issues, so old ones search usenet/torrent
 # FIRST and fall back to GetComics as the last resort, not the first attempt.
 _OLD_ISSUE_DAYS = 90
@@ -467,7 +467,7 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
         except (DuplicateIssueError, UnreadableArchiveError):
             raise
         except Exception as e:
-            # Main host refused (fs2.comicfiles.ru's Cloudflare wall, a dead box).
+            # Main host refused (fs2.comicfiles.ru, or a dead box).
             # The post's other buttons point at the same file somewhere else — ask
             # the mirrors before calling it failed. Mirror loses too? The MAIN
             # host's error is the one worth reporting.

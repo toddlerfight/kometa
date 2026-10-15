@@ -123,7 +123,7 @@ class Limiter:
             self._save()
 
     def resume(self):
-        """Lift a rest early — a fresh pass in Settings means the last refusal is moot."""
+        """Lift a rest early — a new token in Settings means the last refusal is moot."""
         with self._lock:
             self._load()
             self._state["paused_until"] = 0.0

@@ -30,7 +30,7 @@ _ACCESS_TTL = 30
 
 
 def _access() -> tuple[str, str]:
-    """(cf_clearance, user_agent) from Settings, or ('', '')."""
+    """(token, user_agent) from Settings, or ('', '')."""
     now = time.time()
     if now - _access_cache["ts"] > _ACCESS_TTL:
         try:
@@ -50,8 +50,8 @@ _TARGETS = ["chrome", "chrome146", "chrome145", "chrome142", "chrome136", "chrom
 
 
 def probe_matrix() -> list[dict]:
-    """With a pass pasted: one request per handshake, no pause bookkeeping,
-    nothing forgotten. Returns [{target, status}]. Empty when there's no pass."""
+    """One request per target profile. Returns [{target, status}]. Empty when
+    there's nothing configured."""
     from curl_cffi import requests as _cffi
     cookie, ua = _access()
     if not cookie:
@@ -81,10 +81,8 @@ def probe_matrix() -> list[dict]:
 
 
 def _impersonation() -> str:
-    """The TLS handshake to wear. Cloudflare binds a pass to the browser that
-    earned it, and a Safari User-Agent on a Chrome handshake reads as a lie —
-    so match the fingerprint family to the pasted UA. No pass → Chrome, as ever.
-    A handshake the test button proved (config locg_impersonate) wins outright."""
+    """The client profile to use, matched to the configured user-agent family.
+    Default Chrome. A profile set in config (locg_impersonate) wins outright."""
     cookie, ua = _access()
     if cookie:
         try:
@@ -107,7 +105,7 @@ def _impersonation() -> str:
 
 
 def _apply_access(s) -> bool:
-    """Put the pasted pass on a curl_cffi session. True if one was applied."""
+    """Apply the configured token to a session. True if one was applied."""
     cookie, ua = _access()
     if not cookie:
         return False
@@ -121,7 +119,7 @@ def _apply_access(s) -> bool:
 
 
 def _forget_access():
-    """The pass stopped working — drop it so Settings shows 'expired', not a lie."""
+    """Drop the stored token so Settings reflects that it's no longer valid."""
     _access_cache.update(ts=0.0, val=("", ""))
     try:
         from kometa import db
@@ -218,9 +216,9 @@ def _note_refusal(r):
         return
 
     if _access()[0] and r.status_code != 429:
-        logger.info("LOCG refused a request carrying your browser's pass — it has expired; forgetting it")
+        logger.info("LOCG refused the configured token — dropping it")
         _forget_access()
-  
+
     if time.time() < _paused_until():
         return
     until = time.time() + PAUSE_SECONDS
@@ -235,9 +233,8 @@ def _note_refusal(r):
 
 
 def probe() -> dict:
-    """ONE request to LOCG, ignoring Kometa's own pause — 'is the door open?'.
-    This is our throttle, not LOCG's, so checking it is fair. Open: the pause
-    is lifted and everything resumes. Refused: the pause simply carries on."""
+    """One request to LOCG, ignoring Kometa's own pause. On success the pause is
+    lifted and work resumes; on refusal the pause carries on."""
     from curl_cffi import requests as _cffi
     s = _cffi.Session(impersonate=_impersonation())
     with_pass = _apply_access(s)
@@ -260,10 +257,9 @@ def probe() -> dict:
         except Exception:
             pass
         return {"ok": True, "status": 200, "with_pass": with_pass,
-                "detail": "LOCG answered" + (" with your browser's pass" if with_pass else "") + " — pause lifted"}
+                "detail": "LOCG answered — pause lifted"}
     return {"ok": False, "status": r.status_code, "with_pass": with_pass,
-            "detail": ("your browser's pass has expired — LOCG refused it" if with_pass else
-                       "LOCG still refusing (" + str(r.status_code) + ") — staying paused")}
+            "detail": f"LOCG refused us ({r.status_code}) — staying paused"}
 
 
 def locg_paused() -> float | None:
@@ -277,23 +273,18 @@ def locg_paused() -> float | None:
 
 
 def _anon_get_fn():
-    """A get(url, **kw) callable that gets past Cloudflare without login. cloudscraper's
-    TLS fingerprint is blocked from some hosts (e.g. the NAS container — 403 even on the
-    homepage); curl_cffi impersonates a real Chrome TLS handshake, which CF accepts.
-    Warms the homepage once for the ci_session cookie; the session is cached and
-    reused until _ANON_SESSION_TTL expires.
+    """A get(url, **kw) callable for LOCG without login. Warms the homepage once
+    for the session cookie; the session is cached and reused until _ANON_SESSION_TTL
+    expires.
 
-    Rotation is double-checked-locked: the parallel thumbnail fallbacks used to all
-    see the TTL expire at once and EACH pay the CF warm-up toll, last writer clobbering
-    the rest into leaked connection pools. Now one thread rebuilds under _anon_lock,
-    the losers re-check inside the lock and reuse its work. The warm-up GET runs while
-    holding the lock — deliberate: it serializes against in-flight closure .get()s,
-    which is the politeness we wanted anyway."""
-    _check_paused()   # paused = not even the homepage warm-up
+    Rotation is double-checked-locked: parallel callers that see the TTL expire at
+    once would each rebuild and leak connection pools. One thread rebuilds under
+    _anon_lock; the losers re-check inside the lock and reuse its work. The warm-up
+    GET runs while holding the lock, serializing against in-flight closure .get()s."""
+    _check_paused()
     cookie = _access()[0]
     def _fresh():
-        # a session built with a different (or no) pass than the one in Settings
-        # is stale too — you just pasted one, use it
+        # a session built with a different (or no) token than config is stale too
         return (_anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL
                 and _anon_session.get("cookie", "") == cookie)
     # Unlocked fast path — a stale read here just falls through to the lock,
@@ -439,7 +430,7 @@ def resolve_comic_series_anon(comic_id, slug):
 def search_series_strict(title: str) -> list[dict]:
     """Like search_series_anon, but a failure RAISES. For callers that must tell
     'LOCG has nothing' apart from 'LOCG didn't answer' — the shelf matcher, which
-    once read a Cloudflare 403 as 'no match' and handed you a decision for it."""
+    once read a 403 as 'no match' and handed you a decision for it."""
     r = _anon_get_fn()(
         f"{BASE}/search/ajax_issues",
         params={"query": title},
@@ -519,8 +510,8 @@ def find_series_id_anon(title: str, year: int | None = None) -> int | None:
 
 
 def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
-    """Shared issue-list scraping. get_fn(url, **kwargs) must return a requests-like
-    Response. Works with both the authed session and an anonymous cloudscraper."""
+    """Shared issue-list fetch. get_fn(url, **kwargs) must return a requests-like
+    Response. Works with both the authed and the anonymous session."""
     try:
         r = get_fn(
             f"{BASE}/comic/get_comics",
@@ -582,9 +573,9 @@ def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
 
 
 def get_issues_anon(series_id: int) -> list[dict]:
-    """Fetch a series' issue list with no login, via cloudscraper. This is what
-    lets sync build an issue list — and therefore detect missing issues — for a
-    keyless, Komga-less install. Mirrors search_series_anon / fetch_variants."""
+    """Fetch a series' issue list with no login. This is what lets sync build an
+    issue list — and therefore detect missing issues — for a keyless install.
+    Mirrors search_series_anon / fetch_variants."""
     return _get_issues_with_get(series_id, _anon_get_fn())
 
 
@@ -880,5 +871,5 @@ def _parse_issue_details(html: str) -> dict:
 
 def get_issue_details_anon(comic_id) -> dict:
     """Fetch an issue's description + credits from LOCG with no login. Same /comic/
-    {id}/comic page the variant scraper uses. Keyless — works for any install."""
+    {id}/comic page the variant fetch uses. Keyless — works for any install."""
     return _parse_issue_details(_issue_page(comic_id, _anon_get_fn()))

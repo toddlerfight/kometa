@@ -1,13 +1,11 @@
-"""FlareSolverr: a headless Chrome on the NAS (:8191) that walks through a
-Cloudflare challenge and hands back the cf_clearance cookie plus the exact
-User-Agent it was earned with. Kometa then makes the real request itself.
+"""FlareSolverr client: a service on the NAS (:8191) that returns the cookie and
+User-Agent needed for a domain that otherwise refuses a plain request. Kometa
+then makes the real request itself. Used for GetComics' main host
+(fs2.comicfiles.ru), which 403s plain requests. Off unless config
+`flaresolverr_url` is set.
 
-GetComics' main host (fs2.comicfiles.ru) 403s every plain request behind a
-challenge; through here the same Deadpool #8 file came down as a real RAR
-(2026-10-15). Off unless config `flaresolverr_url` is set.
-
-One solve per domain, cached until the cookie's own expiry. The lock means
-twenty queued downloads hitting the wall at once cost ONE ~20s solve, not twenty.
+One result per domain, cached until the cookie's own expiry, behind a lock so
+queued downloads for the same domain share a single ~20s call.
 """
 import logging
 import threading
@@ -36,7 +34,7 @@ def enabled() -> bool:
 
 
 def is_challenge(resp) -> bool:
-    """A Cloudflare wall, not a real 403 from the file host."""
+    """A refusal FlareSolverr can handle, not a real 403 from the file host."""
     if resp is None or resp.status_code not in (403, 503):
         return False
     h = resp.headers
@@ -44,7 +42,7 @@ def is_challenge(resp) -> bool:
 
 
 def clearance(url: str) -> tuple[str, dict] | None:
-    """(user_agent, cookies) that get past the wall on url's domain, or None."""
+    """(user_agent, cookies) for url's domain, or None."""
     base = _base()
     if not base:
         return None

@@ -1,5 +1,5 @@
 """Your own browser's pass for LOCG (kometa/locg_client.py, 2026-10-08): a
-cf_clearance cookie pasted from Settings rides the trickle; a refusal forgets it."""
+an access token from Settings rides the trickle; a refusal drops it."""
 import sys
 import types
 
@@ -46,7 +46,7 @@ def test_probe_carries_the_pasted_pass_and_its_user_agent(wired):
     db.set_config({"locg_cf_clearance": "abc123", "locg_user_agent": "Mozilla/5.0 Chrome/154"}, wired)
     r = lc.probe()
     s = FakeSession.made[-1]
-    assert r["ok"] and r["with_pass"] and "your browser" in r["detail"]
+    assert r["ok"] and r["with_pass"] and "pause lifted" in r["detail"]
     assert s.headers["cookie:cf_clearance"] == "abc123" and s.headers["User-Agent"] == "Mozilla/5.0 Chrome/154"
 
 
@@ -64,7 +64,7 @@ def test_refusal_with_a_pass_forgets_it_and_pauses(wired, monkeypatch):
         self.status, self.resp_headers = 403, {"cf-mitigated": "challenge"}
     monkeypatch.setattr(FakeSession, "__init__", refusing)
     r = lc.probe()
-    assert not r["ok"] and "expired" in r["detail"]
+    assert not r["ok"] and "refused" in r["detail"]
     cfg = db.get_config(wired)
     assert cfg.get("locg_cf_clearance") == "" and cfg.get("locg_cf_set_at") == ""
     assert lc.locg_paused()                                   # back to waiting, as before

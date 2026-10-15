@@ -1108,9 +1108,9 @@ def _get_with_retries(url: str, label: str):
         try:
             r = requests.get(url, stream=True, timeout=120, headers=headers, allow_redirects=True)
             if flaresolverr.is_challenge(r) and flaresolverr.enabled():
-                # Cloudflare wall (fs2.comicfiles.ru): let the headless browser on
-                # the NAS earn a pass, then knock again wearing it. Straight at the
-                # final URL, so the cookie can't get lost in a redirect.
+                # host refused (fs2.comicfiles.ru): get a cookie + UA from
+                # FlareSolverr and retry with them. Straight at the final URL, so
+                # the cookie can't get lost in a redirect.
                 wall = r.url
                 r.close()
                 cleared = flaresolverr.headers_for(wall, HEADERS)

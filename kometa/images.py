@@ -33,8 +33,8 @@ TRICKLE_MAX_FAILS = 5
 # bans the house IP at 20 404s in 2 minutes; this never gets near it).
 #   host: (per 10-min tick, seconds between, per day)
 LANES = {
-    # Fandom's CDN: a Safari pass lives 30 minutes (issued 21:16:17, refused 21:46:19), so
-    # while one is live the lane runs flat out at 1/s — ~600 a tick, not 120 a pass-third
+    # Fandom's CDN: a token lasts ~30 minutes, so while one is live the lane runs
+    # at 1/s — ~600 a tick
     "static.wikia.nocookie.net": (600, 1.0, 3000),
     "comicvine.gamespot.com":    (120, 1.0, 3000),   # Fandom/GameSpot's CDN
     "s3.amazonaws.com":          (60, 1.5, 1500),    # LOCG's bucket: S3 copes, LOCG pays the egress
@@ -46,14 +46,11 @@ DEFAULT_LANE = (20, 3.0, 500)
 # rested the whole lane for an hour (2026-10-13 21:19). There, only 429/503 refuse.
 NOT_THERE_403 = {"s3.amazonaws.com"}
 _lane_limiters: dict = {}
-_lane_locks: dict = {}                 # one run per lane at a time: the tick and a paste-time burst never double up
-FANDOM_BURST = 1800                    # a pass lives 30 min; at 1/s this is all of it
-# Fandom's image CDN puts this house's IP behind a Cloudflare challenge (2026-10-13:
-# a 403 'Just a moment…' page for any script, any UA). Chrome is waved through on its
-# fingerprint and never holds a pass; Safari is challenged, solves it, and its
-# cf_clearance works from ginbako with Safari's exact UA. So the lane only knocks
-# with that pass (config fandom_cf_clearance + fandom_user_agent); none → it waits.
-# A 403 WITH the pass = it expired: forgotten, so Settings says so.
+_lane_locks: dict = {}                 # one run per lane at a time: the tick and a burst never double up
+FANDOM_BURST = 1800                    # a token lasts ~30 min; at 1/s this is all of it
+# Fandom's image CDN needs a token (config fandom_cf_clearance + fandom_user_agent)
+# to serve this host's IP; without one the lane waits. A 403 WITH a token means it
+# expired — it's dropped, and the lane waits again.
 FANDOM_HOST = "static.wikia.nocookie.net"
 EXT_TTL_HOURS = 24
 # Hosts whose images the catalogue cards carry; anything else is refused, this
@@ -530,9 +527,8 @@ def _lane_lock(host: str):
 
 
 def fandom_pass_renewed(path=None, start: bool = True):
-    """A new pass: the lane's rest from the old one's 403 is lifted and the lane starts
-    NOW, running until the pass dies — waiting for the next 10-minute tick spent most
-    of the 30 minutes (06:16 10-14: 426 covers off a pass that could carry ~1,800)."""
+    """A new token: the lane's rest is lifted and it starts at once, running until
+    the token expires, rather than waiting for the next 10-minute tick."""
     _lane_limiter(FANDOM_HOST).resume()
     if start:
         import threading
@@ -540,7 +536,7 @@ def fandom_pass_renewed(path=None, start: bool = True):
 
 
 def fandom_burst(path=None, sleep=time.sleep) -> int:
-    """The Fandom lane alone, up to FANDOM_BURST covers, while the pass holds."""
+    """The Fandom lane alone, up to FANDOM_BURST covers, while the token is live."""
     from urllib.parse import urlparse
     path = path or DB_PATH
     lock = _lane_lock(FANDOM_HOST)
@@ -569,13 +565,13 @@ def _lane_fetch(lim, host: str = "", path=None):
 
     def get(url):
         if host == FANDOM_HOST and "format=" not in url:
-            # the stored original, not the WebP Fandom hands a Safari UA by default
+            # the stored original, not the WebP this UA would otherwise get
             url += ("&" if "?" in url else "?") + "format=original"
         try:
             r = lim.get(url, headers=headers) if headers else lim.get(url)
         except polite.SourceUnavailable as e:
             if host == FANDOM_HOST and "(403)" in str(e):
-                logger.info("Fandom images: the Cloudflare pass stopped working — forgotten; paste a fresh one")
+                logger.info("Fandom images: token no longer working — dropped")
                 db.set_config({"fandom_cf_clearance": "", "fandom_cf_set_at": ""}, path or DB_PATH)
             raise
         return r.content if r.status_code == 200 and r.content else None

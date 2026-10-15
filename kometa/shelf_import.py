@@ -202,9 +202,9 @@ def match_pending(limit: int | None = None, sleep=time.sleep) -> dict:
                 metron_id, locg_id = _match(s)
                 failures_in_a_row = 0
             except Exception as e:
-                # LOCG didn't answer (2026-10-08: a Cloudflare challenge). That is
-                # NOT "no match" — the series stays pending for the next run. Several
-                # in a row means LOCG is shut to us: stop, don't burn the list.
+                # LOCG didn't answer. That is NOT "no match" — the series stays
+                # pending for the next run. Several in a row means LOCG is unreachable:
+                # stop, don't burn the list.
                 done["failed"] += 1
                 failures_in_a_row += 1
                 logger.warning(f"Import: LOCG search failed for {s['title']!r}: {e}")

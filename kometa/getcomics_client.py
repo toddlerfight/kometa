@@ -476,10 +476,9 @@ class GetComicsClient:
         return max(per_kind, default=0)
 
     def _prefer_pixeldrain(self, href: str) -> str:
-        """A post with a Pixeldrain button: take THAT first (a direct API, no Cloudflare
-        wall, no page to scrape; the house finds it faster and more reliable than the
-        main host — 2026-10-15). The main link becomes this pick's mirror, so a dead
-        Pixeldrain still falls back to it."""
+        """A post with a Pixeldrain button: take THAT first (a direct API, no page
+        to scrape, more reliable than the main host — 2026-10-15). The main link
+        becomes this pick's mirror, so a dead Pixeldrain still falls back to it."""
         for m in self.mirror_urls(href):
             if "pixeldrain.com/api/file/" in m:
                 self._mirrors[m] = [href] + [x for x in self._mirrors.get(href, []) if x != m]

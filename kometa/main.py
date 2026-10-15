@@ -496,7 +496,7 @@ def _backup_last() -> dict:
 
 
 def _locg_status() -> dict:
-    """Pass live / paused until / what the top-up queue holds (kometa/topup.py)."""
+    """Token live / paused until / what the top-up queue holds (kometa/topup.py)."""
     try:
         from kometa import topup
         return topup.status(DB_PATH)
@@ -721,7 +721,7 @@ def backup_run():
 
 @app.post("/api/locg/topup")
 def locg_topup_now():
-    """'Top up now': drain the LOCG queue in a thread while the pass is live."""
+    """'Top up now': drain the LOCG queue in a thread while LOCG is reachable."""
     from kometa import topup, locg_client
     if locg_client.locg_paused() is not None:
         return {"ok": False, "started": False, "error": "LOCG is paused", **topup.status(DB_PATH)}
@@ -731,10 +731,9 @@ def locg_topup_now():
 
 @app.post("/api/test/locg")
 def test_locg_access():
-    """Settings 'test' for the LOCG card. With a pass pasted: try every handshake
-    Kometa can wear, remember the one LOCG accepts (config locg_impersonate),
-    lift the pause. None accepted → the pass is forgotten, and you're told which
-    handshakes were refused. No pass: the same single knock as 'Test LOCG now'."""
+    """Settings 'test' for the LOCG card. With a token set: try every client
+    profile, remember the one LOCG accepts (config locg_impersonate), lift the
+    pause. None accepted → the token is dropped. No token: a single probe."""
     from kometa import locg_client as lc
     if lc._access()[0]:
         results = lc.probe_matrix()
@@ -743,21 +742,21 @@ def test_locg_access():
             db.set_config({"locg_impersonate": hit["target"], "locg_paused_until": "0"}, DB_PATH)
             lc._pause["until"] = 0.0
             lc._access_cache["ts"] = 0.0
-            # the paste moment: drain what waited for a pass, in the background
+            # drain what was waiting, in the background
             from kometa import topup
             topup.drain_in_background()
-            return {"ok": True, "detail": f"LOCG accepted your pass with the {hit['target']} handshake — pause lifted"}
+            return {"ok": True, "detail": f"LOCG accepted the {hit['target']} profile — pause lifted"}
         lc._forget_access()
         tried = ", ".join(f"{r['target']} {r['status'] or 'err'}" for r in results)
-        return {"ok": False, "error": f"LOCG refused the pass with every handshake ({tried})"}
+        return {"ok": False, "error": f"LOCG refused every profile ({tried})"}
     r = lc.probe()
     return {"ok": True, "detail": r["detail"]} if r["ok"] else {"ok": False, "error": r["detail"]}
 
 
 @app.post("/api/test/fandom")
 def test_fandom_access():
-    """Settings 'test' for the Fandom card: one gallery image through the lane, with
-    the pass. 200 = the pass works (the lane's rest lifts); 403 = it's forgotten."""
+    """Settings 'test' for the Fandom card: one gallery image through the lane.
+    200 = the token works (the lane's rest lifts); 403 = it's dropped."""
     from kometa import images, polite
     cf, ua = images._fandom_pass(DB_PATH)
     if not (cf and ua):
@@ -770,15 +769,15 @@ def test_fandom_access():
             url = covers[0].get("url") if covers else None
     if not url:
         return {"ok": False, "error": "no gallery listed yet to test with"}
-    images.fandom_pass_renewed(DB_PATH, start=False)     # the test's own knock first; a pass that works starts the burst
+    images.fandom_pass_renewed(DB_PATH, start=False)     # the test's own request first; a working token starts the burst
     try:
         data = images._lane_fetch(images._lane_limiter(images.FANDOM_HOST), images.FANDOM_HOST, DB_PATH)(url)
     except polite.SourceUnavailable as e:
-        return {"ok": False, "error": f"Fandom refused the pass — forgotten ({e})" if "(403)" in str(e) else str(e)}
+        return {"ok": False, "error": f"Fandom refused us — token dropped ({e})" if "(403)" in str(e) else str(e)}
     if not data:
         return {"ok": False, "error": "Fandom answered, but not with an image"}
     images.fandom_pass_renewed(DB_PATH)
-    return {"ok": True, "detail": f"Fandom accepted the pass ({len(data) // 1024} KB image) — downloading now"}
+    return {"ok": True, "detail": f"Fandom accepted the token ({len(data) // 1024} KB image) — downloading now"}
 
 
 # --- version ---
@@ -858,12 +857,12 @@ def get_config():
         "metron_token_set":    bool((cfg.get("metron_token") or "").strip()),
         "metron_configured":   bool((cfg.get("metron_token") or "").strip() or (cfg.get("metron_user", "") and cfg.get("metron_pass", ""))),
         "metron_enabled":      cfg.get("metron_enabled", "1") != "0",
-        # LOCG: your own browser's pass (kometa/locg_client.py). Never echoed back.
+        # LOCG token (kometa/locg_client.py). Never echoed back.
         "locg_cf_configured":  bool(cfg.get("locg_cf_clearance", "")),
         "locg_enabled":        cfg.get("locg_enabled", "1") != "0",
         "locg_cf_set_at":      cfg.get("locg_cf_set_at", ""),
         "locg_user_agent":     cfg.get("locg_user_agent", ""),
-        # Fandom's image CDN: your Safari's Cloudflare pass (kometa/images.py). Never echoed back.
+        # Fandom's image CDN token (kometa/images.py). Never echoed back.
         "fandom_cf_configured": bool(cfg.get("fandom_cf_clearance", "")),
         "fandom_cf_set_at":    cfg.get("fandom_cf_set_at", ""),
         "fandom_user_agent":   cfg.get("fandom_user_agent", ""),
@@ -884,7 +883,7 @@ class ConfigRequest(BaseModel):
     qbit_pass:          str | None = None
     prowlarr_url:       str | None = None
     prowlarr_apikey:    str | None = None
-    flaresolverr_url:   str | None = None   # Cloudflare challenge solver (NAS :8191)
+    flaresolverr_url:   str | None = None   # FlareSolverr service URL (NAS :8191)
     cv_api_key:         str | None = None
     prowlarr_enabled:   str | None = None   # "1"/"0" — master search toggle
     usenet_enabled:     str | None = None   # "1"/"0" — search-source toggle
@@ -913,10 +912,10 @@ class ConfigRequest(BaseModel):
     metron_token:       str | None = None   # API token (preferred over user/pass)
     metron_enabled:     str | None = None   # "1"/"0" — primary metadata source
     locg_enabled:       str | None = None   # "1"/"0" — off = not one request to LOCG
-    locg_cf_clearance:  str | None = None   # your browser's Cloudflare pass (expires)
-    locg_user_agent:    str | None = None   # the exact UA that pass was issued to
-    fandom_cf_clearance: str | None = None  # Fandom image CDN's Cloudflare pass, from the browser that earned it
-    fandom_user_agent:  str | None = None   # …and that browser's exact UA
+    locg_cf_clearance:  str | None = None   # LOCG access token (expires)
+    locg_user_agent:    str | None = None   # the UA the token was issued to
+    fandom_cf_clearance: str | None = None  # Fandom image CDN access token
+    fandom_user_agent:  str | None = None   # the UA the token was issued to
     read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
     retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
 
@@ -945,8 +944,8 @@ def update_config(req: ConfigRequest):
         from kometa.images import fandom_pass_renewed
         fandom_pass_renewed(DB_PATH)                       # the lane starts now, not at the next tick
     if "locg_cf_clearance" in updates:
-        # the Settings field re-verifies on save (POST /api/test/locg) — one knock,
-        # and if the pass works the pause lifts right there
+        # the Settings field re-verifies on save (POST /api/test/locg) — one request,
+        # and on success the pause lifts right there
         from kometa.locg_client import _access_cache
         _access_cache["ts"] = 0.0
     return get_config()
