@@ -3746,7 +3746,7 @@ function _quietSourcesLine(cfg) {
 }
 // the board itself: appended under the Activity list
 function _harvestCardHtml() {
-  return `<div class="settings-card act-harvest">${_settingsHeader('Library harvest', 'background', 'harvest')}<div id="harvest-progress"></div></div>`;
+  return `<div class="act-section act-harvest" data-sec="harvest"><div class="act-section-hdr">Library harvest</div><div id="harvest-progress"></div></div>`;
 }
 
 async function _renderHarvest() {
@@ -4175,11 +4175,11 @@ function _buildActivityHtml(queue) {
   const completed  = queue.filter(q => !ACT_ACTIVE_STATES.includes(q.state));
 
   if (!queue.length) {
-    setApp(`<div class="act-empty">
+    setApp(`<div class="act-wrap"><div class="act-empty">
       <div class="act-empty-icon">◌</div>
       <div class="act-empty-msg">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
       <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
-    </div>${_harvestCardHtml()}`);
+    </div>${_harvestCardHtml()}</div>`);
     _startHarvestPoll();
     return;
   }
@@ -4196,8 +4196,8 @@ function _buildActivityHtml(queue) {
       ${completed.map(_actRowHtml).join('')}
     </div>`;
   }
-  html += '</div>';
-  setApp(html + _harvestCardHtml());
+  html += _harvestCardHtml() + '</div>';
+  setApp(html);
   _startHarvestPoll();
 }
 
@@ -4301,7 +4301,8 @@ async function _reconcileActivity(queue) {
           ? '<div class="act-section act-fade-in" data-sec="progress"><div class="act-section-hdr">In Progress</div></div>'
           : '<div class="act-section act-fade-in" data-sec="completed"></div>';
         secEl = t.content.firstElementChild;
-        sec === 'progress' ? wrap.prepend(secEl) : wrap.append(secEl);
+        const board = wrap.querySelector('.act-section[data-sec="harvest"]');
+        sec === 'progress' ? wrap.prepend(secEl) : board ? wrap.insertBefore(secEl, board) : wrap.append(secEl);
       }
       const hdr = secEl.querySelector('.act-section-hdr');
       let anchor = null;   // the last row we placed; the next one goes right after it
@@ -4328,7 +4329,7 @@ async function _reconcileActivity(queue) {
 
     await Promise.all(anims);
     // Sections left with no rows (header dangling): collapse them away too.
-    wrap.querySelectorAll('.act-section').forEach(sec => {
+    wrap.querySelectorAll('.act-section:not([data-sec="harvest"])').forEach(sec => {
       if (!sec.querySelector('.act-row')) anims.push(_animateRowOut(sec));
     });
     await Promise.all(anims);

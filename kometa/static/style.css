@@ -1343,7 +1343,10 @@ select.settings-input {
 .settings-attn-row.broken .settings-attn-reason, .settings-attn-note.broken .settings-attn-reason,
 .settings-attn-note.wait .settings-attn-reason { color: var(--amb); }
 .settings-quiet { margin: -24px 0 32px; color: var(--tq); }
-.act-harvest { margin-top: 32px; }
+/* the harvest board: a queue section like the others; its rows are label-left, number-right */
+.act-harvest .settings-stat { margin-top: 0; padding: 8px 0; border-bottom: 1px solid var(--bd); }
+.act-harvest .settings-stat:last-child { border-bottom: 0; }
+.act-wrap > .act-empty { padding: 48px 0 16px; }
 /* a jump from the list lands the card's heading below the top bar, not under it */
 .settings-section, .settings-card { scroll-margin-top: 88px; }
 .settings-attn-title { font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-wide); }
