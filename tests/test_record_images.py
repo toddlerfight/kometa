@@ -202,7 +202,7 @@ def test_lanes_run_each_host_at_its_own_pace_and_a_refusal_stops_only_its_own(db
     assert len(slow.asked) == 1 and n == 3            # refused once: that lane stops, the other doesn't care
 
 
-def test_the_fandom_lane_waits_without_a_pass_and_sends_it_when_there_is_one(db_path, tmp_path, monkeypatch):
+def test_the_fandom_lane_downloads_without_manual_token_and_sends_token_when_configured(db_path, tmp_path, monkeypatch):
     monkeypatch.setattr(im, "COVERS_DIR", str(tmp_path / "covers"))
     monkeypatch.setattr(im, "LANES", {im.FANDOM_HOST: (5, 0, 100)})
     sid = db.add_series(title="X", publisher="P", folder_path=None, on_pull_list=False, path=db_path)
@@ -213,9 +213,14 @@ def test_the_fandom_lane_waits_without_a_pass_and_sends_it_when_there_is_one(db_
         def get(self, url, headers=None):
             sent.append((url, headers))
             return super().get(url)
-    lim = L({f"https://{im.FANDOM_HOST}/a.jpg/revision/latest?cb=1&format=original": b"img"})
+    lim = L({f"https://{im.FANDOM_HOST}/a.jpg/revision/latest?cb=1&format=original": b"img",
+             f"https://{im.FANDOM_HOST}/b.jpg/revision/latest?cb=1&format=original": b"img"})
     monkeypatch.setattr(im, "_lane_limiter", lambda host: lim)
-    assert im.images_lanes(path=db_path, sleep=lambda s: None) == 0 and sent == []      # no pass: no knock
+    assert im.images_lanes(path=db_path, sleep=lambda s: None) >= 1
+    url, headers = sent[0]
+    assert url.endswith("&format=original") and not headers
+    sent.clear()
+    db.upsert_issue_status(sid, 2.0, "2020-01-01", 1, metron_image=f"https://{im.FANDOM_HOST}/b.jpg/revision/latest?cb=1", path=db_path)
     db.set_config({"fandom_cf_clearance": "abc", "fandom_user_agent": "Safari/605"}, db_path)
     assert im.images_lanes(path=db_path, sleep=lambda s: None) >= 1
     url, headers = sent[0]

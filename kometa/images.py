@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Response
 
 import kometa.db as db
+from kometa import polite
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
@@ -33,8 +34,6 @@ TRICKLE_MAX_FAILS = 5
 # bans the house IP at 20 404s in 2 minutes; this never gets near it).
 #   host: (per 10-min tick, seconds between, per day)
 LANES = {
-    # Fandom's CDN: a token lasts ~30 minutes, so while one is live the lane runs
-    # at 1/s — ~600 a tick
     "static.wikia.nocookie.net": (600, 1.0, 3000),
     "comicvine.gamespot.com":    (120, 1.0, 3000),   # Fandom/GameSpot's CDN
     "s3.amazonaws.com":          (60, 1.5, 1500),    # LOCG's bucket: S3 copes, LOCG pays the egress
@@ -504,44 +503,74 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
     return out[:limit]
 
 
+class _FandomLimiter(polite.Limiter):
+    def _send(self, method: str, url: str, **kw):
+        from curl_cffi import requests as cffi
+        headers = {"User-Agent": self.user_agent, **(kw.pop("headers", None) or {})}
+        ref = "https://marvel.fandom.com/" if "marveldatabase" in url else "https://dc.fandom.com/" if "marvel_dc" in url else "https://www.fandom.com/"
+        headers.setdefault("Referer", ref)
+        headers.setdefault("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+        headers.setdefault("Sec-Fetch-Dest", "image")
+        headers.setdefault("Sec-Fetch-Mode", "no-cors")
+        headers.setdefault("Sec-Fetch-Site", "cross-site")
+        kw.setdefault("impersonate", "chrome124")
+        with self._lock:
+            self._roll_day()
+            if self._state["paused_until"] > time.time():
+                raise polite.SourceUnavailable(f"{self.name} paused")
+            if self._state["count"] >= self.daily_cap:
+                raise polite.SourceUnavailable(f"{self.name}: today's requests are spent")
+            wait = self._state["last"] + self.min_interval_s - time.time()
+            if wait > 0:
+                self.sleep(wait)
+            self._state["count"] += 1
+            try:
+                r = getattr(cffi, method)(url, headers=headers, timeout=kw.pop("timeout", self.timeout_s), **kw)
+            except Exception as e:
+                self._state["paused_until"] = time.time() + self.unreachable_pause_s
+                polite._health(self.name, "error", e.__class__.__name__)
+                raise polite.SourceUnavailable(f"{self.name} unreachable: {e.__class__.__name__}")
+            finally:
+                self._state["last"] = time.time()
+                self._save()
+            if r.status_code in self.refused_statuses:
+                try:
+                    pause = float(r.headers.get("Retry-After") or self.refused_pause_s)
+                except (TypeError, ValueError, AttributeError):
+                    pause = self.refused_pause_s
+                self._state["paused_until"] = time.time() + pause
+                self._save()
+                polite._health(self.name, "refused", str(r.status_code))
+                logger.info(f"{self.name} refused us ({r.status_code}); resting {pause / 60:.0f} min")
+                raise polite.SourceUnavailable(f"{self.name} refused us ({r.status_code})")
+            if r.status_code >= 500:
+                self._state["paused_until"] = time.time() + self.unreachable_pause_s
+                self._save()
+                polite._health(self.name, "error", str(r.status_code))
+                raise polite.SourceUnavailable(f"{self.name} answered {r.status_code}")
+            polite._health(self.name, "ok")
+            return r
+
+
 def _lane_limiter(host: str):
     from kometa import polite
     from kometa.thumbnails import _img_session
     if host not in _lane_limiters:
         _, gap, cap = LANES.get(host, DEFAULT_LANE)
-        _lane_limiters[host] = polite.Limiter(f"Images {host}", min_interval_s=gap, daily_cap=cap,
-                                              refused_pause_s=3600, timeout_s=30,
-                                              user_agent=_img_session.headers["User-Agent"],
-                                              refused_statuses=(429, 503) if host in NOT_THERE_403 else polite.REFUSED_STATUSES)
+        cls = _FandomLimiter if host == FANDOM_HOST else polite.Limiter
+        _lane_limiters[host] = cls(f"Images {host}", min_interval_s=gap, daily_cap=cap,
+                                   refused_pause_s=3600, timeout_s=30,
+                                   user_agent=_img_session.headers["User-Agent"],
+                                   refused_statuses=(429, 503) if host in NOT_THERE_403 else polite.REFUSED_STATUSES)
     return _lane_limiters[host]
 
 
-_fandom_access_cache = {"ts": 0.0, "val": ("", "")}
-_FANDOM_ACCESS_TTL = 30
-
-
 def _fandom_pass(path=None) -> tuple[str, str]:
-    now = time.time()
-    if now - _fandom_access_cache["ts"] > _FANDOM_ACCESS_TTL:
-        val = ("", "")
-        try:
-            from kometa import flaresolverr
-            if flaresolverr.enabled():
-                got = flaresolverr.clearance("https://" + FANDOM_HOST)
-                if got:
-                    ua, cookies = got
-                    tok = cookies.get("cf_clearance", "")
-                    if tok:
-                        val = (tok, ua)
-        except Exception as e:
-            logger.debug(f"FlareSolverr Fandom clearance lookup failed: {e}")
-
-        if not val[0]:
-            cfg = db.get_config(path or DB_PATH)
-            val = ((cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip())
-        _fandom_access_cache["val"] = val
-        _fandom_access_cache["ts"] = now
-    return _fandom_access_cache["val"]
+    try:
+        cfg = db.get_config(path or DB_PATH)
+        return (cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip()
+    except Exception:
+        return ("", "")
 
 
 def _lane_lock(host: str):
@@ -550,8 +579,6 @@ def _lane_lock(host: str):
 
 
 def fandom_pass_renewed(path=None, start: bool = True):
-    """A new token: the lane's rest is lifted and it starts at once, running until
-    the token expires, rather than waiting for the next 10-minute tick."""
     _lane_limiter(FANDOM_HOST).resume()
     if start:
         import threading
@@ -559,11 +586,10 @@ def fandom_pass_renewed(path=None, start: bool = True):
 
 
 def fandom_burst(path=None, sleep=time.sleep) -> int:
-    """The Fandom lane alone, up to FANDOM_BURST covers, while the token is live."""
     from urllib.parse import urlparse
     path = path or DB_PATH
     lock = _lane_lock(FANDOM_HOST)
-    if not all(_fandom_pass(path)) or not lock.acquire(blocking=False):
+    if not lock.acquire(blocking=False):
         return 0
     try:
         lim = _lane_limiter(FANDOM_HOST)
@@ -578,8 +604,6 @@ def fandom_burst(path=None, sleep=time.sleep) -> int:
 
 
 def _lane_fetch(lim, host: str = "", path=None):
-    """http= for fetch_image: the bytes through this host's limiter; None on a miss.
-    A refusal / outage / spent day raises polite.SourceUnavailable — the lane stops."""
     from kometa import polite
     headers = {}
     if host == FANDOM_HOST:
@@ -590,33 +614,22 @@ def _lane_fetch(lim, host: str = "", path=None):
     def get(url):
         nonlocal headers
         if host == FANDOM_HOST and "format=" not in url:
-            # the stored original, not the WebP this UA would otherwise get
             url += ("&" if "?" in url else "?") + "format=original"
         try:
             r = lim.get(url, headers=headers) if headers else lim.get(url)
         except polite.SourceUnavailable as e:
             if host == FANDOM_HOST and "(403)" in str(e):
-                from kometa import flaresolverr
-                if flaresolverr.enabled():
-                    flaresolverr.forget("https://" + FANDOM_HOST)
-                    _fandom_access_cache["ts"] = 0.0
-                    cf, ua = _fandom_pass(path)
-                    if cf:
-                        headers = {"Cookie": f"cf_clearance={cf}", "User-Agent": ua}
-                        try:
-                            r = lim.get(url, headers=headers)
-                            return r.content if r.status_code == 200 and r.content else None
-                        except Exception:
-                            pass
                 logger.info("Fandom images: token no longer working — dropped")
-                db.set_config({"fandom_cf_clearance": "", "fandom_cf_set_at": ""}, path or DB_PATH)
+                try:
+                    db.set_config({"fandom_cf_clearance": "", "fandom_cf_set_at": ""}, path or DB_PATH)
+                except Exception:
+                    pass
             raise
         return r.content if r.status_code == 200 and r.content else None
     return get
 
 
 def images_lanes(path=None, sleep=time.sleep) -> int:
-    """Scheduler tick: every host's lane at once, each at its own pace (LANES)."""
     from concurrent.futures import ThreadPoolExecutor
     from urllib.parse import urlparse
     path = path or DB_PATH
@@ -638,11 +651,9 @@ def images_lanes(path=None, sleep=time.sleep) -> int:
     if not lanes:
         return 0
     def run(host):
-        if host == FANDOM_HOST and not all(_fandom_pass(path)):
-            return 0                                  # no pass: a knock is a guaranteed 403
         lock = _lane_lock(host)
         if not lock.acquire(blocking=False):
-            return 0                                  # a burst has this lane already
+            return 0
         try:
             lim = _lane_limiter(host)
             if lim.spent():

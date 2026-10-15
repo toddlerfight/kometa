@@ -395,3 +395,26 @@ def test_dropping_a_trade_that_wasnt_found_sends_its_issues_back_to_the_single_s
     assert trade not in states and states[issue] == "queued"
     with db._connect(db_path) as c:
         assert "l8015010" in c.execute("SELECT rejected_json FROM trade_fallback WHERE queue_id = ?", (issue,)).fetchone()[0]
+
+
+
+def test_a_pulled_series_sweeps_singles_even_when_a_trade_covers_them(db_path):
+    # The Seasons (2026-10-15): the user pulls ISSUES, not trades. Owning the Vol 3 TP
+    # that reprints #12 must NOT suppress the single from the sweep — trades are only
+    # acquired when wanted per-trade. #13 (unreleased) still waits for its date.
+    sid = db.add_series(title="The Seasons", publisher="Image", folder_path="/x/The Seasons",
+                        on_pull_list=True, path=db_path)
+    db.upsert_issue_status_many([(sid, 12.0, "2026-10-14", False, None, None, None),
+                                 (sid, 13.0, "2026-10-21", False, None, None, None)], path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET monitor_status='monitored' WHERE id=?", (sid,))
+        c.execute("UPDATE issue_status SET covered_by='/x/The Seasons/Vol 3 TP.cbz' WHERE tracked_series_id=?", (sid,))
+    import datetime
+    today = datetime.date.today().isoformat()
+    # move #12 to today so it reads as released regardless of when the test runs
+    with db._connect(db_path) as c:
+        c.execute("UPDATE issue_status SET store_date=? WHERE tracked_series_id=? AND number=12", (today, sid))
+        c.execute("UPDATE issue_status SET store_date=date('now','+7 days') WHERE tracked_series_id=? AND number=13", (sid,))
+    assert db.get_missing_counts_by_series(db_path).get(sid) == 1          # #12 swept despite being trade-covered
+    nums = {r["number"] for r in db.get_missing_for_monitored(db_path)}
+    assert 12.0 in nums and 13.0 not in nums                               # #13 not out yet

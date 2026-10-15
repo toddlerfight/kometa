@@ -1664,7 +1664,7 @@ def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
               AND i.ignored = 0
-              AND i.covered_by IS NULL
+              -- issue-based pull: an owned trade does not suppress the single
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.monitor_status = 'monitored'
               AND s.on_pull_list = 1
@@ -1760,7 +1760,7 @@ def get_missing_for_monitored(path=DB_PATH):
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
               AND i.ignored = 0
-              AND i.covered_by IS NULL
+              -- issue-based pull: an owned trade does not suppress the single
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
               AND s.on_pull_list = 1
               AND NOT EXISTS (

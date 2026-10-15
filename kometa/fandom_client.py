@@ -56,20 +56,13 @@ def _get(host: str, **params) -> dict:
         except urllib.error.HTTPError as e:
             if e.code in (403, 503):
                 try:
-                    from kometa import flaresolverr
-                    if flaresolverr.enabled():
-                        cleared = flaresolverr.headers_for(url, headers)
-                        if cleared:
-                            with urllib.request.urlopen(urllib.request.Request(url, headers=cleared), timeout=25) as r:
-                                body = json.load(r)
-                            _health('ok')
-                            return body
+                    from curl_cffi import requests as cffi
+                    r = cffi.get(url, impersonate='chrome124', timeout=25)
+                    if r.status_code == 200:
+                        _health('ok')
+                        return r.json()
                 except Exception:
-                    try:
-                        from kometa import flaresolverr
-                        flaresolverr.forget(url)
-                    except Exception:
-                        pass
+                    pass
             if e.code in (403, 429, 503):
                 _last['paused_until'] = time.time() + REFUSED_PAUSE_S
             _health('ok' if e.code == 404 else 'refused' if e.code in (403, 429) else 'error', str(e.code))
