@@ -24,10 +24,14 @@ def sync_hours() -> list[int]:
         raw = db.get_config().get("sync_hours", "")
     except Exception:
         raw = ""  # no DB yet (first boot, tests) — env/default carries it
-    raw = raw or os.environ.get("KOMETA_SYNC_HOURS", "5,12,17")
+    # Once nightly by default: the metadata refresh feeds a slow-moving catalogue
+    # (issues are solicited weeks ahead), and release-day acquisition is date-driven
+    # off store_dates we already hold, so it doesn't need a fresh sync. The frequent,
+    # cheap work is _release_day_retry. 04:00 AEST sits after the nightly backup.
+    raw = raw or os.environ.get("KOMETA_SYNC_HOURS", "4")
     hours = [int(p) for p in (part.strip() for part in raw.split(","))
              if p.isdigit() and 0 <= int(p) <= 23]
-    return hours or [5, 12, 17]
+    return hours or [4]
 
 # How often to poll SABnzbd for in-flight usenet downloads. Lower = smoother progress
 # bar (SAB's the source of truth for %, the UI only sees what we last polled). It's a

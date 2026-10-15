@@ -1507,12 +1507,20 @@ def _torrent_dead(item, qid, infohash, why: str) -> None:
     db.update_queue_state(qid, "failed", error=f"Torrent: {why}", path=DB_PATH)
 
 
+RELEASE_RETRY_DAYS = 7              # how far back a "recent release" stays on the frequent retry
+
 def _release_day_retry():
-    """Re-queue this week's release-day issues that weren't found yet — runs Thu AEST (= Wed EDT)."""
+    """Re-queue recently-released pull-list issues (within RELEASE_RETRY_DAYS) that are
+    still missing. The heavy metadata sync + full sweep runs once nightly; this is the
+    frequent, cheap pass so a release that only trickles onto the indexers in the days
+    after it drops gets grabbed without waiting for the next night. Scheduled every 2h
+    across the US-release evening (3–11pm AEST)."""
     from datetime import timedelta
-    # store_dates are US Wednesday; running Thu AEST means today AEST = Wed US + 1 day
-    release_dates = {str(date.today()), str(date.today() - timedelta(days=1))}
+    today = date.today()
+    cutoff = str(today - timedelta(days=RELEASE_RETRY_DAYS))
+    today_s = str(today)
     rows = db.get_missing_for_monitored(DB_PATH)
     for row in rows:
-        if row.get("store_date") in release_dates:
+        sd = row.get("store_date")
+        if sd and cutoff <= sd <= today_s:          # released, and no older than a week
             db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
