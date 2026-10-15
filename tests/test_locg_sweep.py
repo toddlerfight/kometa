@@ -117,3 +117,32 @@ def test_metron_known_issue_gets_locg_variants_merged_from_the_record_never_a_me
     assert names == ["Cover A (Main)", "Big Time Collectibles NYCC 2026 ACO Variant"]   # Metron's main kept, LOCG's tail added
     assert row["community"] == {"rating": 4.0} and row["community_at"]
     assert out["variants"] == 1 and out["community"] == 1 and sw.pending(db_path) == 0
+
+
+def test_a_broken_page_is_skipped_for_a_day_and_the_tick_moves_on(db_path):
+    """One page LOCG answered 500 sat first in line and stopped every tick for an evening.
+    Now a non-pause failure skips that issue (for a day) and the sweep carries on; a real
+    pause still stops the tick."""
+    import requests
+    from kometa import locg_client
+    sw._bad.clear()
+    a = _series(db_path, "A", pull=True)
+    for n in (1.0, 2.0, 3.0):
+        db.upsert_issue_status(a, n, "2026-01-01", 1, locg_issue_id=str(10 + int(n)), path=db_path)
+    calls = []
+    def fv(sid, n, issue):
+        calls.append(n)
+        if n == 1.0:                                                     # first in line, like the real stall
+            raise requests.HTTPError("HTTP 500 for https://leagueofcomicgeeks.com/comic/11/comic")
+        return []
+    out = sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=fv, sleep=lambda s: None, syncing=lambda: False)
+    assert calls == [1.0, 2.0, 3.0] and out["stopped"] is None and out["skipped"] == 1
+    calls.clear()
+    sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=fv, sleep=lambda s: None, syncing=lambda: False)
+    assert calls == [2.0, 3.0]                                           # the bad page skipped without a request
+    sw._bad.clear()
+    def paused(sid, n, issue):
+        calls.append(("p", n)); raise locg_client.LocgPaused("LOCG is pausing us")
+    calls.clear()
+    out = sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=paused, sleep=lambda s: None, syncing=lambda: False)
+    assert calls == [("p", 1.0)] and out["stopped"].startswith("refused")

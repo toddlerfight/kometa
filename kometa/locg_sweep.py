@@ -93,6 +93,19 @@ def _from_record(path):
     return lambda issue, p=None: {"covers": (record.get_issue(issue["tracked_series_id"], issue["number"], path) or {}).get("covers") or []}
 
 
+# Pages LOCG answers with a 5xx (or anything that isn't a pause): skipped for a day, by
+# locg_issue_id. One such page sat first in the candidate order and stopped every tick for
+# an evening — the stop is for the wall (LocgPaused), not for one broken page.
+BAD_PAGE_TTL_S = 24 * 3600
+_bad: dict[str, float] = {}
+
+
+def _skip_page(lid, e, out) -> None:
+    _bad[str(lid)] = time.time() + BAD_PAGE_TTL_S
+    out["skipped"] += 1
+    logger.info(f"LOCG sweep: skipped page {lid} for a day: {e}")
+
+
 def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None, fill_issue=None,
                sleep=time.sleep, syncing=None, community=None, page_cached=None) -> dict:
     """One tick. Returns {requests, variants, details, community, stopped}."""
@@ -100,7 +113,7 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
     from kometa import locg_client, record
     is_open = is_open or (lambda: locg_client.locg_paused() is None)
     syncing = syncing or _sync_in_progress
-    out = {"requests": 0, "variants": 0, "details": 0, "community": 0, "stopped": None}
+    out = {"requests": 0, "variants": 0, "details": 0, "community": 0, "skipped": 0, "stopped": None}
     if not is_open():
         out["stopped"] = "paused"; return out
     if syncing():
@@ -114,6 +127,9 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
     for issue in candidates(path, limit=budget):
         yield_to_reader(sleep)
         sid, n = issue["tracked_series_id"], issue["number"]
+        lid = str(issue.get("locg_issue_id"))
+        if _bad.get(lid, 0) > time.time():
+            continue
         if out["requests"] >= budget:
             break
         if out["requests"]:
@@ -125,8 +141,10 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
             out["requests"] += 1
             try:
                 got = fv(sid, n, issue)
-            except Exception as e:
+            except locg_client.LocgPaused as e:
                 out["stopped"] = f"refused: {e}"; break
+            except Exception as e:                       # this page, not the wall
+                _skip_page(lid, e, out); continue
             if not is_open() or got is None:        # the client paused itself, or nothing could be asked
                 out["stopped"] = "refused"; break
             out["variants"] += 1
@@ -141,8 +159,10 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
                     out["requests"] += 1
                 try:
                     r = fi(sid, n, issue)
-                except Exception as e:
+                except locg_client.LocgPaused as e:
                     out["stopped"] = f"refused: {e}"; break
+                except Exception as e:
+                    _skip_page(lid, e, out); continue
                 if not is_open():
                     out["stopped"] = "refused"; break
                 if r is None:
@@ -160,14 +180,17 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
                 out["requests"] += 1
             try:
                 record.set_community(sid, n, fc(issue["locg_issue_id"]), path)
-            except Exception as e:
+            except locg_client.LocgPaused as e:
                 out["stopped"] = f"refused: {e}"; break
+            except Exception as e:
+                _skip_page(lid, e, out); continue
             if not is_open():
                 out["stopped"] = "refused"; break
             out["community"] += 1
     _count(out["requests"])
     logger.info(f"LOCG sweep: {out['requests']} requests, {out['variants']} variant lists, {out['details']} details, "
                 f"{out['community']} community"
+                + (f", {out['skipped']} page(s) skipped" if out["skipped"] else "")
                 + (f", stopped: {out['stopped']}" if out["stopped"] else ""))
     return out
 
