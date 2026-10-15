@@ -138,3 +138,26 @@ def test_a_source_failing_for_a_day_is_broken_but_a_refusal_waits():
     assert main._attn_fix("prh", "error", dry_day=True)[0] == "broken"
     assert main._attn_fix("prh", "refused", dry_day=True)[0] == "wait"
     assert main._attn_fix("prh", "error", dry_day=False)[0] == "wait"
+
+
+# --- harvesters: grouped, and the non-fatal ones can be dismissed ---------------------------
+def test_harvester_trouble_is_grouped_and_dismissable_until_it_clears(wired, monkeypatch):
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})
+    item = next(i for i in main.settings_attention() if i["card"] == "marveldc")
+    assert item["group"] == "harvesters" and item["dismissable"] is True
+    main.dismiss_attention(main.DismissRequest(card="marveldc", level="broken"))
+    assert "marveldc" not in _cards(main.settings_attention())
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 40, "kept": 9})   # it cleared
+    main.settings_attention()
+    assert main._dismissed() == {}                                             # the dismissal is forgotten
+    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})    # back again: shown again
+    assert "marveldc" in _cards(main.settings_attention())
+
+
+def test_what_is_yours_to_fix_cannot_be_dismissed(wired):
+    db.set_config({"hardcover_token": ""}, wired)
+    item = next(i for i in main.settings_attention() if i["card"] == "hardcover")
+    assert item["level"] == "fix" and item["dismissable"] is False
+    with pytest.raises(Exception):
+        main.dismiss_attention(main.DismissRequest(card="hardcover", level="fix"))
+    assert "hardcover" in _cards(main.settings_attention())

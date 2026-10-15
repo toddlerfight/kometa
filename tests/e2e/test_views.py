@@ -94,7 +94,7 @@ def test_quiet_sources_are_a_line_not_cards_and_the_board_is_on_activity(app):
     # PRH / Open Library / ComicBookRoundup / Marvel.com need nothing from you (2026-10-15):
     # one line names them; their numbers (the harvest board) moved to Activity.
     app.locator('.nav-item[data-view="settings"]').click()
-    expect(app.locator('.settings-quiet')).to_have_count(0)        # nothing resting: nothing said
+    expect(app.locator('#sec-harvesters')).to_contain_text('ComicBookRoundup')   # one section names them
     for key in ('prh', 'openlibrary', 'cbr', 'marveldc'):
         expect(app.locator(f'#sec-{key}')).to_have_count(0)
     expect(app.locator('#harvest-progress')).to_have_count(0)

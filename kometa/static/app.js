@@ -3738,12 +3738,19 @@ function _startHarvestPoll() {
 
 // Background sources that need nothing from you: named once so you know they exist,
 // 'resting' when one has backed off. Their numbers live on Activity (the harvest board).
-function _quietSourcesLine(cfg) {
-  // nothing to say while they're all fine; a line only when one has backed off
+// The Harvesters section's one line: who runs quietly, and who is resting after a
+// refusal. Their trouble, when there is any, is written out beneath it (and can be
+// dismissed when it isn't yours to fix).
+function _harvestersLine(cfg) {
   const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup', marveldc: 'Marvel.com / DC.com' };
   const b = cfg.extra_budgets || {};
   const resting = Object.keys(names).filter(k => b[k] && b[k].paused).map(k => names[k]);
-  return resting.length ? `<div class="settings-help settings-quiet">Resting after a refusal, back on its own: ${esc(resting.join(', '))}.</div>` : '';
+  return `${Object.values(names).join(' · ')} — no login, nothing to set.${resting.length ? ` Resting after a refusal, back on their own: ${esc(resting.join(', '))}.` : ''}`;
+}
+async function _attnDismiss(card, level, btn) {
+  btn.disabled = true;
+  try { await api.post('/api/settings/attention/dismiss', { card, level }); } catch { btn.disabled = false; return; }
+  _updateSettingsBadge();
 }
 // Every block on Activity wears the same header as a Settings card: bold caps
 // title, an italic tag, a rule beneath. The queue sections and the harvest board alike.
@@ -3833,7 +3840,8 @@ async function _updateSettingsBadge() {
 // Settings open: what's wrong and what to do, in words at the top of the page
 // and again inside the card itself. A red dot with a hover tooltip told an iPad
 // nothing. Tap a row at the top to jump to its card.
-const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'harvest-progress' };
+const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'sec-harvesters',
+                        prh: 'sec-harvesters', openlibrary: 'sec-harvesters', cbr: 'sec-harvesters', marveldc: 'sec-harvesters', fandom: 'sec-harvesters' };
 function _attnTarget(card) {
   const id = _ATTN_SECTION[card];
   const el = (id && document.getElementById(id)) || document.getElementById(`sec-${card}`)
@@ -3844,7 +3852,7 @@ function _renderSettingsAttention(items) {
   const top = document.getElementById('settings-attn');
   if (!top) return;
   document.querySelectorAll('.settings-attn-note').forEach(n => n.remove());
-  const mine = items.filter(it => it.level !== 'wait');
+  const mine = items.filter(it => it.level !== 'wait' && it.group !== 'harvesters');
   top.hidden = !mine.length;
   top.innerHTML = mine.map((it, i) => `
     <button class="settings-attn-row${it.level === 'broken' ? ' broken' : ''}" onclick="_attnJump(${i})">
@@ -3853,12 +3861,16 @@ function _renderSettingsAttention(items) {
       ${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}
     </button>`).join('');
   top._items = mine;
+  const errs = document.getElementById('harvesters-errors');
+  if (errs) errs.innerHTML = '';
   for (const it of items) {
-    const host = _attnTarget(it.card);
-    if (!host) continue;
     const note = document.createElement('div');
     note.className = `settings-attn-note${it.level === 'wait' ? ' wait' : it.level === 'broken' ? ' broken' : ''}`;
-    note.innerHTML = `<span class="settings-attn-reason">${esc(it.reason)}</span>${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}`;
+    const dismiss = it.dismissable ? `<button class="btn-link settings-attn-dismiss" onclick="_attnDismiss('${esc(it.card)}', '${esc(it.level)}', this)" title="Hide until it changes">dismiss</button>` : '';
+    note.innerHTML = `<span class="settings-attn-reason">${it.group === 'harvesters' ? `<b>${esc(it.title)}</b> · ` : ''}${esc(it.reason)}${dismiss}</span>${it.fix ? `<span class="settings-attn-fix">${esc(it.fix)}</span>` : ''}`;
+    if (it.group === 'harvesters' && errs) { errs.appendChild(note); continue; }   // their trouble lives in their section
+    const host = _attnTarget(it.card);
+    if (!host) continue;
     const head = host.querySelector(':scope > .settings-section-head, :scope > .settings-card-header');
     head ? head.after(note) : host.prepend(note);
   }
@@ -4460,7 +4472,6 @@ async function renderSettings() {
 
   setApp(`
     <div class="settings-attn" id="settings-attn" hidden></div>
-    ${_quietSourcesLine(cfg)}
     <div class="settings-grid">
       <div>
         <div class="settings-card">
@@ -4546,6 +4557,11 @@ async function renderSettings() {
               ${_settingsField('f-gcd-pass', 'Password', '', { set: cfg.gcd_configured, ph: 'Enter password' })}
             </div>
           </div></div>
+        </div>
+        <div class="settings-card" id="sec-harvesters" style="margin-top:32px">
+          ${_settingsHeader('Harvesters', 'background', 'harvesters')}
+          <div class="settings-help">${_harvestersLine(cfg)}</div>
+          <div id="harvesters-errors"></div>
         </div>
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
           `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>

@@ -1342,7 +1342,9 @@ select.settings-input {
 .settings-attn-row.broken, .settings-attn-note.broken { border-left-color: var(--amb); background: var(--amb-d); }
 .settings-attn-row.broken .settings-attn-reason, .settings-attn-note.broken .settings-attn-reason,
 .settings-attn-note.wait .settings-attn-reason { color: var(--amb); }
-.settings-quiet { margin: -24px 0 32px; color: var(--tq); }
+.settings-attn-dismiss { margin-left: 10px; color: var(--tq); }
+#harvesters-errors .settings-attn-note { margin: 12px 0 0; }
+#harvesters-errors .settings-attn-note:last-child { margin-bottom: 4px; }
 /* the harvest board: a queue section like the others; its rows are label-left, number-right */
 .act-harvest .settings-stat { margin-top: 0; padding: 8px 0; border-bottom: 1px solid var(--bd); }
 .act-harvest .settings-stat:last-child { border-bottom: 0; }

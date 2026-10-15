@@ -543,6 +543,10 @@ _ATTN_TITLES = {
     "marveldc": "Marvel.com / DC.com", "prowlarr": "Prowlarr", "sabnzbd": "Usenet (SABnzbd)",
     "qbit": "Torrents (qBittorrent)", "harvest": "Library harvest", "backup": "Backup",
 }
+# The quiet harvesters: no login, no card of their own. Their notes live inside the
+# Harvesters section, and a non-fatal one (resting, or a hand-off already passed
+# on) can be dismissed until it clears and comes back.
+_HARVESTERS = ("prh", "openlibrary", "cbr", "marveldc", "fandom")
 # Level 'broken': set up fine, failing anyway, and nothing in Settings can change it —
 # a hand-off, not an instruction. Counted on the badge like a fix, so it isn't missed.
 _TELL = "Nothing to change here — tell Claude: "
@@ -676,7 +680,49 @@ def settings_attention() -> list[dict]:
     for i in out:
         i["title"] = _ATTN_TITLES.get(i["card"], i["card"])
         i.setdefault("level", "fix")
-    return out
+        if i["card"] in _HARVESTERS:
+            i["group"] = "harvesters"
+    return _apply_dismissals(out)
+
+
+def _dismissed() -> dict:
+    try:
+        return json.loads(db.get_config(DB_PATH).get("attention_dismissed") or "{}")
+    except Exception:
+        return {}
+
+
+def _apply_dismissals(items: list[dict]) -> list[dict]:
+    """Drop a dismissed (card, level); forget a dismissal once its item has gone, so
+    the same trouble coming back later shows again. 'fix' is never dismissable."""
+    d = _dismissed()
+    for i in items:
+        i["dismissable"] = i["level"] != "fix"
+    if not d:
+        return items
+    live = {i["card"]: i["level"] for i in items}
+    kept = [i for i in items if not (i["level"] != "fix" and d.get(i["card"]) == i["level"])]
+    stale = [c for c in d if c not in live]
+    if stale:
+        for c in stale:
+            d.pop(c, None)
+        db.set_config({"attention_dismissed": json.dumps(d)}, DB_PATH)
+    return kept
+
+
+class DismissRequest(BaseModel):
+    card: str
+    level: str
+
+
+@app.post("/api/settings/attention/dismiss")
+def dismiss_attention(req: DismissRequest):
+    if req.level == "fix":
+        raise HTTPException(400, "That one is yours to fix")
+    d = _dismissed()
+    d[req.card] = req.level
+    db.set_config({"attention_dismissed": json.dumps(d)}, DB_PATH)
+    return {"ok": True}
 
 
 @app.get("/api/settings/attention")
