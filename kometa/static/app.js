@@ -3939,14 +3939,24 @@ async function _refreshActivity() {
   // don't. When they DO change, we reconcile row-by-row IN PLACE — never a full
   // innerHTML rebuild (that recreated every <img> and replayed the cover-in
   // animation on 20 innocent rows because one row moved). See _reconcileActivity.
-  const sig = queue.map(q => `${q.id}:${q.state}`).join('|') + (_actShowHistory ? '|h' : '');
+  // Collapse 2+ active issues of one series into a single synthetic group row
+  // BEFORE anything renders. Everything below keys off this display list, not the
+  // raw queue, so the reconciler, the sig and the per-tick progress patch all agree.
+  const display = _actGroupActive(queue);
+  // A group row's fingerprint (range + state-mix) rides in the sig so a membership
+  // shift forces a reconcile; bare byte-progress stays in the quiet fast path below.
+  const sig = display.map(q => `${q.id}:${q._group ? q._fp : q.state}`).join('|') + (_actShowHistory ? '|h' : '');
   if (sig === _activitySig) {
-    queue.forEach(q => {
+    display.forEach(q => {
       const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
       const fill = document.getElementById(`actfill-${q.id}`);
       const text = document.getElementById(`acttext-${q.id}`);
       if (fill) fill.style.transform = `scaleX(${pct / 100})`;
-      if (text) text.textContent = `${pct}%${_actProgressDetail(q)}`;
+      // The group row carries its own aggregate byte line; a single row defers to
+      // _actProgressDetail (usenet/torrent/bytes).
+      if (text) text.textContent = q._group
+        ? (q.progress ? `${pct}% — ${_fmtBytes(q.progress.done)} / ${_fmtBytes(q.progress.total)}` : `${pct}%`)
+        : `${pct}%${_actProgressDetail(q)}`;
       // The engine name flips mid-search (GetComics → Usenet → torrent); a bare
       // textContent swap reads as a flash, so crossfade it instead.
       const ss = document.getElementById(`actsearch-${q.id}`);
@@ -3954,7 +3964,7 @@ async function _refreshActivity() {
     });
   } else {
     _activitySig = sig;
-    await _reconcileActivity(queue);
+    await _reconcileActivity(display);
   }
   const hasActive = queue.some(q => ['searching','found','downloading','processing','pending_usenet','pending_torrent'].includes(q.state));
   // Within the post-retry window, keep polling while anything's still queued so
@@ -4159,7 +4169,135 @@ async function proposalDecide(qid, action, btn) {
   } catch (e) { btn.disabled = false; showToast(`Couldn’t ${action}`, 'error'); }
 }
 
+// --- Same-series grouping -------------------------------------------------
+// When 2+ single issues of ONE series are active at once, we don't want N near-
+// identical rows screaming the same cover at you — collapse them into one row that
+// shows the series, the issue range and one aggregate bar. Trades, reading-list
+// packs, run sentinels (issue_number < 0) and anything untracked are NEVER grouped;
+// they keep their own row. A group that shrinks to a single member stops being a
+// group and the real row comes back — the reconciler handles the swap.
+function _actGroupable(q) {
+  return ACT_ACTIVE_STATES.includes(q.state)
+    && q.tracked_series_id
+    && q.kind !== 'trade' && q.kind !== 'list_pack'
+    && q.issue_number != null && q.issue_number >= 0;
+}
+
+// Issue numbers → a tight label. Contiguous integer run reads as "#1–5"; anything
+// gappy or fractional falls back to the explicit list "#1, #3, #5".
+function _actIssueRange(nums) {
+  const u = [...new Set(nums)].sort((a, b) => a - b);
+  if (!u.length) return '';
+  const allInt = u.every(n => Number.isInteger(n));
+  if (allInt && u.length > 1 && u[u.length - 1] - u[0] + 1 === u.length) {
+    return `#${fmtNum(u[0])}–${fmtNum(u[u.length - 1])}`;
+  }
+  return u.map(n => `#${fmtNum(n)}`).join(', ');
+}
+
+// States collapsed to plain words for the group's "1 downloading · 4 filing" line.
+const _ACT_GROUP_WORDS = {
+  downloading: 'downloading', pending_usenet: 'downloading', pending_torrent: 'downloading',
+  processing: 'filing', searching: 'searching', found: 'searching',
+  queued: 'queued', proposed: 'proposed', suggested: 'suggested',
+};
+// Pick one representative state for the chip/thumb — the busiest wins.
+const _ACT_GROUP_PRIO = ['downloading', 'pending_usenet', 'pending_torrent', 'processing', 'searching', 'found', 'proposed', 'suggested', 'queued'];
+
+// Fold a series' active members into one synthetic queue item. The id is stable
+// (`grp-<seriesId>`) so the reconciler can morph it in place across polls, and _fp
+// captures everything that should trigger a re-render EXCEPT raw bytes (those ride
+// the quiet per-tick path, same as a single row).
+function _actMakeGroup(members) {
+  const sid = members[0].tracked_series_id;
+  let done = 0, total = 0, hasProg = false;
+  for (const m of members) {
+    if (m.progress && m.progress.total) { done += m.progress.done || 0; total += m.progress.total; hasProg = true; }
+  }
+  let rep = members[0].state;
+  for (const s of _ACT_GROUP_PRIO) { if (members.some(m => m.state === s)) { rep = s; break; } }
+  const nums = members.map(m => m.issue_number).filter(n => n != null);
+  const range = _actIssueRange(nums);
+  const counts = new Map();
+  for (const m of members) { const w = _ACT_GROUP_WORDS[m.state] || m.state; counts.set(w, (counts.get(w) || 0) + 1); }
+  const mix = Array.from(counts, ([w, n]) => `${n} ${w}`).join(' · ');
+  return {
+    id: `grp-${sid}`,
+    _group: true,
+    _members: members,
+    _range: range,
+    _mix: mix,
+    _hasProg: hasProg,
+    _fp: `${rep}|${[...new Set(nums)].sort((a, b) => a - b).join(',')}|${mix}|${hasProg ? 1 : 0}`,
+    tracked_series_id: sid,
+    title: members[0].title,
+    publisher: members[0].publisher,
+    kind: 'issue',
+    issue_number: -2,            // < 0 → _actThumb serves the series cover, not an issue
+    state: rep,                  // a real active state so it lands in the In Progress section
+    progress: hasProg ? { done, total } : null,
+  };
+}
+
+// Pre-process the raw queue into the display list: each 2+ same-series active group
+// becomes ONE synthetic row (emitted at its first member's position), everything
+// else passes straight through. Preserves order; returns the queue unchanged (same
+// reference) when there's nothing to collapse, so the no-group path is a cheap no-op.
+function _actGroupActive(queue) {
+  const bySeries = new Map();
+  for (const q of queue) {
+    if (!_actGroupable(q)) continue;
+    const arr = bySeries.get(q.tracked_series_id) || [];
+    arr.push(q);
+    bySeries.set(q.tracked_series_id, arr);
+  }
+  const collapse = new Set();
+  for (const [sid, arr] of bySeries) { if (arr.length >= 2) collapse.add(sid); }
+  if (!collapse.size) return queue;
+  const out = [], emitted = new Set();
+  for (const q of queue) {
+    if (_actGroupable(q) && collapse.has(q.tracked_series_id)) {
+      if (emitted.has(q.tracked_series_id)) continue;
+      emitted.add(q.tracked_series_id);
+      out.push(_actMakeGroup(bySeries.get(q.tracked_series_id)));
+    } else {
+      out.push(q);
+    }
+  }
+  return out;
+}
+
+// Inner HTML of a group row's .act-row-meta: title, "publisher · #range · N issues",
+// an aggregate bar (only when a member is actually transferring bytes) and the
+// plain-words state-mix line. Shared by the initial render and the morph path.
+function _actGroupMeta(q) {
+  const title = `<div class="act-row-title u-truncate">${esc(q.title)}</div>`;
+  const issue = `<div class="act-row-issue">${q.publisher ? esc(q.publisher) + ' · ' : ''}${esc(q._range)} · ${q._members.length} issues</div>`;
+  let sub = '';
+  if (q._hasProg) {
+    const pct = q.progress && q.progress.total ? Math.round(q.progress.done / q.progress.total * 100) : 0;
+    sub += `
+        <div class="act-row-progress">
+          <div class="act-progress-track"><div class="act-progress-fill" id="actfill-${q.id}" style="transform:scaleX(${pct / 100})"></div></div>
+          <div class="act-progress-text" id="acttext-${q.id}">${pct}% — ${esc(_fmtBytes(q.progress.done))} / ${esc(_fmtBytes(q.progress.total))}</div>
+        </div>`;
+  }
+  sub += `<div class="act-row-reason">${esc(q._mix)}</div>`;
+  return title + issue + sub;
+}
+
+function _actGroupRowHtml(q) {
+  const nav = ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"`;
+  return `
+        <div class="act-row" data-qid="${q.id}" data-qstate="${esc(q._fp)}" data-qgroup="1">
+          <div class="act-row-cover">${_actThumb(q)}</div>
+          <div class="act-row-meta"${nav}>${_actGroupMeta(q)}</div>
+          <div class="act-row-actions">${_actChip(q.state)}</div>
+        </div>`;
+}
+
 function _actRowHtml(q) {
+  if (q._group) return _actGroupRowHtml(q);
   const active = ACT_ACTIVE_STATES.includes(q.state);
   const errTip = q.error ? ` title="${esc(q.error)}"` : '';
   const pack = _actPack(q);
@@ -4254,6 +4392,16 @@ function _animateRowIn(el) {
 // and its <img> survive untouched — that's the whole point (recreating the img is
 // what replayed the cover-in animation and flashed).
 function _morphActRow(el, q) {
+  // A group row changes shape when its membership/range/state-mix shifts (its _fp).
+  // Rebuild the meta block only — the cover <img> lives in a sibling, so it survives.
+  if (q._group) {
+    el.dataset.qstate = q._fp;
+    const meta = el.querySelector('.act-row-meta');
+    if (meta) meta.innerHTML = _actGroupMeta(q);
+    const actions = el.querySelector('.act-row-actions');
+    if (actions) actions.innerHTML = _actChip(q.state);
+    return;
+  }
   el.dataset.qstate = q.state;
   el.classList.toggle('done', q.state === 'done');
   if (q.error) el.setAttribute('title', q.error); else el.removeAttribute('title');
@@ -4331,7 +4479,7 @@ async function _reconcileActivity(queue) {
           secEl.insertBefore(el, anchor ? anchor.nextSibling : (hdr ? hdr.nextSibling : secEl.firstChild));
           anims.push(_animateRowIn(el));
         } else {
-          if (el.dataset.qstate !== q.state) _morphActRow(el, q);
+          if (el.dataset.qstate !== (q._fp || q.state)) _morphActRow(el, q);
           // Keep DOM order in step with the queue (skipping rows mid-collapse).
           let prev = el.previousElementSibling;
           while (prev && prev.classList.contains('act-removing')) prev = prev.previousElementSibling;
