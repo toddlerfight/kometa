@@ -4565,10 +4565,8 @@ async function renderSettings() {
         </div>
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
           `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>
-          ${_settingsField('f-fandom-cf', 'cf_clearance cookie (images)', '', { set: cfg.fandom_cf_configured, ph: 'Safari → a Fandom image open → Develop → Storage → Cookies', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
-          <div class="settings-help">${cfg.fandom_cf_configured
-            ? `Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.fandom_user_agent))}. Forgotten the moment Fandom refuses it.`
-            : 'From Safari, with a Fandom image open (Chrome never gets one).'}</div>`)}
+          ${_settingsField('f-fandom-cf', 'cf_clearance cookie (images)', '', { set: cfg.fandom_cf_configured, ph: 'cf_clearance', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
+          ${cfg.fandom_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}`)}
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4579,15 +4577,12 @@ async function renderSettings() {
           </div></div>
         </div>
         <div class="settings-section ${cfg.locg_enabled ? '' : 'section-off'}" id="sec-locg" style="margin-top:32px">
-          ${_settingsSectionHead('League of Comic Geeks', 'your browser’s pass', 't-locg', cfg.locg_enabled)}
+          ${_settingsSectionHead('League of Comic Geeks', 'variants, top-ups', 't-locg', cfg.locg_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
           <div class="settings-card">
-          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'Paste from DevTools → Application → Cookies', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
+          ${_settingsField('f-locg-cf', 'cf_clearance cookie', '', { set: cfg.locg_cf_configured, ph: 'cf_clearance', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
           <div class="settings-help" id="locg-topup-status">${_locgTopupLine(cfg)}</div>
-          <div class="settings-help">${cfg.locg_cf_configured
-            ? `Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC from ${esc(_browserName(cfg.locg_user_agent))}. It lasts a few hours and is forgotten the moment LOCG refuses it. Paste from the browser that has LOCG open.`
-            : 'LOCG challenges anything that isn’t a browser. When yours gets through, its cookie lets Kometa ride the same session — same house, same IP — at the usual trickle. Optional; Metron covers nearly everything now.'}</div>
-          </div>
+          ${cfg.locg_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}
           </div></div>
         </div>
       </div>

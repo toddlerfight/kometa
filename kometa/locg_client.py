@@ -17,34 +17,14 @@ S3_LARGE = "https://s3.amazonaws.com/comicgeeks/comics/covers/large-{}.jpg"
 _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 
 
-# One warmed anon session, rebuilt on a timer. Building a fresh impersonated
-# session — homepage warm-up and all — on EVERY anon call was paying the
-# Cloudflare toll over and over for nothing. The TTL keeps the cookies from
-# rotting under a long-running server.
-#
-# The raw Session lives in the dict (not just inside a closure) so rotation can
-# .close() the outgoing one instead of orphaning its connection pool — the old
-# closure-only capture meant every replaced session leaked until GC felt like it.
+
 _ANON_SESSION_TTL = 1800  # seconds
 _anon_session = {"session": None, "get": None, "ts": 0.0}
-# One session shared by every anon caller — and grid renders now fire thumbnail
-# fallbacks in PARALLEL. curl_cffi sessions make no thread-safety promises, and
-# CF gets twitchy about request bursts anyway. Serialize; politeness is cheap.
-#
-# The SAME lock also guards the TTL check-and-rebuild in _anon_get_fn (see the
-# double-check there). One lock, never nested — the rebuild finishes and releases
-# before any closure .get() can grab it, so no ordering games to lose.
+
 _anon_lock = threading.Lock()
 
 
-# --- your own browser's pass ------------------------------------------------------
-# 2026-10-08: LOCG's Cloudflare challenges every non-browser. A real Chrome at
-# home passes it and is handed a cf_clearance cookie bound to the house's public
-# IP and that browser's exact User-Agent. Kometa sits behind the same IP, so a
-# cookie YOU paste from YOUR browser (Settings → LOCG) lets it ride your session
-# — at the trickle, for a few hours, until Cloudflare lets it rot. Not a bypass:
-# no solver, no headless browser, nothing automated. When it dies we forget it
-# and go back to waiting, same as before.
+
 _access_cache = {"ts": 0.0, "val": ("", "")}
 _ACCESS_TTL = 30
 
@@ -64,9 +44,7 @@ def _access() -> tuple[str, str]:
     return _access_cache["val"]
 
 
-# Every handshake curl_cffi can wear, newest Chrome first. Cloudflare may bind
-# a clearance to the TLS fingerprint as well as IP + UA, and 'chrome' is a
-# generic one; the test button tries them all and remembers the one that works.
+
 _TARGETS = ["chrome", "chrome146", "chrome145", "chrome142", "chrome136", "chrome133a", "chrome131",
             "chrome124", "edge", "safari", "safari184", "safari260", "firefox", "firefox147"]
 
@@ -152,12 +130,6 @@ def _forget_access():
         pass
 
 
-# --- backoff ----------------------------------------------------------------------
-# LOCG is a site we read without an API or an agreement. When it says "too much"
-# — a Cloudflare challenge or a 429 — we STOP: every LOCG call (syncs, matching,
-# cover fallbacks) pauses for a few hours instead of retrying into the wall.
-# 2026-10-08: challenged from ~03:00; the 06:00 sync then threw 276 more requests
-# at it. Persisted in config so a restart doesn't reset the clock.
 PAUSE_SECONDS = 3 * 3600
 _pause = {"until": None}
 
@@ -208,11 +180,6 @@ def _check_paused():
         raise LocgPaused(f"LOCG is pausing us until {pause_label(until)} — it refused our requests")
 
 
-# One speed for ALL of LOCG. Each job (sweep, top-up, re-check, trade fill,
-# syncs) kept its own polite budget — and on a fresh pass they all woke at once:
-# 2026-10-11 05:31 a burst drew a 429 two minutes after the user pasted a
-# cookie. Every request now goes through here: >= 3 s apart, and no more than
-# 20 in any 5 minutes, whoever is asking.
 PACE_GAP_S = 3.0
 PACE_WINDOW_S = 300
 PACE_MAX = 20
@@ -249,14 +216,11 @@ def _note_refusal(r):
     health.record("LOCG", "refused" if refused else "ok" if r.status_code < 500 else "error", str(r.status_code))
     if not refused:
         return
-    # A 429 is 'slow down', not 'your pass is dead': keep it, just pause. Only a
-    # Cloudflare challenge (403) means the pass expired. (05:31 a 429 threw away
-    # a pass that was two minutes old.)
+
     if _access()[0] and r.status_code != 429:
         logger.info("LOCG refused a request carrying your browser's pass — it has expired; forgetting it")
         _forget_access()
-    # A refusal while ALREADY paused (a 'Test LOCG now' knock) doesn't push the
-    # clock out again — four hopeful clicks were turning 3h into most of a day.
+  
     if time.time() < _paused_until():
         return
     until = time.time() + PAUSE_SECONDS

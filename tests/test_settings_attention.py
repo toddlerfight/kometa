@@ -49,10 +49,8 @@ def test_metron_refusal_lights_the_card(wired):
     assert any(i["card"] == "metron" and "refused" in i["reason"] for i in items)
 
 
-def test_locg_waiting_without_a_pass(wired, monkeypatch):
+def test_locg_never_nags_about_a_pass(wired, monkeypatch):
     monkeypatch.setattr(main, "_locg_status", lambda: {"locg_pass_live": False, "locg_topup_waiting": 12})
-    assert "locg" in _cards(main.settings_attention())
-    monkeypatch.setattr(main, "_locg_status", lambda: {"locg_pass_live": True, "locg_topup_waiting": 12})
     assert "locg" not in _cards(main.settings_attention())
 
 
@@ -101,15 +99,11 @@ def test_no_komga_routes_or_disconnect(wired):
         main.disconnect_integration("komga")
 
 
-def test_fandom_downloads_waiting_with_no_pass_light_the_card(wired, monkeypatch):
+def test_fandom_never_nags_about_a_pass(wired, monkeypatch):
     from kometa import fandom_covers
     monkeypatch.setattr(fandom_covers, "status", lambda path=None: {"covers": 10, "downloaded": 4})
-    assert "fandom" not in _cards(main.settings_attention())                  # downloads off: nothing to fix
     db.set_config({"fandom_download": "1"}, wired)
-    item = next(i for i in main.settings_attention() if i["card"] == "fandom")
-    assert item["reason"].startswith("6 gallery images waiting")
-    db.set_config({"fandom_cf_clearance": "abc"}, wired)
-    assert "fandom" not in _cards(main.settings_attention())                  # a pass: quiet again
+    assert "fandom" not in _cards(main.settings_attention())
 
 
 # --- what only a code change can fix: counted, worded as a hand-off --------------------

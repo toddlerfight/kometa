@@ -550,10 +550,6 @@ _HARVESTERS = ("prh", "openlibrary", "cbr", "marveldc", "fandom")
 # Level 'broken': set up fine, failing anyway, and nothing in Settings can change it —
 # a hand-off, not an instruction. Counted on the badge like a fix, so it isn't missed.
 _TELL = "Nothing to change here — tell Claude: "
-_FIX_LOCG_PASS = ("In Safari, open leagueofcomicgeeks.com, then Develop › Show Web Inspector › Storage › Cookies; "
-                  "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
-_FIX_FANDOM_PASS = ("In Safari, open any Fandom cover image, then Develop › Show Web Inspector › Storage › Cookies; "
-                    "copy cf_clearance and paste it below — with Kometa open in Safari too (the pass only works with the browser that earned it).")
 
 
 def _attn_fix(card: str, kind: str | None, dry_day: bool = False) -> tuple[str, str]:
@@ -561,10 +557,6 @@ def _attn_fix(card: str, kind: str | None, dry_day: bool = False) -> tuple[str, 
     amber on its own card, never counted — Kometa backs off by itself. A source
     that has FAILED (not refused) for a whole day is 'broken': their page shape
     changed, or ours did, and only a code change fixes it."""
-    if card == "locg" and kind == "refused":
-        return "wait", _FIX_LOCG_PASS
-    if card == "fandom" and kind == "refused":
-        return "wait", _FIX_FANDOM_PASS
     if kind == "refused":
         return "wait", "Nothing to do: Kometa backs off and tries again on its own."
     if dry_day:
@@ -638,24 +630,8 @@ def settings_attention() -> list[dict]:
                     "fix": "Paste a token from hardcover.app › Settings › API into the Hardcover card, or switch it off."})
     # PRH, Open Library and ComicBookRoundup need no login — nothing for you to fix,
     # so never a dot (a refusal just rests that source; the harvest card shows it)
-    if on("locg_enabled"):
-        st = _locg_status()
-        waiting = (st.get("locg_topup_waiting") or 0) + (st.get("locg_sweep_pending") or 0)
-        if waiting and not st.get("locg_pass_live"):
-            out.append({"card": "locg", "reason": f"{waiting} lookups waiting on a fresh pass", "fix": _FIX_LOCG_PASS,
-                        "level": "wait"})
-    # Fandom's image CDN only lets a browser's pass through (kometa/images.py FANDOM_HOST):
-    # downloads on, covers waiting, no pass (never pasted, or forgotten after a 403)
-    if on("fandom_enabled") and cfg.get("fandom_download", "0") == "1" and not has("fandom_cf_clearance"):
-        try:
-            from kometa import fandom_covers
-            st = fandom_covers.status(DB_PATH)
-            waiting = max(0, (st.get("covers") or 0) - (st.get("downloaded") or 0))
-        except Exception:
-            waiting = 0
-        if waiting:
-            out.append({"card": "fandom", "reason": f"{waiting} gallery images waiting on a fresh Safari pass",
-                            "fix": _FIX_FANDOM_PASS, "level": "wait"})
+    # LOCG and Fandom wait on a pass only a person can give; the page no longer nags
+    # about it (2026-10-15) — their cards show the field and the queue line, nothing more.
     # set up fine, failing anyway (kometa/health.py) — a switched-off source never nags
     try:
         from kometa import health
@@ -785,7 +761,7 @@ def test_fandom_access():
     from kometa import images, polite
     cf, ua = images._fandom_pass(DB_PATH)
     if not (cf and ua):
-        return {"ok": False, "error": "no pass — paste cf_clearance from Safari with a Fandom image open"}
+        return {"ok": False, "error": "no pass set"}
     url = None
     with db._connect(DB_PATH) as conn:
         for (raw,) in conn.execute("""SELECT extra_json FROM issue_record WHERE extra_json LIKE '%"fandom": {%"covers": [{%' LIMIT 1"""):
