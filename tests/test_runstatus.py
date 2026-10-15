@@ -16,8 +16,8 @@ def test_something_solicited_is_ongoing_whatever_metron_says():
 
 
 def test_metron_completed_and_cancelled_are_finished():
-    assert runstatus.compute({"metron_status": "Completed"}, _iss("2020-01-01"), TODAY)["label"] == "Finished"
-    assert runstatus.compute({"metron_status": "Cancelled"}, _iss("2020-01-01"), TODAY)["label"] == "Cancelled"
+    assert runstatus.compute({"metron_status": "Completed"}, _iss("2020-01-01"), TODAY)["label"] == "Ended"
+    assert runstatus.compute({"metron_status": "Cancelled"}, _iss("2020-01-01"), TODAY)["label"] == "Ended"
 
 
 def test_metron_hiatus_is_hiatus():
