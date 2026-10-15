@@ -120,7 +120,10 @@ def test_an_owned_trade_covers_its_issues_for_counts_and_reading_lists(db_path, 
     with db._connect(db_path) as c:
         cov = {r[0]: r[1] for r in c.execute("SELECT number, covered_by FROM issue_status WHERE tracked_series_id = ?", (ff,))}
     assert cov[67.0].endswith("Unthinkable (2003).cbz") and cov[500.0] and cov[503.0] is None
-    assert db.get_all_series_summaries(db_path)[ff]["missing"] == 1          # only #503
+    # issue-based (2026-10-15): a trade reprint no longer hides the single from the
+    # missing COUNT — all three unowned released issues are missing — but the reading
+    # list still resolves the covered ones as owned-via-trade.
+    assert db.get_all_series_summaries(db_path)[ff]["missing"] == 3
     lid = rl.save_list("FF", [{"series": "Fantastic Four", "number": "67", "volume": "1998"},
                               {"series": "Fantastic Four", "number": "503", "volume": "1998"}], "cbl", None, db_path)
     e = rl.resolve(lid, db_path)["entries"]
