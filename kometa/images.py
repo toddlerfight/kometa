@@ -41,6 +41,13 @@ LANES = {
     "files1.comics.org":         (10, 5.0, 200),     # GCD, volunteer project
 }
 DEFAULT_LANE = (20, 3.0, 500)
+# Hosts we won't fetch covers from, whatever the catalogue offers. files1.comics.org
+# (GCD's cover CDN) sits behind a Cloudflare WAF *block* — a hard 403 "you have been
+# blocked", not a solvable challenge, so FlareSolverr can't clear it and a browser UA
+# doesn't either (verified 2026-10-15). GCD covers are redundant (Metron/ComicVine/
+# Fandom/PRH carry them) and the GCD *metadata* still works; this just stops us hammering
+# a volunteer host that's said no. Drop a host from here to resume fetching it.
+BLOCKED_IMAGE_HOSTS = {"files1.comics.org"}
 # S3 says 403 (not 404) for a key that isn't in the bucket — one missing LOCG cover
 # rested the whole lane for an hour (2026-10-13 21:19). There, only 429/503 refuse.
 NOT_THERE_403 = {"s3.amazonaws.com"}
@@ -452,6 +459,7 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                 return out[:limit]
         try:
             import json
+            from urllib.parse import urlparse
             for r in conn.execute("""SELECT r.tracked_series_id AS sid, r.number, r.covers_json FROM issue_record r
                 JOIN tracked_series s ON s.id = r.tracked_series_id WHERE r.covers_json IS NOT NULL AND r.covers_json != '[]'
                 ORDER BY s.on_pull_list DESC, r.tracked_series_id, r.number"""):
@@ -459,6 +467,8 @@ def pending(path=None, limit: int = 200) -> list[tuple[str, str, str]]:
                     url = best_cover_url(c)
                     if not url or not c.get("id"):
                         continue
+                    if urlparse(url).netloc in BLOCKED_IMAGE_HOSTS:
+                        continue                 # host is walled off (see BLOCKED_IMAGE_HOSTS) — never queue it
                     k = variant_key(r["sid"], r["number"], c["id"])
                     if _wants(have, k, url):
                         out.append((k, url, c.get("source") or "catalogue"))
