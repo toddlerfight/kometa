@@ -3814,12 +3814,13 @@ async function _updateSettingsBadge() {
   const mine = items.filter(it => it.level !== 'wait');
   const el = document.getElementById('settings-badge');
   if (el) {
+    // red = something you can fix here; amber = only hand-offs (tell Claude) pending
     el.textContent = mine.length || '';
-    el.className = 'nav-badge' + (mine.length ? ' red' : '');
+    el.className = 'nav-badge' + (mine.some(it => it.level !== 'broken') ? ' red' : mine.length ? ' amber' : '');
   }
   for (const it of items) {
     const dot = document.getElementById(`dot-${it.card}`);
-    if (dot) { dot.className = `settings-dot ${it.level === 'wait' ? 'warn' : 'bad'}`; dot.title = it.reason; }
+    if (dot) { dot.className = `settings-dot ${it.level === 'fix' ? 'bad' : 'warn'}`; dot.title = it.reason; }
   }
   _renderSettingsAttention(items);
 }

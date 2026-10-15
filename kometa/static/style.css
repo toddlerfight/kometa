@@ -1336,8 +1336,12 @@ select.settings-input {
 }
 .settings-attn-row { border-top: 0; border-right: 0; border-bottom: 0; cursor: pointer; width: 100%; }
 .settings-attn-note { margin-bottom: 20px; }
-/* a hand-off: set up fine, failing anyway, and only a code change fixes it */
-.settings-attn-row.broken .settings-attn-fix, .settings-attn-note.broken .settings-attn-fix { color: var(--pink); }
+/* Colour says whose move it is. Pink = yours, fixable here. Amber = nothing for you
+   to change: their side resting (wait), or broken in a way only a code change fixes
+   (broken, a hand-off to Claude — still counted, so it isn't missed). */
+.settings-attn-row.broken, .settings-attn-note.broken { border-left-color: var(--amb); background: var(--amb-d); }
+.settings-attn-row.broken .settings-attn-reason, .settings-attn-note.broken .settings-attn-reason,
+.settings-attn-note.wait .settings-attn-reason { color: var(--amb); }
 .settings-quiet { margin: -24px 0 32px; color: var(--tq); }
 .act-harvest { margin-top: 32px; }
 /* a jump from the list lands the card's heading below the top bar, not under it */
