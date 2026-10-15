@@ -150,6 +150,13 @@ def _open(path):
     # per commit — the DB lives on a host folder shared into the VM, where each
     # flush is a round trip
     conn.execute("PRAGMA synchronous=NORMAL")
+    # The mount makes every disk page fetch a round trip, so keep as much resident
+    # as we can: a 64MB page cache, 256MB mmap reads, and temp sorts in RAM. These
+    # are per-connection; _connect pools one per thread, so each pays this once.
+    # (journal_mode=WAL is set once at init — it's persistent, not per-connection.)
+    conn.execute("PRAGMA cache_size=-64000")
+    conn.execute("PRAGMA mmap_size=268435456")
+    conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 
 

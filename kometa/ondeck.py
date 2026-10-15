@@ -42,15 +42,24 @@ def _label(number, path_):
 
 
 def _series_name(conn, b) -> tuple[str, int | None, int | None]:
-    """(title, tracked_series_id, shelf_series_id)"""
+    """(title, tracked_series_id, shelf_series_id). The title rides on the row when
+    the source query joined it in (tracked_title / shelf_title — the On Deck queries
+    do, so no per-card SELECT); falls back to a lookup for any row that didn't."""
+    keys = b.keys()
     if b["tracked_series_id"]:
-        r = conn.execute("SELECT title FROM tracked_series WHERE id = ?", (b["tracked_series_id"],)).fetchone()
-        if r:
-            return r["title"], b["tracked_series_id"], b["shelf_series_id"]
+        title = b["tracked_title"] if "tracked_title" in keys else None
+        if title is None:
+            r = conn.execute("SELECT title FROM tracked_series WHERE id = ?", (b["tracked_series_id"],)).fetchone()
+            title = r["title"] if r else None
+        if title:
+            return title, b["tracked_series_id"], b["shelf_series_id"]
     if b["shelf_series_id"]:
-        r = conn.execute("SELECT title FROM shelf_series WHERE id = ?", (b["shelf_series_id"],)).fetchone()
-        if r:
-            return r["title"], None, b["shelf_series_id"]
+        title = b["shelf_title"] if "shelf_title" in keys else None
+        if title is None:
+            r = conn.execute("SELECT title FROM shelf_series WHERE id = ?", (b["shelf_series_id"],)).fetchone()
+            title = r["title"] if r else None
+        if title:
+            return title, None, b["shelf_series_id"]
     return os.path.basename(os.path.dirname(b["path"])), None, None
 
 
@@ -68,7 +77,8 @@ def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
     since = (now - timedelta(days=CONTINUE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with db._connect(path) as conn:
         rows = conn.execute("""
-            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.page, p.updated_at FROM read_progress p JOIN books b ON b.id = p.book_id
+            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.page, p.updated_at, t.title AS tracked_title, s.title AS shelf_title FROM read_progress p JOIN books b ON b.id = p.book_id
+            LEFT JOIN tracked_series t ON t.id = b.tracked_series_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
             WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ? AND b.missing_at IS NULL
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
         return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
@@ -83,8 +93,9 @@ BOOK_COLS = "b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b
 def _series_groups(conn, reader_id):
     """Per series (tracked id or shelf id): books in issue order with progress."""
     rows = conn.execute("""
-        SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.completed, p.updated_at, p.page FROM books b
+        SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.completed, p.updated_at, p.page, t.title AS tracked_title, s.title AS shelf_title FROM books b
         LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
+        LEFT JOIN tracked_series t ON t.id = b.tracked_series_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
         WHERE b.missing_at IS NULL
         ORDER BY b.number IS NULL, b.number, b.path""", (reader_id,)).fetchall()
     groups: dict[tuple, list] = {}
