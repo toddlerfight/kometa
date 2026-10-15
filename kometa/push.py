@@ -278,6 +278,28 @@ def register_device(req: DeviceRequest):
     return {"ok": True}
 
 
+class ForgetRequest(BaseModel):
+    token: str
+
+
+@router.post("/api/push/devices/forget")
+def forget_device(req: ForgetRequest):
+    """Notifications turned off on a device: mark its token dead so send() skips it.
+    Reader-scoped — you can only forget a device registered to you (admin: any)."""
+    tok = (req.token or "").strip().lower()
+    if not tok:
+        raise HTTPException(422, "token required")
+    ensure_tables()
+    from kometa.auth import current_reader, is_admin
+    with db._connect(DB_PATH) as conn:
+        if is_admin():
+            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ?", (tok,))
+        else:
+            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ? AND reader_id = ?",
+                         (tok, current_reader()))
+    return {"ok": True}
+
+
 @router.get("/api/push/status")
 def push_status():
     ensure_tables()

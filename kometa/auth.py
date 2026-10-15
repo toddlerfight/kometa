@@ -380,7 +380,7 @@ READER_GET = [re.compile(p) for p in (
 )]
 READER_WRITE = [re.compile(p) for p in (
     rf"PUT /api/books/{_R}/(progress|mark)", rf"POST /api/books/{_R}/dismiss", rf"PUT /api/series/{_R}/mark",
-    r"POST /api/wantread", rf"DELETE /api/wantread/{_R}", r"POST /api/push/(devices|test)",
+    r"POST /api/wantread", rf"DELETE /api/wantread/{_R}", r"POST /api/push/(devices(/forget)?|test)",
     r"(PUT|PATCH|POST|DELETE) /api/me/.*", r"POST /api/auth/logout",
 )]
 OPEN = [re.compile(p) for p in (r"GET /api/version", r"POST /api/auth/login", r"GET /login")]

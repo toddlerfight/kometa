@@ -145,3 +145,22 @@ def test_each_person_gets_their_own_landings_on_their_own_devices(setup, db_path
     push.flush(db_path, post=lambda u, h, body: got.setdefault(u.rsplit("/", 1)[1][:4], json.loads(body)) and R(200) or R(200))
     assert got["aaaa"]["aps"]["alert"]["body"] == "Pulled #2"
     assert got["bbbb"]["aps"]["alert"]["body"] == "Tess Pulls #2, Tess Reads #2"
+
+
+def test_forget_marks_a_device_dead_and_scopes_to_the_reader(setup, db_path, monkeypatch):
+    from kometa import push, auth
+    monkeypatch.setattr(push, "DB_PATH", db_path)
+    monkeypatch.setattr(auth, "DB_PATH", db_path)
+    with db._connect(db_path) as c:
+        c.execute("DELETE FROM push_devices")
+        c.execute("INSERT INTO push_devices (token, env, reader_id, dead_at) VALUES ('aa','sandbox','me',NULL)")
+        c.execute("INSERT INTO push_devices (token, env, reader_id, dead_at) VALUES ('bb','sandbox','u-tess',NULL)")
+    # a reader can only forget their own device
+    monkeypatch.setattr(auth, "current_reader", lambda: "me")
+    monkeypatch.setattr(auth, "is_admin", lambda: False)
+    push.forget_device(push.ForgetRequest(token="BB"))                 # someone else's: untouched
+    with db._connect(db_path) as c:
+        assert c.execute("SELECT dead_at FROM push_devices WHERE token='bb'").fetchone()[0] is None
+    push.forget_device(push.ForgetRequest(token="aa"))                 # mine: dead
+    with db._connect(db_path) as c:
+        assert c.execute("SELECT dead_at FROM push_devices WHERE token='aa'").fetchone()[0] is not None
