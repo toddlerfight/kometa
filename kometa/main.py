@@ -307,8 +307,8 @@ def _summary(issues):
     wanted = [r for r in issues if not r["owned"] and not r.get("ignored")]
     # Issue-based (2026-10-15): a single a trade reprints is still missing until you
     # own the single. Matches db.get_all_series_summaries and the acquisition sweep.
-    missing = sum(1 for r in wanted if (not r["store_date"] or r["store_date"] < today))
-    upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] >= today)
+    missing = sum(1 for r in wanted if (not r["store_date"] or r["store_date"] <= today))
+    upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] > today)
     soon = [r["store_date"] for r in wanted
             if r["store_date"] and today <= r["store_date"] <= cutoff]
     week_ago = str(date.today() - timedelta(days=db.RECENT_RELEASE_DAYS))

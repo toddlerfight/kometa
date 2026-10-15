@@ -805,8 +805,8 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
                 tracked_series_id,
                 MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
                 SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date < ?) THEN 1 ELSE 0 END) as missing,  -- issue-based: a trade reprint doesn't make the single not-missing
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? THEN 1 ELSE 0 END) as upcoming,
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,  -- issue-based: a trade reprint doesn't make the single not-missing; released-today counts (out today AND missing both hold)
+                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
                 SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
                 MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
                 MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date >= ? AND store_date < '9999' THEN store_date END) as next_upcoming,

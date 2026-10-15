@@ -2005,8 +2005,8 @@ function buildIssueTiles(s) {
   const filtered = s.issues.filter(i => {
     const st = issueStatus(i);
     if (detailTab === 'owned')    return st === 'owned';
-    if (detailTab === 'missing')  return st === 'missing';
-    if (detailTab === 'upcoming') return st === 'upcoming' || st === 'today';
+    if (detailTab === 'missing')  return st === 'missing' || st === 'today';  // out-today + unowned is still missing
+    if (detailTab === 'upcoming') return st === 'upcoming';
     return true;
   }).sort((a, b) => by ? ((by[b.number] ?? -1) - (by[a.number] ?? -1)) || a.number - b.number
     : detailSortDesc ? b.number - a.number : a.number - b.number);

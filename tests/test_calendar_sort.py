@@ -63,14 +63,16 @@ def test_sorts_ahead_of_next_weeks_books(db_path):
     assert s[today_owned]["calendar_date"] < s[next_week]["calendar_date"]
 
 
-def test_library_card_counts_release_day_issue_without_changing_anything_else(db_path):
-    # 2026-10-07, Walking Dead Deluxe read 145/145 with #146 out today. The card
-    # gets out_today; missing/upcoming keep their meaning everywhere else.
+def test_library_card_counts_release_day_issue_as_out_today_and_missing(db_path):
+    # 2026-10-07, Walking Dead Deluxe read 145/145 with #146 out today. Out-today and
+    # missing both hold for a released, unowned issue (2026-10-15 rule): #146 is
+    # out_today AND missing; only #147 (a fortnight out) is upcoming. out_today is a
+    # badge on top of missing, not a separate bucket that hides it.
     sid = _series(db_path, "The Walking Dead Deluxe")
     db.upsert_issue_status(sid, 145.0, d(-21), owned=True, path=db_path)
     db.upsert_issue_status(sid, 146.0, d(0), owned=False, path=db_path)
     db.upsert_issue_status(sid, 147.0, d(14), owned=False, path=db_path)
     card = db.get_all_series_summaries(db_path)[sid]
-    assert (card["owned"], card["missing"], card["out_today"], card["upcoming"]) == (1, 0, 1, 2)
+    assert (card["owned"], card["missing"], card["out_today"], card["upcoming"]) == (1, 1, 1, 1)
     db.upsert_issue_status(sid, 146.0, d(0), owned=True, path=db_path)
     assert db.get_all_series_summaries(db_path)[sid]["out_today"] == 0
