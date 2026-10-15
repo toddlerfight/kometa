@@ -518,20 +518,7 @@ def _extra_budgets() -> dict:
         out["fandom"] = fandom_client.budget()      # the wikis' one throttle: galleries + collected editions
     except Exception:
         pass
-    try:
-        from kometa import marveldc
-        out["marveldc"] = marveldc.marvel.budget()
-    except Exception:
-        pass
     return out
-
-
-def _marveldc_tonight() -> dict | None:
-    try:
-        from kometa import marveldc
-        return marveldc.tonight(DB_PATH)
-    except Exception:
-        return None
 
 
 # Each Settings card's name, and what to DO about a dot — the reason alone said
@@ -546,7 +533,7 @@ _ATTN_TITLES = {
 # The quiet harvesters: no login, no card of their own. Their notes live inside the
 # Harvesters section, and a non-fatal one (resting, or a hand-off already passed
 # on) can be dismissed until it clears and comes back.
-_HARVESTERS = ("prh", "openlibrary", "cbr", "marveldc", "fandom")
+_HARVESTERS = ("prh", "openlibrary", "cbr", "fandom")
 # Level 'broken': set up fine, failing anyway, and nothing in Settings can change it —
 # a hand-off, not an instruction. Counted on the badge like a fix, so it isn't missed.
 _TELL = "Nothing to change here — tell Claude: "
@@ -586,13 +573,6 @@ def _broken_items() -> list[dict]:
             # one run a night at 03:30: past 30 h, last night's didn't happen (the record is the one before)
             out.append({"card": "backup", "reason": f"last night's backup didn't run — the last good one was {when}",
                         "fix": _TELL + "the nightly backup missed a night.", "level": "broken"})
-    except Exception:
-        pass
-    try:
-        t = _marveldc_tonight() or {}
-        if (t.get("asked") or 0) >= 50 and not t.get("matched"):
-            out.append({"card": "marveldc", "reason": f"Marvel.com matched 0 of {t['asked']} issues tonight",
-                        "fix": _TELL + "Marvel.com's pages may have changed shape.", "level": "broken"})
     except Exception:
         pass
     return out
@@ -637,7 +617,7 @@ def settings_attention() -> list[dict]:
         from kometa import health
         keys = {"metron": "metron_enabled", "locg": "locg_enabled", "gcd": "gcd_enabled", "comicvine": "comicvine_enabled",
                 "fandom": "fandom_enabled", "hardcover": "hardcover_enabled", "prh": "prh_enabled",
-                "openlibrary": "openlibrary_enabled", "cbr": "cbr_enabled", "marveldc": "marveldc_enabled"}
+                "openlibrary": "openlibrary_enabled", "cbr": "cbr_enabled"}
         lit = {i["card"] for i in out}
         for u in health.unwell(DB_PATH):
             if on(keys.get(u["card"], "_")) and u["card"] not in lit:
@@ -846,9 +826,6 @@ def get_config():
         "hardcover_configured": bool((cfg.get("hardcover_token") or "").strip()),
         "hardcover_enabled":   cfg.get("hardcover_enabled", "1") != "0",
         # Marvel.com print covers (1i-e): night only, on by default (the user's call, 2026-10-12)
-        "marveldc_enabled":    cfg.get("marveldc_enabled", "1") != "0",
-        "marveldc_hours":      cfg.get("marveldc_hours") or "0-0",     # marveldc.DEFAULT_HOURS: all day
-        "marveldc_tonight":    _marveldc_tonight(),
         "extra_budgets":       _extra_budgets(),
         # Metron: the primary metadata source (docs/reader-spec.md, 2026-10-08)
         "metron_user":         cfg.get("metron_user", ""),

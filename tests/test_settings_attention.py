@@ -118,16 +118,6 @@ def test_a_failed_or_stale_backup_is_a_hand_off(wired):
     assert "failed: disk full" in item["reason"] and "2 oct" in item["reason"]
 
 
-def test_marvel_matching_nothing_is_a_hand_off(wired, monkeypatch):
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})
-    item = next(i for i in main.settings_attention() if i["card"] == "marveldc")
-    assert item["level"] == "broken" and "0 of 100" in item["reason"]
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 30, "kept": 12})
-    assert "marveldc" not in _cards(main.settings_attention())
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 10, "matched": 0, "kept": 0})   # too few to judge
-    assert "marveldc" not in _cards(main.settings_attention())
-
-
 def test_a_source_failing_for_a_day_is_broken_but_a_refusal_waits():
     assert main._attn_fix("prh", "error", dry_day=True)[0] == "broken"
     assert main._attn_fix("prh", "refused", dry_day=True)[0] == "wait"
@@ -136,16 +126,18 @@ def test_a_source_failing_for_a_day_is_broken_but_a_refusal_waits():
 
 # --- harvesters: grouped, and the non-fatal ones can be dismissed ---------------------------
 def test_harvester_trouble_is_grouped_and_dismissable_until_it_clears(wired, monkeypatch):
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})
-    item = next(i for i in main.settings_attention() if i["card"] == "marveldc")
-    assert item["group"] == "harvesters" and item["dismissable"] is True
-    main.dismiss_attention(main.DismissRequest(card="marveldc", level="broken"))
-    assert "marveldc" not in _cards(main.settings_attention())
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 40, "kept": 9})   # it cleared
+    from kometa import health
+    bad = [{"card": "prh", "kind": "error", "reason": "PRH: failing", "dry_day": True}]
+    monkeypatch.setattr(health, "unwell", lambda path=None: bad)
+    item = next(i for i in main.settings_attention() if i["card"] == "prh")
+    assert item["group"] == "harvesters" and item["level"] == "broken" and item["dismissable"] is True
+    main.dismiss_attention(main.DismissRequest(card="prh", level="broken"))
+    assert "prh" not in _cards(main.settings_attention())
+    monkeypatch.setattr(health, "unwell", lambda path=None: [])          # it cleared
     main.settings_attention()
-    assert main._dismissed() == {}                                             # the dismissal is forgotten
-    monkeypatch.setattr(main, "_marveldc_tonight", lambda: {"asked": 100, "matched": 0, "kept": 0})    # back again: shown again
-    assert "marveldc" in _cards(main.settings_attention())
+    assert main._dismissed() == {}                                       # the dismissal is forgotten
+    monkeypatch.setattr(health, "unwell", lambda path=None: bad)         # back again: shown again
+    assert "prh" in _cards(main.settings_attention())
 
 
 def test_what_is_yours_to_fix_cannot_be_dismissed(wired):

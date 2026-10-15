@@ -384,20 +384,16 @@ def wired(tmp_path, monkeypatch):
     return dbp
 
 
-def test_settings_round_trip(wired):
+def test_the_scraper_is_retired_no_settings_surface(wired):
+    # 2026-10-15: Marvel.com/DC.com cover scrape removed (every candidate failed the
+    # UPC match). No config knob, no budget line, no attention dot; the module stays
+    # so the covers already fetched still show via coverupgrade.
     cfg = main.get_config()
-    assert cfg["marveldc_enabled"] is True and cfg["marveldc_hours"] == "0-0"      # all day, by default (marveldc.DEFAULT_HOURS)
-    assert cfg["extra_budgets"]["marveldc"]["cap"] == 400
-    assert {"requests", "matched", "kept"} <= set(cfg["marveldc_tonight"])
-    cfg = main.update_config(main.ConfigRequest(marveldc_enabled="0", marveldc_hours="22 - 6"))
-    assert cfg["marveldc_enabled"] is False and cfg["marveldc_hours"] == "22-6"
-    with pytest.raises(HTTPException):
-        main.update_config(main.ConfigRequest(marveldc_hours="25-7"))
-    assert all(i["card"] != "marveldc" for i in main.settings_attention())     # no login: never a red dot
-    assert main.app.url_path_for("get_report") == "/api/harvest/marveldc-report"
+    assert "marveldc_tonight" not in cfg and "marveldc" not in cfg.get("extra_budgets", {})
+    assert all(i["card"] != "marveldc" for i in main.settings_attention())
 
 
-def test_harvest_progress_has_a_marvel_row(db_path):
+def test_harvest_progress_has_no_marvel_row(db_path):
     rec.ensure_tables(db_path)
     p = harvest.progress(db_path)
-    assert {"asked", "matched", "kept", "upgrades"} <= set(p["marveldc"])
+    assert "marveldc" not in p

@@ -265,9 +265,11 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # no-ops when its Settings toggle is off. No Metron traffic, so no harvest wrapper.
     for mod_name, job_id, offset in (("prh", "harvest_prh", 4), ("openlibrary", "harvest_openlibrary", 6),
                                      ("cbr", "harvest_cbr", 8), ("fandom_covers", "harvest_fandom", 3),
-                                     ("hardcover", "harvest_hardcover", 5),
-                                     # Marvel.com (1i-e): NIGHT ONLY — the tick no-ops outside marveldc_hours
-                                     ("marveldc", "harvest_marveldc", 2)):
+                                     ("hardcover", "harvest_hardcover", 5)):
+        # Marvel.com/DC.com cover scrape retired 2026-10-15: every candidate now
+        # fails the UPC match (marvel.com reissued UPCs), so it matched 0 for nights
+        # on end while burning ~120 requests. The 549 covers it already fetched stay
+        # in the record and still show in the Variants picker (coverupgrade.own_entries).
         try:
             import importlib
             mod = importlib.import_module(f"kometa.{mod_name}")

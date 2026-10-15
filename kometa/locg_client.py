@@ -5,6 +5,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 
+import requests
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,72 @@ S3_THUMB = "https://s3.amazonaws.com/comicgeeks/comics/covers/medium-{}.jpg"
 S3_LARGE = "https://s3.amazonaws.com/comicgeeks/comics/covers/large-{}.jpg"
 _COVER_ID_RE = re.compile(r'covers/(?:large|medium|small)-(\d+)\.jpg')
 
+
+class FlareSolverrResponse:
+    def __init__(self, status_code: int, text: str, headers: dict | None = None, url: str = ""):
+        self.status_code = status_code
+        self.text = text
+        self.headers = requests.structures.CaseInsensitiveDict(headers or {}) if hasattr(requests, "structures") else (headers or {})
+        self.url = url
+
+    def json(self):
+        import json
+        t = _clean_json_text(self.text)
+        return json.loads(t)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code} for {self.url}")
+
+
+def _clean_json_text(text: str) -> str:
+    """FlareSolverr sometimes wraps JSON responses in HTML body/pre tags."""
+    t = (text or "").strip()
+    if t.startswith("<") and ("{" in t or "[" in t):
+        m = re.search(r"<pre[^>]*>(.*?)</pre>", t, re.DOTALL | re.IGNORECASE)
+        if m:
+            t = m.group(1).strip()
+        else:
+            m = re.search(r"<body[^>]*>(.*?)</body>", t, re.DOTALL | re.IGNORECASE)
+            if m:
+                t = m.group(1).strip()
+    return t
+
+
+def _flaresolverr_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: float = 60, **kw) -> FlareSolverrResponse:
+    """Execute a GET request through FlareSolverr's headless Chrome."""
+    from kometa import flaresolverr
+    base = flaresolverr._base()
+    if not base:
+        raise RuntimeError("FlareSolverr not configured")
+    if params:
+        from urllib.parse import urlencode
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urlencode(params, doseq=True)}"
+
+    req_headers = {"User-Agent": _UA, "Referer": BASE + "/"}
+    if headers:
+        req_headers.update(headers)
+
+    payload = {
+        "cmd": "request.get",
+        "url": url,
+        "headers": req_headers,
+        "maxTimeout": int((timeout or 60) * 1000),
+    }
+
+    resp = requests.post(f"{base}/v1", json=payload, timeout=(timeout or 60) + 30)
+    data = resp.json()
+    if data.get("status") != "ok":
+        msg = data.get("message", "unknown error")
+        logger.warning(f"FlareSolverr: request failed for {url} ({msg})")
+        return FlareSolverrResponse(status_code=500, text=msg, url=url)
+
+    sol = data.get("solution") or {}
+    status = int(sol.get("status", 200))
+    text = sol.get("response", "")
+    resp_headers = sol.get("headers") or {}
+    return FlareSolverrResponse(status_code=status, text=text, headers=resp_headers, url=url)
 
 
 _ANON_SESSION_TTL = 1800  # seconds
@@ -30,16 +97,31 @@ _ACCESS_TTL = 30
 
 
 def _access() -> tuple[str, str]:
-    """(token, user_agent) from Settings, or ('', '')."""
+    """(token, user_agent) from FlareSolverr, Settings, or ('', '')."""
     now = time.time()
     if now - _access_cache["ts"] > _ACCESS_TTL:
+        val = ("", "")
         try:
-            from kometa import db
-            cfg = db.get_config(db.DB_PATH)
-            _access_cache["val"] = ((cfg.get("locg_cf_clearance") or "").strip(),
-                                    (cfg.get("locg_user_agent") or "").strip())
-        except Exception:
-            _access_cache["val"] = ("", "")
+            from kometa import flaresolverr
+            if flaresolverr.enabled():
+                got = flaresolverr.clearance(BASE)
+                if got:
+                    ua, cookies = got
+                    tok = cookies.get("cf_clearance", "")
+                    if tok:
+                        val = (tok, ua)
+        except Exception as e:
+            logger.debug(f"FlareSolverr clearance lookup failed: {e}")
+
+        if not val[0]:
+            try:
+                from kometa import db
+                cfg = db.get_config(db.DB_PATH)
+                val = ((cfg.get("locg_cf_clearance") or "").strip(),
+                       (cfg.get("locg_user_agent") or "").strip())
+            except Exception:
+                val = ("", "")
+        _access_cache["val"] = val
         _access_cache["ts"] = now
     return _access_cache["val"]
 
@@ -215,6 +297,13 @@ def _note_refusal(r):
     if not refused:
         return
 
+    try:
+        from kometa import flaresolverr
+        if flaresolverr.enabled():
+            flaresolverr.forget(BASE)
+    except Exception:
+        pass
+
     if _access()[0] and r.status_code != 429:
         logger.info("LOCG refused the configured token — dropping it")
         _forget_access()
@@ -235,6 +324,30 @@ def _note_refusal(r):
 def probe() -> dict:
     """One request to LOCG, ignoring Kometa's own pause. On success the pause is
     lifted and work resumes; on refusal the pause carries on."""
+    from kometa import flaresolverr
+    if flaresolverr.enabled():
+        try:
+            r = _flaresolverr_get(
+                f"{BASE}/search/ajax_issues",
+                params={"query": "Batman"},
+                headers={"X-Requested-With": "XMLHttpRequest", "Referer": BASE + "/"},
+                timeout=25,
+            )
+            if r.status_code == 200:
+                _pause["until"] = 0.0
+                try:
+                    from kometa import db
+                    db.set_config({"locg_paused_until": "0"}, db.DB_PATH)
+                except Exception:
+                    pass
+                return {"ok": True, "status": 200, "with_pass": True, "via_flaresolverr": True,
+                        "detail": "LOCG answered via FlareSolverr — pause lifted"}
+            _note_refusal(r)
+            return {"ok": False, "status": r.status_code, "with_pass": False, "via_flaresolverr": True,
+                    "detail": f"LOCG refused us ({r.status_code}) — staying paused"}
+        except Exception as e:
+            return {"ok": False, "status": None, "detail": f"FlareSolverr unreachable: {e}"}
+
     from curl_cffi import requests as _cffi
     s = _cffi.Session(impersonate=_impersonation())
     with_pass = _apply_access(s)
@@ -257,9 +370,10 @@ def probe() -> dict:
         except Exception:
             pass
         return {"ok": True, "status": 200, "with_pass": with_pass,
-                "detail": "LOCG answered — pause lifted"}
+                "detail": "LOCG answered" + (" with your browser's pass" if with_pass else "") + " — pause lifted"}
     return {"ok": False, "status": r.status_code, "with_pass": with_pass,
-            "detail": f"LOCG refused us ({r.status_code}) — staying paused"}
+            "detail": ("your browser's pass has expired — LOCG refused it" if with_pass else
+                       "LOCG still refusing (" + str(r.status_code) + ") — staying paused")}
 
 
 def locg_paused() -> float | None:
@@ -273,40 +387,37 @@ def locg_paused() -> float | None:
 
 
 def _anon_get_fn():
-    """A get(url, **kw) callable for LOCG without login. Warms the homepage once
-    for the session cookie; the session is cached and reused until _ANON_SESSION_TTL
-    expires.
-
-    Rotation is double-checked-locked: parallel callers that see the TTL expire at
-    once would each rebuild and leak connection pools. One thread rebuilds under
-    _anon_lock; the losers re-check inside the lock and reuse its work. The warm-up
-    GET runs while holding the lock, serializing against in-flight closure .get()s."""
+    """A get(url, **kw) callable for LOCG without login. Routes through FlareSolverr
+    when configured, or curl_cffi with impersonation and any available access token."""
     _check_paused()
     cookie = _access()[0]
     def _fresh():
-        # a session built with a different (or no) token than config is stale too
+        from kometa import flaresolverr
+        if flaresolverr.enabled():
+            return _anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL
         return (_anon_session["get"] is not None and time.time() - _anon_session["ts"] <= _ANON_SESSION_TTL
                 and _anon_session.get("cookie", "") == cookie)
-    # Unlocked fast path — a stale read here just falls through to the lock,
-    # where the truth gets re-checked. Fresh-session reads skip the lock entirely.
+
     if _fresh():
         return _anon_session["get"]
     with _anon_lock:
-        # The double-check: whoever won the lock race may have already rebuilt.
         now = time.time()
         if _fresh():
             return _anon_session["get"]
+
+        from kometa import flaresolverr
+        fs_on = flaresolverr.enabled()
+
         from curl_cffi import requests as _cffi
         s = _cffi.Session(impersonate=_impersonation())
         _apply_access(s)
         _anon_session["cookie"] = cookie
-        try:
-            s.get(BASE + "/", timeout=20)
-        except Exception:
-            pass
-        # Close the outgoing session before swapping it in. We hold _anon_lock,
-        # and every closure .get() needs it too — so nothing is mid-flight on
-        # the old session when it dies.
+        if not fs_on:
+            try:
+                s.get(BASE + "/", timeout=20)
+            except Exception:
+                pass
+
         old = _anon_session["session"]
         if old is not None:
             try:
@@ -314,10 +425,8 @@ def _anon_get_fn():
             except Exception:
                 pass
         _anon_session["session"] = s
+
         if _anon_session["get"] is None:
-            # The closure reads the CURRENT session out of the dict under the lock
-            # (instead of capturing one), so callers holding a get fn from before a
-            # rotation transparently ride the new session — no zombie handles.
             def _get(url, **kw):
                 kw.setdefault("timeout", 25)
                 _check_paused()
@@ -326,8 +435,23 @@ def _anon_get_fn():
                 if not _anon_lock.acquire(timeout=MAX_WAIT_S if interactive else -1):
                     raise LocgBusy("LOCG is busy with background work")
                 try:
-                    _pace(max_wait=MAX_WAIT_S if interactive else None)   # ONE pace for every caller, under the same lock
-                    _check_paused()              # the wait may have outlasted a pause someone else hit
+                    _pace(max_wait=MAX_WAIT_S if interactive else None)
+                    _check_paused()
+
+                    from kometa import flaresolverr
+                    if flaresolverr.enabled():
+                        try:
+                            r = _flaresolverr_get(url, **kw)
+                            _note_refusal(r)
+                            return r
+                        except Exception as e:
+                            logger.warning(f"FlareSolverr GET failed for {url} ({e}); falling back to session")
+                            if _anon_session["session"] is not None:
+                                r = _anon_session["session"].get(url, **kw)
+                                _note_refusal(r)
+                                return r
+                            raise
+
                     r = _anon_session["session"].get(url, **kw)
                 finally:
                     _anon_lock.release()
@@ -676,6 +800,7 @@ _VARIANT_CACHE_TTL = 6 * 3600  # seconds
 # bounded: the LOCG sweep fetches variants for every owned issue (~7k), and a
 # plain dict kept every one until restart (10–30 MB) — oldest go first now
 import collections as _collections
+_cache_lock = threading.Lock()
 _variant_cache: "_collections.OrderedDict[str, tuple[float, dict]]" = _collections.OrderedDict()
 _VARIANT_CACHE_MAX = 512
 
@@ -690,16 +815,18 @@ _page_cache: "_collections.OrderedDict[str, tuple[float, str]]" = _collections.O
 
 def _issue_page(locg_issue_id, get_fn) -> str:
     key = str(locg_issue_id)
-    hit = _page_cache.get(key)
-    if hit and time.time() - hit[0] < _PAGE_CACHE_TTL:
-        return hit[1]
+    with _cache_lock:
+        hit = _page_cache.get(key)
+        if hit and time.time() - hit[0] < _PAGE_CACHE_TTL:
+            return hit[1]
     r = get_fn(f"{BASE}/comic/{key}/comic", headers={'Referer': BASE + '/', 'Accept': 'text/html'})
     if hasattr(r, 'raise_for_status'):
         r.raise_for_status()
-    _page_cache[key] = (time.time(), r.text)
-    _page_cache.move_to_end(key)
-    while len(_page_cache) > _PAGE_CACHE_MAX:
-        _page_cache.popitem(last=False)
+    with _cache_lock:
+        _page_cache[key] = (time.time(), r.text)
+        _page_cache.move_to_end(key)
+        while len(_page_cache) > _PAGE_CACHE_MAX:
+            _page_cache.popitem(last=False)
     return r.text
 
 
@@ -766,9 +893,10 @@ def fetch_community(locg_issue_id) -> dict:
 def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
     """Shared variant-scraping logic. get_fn(url, **kwargs) must return a
     requests.Response. Results are cached per issue id for _VARIANT_CACHE_TTL."""
-    cached = _variant_cache.get(locg_issue_id)
-    if cached and time.time() - cached[0] < _VARIANT_CACHE_TTL:
-        return cached[1]
+    with _cache_lock:
+        cached = _variant_cache.get(locg_issue_id)
+        if cached and time.time() - cached[0] < _VARIANT_CACHE_TTL:
+            return cached[1]
 
     soup = BeautifulSoup(_issue_page(locg_issue_id, get_fn), 'html.parser')
     title_tag = soup.find('h1') or soup.find('title')
@@ -798,10 +926,11 @@ def _fetch_variants_with_get(locg_issue_id: str, get_fn) -> dict:
                            'large': S3_LARGE.format(vid)})
 
     result = {'title': issue_title, 'covers': covers}
-    _variant_cache[locg_issue_id] = (time.time(), result)
-    _variant_cache.move_to_end(locg_issue_id)
-    while len(_variant_cache) > _VARIANT_CACHE_MAX:
-        _variant_cache.popitem(last=False)
+    with _cache_lock:
+        _variant_cache[locg_issue_id] = (time.time(), result)
+        _variant_cache.move_to_end(locg_issue_id)
+        while len(_variant_cache) > _VARIANT_CACHE_MAX:
+            _variant_cache.popitem(last=False)
     return result
 
 

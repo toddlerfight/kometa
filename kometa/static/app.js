@@ -3742,7 +3742,7 @@ function _startHarvestPoll() {
 // refusal. Their trouble, when there is any, is written out beneath it (and can be
 // dismissed when it isn't yours to fix).
 function _harvestersLine(cfg) {
-  const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup', marveldc: 'Marvel.com / DC.com' };
+  const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup' };
   const b = cfg.extra_budgets || {};
   const resting = Object.keys(names).filter(k => b[k] && b[k].paused).map(k => names[k]);
   return `${Object.values(names).join(' · ')} — no login, nothing to set.${resting.length ? ` Resting after a refusal, back on their own: ${esc(resting.join(', '))}.` : ''}`;
@@ -3791,9 +3791,6 @@ async function _renderHarvest() {
   const hc = h.hardcover;
   const hardcover = !hc ? '—' : off(hc) ? 'switched off' : !hc.configured ? 'no token'
     : `${n(hc.rated)} rated · ${n(hc.none)} not there${today(hc.budget)}`;
-  const md = h.marveldc;
-  const marveldc = !md ? '—' : off(md) ? 'switched off'
-    : `${n(md.asked)} asked · ${n(md.matched)} matched · ${n(md.kept)} covers kept · ${n(md.upgrades)} upgrades${today(md.budget)}`;
   const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
   el.innerHTML = [
     row('Owned issues', n(o.owned)),
@@ -3811,7 +3808,6 @@ async function _renderHarvest() {
     row('ComicBookRoundup', cbr),
     row('Fandom wikis', fandom),
     row('Hardcover', hardcover),
-    row('Marvel.com', marveldc),
   ].join('');
 }
 
@@ -3841,7 +3837,7 @@ async function _updateSettingsBadge() {
 // and again inside the card itself. A red dot with a hover tooltip told an iPad
 // nothing. Tap a row at the top to jump to its card.
 const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'sec-harvesters',
-                        prh: 'sec-harvesters', openlibrary: 'sec-harvesters', cbr: 'sec-harvesters', marveldc: 'sec-harvesters', fandom: 'sec-harvesters' };
+                        prh: 'sec-harvesters', openlibrary: 'sec-harvesters', cbr: 'sec-harvesters', fandom: 'sec-harvesters' };
 function _attnTarget(card) {
   const id = _ATTN_SECTION[card];
   const el = (id && document.getElementById(id)) || document.getElementById(`sec-${card}`)
@@ -4757,18 +4753,6 @@ function _requestsToday(cfg, key) {
   return `<div class="settings-stat"><span>Requests today</span><b>${today}</b></div>`;
 }
 
-// Marvel.com's night: requests used today, then what the last night matched and kept
-function _marveldcTonight(cfg) {
-  const t = cfg.marveldc_tonight || {};
-  const n = v => (v == null ? '—' : Number(v).toLocaleString());
-  const stat = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
-  return [
-    stat('Requests today', `${n(t.requests)} of ${n(t.cap)}${t.paused ? ' · resting' : ''}`),
-    stat('Matched', n(t.matched)),
-    stat('Covers kept', n(t.kept)),
-  ].join('');
-}
-
 function _politeSourceSection(key, title, tag, cfg, extra = '') {
   const on = !!cfg[`${key}_enabled`];
   // no login, so no test row to carry the dot: it sits in the head (kometa/health.py
@@ -4905,11 +4889,6 @@ async function _settingsChanged(el) {
   if (f.key === 'sync_hours' && !_validSyncHours(val)) {
     el.classList.add('input-bad');
     _whisper(f.card, 'hours are 0–23, comma-separated', true);
-    return;
-  }
-  if (f.key === 'marveldc_hours' && !_validHourWindow(val)) {
-    el.classList.add('input-bad');
-    _whisper(f.card, 'two hours 0–23, from-to, e.g. 23-7', true);
     return;
   }
   el.classList.remove('input-bad');

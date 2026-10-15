@@ -91,8 +91,9 @@ def test_source_toggles_render_and_flip(app):
 
 
 def test_quiet_sources_are_a_line_not_cards_and_the_board_is_on_activity(app):
-    # PRH / Open Library / ComicBookRoundup / Marvel.com need nothing from you (2026-10-15):
-    # one line names them; their numbers (the harvest board) moved to Activity.
+    # PRH / Open Library / ComicBookRoundup need nothing from you (2026-10-15):
+    # one section names them; their numbers (the harvest board) moved to Activity.
+    # (Marvel.com's scraper was retired the same day.)
     app.locator('.nav-item[data-view="settings"]').click()
     expect(app.locator('#sec-harvesters')).to_contain_text('ComicBookRoundup')   # one section names them
     for key in ('prh', 'openlibrary', 'cbr', 'marveldc'):
@@ -100,6 +101,5 @@ def test_quiet_sources_are_a_line_not_cards_and_the_board_is_on_activity(app):
     expect(app.locator('#harvest-progress')).to_have_count(0)
     app.locator('.nav-item[data-view="activity"]').click()
     expect(app.locator('#harvest-progress')).to_contain_text('ComicBookRoundup')
-    expect(app.locator('#harvest-progress')).to_contain_text('Marvel.com')
 
 

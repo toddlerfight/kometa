@@ -109,3 +109,39 @@ def test_probe_matrix_tries_handshakes_until_one_passes_and_forgets_nothing(wire
     db.set_config({"locg_impersonate": "chrome145"}, wired)
     lc._access_cache["ts"] = 0.0
     assert lc._impersonation() == "chrome145"
+
+
+def test_flaresolverr_clears_locg_without_manual_token(wired, monkeypatch):
+    import kometa.flaresolverr as fs
+    monkeypatch.setattr(fs, "_base", lambda: "http://nas:8191")
+    monkeypatch.setattr(fs, "clearance", lambda url: ("UA-Flare", {"cf_clearance": "auto_clearance_123"}))
+
+    calls = []
+    def fake_fs_get(url, **kw):
+        calls.append(url)
+        return lc.FlareSolverrResponse(200, "<ul><li class='media'><a href='/comics/series/1/'>Batman</a><span class='title'>Batman</span></li></ul>")
+
+    monkeypatch.setattr(lc, "_flaresolverr_get", fake_fs_get)
+
+    # 1. _access() automatically gets clearance from FlareSolverr without manual token
+    token, ua = lc._access()
+    assert token == "auto_clearance_123" and ua == "UA-Flare"
+
+    # 2. probe() routes through FlareSolverr
+    r = lc.probe()
+    assert r["ok"] and r["via_flaresolverr"] and "FlareSolverr" in r["detail"]
+
+    # 3. _anon_get_fn() routes requests through FlareSolverr
+    fn = lc._anon_get_fn()
+    res = fn(f"{lc.BASE}/search/ajax_issues", params={"query": "Batman"})
+    assert res.status_code == 200
+    assert any("search/ajax_issues" in c for c in calls)
+
+
+def test_flaresolverr_json_cleaning():
+    resp_raw = lc.FlareSolverrResponse(200, '{"list": "ok"}')
+    assert resp_raw.json() == {"list": "ok"}
+
+    resp_html = lc.FlareSolverrResponse(200, '<html><body><pre>{"list": "wrapped"}</pre></body></html>')
+    assert resp_html.json() == {"list": "wrapped"}
+
