@@ -183,3 +183,39 @@ def test_warm_lists_skips_when_nothing_changed(db_path, monkeypatch):
     sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
     rel.warm_lists(db_path)
     assert builds == [1, 1]                                                        # a new run: rebuilt
+
+
+def test_an_empty_answer_with_nothing_to_ask_is_retried_tomorrow_not_next_month(db_path):
+    """4 Kids Walk Into A Bank: signals filled before its issues landed → an empty row
+    cached for a month, nothing suggested. Now the empty row is dated to come back tomorrow,
+    and the trickle asks again as soon as the run has credits or a Metron issue."""
+    sid = db.add_series(title="4 Kids Walk Into A Bank", publisher="Black Mask", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = 15157 WHERE id = ?", (sid,))
+    assert rel.fill_signals(sid, db_path, detail=lambda mid: {"credits": []}) is False       # nothing to ask yet
+    sig = rel._signals(db_path)[sid]
+    assert sig["creators"] == [] and rel._stale(sig["fetched_at"]) is False                   # not stale yet…
+    with db._connect(db_path) as c:
+        c.execute("UPDATE series_signals SET fetched_at = datetime(fetched_at, '-1 days', '-1 minutes') WHERE tracked_series_id = ?", (sid,))
+    assert rel._stale(rel._signals(db_path)[sid]["fetched_at"]) is True                     # …but it is after a day
+    # the issues land with Metron ids: the next trickle asks again at once, even though the row is fresh
+    rel.fill_signals(sid, db_path, detail=lambda mid: {"credits": []})
+    db.upsert_issue_status(sid, 1.0, "2016-01-01", 1, metron_issue_id=162437, path=db_path)
+    asked = []
+    import kometa.metron_client as mc
+    orig = mc.issue_detail
+    mc.issue_detail = lambda mid: (asked.append(mid) or {"credits": [{"role": "Writer", "name": "Matthew Rosenberg", "metron_creator_id": 7}], "arcs": []})
+    try:
+        assert rel.trickle_signals(path=db_path) == 1
+    finally:
+        mc.issue_detail = orig
+    assert asked == [162437]
+    assert rel._signals(db_path)[sid]["creators"][0]["name"] == "Matthew Rosenberg"
+
+
+def test_trickle_covers_locg_only_runs(db_path):
+    sid = db.add_series(title="Only On LOCG", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET locg_series_id = 999 WHERE id = ?", (sid,))
+    assert rel.trickle_signals(path=db_path) == 1                 # it gets a row (empty, retried tomorrow) instead of never
+    assert sid in rel._signals(db_path)

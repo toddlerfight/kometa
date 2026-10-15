@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
 SIGNAL_TTL_DAYS = 30
+EMPTY_RETRY_DAYS = 1                 # an empty answer with nothing to ask is retried this soon
 RECENT_DAYS = 60
 _ROLE_WEIGHT = {"writer": 3.0, "story": 3.0, "script": 3.0, "plot": 2.0, "artist": 2.0, "penciller": 2.0,
                 "inker": 1.0, "colorist": 0.5, "letterer": 0.25, "cover": 0.0}
@@ -92,10 +93,15 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
             if c.get("name"):
                 creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
         arcs = [a for a in (d.get("arcs") or []) if a]
+    asked = bool(issue) or bool(rows)
     with db._connect(path) as conn:
+        # Nothing to ask yet (the issues or their credits haven't landed): the empty answer
+        # is dated so it's looked at again tomorrow, not in a month. 4 Kids Walk Into A Bank
+        # got its empty row half an hour before its issues arrived and showed nothing for a day.
+        stamp = "datetime('now')" if asked else f"datetime('now', '-{SIGNAL_TTL_DAYS - EMPTY_RETRY_DAYS} days')"
         conn.execute("INSERT OR REPLACE INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) "
-                     "VALUES (?, ?, ?, datetime('now'))", (series_id, json.dumps(creators), json.dumps(arcs)))
-    return bool(issue) or bool(rows)
+                     f"VALUES (?, ?, ?, {stamp})", (series_id, json.dumps(creators), json.dumps(arcs)))
+    return asked
 
 
 def _signals(path) -> dict[int, dict]:
@@ -121,13 +127,33 @@ def _stale(fetched_at: str | None) -> bool:
         return True
 
 
+def _askable(path) -> set[int]:
+    """Series with something fill_signals can read: a record row with credits, or an issue
+    with a Metron id."""
+    from kometa.record import ensure_tables as _rec
+    _rec(path)
+    with db._connect(path) as conn:
+        return ({r[0] for r in conn.execute("SELECT DISTINCT tracked_series_id FROM issue_record WHERE credits_json IS NOT NULL AND credits_json NOT IN ('', '[]')")}
+                | {r[0] for r in conn.execute("SELECT DISTINCT tracked_series_id FROM issue_status WHERE metron_issue_id IS NOT NULL")})
+
+
 def trickle_signals(limit: int = 20, path=None) -> int:
     """Background: fill signals for series that have none (or stale ones).
     Stops at the first Metron refusal — the budget is shared with everything."""
     path = path or DB_PATH
     have = _signals(path)
-    todo = [s for s in db.get_all_series(path) if s.get("kind") != "arc" and s.get("metron_series_id")
-            and (s["id"] not in have or _stale(have[s["id"]]["fetched_at"]) or _needs_ids(have[s["id"]]))]
+    askable = _askable(path)
+    def due(s):
+        g = have.get(s["id"])
+        if g is None:
+            return True
+        # an empty row on a run that now has credits or a Metron issue to ask: ask again now
+        return _stale(g["fetched_at"]) or _needs_ids(g) or (not g["creators"] and s["id"] in askable)
+    # LOCG-only runs count too: fill_signals reads the record's LOCG credits (or queues the
+    # top-up) — before, 99 of them never got a row and showed no Related at all
+    todo = [s for s in db.get_all_series(path) if s.get("kind") != "arc"
+            and (s.get("metron_series_id") or s.get("locg_series_id")) and due(s)]
+    todo.sort(key=lambda s: (s["id"] in have, s["id"] not in askable))   # new rows first, then empties that can be asked
     n = 0
     from kometa import metron_client
     for s in todo[:limit]:
