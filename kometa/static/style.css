@@ -1735,6 +1735,8 @@ select.settings-input {
   font-size: var(--fs-body);
   color: var(--tq);
 }
+/* the download queue when idle: a plain left-aligned line under the Downloads header */
+.act-empty-line { color: var(--tq); font-size: var(--fs-body); padding: 8px 0 4px; }
 
 .chip {
   font-size: var(--fs-label);

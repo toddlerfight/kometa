@@ -516,9 +516,32 @@ def _lane_limiter(host: str):
     return _lane_limiters[host]
 
 
+_fandom_access_cache = {"ts": 0.0, "val": ("", "")}
+_FANDOM_ACCESS_TTL = 30
+
+
 def _fandom_pass(path=None) -> tuple[str, str]:
-    cfg = db.get_config(path or DB_PATH)
-    return (cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip()
+    now = time.time()
+    if now - _fandom_access_cache["ts"] > _FANDOM_ACCESS_TTL:
+        val = ("", "")
+        try:
+            from kometa import flaresolverr
+            if flaresolverr.enabled():
+                got = flaresolverr.clearance("https://" + FANDOM_HOST)
+                if got:
+                    ua, cookies = got
+                    tok = cookies.get("cf_clearance", "")
+                    if tok:
+                        val = (tok, ua)
+        except Exception as e:
+            logger.debug(f"FlareSolverr Fandom clearance lookup failed: {e}")
+
+        if not val[0]:
+            cfg = db.get_config(path or DB_PATH)
+            val = ((cfg.get("fandom_cf_clearance") or "").strip(), (cfg.get("fandom_user_agent") or "").strip())
+        _fandom_access_cache["val"] = val
+        _fandom_access_cache["ts"] = now
+    return _fandom_access_cache["val"]
 
 
 def _lane_lock(host: str):
@@ -561,9 +584,11 @@ def _lane_fetch(lim, host: str = "", path=None):
     headers = {}
     if host == FANDOM_HOST:
         cf, ua = _fandom_pass(path)
-        headers = {"Cookie": f"cf_clearance={cf}", "User-Agent": ua}
+        if cf:
+            headers = {"Cookie": f"cf_clearance={cf}", "User-Agent": ua}
 
     def get(url):
+        nonlocal headers
         if host == FANDOM_HOST and "format=" not in url:
             # the stored original, not the WebP this UA would otherwise get
             url += ("&" if "?" in url else "?") + "format=original"
@@ -571,6 +596,18 @@ def _lane_fetch(lim, host: str = "", path=None):
             r = lim.get(url, headers=headers) if headers else lim.get(url)
         except polite.SourceUnavailable as e:
             if host == FANDOM_HOST and "(403)" in str(e):
+                from kometa import flaresolverr
+                if flaresolverr.enabled():
+                    flaresolverr.forget("https://" + FANDOM_HOST)
+                    _fandom_access_cache["ts"] = 0.0
+                    cf, ua = _fandom_pass(path)
+                    if cf:
+                        headers = {"Cookie": f"cf_clearance={cf}", "User-Agent": ua}
+                        try:
+                            r = lim.get(url, headers=headers)
+                            return r.content if r.status_code == 200 and r.content else None
+                        except Exception:
+                            pass
                 logger.info("Fandom images: token no longer working — dropped")
                 db.set_config({"fandom_cf_clearance": "", "fandom_cf_set_at": ""}, path or DB_PATH)
             raise

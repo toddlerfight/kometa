@@ -4188,11 +4188,11 @@ function _buildActivityHtml(queue) {
   const completed  = queue.filter(q => !ACT_ACTIVE_STATES.includes(q.state));
 
   if (!queue.length) {
-    setApp(`<div class="act-wrap"><div class="act-empty">
-      <div class="act-empty-icon">◌</div>
-      <div class="act-empty-msg">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
-      <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
-    </div>${_harvestCardHtml()}</div>`);
+    setApp(`<div class="act-wrap">
+      <div class="act-section settings-card" data-sec="empty">
+        ${_actHeader('Downloads')}
+        <div class="act-empty-line">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
+      </div>${_harvestCardHtml()}</div>`);
     _startHarvestPoll();
     return;
   }
@@ -4200,7 +4200,7 @@ function _buildActivityHtml(queue) {
   let html = '<div class="act-wrap">';
   if (inProgress.length) {
     html += `<div class="act-section settings-card" data-sec="progress">
-      ${_actHeader('In progress')}
+      ${_actHeader('Downloads')}
       ${inProgress.map(_actRowHtml).join('')}
     </div>`;
   }
@@ -4312,7 +4312,7 @@ async function _reconcileActivity(queue) {
       if (!secEl) {
         const t = document.createElement('template');
         t.innerHTML = sec === 'progress'
-          ? `<div class="act-section settings-card act-fade-in" data-sec="progress">${_actHeader('In progress')}</div>`
+          ? `<div class="act-section settings-card act-fade-in" data-sec="progress">${_actHeader('Downloads')}</div>`
           : `<div class="act-section settings-card act-fade-in" data-sec="completed">${_actHeader(_actShowHistory ? 'History' : 'Completed')}</div>`;
         secEl = t.content.firstElementChild;
         const board = wrap.querySelector('.act-section[data-sec="harvest"]');
