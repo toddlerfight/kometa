@@ -4560,9 +4560,7 @@ async function renderSettings() {
           <div id="harvesters-errors"></div>
         </div>
         ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
-          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>
-          ${_settingsField('f-fandom-cf', 'Access token (images)', '', { set: cfg.fandom_cf_configured, ph: 'token', test: { cardId: 'fandom', configured: cfg.fandom_cf_configured } })}
-          ${cfg.fandom_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.fandom_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}`)}
+          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>`)}
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4612,10 +4610,9 @@ const _SETTINGS_FIELDS = {
   'f-gcd-user':        { card: 'gcd',       key: 'gcd_user',        test: 'gcd' },
   'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
   'f-hardcover-token': { card: 'hardcover', key: 'hardcover_token', test: 'hardcover', secret: true },
-  'f-fandom-cf':       { card: 'fandom',    key: 'fandom_cf_clearance', test: 'fandom', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', flaresolverr: 'flaresolverr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', hardcover: 'hardcover', fandom: 'fandom' };
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', flaresolverr: 'flaresolverr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', hardcover: 'hardcover' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
@@ -4720,9 +4717,9 @@ function _requestsToday(cfg, key) {
 function _politeSourceSection(key, title, tag, cfg, extra = '') {
   const on = !!cfg[`${key}_enabled`];
   // no login, so no test row to carry the dot: it sits in the head (kometa/health.py
-  // lights it when the source keeps failing). Fandom's pass field brings its own.
+  // lights it when the source keeps failing).
   return `<div class="settings-section ${on ? '' : 'section-off'}" id="sec-${key}" style="margin-top:32px">
-    ${_settingsSectionHead(title, tag, `t-${key}`, on, key === 'fandom' ? '' : `dot-${key}`)}
+    ${_settingsSectionHead(title, tag, `t-${key}`, on, `dot-${key}`)}
     <div class="settings-section-body"><div class="settings-section-inner">
       <div class="settings-card">
         ${_requestsToday(cfg, key)}
@@ -4857,7 +4854,6 @@ async function _settingsChanged(el) {
   el.classList.remove('input-bad');
 
   const body = { [f.key]: val };
-  if (f.key === 'fandom_cf_clearance') body.fandom_user_agent = navigator.userAgent;   // same: record this browser's UA
   try {
     const cfg = await api.patch('/api/config', body);
     // Settings autosave changes what the SERVER knows, but every render decision
