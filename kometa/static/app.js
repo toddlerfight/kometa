@@ -3739,14 +3739,19 @@ function _startHarvestPoll() {
 // Background sources that need nothing from you: named once so you know they exist,
 // 'resting' when one has backed off. Their numbers live on Activity (the harvest board).
 function _quietSourcesLine(cfg) {
+  // nothing to say while they're all fine; a line only when one has backed off
   const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup', marveldc: 'Marvel.com / DC.com' };
   const b = cfg.extra_budgets || {};
   const resting = Object.keys(names).filter(k => b[k] && b[k].paused).map(k => names[k]);
-  return `Running quietly in the background: ${Object.values(names).join(', ')}.${resting.length ? ` Resting: ${esc(resting.join(', '))}.` : ''}`;
+  return resting.length ? `<div class="settings-help settings-quiet">Resting after a refusal, back on its own: ${esc(resting.join(', '))}.</div>` : '';
 }
-// the board itself: appended under the Activity list
+// Every block on Activity wears the same header as a Settings card: bold caps
+// title, an italic tag, a rule beneath. The queue sections and the harvest board alike.
+function _actHeader(title, tag = '') {
+  return `<div class="settings-card-header"><span>${esc(title)}${tag ? ` <span class="settings-opt">${esc(tag)}</span>` : ''}</span></div>`;
+}
 function _harvestCardHtml() {
-  return `<div class="act-section act-harvest" data-sec="harvest"><div class="act-section-hdr">Library harvest</div><div id="harvest-progress"></div></div>`;
+  return `<div class="act-section settings-card act-harvest" data-sec="harvest">${_actHeader('Library harvest', 'background')}<div id="harvest-progress"></div></div>`;
 }
 
 async function _renderHarvest() {
@@ -4186,13 +4191,14 @@ function _buildActivityHtml(queue) {
 
   let html = '<div class="act-wrap">';
   if (inProgress.length) {
-    html += `<div class="act-section" data-sec="progress">
-      <div class="act-section-hdr">In Progress</div>
+    html += `<div class="act-section settings-card" data-sec="progress">
+      ${_actHeader('In progress')}
       ${inProgress.map(_actRowHtml).join('')}
     </div>`;
   }
   if (completed.length) {
-    html += `<div class="act-section" data-sec="completed">
+    html += `<div class="act-section settings-card" data-sec="completed">
+      ${_actHeader(_actShowHistory ? 'History' : 'Completed')}
       ${completed.map(_actRowHtml).join('')}
     </div>`;
   }
@@ -4298,13 +4304,13 @@ async function _reconcileActivity(queue) {
       if (!secEl) {
         const t = document.createElement('template');
         t.innerHTML = sec === 'progress'
-          ? '<div class="act-section act-fade-in" data-sec="progress"><div class="act-section-hdr">In Progress</div></div>'
-          : '<div class="act-section act-fade-in" data-sec="completed"></div>';
+          ? `<div class="act-section settings-card act-fade-in" data-sec="progress">${_actHeader('In progress')}</div>`
+          : `<div class="act-section settings-card act-fade-in" data-sec="completed">${_actHeader(_actShowHistory ? 'History' : 'Completed')}</div>`;
         secEl = t.content.firstElementChild;
         const board = wrap.querySelector('.act-section[data-sec="harvest"]');
         sec === 'progress' ? wrap.prepend(secEl) : board ? wrap.insertBefore(secEl, board) : wrap.append(secEl);
       }
-      const hdr = secEl.querySelector('.act-section-hdr');
+      const hdr = secEl.querySelector('.settings-card-header');
       let anchor = null;   // the last row we placed; the next one goes right after it
       for (const q of items) {
         let el = wrap.querySelector(`.act-row[data-qid="${q.id}"]:not(.act-removing)`);
@@ -4454,7 +4460,7 @@ async function renderSettings() {
 
   setApp(`
     <div class="settings-attn" id="settings-attn" hidden></div>
-    <div class="settings-help settings-quiet">${_quietSourcesLine(cfg)}</div>
+    ${_quietSourcesLine(cfg)}
     <div class="settings-grid">
       <div>
         <div class="settings-card">
