@@ -533,7 +533,10 @@ _ATTN_TITLES = {
 # The quiet harvesters: no login, no card of their own. Their notes live inside the
 # Harvesters section, and a non-fatal one (resting, or a hand-off already passed
 # on) can be dismissed until it clears and comes back.
-_HARVESTERS = ("prh", "openlibrary", "cbr", "fandom")
+# background sources with no card on the page; their trouble groups into Harvesters
+# (dismissable), never the top list. LOCG joined here when FlareSolverr took over its
+# access — nothing to paste, nothing to set.
+_HARVESTERS = ("prh", "openlibrary", "cbr", "fandom", "locg")
 # Level 'broken': set up fine, failing anyway, and nothing in Settings can change it —
 # a hand-off, not an instruction. Counted on the badge like a fix, so it isn't missed.
 _TELL = "Nothing to change here — tell Claude: "

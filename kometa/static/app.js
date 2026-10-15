@@ -3836,7 +3836,7 @@ async function _updateSettingsBadge() {
 // Settings open: what's wrong and what to do, in words at the top of the page
 // and again inside the card itself. A red dot with a hover tooltip told an iPad
 // nothing. Tap a row at the top to jump to its card.
-const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'sec-harvesters',
+const _ATTN_SECTION = { sabnzbd: 'sec-usenet', qbit: 'sec-torrent', root: 'ff-root', harvest: 'sec-harvesters', locg: 'sec-harvesters',
                         prh: 'sec-harvesters', openlibrary: 'sec-harvesters', cbr: 'sec-harvesters', fandom: 'sec-harvesters' };
 function _attnTarget(card) {
   const id = _ATTN_SECTION[card];
@@ -4572,15 +4572,6 @@ async function renderSettings() {
             </div>
           </div></div>
         </div>
-        <div class="settings-section ${cfg.locg_enabled ? '' : 'section-off'}" id="sec-locg" style="margin-top:32px">
-          ${_settingsSectionHead('League of Comic Geeks', 'variants, top-ups', 't-locg', cfg.locg_enabled)}
-          <div class="settings-section-body"><div class="settings-section-inner">
-          <div class="settings-card">
-          ${_settingsField('f-locg-cf', 'Access token', '', { set: cfg.locg_cf_configured, ph: 'token', test: { cardId: 'locg', configured: cfg.locg_cf_configured } })}
-          <div class="settings-help" id="locg-topup-status">${_locgTopupLine(cfg)}</div>
-          ${cfg.locg_cf_configured ? `<div class="settings-help">Pass saved ${esc((cfg.locg_cf_set_at || '').slice(0, 16))} UTC.</div>` : ''}
-          </div></div>
-        </div>
       </div>
     </div>
   `);
@@ -4596,7 +4587,6 @@ async function renderSettings() {
     if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
   }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);
-  if (!cfg.locg_enabled)      _collapseSection(document.getElementById('sec-locg'), true, false);
   if (!cfg.prowlarr_enabled)  _collapseSection(document.getElementById('sec-prowlarr'), true, false);
   if (!cfg.usenet_enabled)   _collapseSection(document.getElementById('sec-usenet'), true, false);
   if (!cfg.torrent_enabled)  _collapseSection(document.getElementById('sec-torrent'), true, false);
@@ -4622,11 +4612,10 @@ const _SETTINGS_FIELDS = {
   'f-gcd-user':        { card: 'gcd',       key: 'gcd_user',        test: 'gcd' },
   'f-gcd-pass':        { card: 'gcd',       key: 'gcd_pass',        test: 'gcd', secret: true },
   'f-hardcover-token': { card: 'hardcover', key: 'hardcover_token', test: 'hardcover', secret: true },
-  'f-locg-cf':         { card: 'locg',      key: 'locg_cf_clearance', test: 'locg', secret: 'mask' },
   'f-fandom-cf':       { card: 'fandom',    key: 'fandom_cf_clearance', test: 'fandom', secret: 'mask' },
 };
 
-const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', flaresolverr: 'flaresolverr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', locg: 'locg', hardcover: 'hardcover', fandom: 'fandom' };
+const _TEST_ENDPOINTS = { sabnzbd: 'sab', qbit: 'qbit', prowlarr: 'prowlarr', flaresolverr: 'flaresolverr', comicvine: 'comicvine', gcd: 'gcd', metron: 'metron', hardcover: 'hardcover', fandom: 'fandom' };
 
 // Nightly backup of the record (kometa/backup.py): database copy + cover mirror to the NAS.
 function _backupLine(cfg) {
@@ -4655,31 +4644,6 @@ async function _backupNow(btn) {
       } catch { clearInterval(poll); btn.disabled = false; btn.textContent = 'back up now'; }
     }, 3000);
   } catch { btn.disabled = false; btn.textContent = 'back up now'; }
-}
-
-// LOCG is a filler: what it owes us waits in a queue (kometa/topup.py) and
-// drains while a pass is live. The card says which state we're in and what's waiting.
-function _locgTopupLine(cfg) {
-  const n = cfg.locg_topup_waiting || 0;
-  const waiting = n ? `${n} item${n === 1 ? '' : 's'} waiting` : 'nothing waiting';
-  const state = cfg.locg_paused_until === 'switched off' ? 'switched off'
-    : cfg.locg_paused_until ? `paused until ${esc(cfg.locg_paused_until)}`
-    : cfg.locg_pass_live ? 'live' : 'no pass';
-  const btn = n && cfg.locg_pass_live ? ` <button class="btn-link" onclick="_locgTopupNow(this)">${cfg.locg_topup_draining ? 'topping up…' : 'top up now'}</button>` : '';
-  const sweep = cfg.locg_sweep_pending != null
-    ? ` · variant sweep: ${cfg.locg_sweep_pending} to go${cfg.locg_sweep_done_today ? `, ${cfg.locg_sweep_done_today} requests today` : ''}` : '';
-  return `LOCG pass: ${state} · ${waiting}${btn}${sweep}`;
-}
-
-async function _locgTopupNow(btn) {
-  btn.disabled = true; btn.textContent = 'topping up…';
-  try {
-    const r = await api.post('/api/locg/topup', {});
-    _whisper('locg', r.started ? 'top-up started' : (r.error || 'already running'), !r.ok);
-    setTimeout(async () => {
-      try { const cfg = await api.get('/api/config'); const el = document.getElementById('locg-topup-status'); if (el) el.innerHTML = _locgTopupLine(cfg); } catch {}
-    }, 8000);
-  } catch (e) { btn.disabled = false; btn.textContent = 'top up now'; _whisper('locg', 'couldn’t start', true); }
 }
 
 // 'Chrome 154 on macOS' from a User-Agent — for the LOCG card's status line.
@@ -4781,7 +4745,6 @@ function _settingsSectionHead(title, tag, toggleId, on, dotId = '') {
 // (gates the search cascade for usenet/torrent, each source's accessor for the rest).
 const _SOURCE_TOGGLES = {
   't-comicvine': { key: 'comicvine_enabled', section: 'sec-comicvine', label: 'ComicVine' },
-  't-locg':      { key: 'locg_enabled',      section: 'sec-locg',      label: 'League of Comic Geeks' },
   't-metron':    { key: 'metron_enabled',    section: 'sec-metron',    label: 'Metron' },
   't-gcd':       { key: 'gcd_enabled',       section: 'sec-gcd',       label: 'Grand Comics Database' },
   't-fandom':    { key: 'fandom_enabled',    section: 'sec-fandom',    label: 'Fandom wikis' },
@@ -4894,12 +4857,6 @@ async function _settingsChanged(el) {
   el.classList.remove('input-bad');
 
   const body = { [f.key]: val };
-  if (f.key === 'locg_cf_clearance') {
-    // record this browser's UA alongside the token, so the two stay matched
-    const ua = document.getElementById('f-locg-ua');
-    body.locg_user_agent = navigator.userAgent;
-    if (ua) { ua.value = navigator.userAgent; ua.dataset.last = navigator.userAgent; }
-  }
   if (f.key === 'fandom_cf_clearance') body.fandom_user_agent = navigator.userAgent;   // same: record this browser's UA
   try {
     const cfg = await api.patch('/api/config', body);
