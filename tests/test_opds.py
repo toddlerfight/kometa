@@ -27,7 +27,7 @@ def test_root_and_series_feeds_parse_and_link(db_path, tmp_path):
     sid, _ = _shelf(db_path, tmp_path)
     root = ET.fromstring(op.root_feed())
     assert [e.find("a:title", NS).text for e in root.findall("a:entry", NS)] == [
-        "Keep reading", "Next", "Favourites", "Reading lists", "Recently added", "Series by letter", "All series"]
+        "Keep reading", "Next", "Favourites", "Reading lists", "Recently added", "All series", "Series by letter"]   # All series first: YondeB hands the SERIES role to the first "series" title
     ser = ET.fromstring(op.series_feed(0, db_path))
     e = ser.find("a:entry", NS)
     assert e.find("a:title", NS).text == "Saga"

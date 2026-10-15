@@ -10,6 +10,7 @@ pipeline. pse:lastRead reports what the web reader knows; PSE page fetches
 do NOT write progress yet — that's the next, separate decision.
 """
 import logging
+from urllib.parse import quote
 import contextvars
 import os
 import re
@@ -184,8 +185,11 @@ def root_feed() -> str:
         _nav_entry("urn:kometa:opds:favourites", "Favourites", "/opds/ondeck/favourites", "What you starred"),
         _nav_entry("urn:kometa:opds:lists", "Reading lists", "/opds/lists", "Each list, in order, what's on the shelf", NAV),
         _nav_entry("urn:kometa:opds:recent", "Recently added", "/opds/recent", "Newest files on the shelf"),
-        _nav_entry("urn:kometa:opds:az", "Series by letter", "/opds/az", "A to Z, one letter at a time", NAV),
+        # "All series" before "Series by letter": YondeB gives the SERIES role to the first root
+        # entry whose title says "series" (OPDSHome.swift role()), and the letter index is a
+        # browse aid, not the library.
         _nav_entry("urn:kometa:opds:series", "All series", "/opds/series", "Every series on the shelf", NAV),
+        _nav_entry("urn:kometa:opds:az", "Series by letter", "/opds/az", "A to Z, one letter at a time", NAV),
     ], "/opds")
 
 
@@ -227,7 +231,9 @@ def az_feed(path=None) -> str:
     counts: dict[str, int] = {}
     for t in titles:
         counts[_letter(t)] = counts.get(_letter(t), 0) + 1
-    entries = [_nav_entry(f"urn:kometa:opds:az:{L}", L, f"/opds/series?letter={L}", f"{counts[L]} series", NAV)
+    # '#' must travel as %23: bare, every client reads it as a fragment and asks for letter=
+    # (which is every series). YondeB on both platforms did exactly that.
+    entries = [_nav_entry(f"urn:kometa:opds:az:{L}", L, f"/opds/series?letter={quote(L, safe='')}", f"{counts[L]} series", NAV)
                for L in sorted(counts, key=lambda x: (x == "#", x))]
     return _feed(NAV, "urn:kometa:opds:az", "Series by letter", [], entries, "/opds/az")
 
