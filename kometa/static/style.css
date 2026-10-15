@@ -921,7 +921,9 @@ select.settings-input {
 }
 .issue-tile-img.missing::after  { border: 2px solid var(--amb); }
 .issue-tile-img.upcoming::after { border: 2px solid var(--blu); }
-.issue-tile-img.today::after    { border: 2px solid var(--blu); }
+/* Out today AND unowned is missing — amber frame like any other missing issue;
+   the TODAY badge still says it only just dropped. Blue stays for the unreleased. */
+.issue-tile-img.today::after    { border: 2px solid var(--amb); }
 
 /* Ignored: told to stop chasing it. Dimmed and quiet — present, but not asking for anything. */
 .issue-tile-img.ignored { background: transparent; }   /* the page shows through */
