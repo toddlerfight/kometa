@@ -576,15 +576,20 @@ def _broken_items() -> list[dict]:
         from kometa import backup
         b = backup.last(DB_PATH)
         started = b.get("started_at") or ""
-        age_h = None
+        age_h, when = None, started[:10]
         try:
-            age_h = (datetime.now(timezone.utc) - datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds() / 3600
+            from kometa.scheduler import TZ
+            t = datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            age_h = (datetime.now(timezone.utc) - t).total_seconds() / 3600
+            when = t.astimezone(TZ).strftime("%-d %b %-I:%M%p").lower()      # the run's own clock, not UTC's date
         except ValueError:
             pass
         if b and not b.get("ok"):
-            out.append({"card": "backup", "reason": f"last backup failed: {str(b.get('error') or '')[:80]}", "fix": _TELL + "the nightly backup is failing.", "level": "broken"})
+            out.append({"card": "backup", "reason": f"last backup ({when}) failed: {str(b.get('error') or '')[:80]}", "fix": _TELL + "the nightly backup is failing.", "level": "broken"})
         elif age_h is not None and age_h > 30:
-            out.append({"card": "backup", "reason": f"no backup since {started[:10]}", "fix": _TELL + "the nightly backup hasn't run.", "level": "broken"})
+            # one run a night at 03:30: past 30 h, last night's didn't happen (the record is the one before)
+            out.append({"card": "backup", "reason": f"last night's backup didn't run — the last good one was {when}",
+                        "fix": _TELL + "the nightly backup missed a night.", "level": "broken"})
     except Exception:
         pass
     try:

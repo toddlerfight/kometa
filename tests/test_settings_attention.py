@@ -118,10 +118,10 @@ def test_a_failed_or_stale_backup_is_a_hand_off(wired):
     assert "backup" not in _cards(main.settings_attention())
     db.set_config({"backup_last": json.dumps({"started_at": "2026-10-01T17:30:00Z", "ok": True})}, wired)
     item = next(i for i in main.settings_attention() if i["card"] == "backup")
-    assert item["level"] == "broken" and "no backup since 2026-10-01" in item["reason"] and "tell Claude" in item["fix"]
+    assert item["level"] == "broken" and "didn't run" in item["reason"] and "2 oct" in item["reason"] and "tell Claude" in item["fix"]
     db.set_config({"backup_last": json.dumps({"started_at": "2026-10-01T17:30:00Z", "ok": False, "error": "disk full"})}, wired)
     item = next(i for i in main.settings_attention() if i["card"] == "backup")
-    assert "failed: disk full" in item["reason"]
+    assert "failed: disk full" in item["reason"] and "2 oct" in item["reason"]
 
 
 def test_marvel_matching_nothing_is_a_hand_off(wired, monkeypatch):
