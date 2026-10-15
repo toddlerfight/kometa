@@ -1365,6 +1365,8 @@ select.settings-input {
 .acct-name { color: var(--tp); font-weight: 700; }
 .acct-meta { color: var(--tq); margin-left: auto; }
 .acct-off .acct-name { color: var(--tq); }
+.acct-reading { display: flex; justify-content: space-between; gap: var(--sp-md); flex-wrap: wrap; margin-top: 4px; color: var(--tq); }
+.acct-reading-last { color: var(--tp); }
 .acct-devices { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .acct-device { display: flex; justify-content: space-between; gap: var(--sp-md); color: var(--tq); }
 .acct-actions { display: flex; gap: var(--sp-md); margin-top: 8px; flex-wrap: wrap; }

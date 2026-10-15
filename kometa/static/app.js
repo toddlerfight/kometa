@@ -3649,6 +3649,16 @@ function _acctWhen(s) {
   return isNaN(d) ? s : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 let _acctNote = null;          // {id, text}: the one-time password line under that account
+// What they're reading, from /api/users → reading (auth.reading_summary): the last book
+// touched, page of pages, when; then the tallies and whether a phone takes push.
+function _acctReading(r) {
+  if (!r) return '';
+  const l = r.last;
+  const where = l ? `${esc(l.series || '')}${l.number != null ? ' #' + esc(String(l.number).replace(/\.0$/, '')) : ''} · ${l.finished ? 'finished' : `page ${l.page}${l.pages ? '/' + l.pages : ''}`} · ${esc(_acctWhen(l.at))}` : 'nothing read yet';
+  const tally = [r.in_progress ? `${r.in_progress} in progress` : '', r.finished ? `${r.finished} finished` : '',
+                 r.push && r.push.length ? `push: ${r.push.map(esc).join(', ')}` : 'no push'].filter(Boolean).join(' · ');
+  return `<div class="acct-reading"><span class="acct-reading-last">${where}</span><span class="acct-meta">${tally}</span></div>`;
+}
 async function _renderAccounts() {
   const el = document.getElementById('accounts');
   if (!el) return;
@@ -3664,6 +3674,7 @@ async function _renderAccounts() {
         <span class="settings-opt">${admin ? 'admin' : 'reader'}${u.disabled ? ' · off' : ''}</span>
         <span class="acct-meta">${toks.length} device${toks.length === 1 ? '' : 's'} · last used ${esc(_acctWhen(last))}</span>
       </div>
+      ${_acctReading(u.reading)}
       ${toks.length ? `<div class="acct-devices">${toks.map(t => `<div class="acct-device">
         <span>${esc(t.name || 'unnamed')} · ${esc(_acctWhen(t.last_used))}</span>
         <button class="btn-link" onclick="_acctDo('device', '${u.id}', ${t.id}, this)">sign out</button></div>`).join('')}</div>` : ''}

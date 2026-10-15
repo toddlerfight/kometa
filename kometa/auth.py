@@ -616,6 +616,38 @@ class UserChange(BaseModel):
     disabled: bool | None = None
 
 
+def reading_summary(reader_id: str, path=None) -> dict:
+    """What a reader is up to, for the admin's Accounts list: the book they touched
+    last (series, number, page of pages, finished?, when), how many they're mid-way
+    through, how many they've finished, and whether a phone is registered for push.
+    The owner's question was "what's Jane reading?" — this answers it without anyone
+    opening the database."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        row = conn.execute("""
+            SELECT COALESCE(ts.title, ss.title, b.path) AS series, b.number, p.page, b.page_count,
+                   p.completed, p.updated_at
+            FROM read_progress p JOIN books b ON b.id = p.book_id
+            LEFT JOIN tracked_series ts ON ts.id = b.tracked_series_id
+            LEFT JOIN shelf_series ss ON ss.id = b.shelf_series_id
+            WHERE p.reader_id = ? ORDER BY p.updated_at DESC LIMIT 1""", (reader_id,)).fetchone()
+        n = conn.execute("SELECT COUNT(*), COALESCE(SUM(completed), 0) FROM read_progress WHERE reader_id = ?",
+                         (reader_id,)).fetchone()
+        try:
+            push = [r[0] for r in conn.execute(
+                "SELECT DISTINCT platform FROM push_devices WHERE reader_id = ? AND dead_at IS NULL", (reader_id,))]
+        except Exception:                              # push_devices only exists once a phone has registered
+            push = []
+    last = None
+    if row:
+        series = row["series"]
+        if series and "/" in series:                   # a bare path: the folder is the nearest thing to a title
+            series = series.rsplit("/", 2)[-2]
+        last = {"series": series, "number": row["number"], "page": row["page"], "pages": row["page_count"],
+                "finished": bool(row["completed"]), "at": row["updated_at"]}
+    return {"last": last, "in_progress": int(n[0]) - int(n[1]), "finished": int(n[1]), "push": push}
+
+
 @router.get("/api/users")
 def users_list():
     out = []
@@ -623,7 +655,7 @@ def users_list():
         with db._connect(DB_PATH) as conn:
             toks = [dict(r) for r in conn.execute(
                 "SELECT id, name, created_at, last_used FROM auth_tokens WHERE user_id = ? ORDER BY last_used DESC", (u["id"],))]
-        out.append({**_public(u), "created_at": u["created_at"], "tokens": toks})
+        out.append({**_public(u), "created_at": u["created_at"], "tokens": toks, "reading": reading_summary(u["id"])})
     return out
 
 

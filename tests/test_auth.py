@@ -444,3 +444,24 @@ def test_last_used_is_written_by_the_flusher_not_the_request(a):
     with db._connect(a) as conn:
         assert conn.execute("SELECT last_used FROM auth_tokens").fetchone()[0]
     assert auth.flush_last_used(a) == 0
+
+
+def test_users_list_carries_each_readers_reading(a, series):
+    """The admin's Accounts list says what each reader is up to: the last book they
+    touched (series, number, page of pages, when), counts, and push platforms."""
+    jane = auth.create_user("jane", "secret99", "reader", a)
+    b1 = db.upsert_book("/comics/Image Comics/Saga/Saga 001.cbz", 1, 1, ["p1.jpg"] * 40, series, 1, path=a)
+    b2 = db.upsert_book("/comics/Image Comics/Saga/Saga 002.cbz", 1, 1, ["p1.jpg"] * 44, series, 2, path=a)
+    with db._connect(a) as conn:
+        conn.execute("INSERT INTO read_progress (reader_id, book_id, page, completed, updated_at) VALUES (?, ?, 40, 1, '2026-10-15 09:00:00')", (jane["id"], b1))
+        conn.execute("INSERT INTO read_progress (reader_id, book_id, page, completed, updated_at) VALUES (?, ?, 7, 0, '2026-10-15 10:21:00')", (jane["id"], b2))
+    c = TestClient(_app())                                               # auth off: the caller is the admin
+    rows = {r["username"]: r for r in c.get("/api/users").json()}
+    r = rows["jane"]["reading"]
+    assert r["in_progress"] == 1 and r["finished"] == 1 and r["push"] == []
+    assert r["last"]["number"] == 2 and r["last"]["page"] == 7 and r["last"]["pages"] == 44
+    assert r["last"]["finished"] is False and r["last"]["at"] == "2026-10-15 10:21:00"
+    assert r["last"]["series"]                                            # the fixture series' title
+    auth.create_user("jotham", "secret99", "reader", a)
+    rows = {r["username"]: r for r in c.get("/api/users").json()}
+    assert rows["jotham"]["reading"] == {"last": None, "in_progress": 0, "finished": 0, "push": []}
