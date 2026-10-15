@@ -69,7 +69,17 @@ mirror() {   # name src dst [extra rsync args...]
   local name=$1 src=$2 dst=$3; shift 3
   local rc=0
   if [ ! -x "$RSYNC" ]; then ok=0; notes+=("$name: no GNU rsync at $RSYNC (brew install rsync)"); say "$name SKIPPED (no GNU rsync)"; return; fi
-  "$RSYNC" -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" "$@" "$src" "$dst" >> "$LOG" 2>&1 || rc=$?
+  # --timeout: a stalled transfer exits (rc 30) instead of hanging. 2026-10-16 the comics
+  # sender sat in one openat() on the SMB share from 02:01 until it was killed at 10:00 —
+  # the share had blipped, macOS never timed the call out, and nothing downstream (the
+  # old-library cleanup, deploys) could move. A blip gets ONE more go after a minute.
+  local attempt
+  for attempt in 1 2; do
+    rc=0
+    "$RSYNC" -a --delete --backup --backup-dir="$DEST/deleted/$DAY/$name" --timeout=900 "$@" "$src" "$dst" >> "$LOG" 2>&1 || rc=$?
+    [ $rc = 30 ] && [ $attempt = 1 ] && { say "$name stalled (rsync 30) — one more go in a minute"; sleep 60; continue; }
+    break
+  done
   if [ $rc = 0 ]; then
     say "$name ok"
   else   # read rc, not $? — by the time the note was built, ok=0 had already reset it to 0
