@@ -305,9 +305,9 @@ def _summary(issues):
     cutoff = str(date.today() + timedelta(days=30))
     owned = sum(1 for r in issues if r["owned"])
     wanted = [r for r in issues if not r["owned"] and not r.get("ignored")]
-    # an issue a trade on the shelf already holds isn't missing — the Library card's
-    # SQL (db.get_all_series_summaries) has always said so; the series page didn't
-    missing = sum(1 for r in wanted if (not r["store_date"] or r["store_date"] < today) and not r.get("covered_by"))
+    # Issue-based (2026-10-15): a single a trade reprints is still missing until you
+    # own the single. Matches db.get_all_series_summaries and the acquisition sweep.
+    missing = sum(1 for r in wanted if (not r["store_date"] or r["store_date"] < today))
     upcoming = sum(1 for r in wanted if r["store_date"] and r["store_date"] >= today)
     soon = [r["store_date"] for r in wanted
             if r["store_date"] and today <= r["store_date"] <= cutoff]
