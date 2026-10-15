@@ -3742,10 +3742,10 @@ function _startHarvestPoll() {
 // refusal. Their trouble, when there is any, is written out beneath it (and can be
 // dismissed when it isn't yours to fix).
 function _harvestersLine(cfg) {
-  const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup' };
+  const names = { prh: 'Penguin Random House', openlibrary: 'Open Library', cbr: 'ComicBookRoundup', fandom: 'Fandom wikis' };
   const b = cfg.extra_budgets || {};
   const resting = Object.keys(names).filter(k => b[k] && b[k].paused).map(k => names[k]);
-  return `${Object.values(names).join(' · ')} — no login, nothing to set.${resting.length ? ` Resting after a refusal, back on their own: ${esc(resting.join(', '))}.` : ''}`;
+  return `${Object.values(names).join(' · ')} — no login, they just run.${resting.length ? ` Resting after a refusal, back on their own: ${esc(resting.join(', '))}.` : ''}`;
 }
 async function _attnDismiss(card, level, btn) {
   btn.disabled = true;
@@ -4557,10 +4557,9 @@ async function renderSettings() {
         <div class="settings-card" id="sec-harvesters" style="margin-top:32px">
           ${_settingsHeader('Harvesters', 'background', 'harvesters')}
           <div class="settings-help">${_harvestersLine(cfg)}</div>
+          <div class="settings-row-toggle" style="margin-top:12px"><span>Download Fandom gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download Fandom gallery images')}</div>
           <div id="harvesters-errors"></div>
         </div>
-        ${_politeSourceSection('fandom', 'Fandom wikis', 'cover galleries', cfg,
-          `<div class="settings-row-toggle"><span>Download gallery images</span>${_settingsToggle('t-fandom-download', !!cfg.fandom_download, 'Download gallery images')}</div>`)}
         <div class="settings-section ${cfg.hardcover_enabled ? '' : 'section-off'}" id="sec-hardcover" style="margin-top:32px">
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
@@ -4581,7 +4580,7 @@ async function renderSettings() {
   // whole usenet+torrent branch it wraps.
   if (!cfg.comicvine_enabled) _collapseSection(document.getElementById('sec-comicvine'), true, false);
   if (!cfg.gcd_enabled)       _collapseSection(document.getElementById('sec-gcd'), true, false);
-  for (const k of ['fandom', 'hardcover']) {
+  for (const k of ['hardcover']) {
     if (!cfg[`${k}_enabled`]) _collapseSection(document.getElementById(`sec-${k}`), true, false);
   }
   if (!cfg.metron_enabled)    _collapseSection(document.getElementById('sec-metron'), true, false);

@@ -96,7 +96,8 @@ def test_quiet_sources_are_a_line_not_cards_and_the_board_is_on_activity(app):
     # (Marvel.com's scraper was retired the same day.)
     app.locator('.nav-item[data-view="settings"]').click()
     expect(app.locator('#sec-harvesters')).to_contain_text('ComicBookRoundup')   # one section names them
-    for key in ('prh', 'openlibrary', 'cbr', 'marveldc'):
+    expect(app.locator('#sec-harvesters')).to_contain_text('Fandom')             # Fandom demoted into the quiet line
+    for key in ('prh', 'openlibrary', 'cbr', 'marveldc', 'fandom'):
         expect(app.locator(f'#sec-{key}')).to_have_count(0)
     expect(app.locator('#harvest-progress')).to_have_count(0)
     app.locator('.nav-item[data-view="activity"]').click()
