@@ -241,6 +241,18 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
   stopgaps the catalogues overwrite, `reading_lists.source = 'komga'` is provenance,
   and the `komga_series_id` / `komga_book_id` columns are kept but nothing reads or
   writes them. Ownership is the folder on disk, the reader is Kometa's own.
+- **Push to phones (kometa/push.py)** — two platforms, either may be set up alone; devices say
+  which they speak when they register (`POST /api/push/devices`, `platform: apns|fcm`).
+  - **iOS (APNs):** the Apple `.p8` key at `data/apns/AuthKey.p8` on ginbako (beside the DB, never in
+    the repo) plus `apns_key_id` / `apns_team_id` in config (`PATCH /api/config`).
+  - **Android (FCM, HTTP v1):** a Firebase service-account JSON at `data/fcm/service-account.json` —
+    on ginbako that is `~/docker/apps/kometa/data/fcm/service-account.json` (mode 600; container path
+    `/data/fcm/service-account.json`). Firebase console › Project settings › Service accounts › Generate
+    new private key; the project id is read from the file, nothing else to configure. Never in the repo —
+    `data/` is the mounted volume, same place as the APNs key. The app swaps an RS256 JWT for a one-hour
+    OAuth2 token and caches it; no Firebase SDK, just `cryptography` + `curl_cffi`, both already in the image.
+  - **Check:** `GET /api/push/status` → `platforms: {apns: bool, fcm: bool}` says what the file/config
+    state lets it send to; `configured` is the OR of the two. `devices` lists each token's platform.
 - **Metron API — READ THIS BEFORE TOUCHING IT** (source: Metron-Project/metron
   `api/RATELIMIT.md`, `fail2ban/jail.d/metron.conf`, `api/throttle.py`; verified 2026-10-10
   after Kometa got the house IP banned for 24h):

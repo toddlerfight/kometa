@@ -8,6 +8,14 @@ not a machine-gun of buzzes while a week's pull list drains.
 
 The key lives beside the DB (data/apns/), never in the repo; its id and the team
 id are config (apns_key_id, apns_team_id).
+
+Android (2026-10-15): the same landings go out over Firebase Cloud Messaging, HTTP v1.
+A Google service-account JSON beside the APNs key (data/fcm/service-account.json)
+signs an RS256 JWT that Google swaps for a one-hour OAuth2 access token; one FCM
+message per device token. A device says which it is at registration (platform
+'apns' or 'fcm'); the alert text and the deep-link data keys are built once and
+dressed for whichever platform the device speaks. Either platform may be set up
+alone — devices of the other kind are simply skipped.
 """
 import base64
 import json
@@ -30,11 +38,20 @@ MAX_BATCH_IDS = 20                  # book ids a batch carries (APNs payloads ca
 JWT_TTL_S = 40 * 60                 # Apple wants it 20–60 min old at most; refresh at 40
 HOSTS = {"sandbox": "https://api.sandbox.push.apple.com", "production": "https://api.push.apple.com"}
 TOPIC = "dev.kometa.yondeb"
+PLATFORMS = ("apns", "fcm")
+FCM_SEND = "https://fcm.googleapis.com/v1/projects/{project}/messages:send"
+FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+FCM_TOKEN_URL = "https://oauth2.googleapis.com/token"
+FCM_TOKEN_TTL_S = 60 * 60           # Google's access tokens last an hour; we ask for exactly that
+FCM_TOKEN_SLACK_S = 5 * 60          # ...and stop trusting ours five minutes early
+FCM_CHANNEL = "kometa-new"
+FCM_TOKEN_MAX = 4096                # FCM registration tokens are ~160 chars today; this is a sanity cap, not a spec
 
 _lock = threading.Lock()
 _pending: list[dict] = []
 _timer: threading.Timer | None = None
 _jwt: dict = {"token": None, "at": 0.0}
+_fcm: dict = {"token": None, "exp": 0.0}          # the OAuth2 access token, cached until ~5 min before it dies
 
 
 def ensure_tables(path=None):
@@ -45,15 +62,30 @@ def ensure_tables(path=None):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(push_devices)")}
         if "reader_id" not in cols:                     # 2026-10-14: a device belongs to someone
             conn.execute("ALTER TABLE push_devices ADD COLUMN reader_id TEXT NOT NULL DEFAULT 'me'")
+        if "platform" not in cols:                      # 2026-10-15: and speaks APNs or FCM
+            conn.execute("ALTER TABLE push_devices ADD COLUMN platform TEXT NOT NULL DEFAULT 'apns'")
 
 
 def _key_path(path=None) -> str:
     return os.path.join(os.path.dirname(path or DB_PATH) or ".", "apns", "AuthKey.p8")
 
 
-def configured(path=None) -> bool:
+def _sa_path(path=None) -> str:
+    """The Google service-account JSON: data/fcm/service-account.json, beside the APNs key."""
+    return os.path.join(os.path.dirname(path or DB_PATH) or ".", "fcm", "service-account.json")
+
+
+def platforms(path=None) -> dict:
+    """Which platforms can actually be sent to right now. APNs wants the .p8 plus its
+    key/team ids in config; FCM wants only the service-account file (the project id
+    is inside it)."""
     cfg = db.get_config(path or DB_PATH)
-    return bool(cfg.get("apns_key_id") and cfg.get("apns_team_id") and os.path.exists(_key_path(path)))
+    return {"apns": bool(cfg.get("apns_key_id") and cfg.get("apns_team_id") and os.path.exists(_key_path(path))),
+            "fcm": os.path.exists(_sa_path(path))}
+
+
+def configured(path=None) -> bool:
+    return any(platforms(path).values())
 
 
 # --- the JWT: ES256 over header.claims, raw r||s, base64url --------------------------
@@ -84,6 +116,49 @@ def _bearer(path=None) -> str:
     return tok
 
 
+# --- FCM: a service-account RS256 JWT, swapped at Google for an hour's access token ------
+def _service_account(path=None) -> dict:
+    with open(_sa_path(path), "rb") as fh:
+        sa = json.load(fh)
+    for k in ("client_email", "private_key", "project_id"):
+        if not sa.get(k):
+            raise ValueError(f"service-account.json is missing {k}")
+    return sa
+
+
+def _make_sa_jwt(sa: dict, now: float) -> str:
+    """RS256 over header.claims — PKCS#1 v1.5, which is already the JWS byte shape (no
+    DER-to-raw dance like ES256 needs)."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    head = _b64(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    claims = {"iss": sa["client_email"], "scope": FCM_SCOPE, "aud": sa.get("token_uri") or FCM_TOKEN_URL,
+              "iat": int(now), "exp": int(now) + FCM_TOKEN_TTL_S}
+    body = _b64(json.dumps(claims, separators=(",", ":")).encode())
+    key = serialization.load_pem_private_key(sa["private_key"].encode(), password=None)
+    sig = key.sign(f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    return f"{head}.{body}.{_b64(sig)}"
+
+
+def _fcm_bearer(path=None, post=None) -> str:
+    """The OAuth2 access token, fetched through the same post seam the sends use (so the
+    tests never touch Google) and kept until FCM_TOKEN_SLACK_S before it expires."""
+    now = time.time()
+    if _fcm["token"] and now < _fcm["exp"] - FCM_TOKEN_SLACK_S:
+        return _fcm["token"]
+    sa = _service_account(path)
+    from urllib.parse import urlencode
+    body = urlencode({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                      "assertion": _make_sa_jwt(sa, now)}).encode()
+    r = (post or _post)(sa.get("token_uri") or FCM_TOKEN_URL,
+                        {"content-type": "application/x-www-form-urlencoded"}, body)
+    if r.status_code != 200:
+        raise RuntimeError(f"FCM token exchange answered {r.status_code}")
+    tok = r.json()
+    _fcm.update(token=tok["access_token"], exp=now + float(tok.get("expires_in") or FCM_TOKEN_TTL_S))
+    return _fcm["token"]
+
+
 # --- sending ------------------------------------------------------------------------------
 def _post(url: str, headers: dict, body: bytes):
     from curl_cffi import CurlHttpVersion
@@ -91,21 +166,40 @@ def _post(url: str, headers: dict, body: bytes):
     return cr.post(url, headers=headers, data=body, timeout=15, http_version=CurlHttpVersion.V2_0)
 
 
+def _bury(token: str, path) -> None:
+    with db._connect(path) as conn:
+        conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ?", (token,))
+
+
 def send(payload: dict, path=None, post=None, reader_id: str | None = None) -> dict:
     """One payload to every live device — or only one person's. Returns {sent, failed,
-    dead}. A token Apple calls Unregistered / BadDeviceToken is marked dead and never
-    tried again."""
+    dead}. `payload` is the APNs shape build_payload makes; an FCM device gets the same
+    alert and data keys re-dressed by fcm_message. A token the platform disowns (Apple:
+    Unregistered / BadDeviceToken; Google: UNREGISTERED / a bad registration token) is
+    marked dead and never tried again. Devices of a platform that isn't set up are
+    skipped, not failed."""
     path = path or DB_PATH
     ensure_tables(path)
-    if not configured(path):
+    up = platforms(path)
+    if not any(up.values()):
         return {"sent": 0, "failed": 0, "dead": 0, "error": "not configured"}
     post = post or _post
     with db._connect(path) as conn:
         devices = [dict(r) for r in conn.execute(
-            "SELECT token, env FROM push_devices WHERE dead_at IS NULL AND (? IS NULL OR reader_id = ?)",
+            "SELECT token, env, platform FROM push_devices WHERE dead_at IS NULL AND (? IS NULL OR reader_id = ?)",
             (reader_id, reader_id))]
-    body = json.dumps(payload, separators=(",", ":")).encode()
     out = {"sent": 0, "failed": 0, "dead": 0}
+    apns = [d for d in devices if d["platform"] == "apns"]
+    fcm = [d for d in devices if d["platform"] == "fcm"]
+    if apns and up["apns"]:
+        _send_apns(apns, payload, path, post, out)
+    if fcm and up["fcm"]:
+        _send_fcm(fcm, payload, path, post, out)
+    return out
+
+
+def _send_apns(devices: list[dict], payload: dict, path, post, out: dict) -> None:
+    body = json.dumps(payload, separators=(",", ":")).encode()
     for d in devices:
         headers = {"authorization": f"bearer {_bearer(path)}", "apns-topic": TOPIC, "apns-push-type": "alert",
                    "apns-priority": "10", "content-type": "application/json"}
@@ -124,15 +218,54 @@ def send(payload: dict, path=None, post=None, reader_id: str | None = None) -> d
         except Exception:
             pass
         if r.status_code == 410 or reason in ("Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"):
-            with db._connect(path) as conn:
-                conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ?", (d["token"],))
+            _bury(d["token"], path)
             out["dead"] += 1
         else:
             if reason in ("ExpiredProviderToken", "InvalidProviderToken"):
                 _jwt.update(token=None, at=0.0)
             out["failed"] += 1
         logger.info(f"Push: {d['token'][:8]}… answered {r.status_code} {reason}")
-    return out
+
+
+def _send_fcm(devices: list[dict], payload: dict, path, post, out: dict) -> None:
+    try:
+        project = _service_account(path)["project_id"]
+        bearer = _fcm_bearer(path, post)
+    except Exception as e:                               # no token = nobody on Android hears a thing; say so once
+        logger.warning(f"Push: FCM auth failed, {len(devices)} device(s) skipped: {e}")
+        out["failed"] += len(devices)
+        return
+    url = FCM_SEND.format(project=project)
+    for d in devices:
+        headers = {"authorization": f"Bearer {bearer}", "content-type": "application/json"}
+        body = json.dumps(fcm_message(d["token"], payload), separators=(",", ":")).encode()
+        try:
+            r = post(url, headers, body)
+        except Exception as e:
+            logger.warning(f"Push: {d['token'][:8]}… didn't go: {e}")
+            out["failed"] += 1
+            continue
+        if r.status_code == 200:
+            out["sent"] += 1
+            continue
+        status, message, codes = "", "", set()
+        try:
+            err = (r.json() or {}).get("error") or {}
+            status, message = err.get("status", ""), err.get("message", "")
+            codes = {x.get("errorCode") for x in err.get("details") or [] if isinstance(x, dict)}
+        except Exception:
+            pass
+        # 404 UNREGISTERED = the app was uninstalled or its token rotated. 400 INVALID_ARGUMENT
+        # is also what a malformed MESSAGE gets, so only the token flavour buries the device.
+        bad_token = r.status_code == 400 and "registration token" in message.lower()
+        if r.status_code == 404 or "UNREGISTERED" in codes or bad_token:
+            _bury(d["token"], path)
+            out["dead"] += 1
+        else:
+            if r.status_code == 401:
+                _fcm.update(token=None, exp=0.0)
+            out["failed"] += 1
+        logger.info(f"Push: {d['token'][:8]}… answered {r.status_code} {status} {message[:80]}")
 
 
 # --- what landed -----------------------------------------------------------------------
@@ -179,22 +312,47 @@ def _book_id(series_id: int, number) -> int | None:
         return None
 
 
-def build_payload(items: list[dict]) -> dict:
-    first = items[0]
+def build_alert(items: list[dict]) -> dict:
+    """The words on the lock screen — the same on every platform."""
     if len(items) == 1:
-        alert = {"title": "New on the shelf", "body": _label(first)}
-    else:
-        alert = {"title": f"{len(items)} new on the shelf",
-                 "body": ", ".join(_label(i) for i in items[:4]) + ("…" if len(items) > 4 else "")}
-    p = {"aps": {"alert": alert, "sound": "default", "thread-id": "kometa-new"}, "kind": "new",
-         "series_id": first["series_id"]}
+        return {"title": "New on the shelf", "body": _label(items[0])}
+    return {"title": f"{len(items)} new on the shelf",
+            "body": ", ".join(_label(i) for i in items[:4]) + ("…" if len(items) > 4 else "")}
+
+
+def build_data(items: list[dict]) -> dict:
+    """The deep link the tap follows: kind + series_id always; one issue carries book_id
+    (straight into the reader), a batch carries dest=recent + book_ids (On Deck's Recently
+    added with these lit up — not the first one, arbitrarily)."""
+    first = items[0]
+    d = {"kind": "new", "series_id": first["series_id"]}
     if len(items) > 1:
-        # a batch opens On Deck's Recently added with these lit up — not the first one, arbitrarily
-        p["dest"] = "recent"
-        p["book_ids"] = [i["book_id"] for i in items if i.get("book_id")]
+        d["dest"] = "recent"
+        d["book_ids"] = [i["book_id"] for i in items if i.get("book_id")]
     elif first.get("book_id"):
-        p["book_id"] = first["book_id"]                  # one issue: straight into the reader
-    return p
+        d["book_id"] = first["book_id"]
+    return d
+
+
+def build_payload(items: list[dict]) -> dict:
+    """The APNs payload: aps.alert + the data keys at the top level. This is the shape
+    send() takes for every platform; fcm_message re-dresses it for Google."""
+    return {"aps": {"alert": build_alert(items), "sound": "default", "thread-id": FCM_CHANNEL}, **build_data(items)}
+
+
+def fcm_message(token: str, payload: dict) -> dict:
+    """One FCM v1 message for one device, from the APNs-shaped payload. FCM data values
+    must be strings, so ints are str()'d and book_ids rides as a JSON array in a string.
+    The Android tag is per destination: a fresh landing for the same series replaces its
+    stale notification instead of stacking, but issue A's buzz survives issue B's."""
+    alert = (payload.get("aps") or {}).get("alert")
+    notif = dict(alert) if isinstance(alert, dict) else {"body": str(alert or "")}
+    data = {k: (json.dumps(v, separators=(",", ":")) if isinstance(v, (list, dict)) else str(v))
+            for k, v in payload.items() if k != "aps"}
+    tag = f"{FCM_CHANNEL}-{data['dest']}" if "dest" in data else f"{FCM_CHANNEL}-s{data.get('series_id', '')}"
+    return {"message": {"token": token, "notification": notif, "data": data,
+                        "android": {"priority": "high", "collapse_key": tag,
+                                    "notification": {"channel_id": FCM_CHANNEL, "sound": "default", "tag": tag}}}}
 
 
 def flush(path=None, post=None) -> dict | None:
@@ -260,21 +418,37 @@ class DeviceRequest(BaseModel):
     env: str = "sandbox"
     name: str | None = None
     app: str | None = None
+    platform: str = "apns"
+
+
+def _clean_token(token: str, platform: str) -> str:
+    """APNs: 64 hex chars, lowercased. FCM: a long base64url-ish string Google mints —
+    case matters, so it's kept as sent; only the length and the charset are checked."""
+    tok = (token or "").strip()
+    if platform == "fcm":
+        if not tok or len(tok) > FCM_TOKEN_MAX or any(c.isspace() or not c.isprintable() for c in tok):
+            raise HTTPException(422, "token must be the FCM registration token")
+        return tok
+    tok = tok.lower()
+    if not tok or len(tok) > 200 or any(c not in "0123456789abcdef" for c in tok):
+        raise HTTPException(422, "token must be the device token in hex")
+    return tok
 
 
 @router.post("/api/push/devices")
 def register_device(req: DeviceRequest):
-    tok = req.token.strip().lower()
-    if not tok or len(tok) > 200 or any(c not in "0123456789abcdef" for c in tok):
-        raise HTTPException(422, "token must be the device token in hex")
-    env = req.env if req.env in HOSTS else "sandbox"
+    platform = req.platform if req.platform in PLATFORMS else "apns"
+    tok = _clean_token(req.token, platform)
+    # FCM has no sandbox/production split — Google routes on the token; env is a no-op there
+    env = "production" if platform == "fcm" else (req.env if req.env in HOSTS else "sandbox")
     ensure_tables()
     with db._connect(DB_PATH) as conn:
-        conn.execute("""INSERT INTO push_devices (token, env, name, app, seen_at, dead_at, reader_id)
-            VALUES (?, ?, ?, ?, datetime('now'), NULL, ?)
+        conn.execute("""INSERT INTO push_devices (token, env, name, app, seen_at, dead_at, reader_id, platform)
+            VALUES (?, ?, ?, ?, datetime('now'), NULL, ?, ?)
             ON CONFLICT(token) DO UPDATE SET env = excluded.env, name = excluded.name, app = excluded.app,
-                seen_at = excluded.seen_at, dead_at = NULL, reader_id = excluded.reader_id""",
-                     (tok, env, req.name, req.app, current_reader()))      # whoever's signed in on it now
+                seen_at = excluded.seen_at, dead_at = NULL, reader_id = excluded.reader_id,
+                platform = excluded.platform""",
+                     (tok, env, req.name, req.app, current_reader(), platform))   # whoever's signed in on it now
     return {"ok": True}
 
 
@@ -285,18 +459,20 @@ class ForgetRequest(BaseModel):
 @router.post("/api/push/devices/forget")
 def forget_device(req: ForgetRequest):
     """Notifications turned off on a device: mark its token dead so send() skips it.
-    Reader-scoped — you can only forget a device registered to you (admin: any)."""
-    tok = (req.token or "").strip().lower()
-    if not tok:
+    Reader-scoped — you can only forget a device registered to you (admin: any).
+    Matches the token as sent OR lowercased: APNs tokens were stored lowercased, FCM
+    tokens verbatim."""
+    raw = (req.token or "").strip()
+    if not raw:
         raise HTTPException(422, "token required")
     ensure_tables()
     from kometa.auth import current_reader, is_admin
     with db._connect(DB_PATH) as conn:
         if is_admin():
-            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ?", (tok,))
+            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token IN (?, ?)", (raw, raw.lower()))
         else:
-            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token = ? AND reader_id = ?",
-                         (tok, current_reader()))
+            conn.execute("UPDATE push_devices SET dead_at = datetime('now') WHERE token IN (?, ?) AND reader_id = ?",
+                         (raw, raw.lower(), current_reader()))
     return {"ok": True}
 
 
@@ -305,8 +481,9 @@ def push_status():
     ensure_tables()
     with db._connect(DB_PATH) as conn:
         devs = [dict(r) for r in conn.execute(           # yours; the admin sees everyone's
-            "SELECT substr(token, 1, 8) AS token, env, name, seen_at, dead_at, reader_id FROM push_devices "
+            "SELECT substr(token, 1, 8) AS token, platform, env, name, seen_at, dead_at, reader_id FROM push_devices "
             "WHERE ? OR reader_id = ? ORDER BY seen_at DESC", (int(is_admin()), current_reader()))]
     cfg = db.get_config(DB_PATH)
-    return {"configured": configured(), "scope": cfg.get("push_scope") or "pull",
+    up = platforms()
+    return {"configured": any(up.values()), "platforms": up, "scope": cfg.get("push_scope") or "pull",
             "enabled": cfg.get("push_enabled", "1") != "0", "devices": devs}

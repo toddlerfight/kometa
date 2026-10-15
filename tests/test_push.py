@@ -2,10 +2,11 @@
 import base64
 import json
 import os
+from urllib.parse import parse_qs
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 import kometa.db as db
@@ -164,3 +165,226 @@ def test_forget_marks_a_device_dead_and_scopes_to_the_reader(setup, db_path, mon
     push.forget_device(push.ForgetRequest(token="aa"))                 # mine: dead
     with db._connect(db_path) as c:
         assert c.execute("SELECT dead_at FROM push_devices WHERE token='aa'").fetchone()[0] is not None
+
+
+# --- Android: FCM HTTP v1 with a throwaway RSA service account and a fake Google --------
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+FCM_URL = "https://fcm.googleapis.com/v1/projects/kometa-test/messages:send"
+
+
+@pytest.fixture
+def fcm_setup(db_path, monkeypatch):
+    """FCM only — no APNs key, no apns_* config. Combine with `setup` for both."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                            serialization.NoEncryption()).decode()
+    d = os.path.join(os.path.dirname(db_path), "fcm")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "service-account.json"), "w") as fh:
+        json.dump({"type": "service_account", "project_id": "kometa-test", "private_key": pem,
+                   "client_email": "push@kometa-test.iam.gserviceaccount.com", "token_uri": TOKEN_URL}, fh)
+    monkeypatch.setattr(push, "DB_PATH", db_path)
+    monkeypatch.setattr(push, "_fcm", {"token": None, "exp": 0.0})
+    monkeypatch.setattr(push, "_jwt", {"token": None, "at": 0.0})
+    push.ensure_tables(db_path)
+    return key
+
+
+def _fdev(db_path, tok="dAbC:APA91b-android_token_1", reader_id="me"):
+    with db._connect(db_path) as conn:
+        conn.execute("INSERT INTO push_devices (token, env, platform, reader_id) VALUES (?, 'production', 'fcm', ?)",
+                     (tok, reader_id))
+
+
+class Google:
+    """Answers the token exchange and records every FCM send. `answer(token)` picks the
+    reply per device token; default is a 200 with a message name."""
+    def __init__(self, answer=None, token_status=200):
+        self.token_calls, self.sends, self.answer, self.token_status = [], [], answer, token_status
+
+    def __call__(self, url, headers, body):
+        if url == TOKEN_URL:
+            self.token_calls.append((headers, parse_qs(body.decode())))
+            return R(self.token_status, {"access_token": f"ya29.n{len(self.token_calls)}", "expires_in": 3600,
+                                         "token_type": "Bearer"})
+        msg = json.loads(body)
+        self.sends.append((url, headers, msg))
+        if self.answer:
+            return self.answer(msg["message"]["token"])
+        return R(200, {"name": "projects/kometa-test/messages/0:1"})
+
+
+def test_fcm_registration_keeps_the_token_verbatim_and_status_shows_the_platform(fcm_setup, db_path):
+    mixed = "dAbC:APA91b-Mixed_Case"                 # a made-up registration token; case must survive
+    push.register_device(push.DeviceRequest(token=f" {mixed} ", platform="fcm", name="Pixel", env="sandbox"))
+    st = push.push_status()
+    assert st["platforms"] == {"apns": False, "fcm": True} and st["configured"]
+    dev = st["devices"][0]
+    assert dev["platform"] == "fcm" and dev["env"] == "production" and dev["name"] == "Pixel"
+    with db._connect(db_path) as conn:
+        assert conn.execute("SELECT token FROM push_devices").fetchone()[0] == mixed   # case kept
+    with pytest.raises(Exception):
+        push.register_device(push.DeviceRequest(token="x" * 5000, platform="fcm"))
+    with pytest.raises(Exception):
+        push.register_device(push.DeviceRequest(token=mixed.replace("-", " "), platform="fcm"))   # whitespace: no
+    with pytest.raises(Exception):
+        push.register_device(push.DeviceRequest(token="zz" * 32))                 # APNs is still hex-only
+    push.register_device(push.DeviceRequest(token="ab" * 32, platform="nonsense"))   # unknown platform → apns
+    with db._connect(db_path) as conn:
+        assert conn.execute("SELECT platform FROM push_devices WHERE token = ?", ("ab" * 32,)).fetchone()[0] == "apns"
+    # forget works on the verbatim FCM token even though APNs tokens are lowercased
+    push.forget_device(push.ForgetRequest(token=mixed))
+    with db._connect(db_path) as conn:
+        assert conn.execute("SELECT dead_at FROM push_devices WHERE platform = 'fcm'").fetchone()[0] is not None
+
+
+def test_fcm_send_shape_signed_assertion_and_token_caching(fcm_setup, db_path):
+    _fdev(db_path)
+    g = Google()
+    single = push.build_payload([{"series_id": 12, "number": 3.0, "title": "Saga", "book_id": 77}])
+    assert push.send(single, db_path, g) == {"sent": 1, "failed": 0, "dead": 0}
+    # the assertion: a real RS256 JWT with the service-account claims, signed by its key
+    headers, form = g.token_calls[0]
+    assert headers["content-type"] == "application/x-www-form-urlencoded"
+    assert form["grant_type"] == ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
+    head, body, sig = form["assertion"][0].split(".")
+
+    def pad(s):
+        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    assert json.loads(pad(head)) == {"alg": "RS256", "typ": "JWT"}
+    claims = json.loads(pad(body))
+    assert claims["iss"] == "push@kometa-test.iam.gserviceaccount.com" and claims["aud"] == TOKEN_URL
+    assert claims["scope"] == "https://www.googleapis.com/auth/firebase.messaging"
+    assert claims["exp"] - claims["iat"] == 3600
+    fcm_setup.public_key().verify(pad(sig), f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    # the message: v1 shape, string-only data, high priority on the kometa-new channel
+    url, h, msg = g.sends[0]
+    assert url == FCM_URL and h["authorization"] == "Bearer ya29.n1" and h["content-type"] == "application/json"
+    m = msg["message"]
+    assert m["token"] == "dAbC:APA91b-android_token_1"
+    assert m["notification"] == {"title": "New on the shelf", "body": "Saga #3"}
+    assert m["data"] == {"kind": "new", "series_id": "12", "book_id": "77"}
+    assert all(isinstance(v, str) for v in m["data"].values())
+    assert m["android"]["priority"] == "high"
+    assert m["android"]["notification"] == {"channel_id": "kometa-new", "sound": "default", "tag": "kometa-new-s12"}
+    assert m["android"]["collapse_key"] == "kometa-new-s12"
+    # a batch: dest=recent, book_ids as a JSON string, its own tag
+    batch = push.build_payload([{"series_id": 12, "number": 3.0, "title": "Saga", "book_id": 77},
+                                {"series_id": 13, "number": 1.0, "title": "Ice Cream Man", "book_id": 78}])
+    push.send(batch, db_path, g)
+    m = g.sends[1][2]["message"]
+    assert m["notification"]["title"] == "2 new on the shelf"
+    assert m["data"] == {"kind": "new", "series_id": "12", "dest": "recent", "book_ids": "[77,78]"}
+    assert m["android"]["notification"]["tag"] == "kometa-new-recent"
+    # one token exchange for two sends: cached
+    assert len(g.token_calls) == 1
+    # ...until it's within five minutes of dying, then a fresh one
+    push._fcm["exp"] = push.time.time() + 200
+    push.send(single, db_path, g)
+    assert len(g.token_calls) == 2 and g.sends[2][1]["authorization"] == "Bearer ya29.n2"
+
+
+def test_fcm_buries_unregistered_and_bad_tokens_but_not_our_own_bad_messages(fcm_setup, db_path):
+    _fdev(db_path, "gone")
+    _fdev(db_path, "garbage")
+    _fdev(db_path, "ourfault")
+    _fdev(db_path, "fine")
+
+    def answer(tok):
+        return {
+            "gone": R(404, {"error": {"code": 404, "status": "NOT_FOUND", "message": "Requested entity was not found.",
+                                      "details": [{"@type": "type.googleapis.com/google.firebase.fcm.v1.FcmError",
+                                                   "errorCode": "UNREGISTERED"}]}}),
+            "garbage": R(400, {"error": {"code": 400, "status": "INVALID_ARGUMENT",
+                                         "message": "The registration token is not a valid FCM registration token",
+                                         "details": [{"errorCode": "INVALID_ARGUMENT"}]}}),
+            "ourfault": R(400, {"error": {"code": 400, "status": "INVALID_ARGUMENT",
+                                          "message": "Invalid JSON payload received. Unknown name \"foo\"",
+                                          "details": [{"errorCode": "INVALID_ARGUMENT"}]}}),
+        }.get(tok, R(200, {"name": "ok"}))
+    g = Google(answer)
+    out = push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g)
+    assert out == {"sent": 1, "failed": 1, "dead": 2}
+    with db._connect(db_path) as conn:
+        dead = {r[0] for r in conn.execute("SELECT token FROM push_devices WHERE dead_at IS NOT NULL")}
+    assert dead == {"gone", "garbage"}
+    g.sends.clear()
+    push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g)
+    assert {s[2]["message"]["token"] for s in g.sends} == {"ourfault", "fine"}       # the dead aren't asked again
+
+
+def test_fcm_401_drops_the_cached_token(fcm_setup, db_path):
+    _fdev(db_path)
+    g = Google(lambda tok: R(401, {"error": {"status": "UNAUTHENTICATED", "message": "expired"}}))
+    assert push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g)["failed"] == 1
+    assert push._fcm["token"] is None
+    push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g)
+    assert len(g.token_calls) == 2
+
+
+def test_fcm_token_exchange_failure_fails_the_devices_without_raising(fcm_setup, db_path):
+    _fdev(db_path, "a")
+    _fdev(db_path, "b")
+    g = Google(token_status=500)
+    assert push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g) == \
+        {"sent": 0, "failed": 2, "dead": 0}
+    assert g.sends == []
+
+
+def test_mixed_apns_and_fcm_fan_out_from_one_landing(setup, fcm_setup, db_path, monkeypatch):
+    monkeypatch.setattr(push, "BATCH_S", 999)
+    monkeypatch.setattr(push, "_book_id", lambda s, n: 77)
+    a = db.add_series(title="Midnight X-Men", publisher="Marvel", folder_path="/c/a", path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET on_pull_list = 1 WHERE id = ?", (a,))
+    _dev(db_path, "aa" * 32, "production")                     # the iPhone
+    _fdev(db_path, "dAbC:APA91b-pixel")                        # the Pixel
+    assert push.platforms(db_path) == {"apns": True, "fcm": True}
+    g = Google()
+    apple = []
+
+    def post(url, headers, body):
+        if "push.apple.com" in url:
+            apple.append((url, headers, json.loads(body)))
+            return R(200)
+        return g(url, headers, body)
+    push.issue_landed(a, 2.0, db_path)
+    push._timer.cancel()
+    assert push.flush(db_path, post=post) == {"sent": 2, "failed": 0, "dead": 0}
+    assert len(apple) == 1 and len(g.sends) == 1
+    assert apple[0][0] == "https://api.push.apple.com/3/device/" + "aa" * 32
+    assert apple[0][2]["aps"]["alert"] == {"title": "New on the shelf", "body": "Midnight X-Men #2"}
+    assert apple[0][2]["book_id"] == 77
+    m = g.sends[0][2]["message"]
+    assert m["notification"] == apple[0][2]["aps"]["alert"]                 # same words on both lock screens
+    assert m["data"] == {"kind": "new", "series_id": str(a), "book_id": "77"}
+
+
+def test_a_missing_service_account_skips_fcm_devices_and_vice_versa(setup, db_path, monkeypatch):
+    # APNs only: the Pixel is skipped quietly, not failed, and Google is never called
+    _dev(db_path, "aa" * 32)
+    _fdev(db_path, "dAbC:APA91b-pixel")
+    assert push.platforms(db_path) == {"apns": True, "fcm": False}
+    urls = []
+    out = push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path,
+                    lambda u, h, b: urls.append(u) or R(200))
+    assert out == {"sent": 1, "failed": 0, "dead": 0}
+    assert len(urls) == 1 and "apple" in urls[0]
+    # FCM only: now the iPhone is the one skipped
+    os.remove(push._key_path(db_path))
+    monkeypatch.setattr(push, "_fcm", {"token": None, "exp": 0.0})
+    d = os.path.join(os.path.dirname(db_path), "fcm")
+    os.makedirs(d, exist_ok=True)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    with open(os.path.join(d, "service-account.json"), "w") as fh:
+        json.dump({"project_id": "kometa-test", "client_email": "p@x", "private_key": key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()}, fh)
+    assert push.platforms(db_path) == {"apns": False, "fcm": True}
+    g = Google()
+    assert push.send(push.build_payload([{"series_id": 1, "number": 1.0, "title": "T"}]), db_path, g) == \
+        {"sent": 1, "failed": 0, "dead": 0}
+    assert g.sends[0][0] == FCM_URL
+    # neither: the old "not configured" answer, and a landing isn't even queued
+    os.remove(os.path.join(d, "service-account.json"))
+    assert push.send({"aps": {}}, db_path, post=lambda *a: 1 / 0)["error"] == "not configured"
+    assert push.push_status()["platforms"] == {"apns": False, "fcm": False}
