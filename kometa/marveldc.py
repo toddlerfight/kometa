@@ -364,7 +364,7 @@ def held_covers(series_id: int, number: float, path=None) -> list[dict]:
     from PIL import Image
     path = path or DB_PATH
     images.ensure_tables(path)
-    prefix = f"issue/{int(series_id)}/{number:g}/"
+    prefix = f"issue/{int(series_id)}/{images.num(number)}/"
     with db._connect(path) as conn:
         rows = conn.execute("SELECT key, path FROM image_record WHERE key LIKE ? AND path IS NOT NULL",
                             (prefix + "%",)).fetchall()

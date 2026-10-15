@@ -16,6 +16,7 @@ import logging
 import os
 
 import kometa.db as db
+from kometa import images
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
@@ -155,7 +156,7 @@ def own_entries(series_id: int, number: float, path=None) -> list[dict]:
         except Exception:        # no record table yet — nothing harvested, nothing to add
             return []
         linked = {r[0] for r in conn.execute("SELECT DISTINCT better FROM cover_upgrade WHERE better LIKE ?",
-                                             (f"issue/{int(series_id)}/{number:g}/%",))}
+                                             (f"issue/{int(series_id)}/{images.num(number)}/%",))}
     try:
         imgs = (json.loads((row and row["extra_json"]) or "{}").get("marveldc") or {}).get("images") or []
     except ValueError:
@@ -180,7 +181,7 @@ def fandom_entries(series_id: int, number: float, path=None) -> list[dict]:
     copy, since the wiki's CDN won't hand the injector anything."""
     path = path or DB_PATH
     ensure_tables(path)
-    prefix = f"issue/{int(series_id)}/{number:g}/fandom/"
+    prefix = f"issue/{int(series_id)}/{images.num(number)}/fandom/"
     with db._connect(path) as conn:
         linked = {r[0] for r in conn.execute("SELECT DISTINCT better FROM cover_upgrade WHERE better LIKE ?", (prefix + "%",))}
         rows = conn.execute("SELECT key, path FROM image_record WHERE key LIKE ? AND path IS NOT NULL", (prefix + "%",)).fetchall()

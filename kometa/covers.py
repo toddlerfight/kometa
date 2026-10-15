@@ -31,7 +31,7 @@ _ROLES = (("Writer", "writer"), ("Penciller", "penciller"), ("Inker", "inker"), 
 
 # --- keys -----------------------------------------------------------------------
 def file_key(series_id: int, number: float) -> str:
-    return f"issue/{int(series_id)}/{number:g}/file"
+    return f"issue/{int(series_id)}/{images.num(number)}/file"
 
 
 def book_key(book_id: int) -> str:

@@ -275,3 +275,43 @@ def test_a_fandom_burst_takes_its_lane_and_the_tick_stands_aside(db_path, tmp_pa
     with im._lane_lock(im.FANDOM_HOST):
         assert im.images_lanes(path=db_path, sleep=lambda s: None) == 0          # the burst has it
     assert im.fandom_burst(db_path, sleep=lambda s: None) >= 5                    # all of it, not the tick's 2
+
+
+def test_issue_numbers_in_keys_never_use_scientific_notation(db_path):
+    """Batman #1,000,000 (DC One Million) minted 'issue/66/1e+06/main' through f"{n:g}";
+    the key check refused it and the whole cover lane died on it every tick."""
+    assert im.num(12.0) == "12" and im.num(12.5) == "12.5" and im.num(1_000_000.0) == "1000000"
+    assert im.issue_key(66, 1_000_000.0) == "issue/66/1000000/main"
+    assert im.file_for(im.issue_key(66, 1_000_000.0), "/tmp/x").endswith("issue/66/1000000/main.jpg")
+    assert im.issue_key(5, 1.0) == "issue/5/1/main"            # everything below a million is unchanged
+
+
+def test_ensure_tables_rewrites_keys_minted_in_scientific_notation(db_path):
+    import kometa.db as db
+    im.ensure_tables(db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("INSERT INTO image_record (key, url, source) VALUES (?, ?, ?)",
+                     ("issue/66/1e+06/main", "https://static/m.jpg", "metron"))
+        conn.execute("INSERT INTO image_record (key, url, source) VALUES (?, ?, ?)",
+                     ("issue/66/1e+06/variant/v1", "https://static/v.jpg", "locg"))
+        conn.execute("INSERT INTO image_record (key, url, source) VALUES (?, ?, ?)",
+                     ("issue/66/1000000/variant/v1", "https://static/v-good.jpg", "locg"))   # the proper row already exists
+    im.ensure_tables.__wrapped__(db_path)        # once_per_db already ran for this file; the migration itself, again
+    with db._connect(db_path) as conn:
+        keys = sorted(r[0] for r in conn.execute("SELECT key FROM image_record WHERE key LIKE 'issue/66/%'"))
+    assert keys == ["issue/66/1000000/main", "issue/66/1000000/variant/v1"]
+
+
+def test_a_bad_key_skips_the_item_not_the_lane(db_path, monkeypatch):
+    calls = []
+    def fetch(key, url, source, path, http=None):
+        calls.append(key)
+        if "bad key" in key:
+            raise ValueError("bad image key")
+        return {"key": key}
+    monkeypatch.setattr(im, "fetch_image", fetch)
+    monkeypatch.setattr("kometa.activity.yield_to_reader", lambda sleep: None)
+    items = [("issue/1/1/main", "https://s/a.jpg", "metron"), ("issue/1/bad key/main", "https://s/b.jpg", "metron"),
+             ("issue/1/2/main", "https://s/c.jpg", "metron")]
+    done = im._run_lane(items, db_path, http=None, sleep=lambda s: None, gap=0, label="s")
+    assert calls == [k for k, _, _ in items] and done == 2

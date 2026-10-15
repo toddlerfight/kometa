@@ -183,7 +183,7 @@ def closest_cover(series_id: int, number: float, h: int, path=None) -> str | Non
     from kometa import coververify, images
     path = path or DB_PATH
     images.ensure_tables(path)
-    prefix = f"issue/{int(series_id)}/{number:g}/"
+    prefix = f"issue/{int(series_id)}/{images.num(number)}/"
     best, best_d = None, coververify.CLOSE + 1
     with db._connect(path) as conn:
         rows = conn.execute("SELECT key, path FROM image_record WHERE key LIKE ? AND path IS NOT NULL",

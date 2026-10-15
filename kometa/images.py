@@ -95,18 +95,40 @@ def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS image_record (
             key TEXT PRIMARY KEY, path TEXT, url TEXT, bytes INTEGER, fetched_at TEXT, source TEXT, failed_at TEXT)""")
+        # keys minted before num(): '/1e+06/' for #1,000,000. Rewritten, or dropped if the
+        # proper key already has a row — a bad key must never reach the lane again.
+        for (k,) in conn.execute("SELECT key FROM image_record WHERE key LIKE '%e+%'").fetchall():
+            fixed = re.sub(r"/([0-9.]+e\+[0-9]+)/", lambda m: "/" + num(float(m.group(1))) + "/", k)
+            if fixed == k:
+                continue
+            if conn.execute("SELECT 1 FROM image_record WHERE key = ?", (fixed,)).fetchone():
+                conn.execute("DELETE FROM image_record WHERE key = ?", (k,))
+            else:
+                conn.execute("UPDATE image_record SET key = ? WHERE key = ?", (fixed, k))
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def num(number) -> str:
+    """An issue number as it reads in an image key: 12 → '12', 12.5 → '12.5',
+    1000000 → '1000000'. Batman #1,000,000 (DC One Million, 1998) came out of
+    f"{n:g}" as '1e+06', which the key check rightly refuses — and that one key
+    took the whole cover lane down with it, every ten minutes, for a morning."""
+    try:
+        f = float(number)
+    except (TypeError, ValueError):
+        return str(number)
+    return str(int(f)) if f.is_integer() and abs(f) < 1e15 else f"{f:g}"
+
+
 def issue_key(series_id: int, number: float) -> str:
-    return f"issue/{int(series_id)}/{number:g}/main"
+    return f"issue/{int(series_id)}/{num(number)}/main"
 
 
 def variant_key(series_id: int, number: float, variant_id) -> str:
-    return f"issue/{int(series_id)}/{number:g}/variant/{re.sub(r'[^A-Za-z0-9_.-]', '_', str(variant_id))}"
+    return f"issue/{int(series_id)}/{num(number)}/variant/{re.sub(r'[^A-Za-z0-9_.-]', '_', str(variant_id))}"
 
 
 def cv_key(series_id: int, number: float) -> str:
@@ -698,6 +720,9 @@ def _run_lane(items, path, http, sleep, gap: float = TRICKLE_GAP_S, label: str =
         except polite.SourceUnavailable as e:
             logger.info(f"Image lane {label}: {e}; stopping this tick")
             break
+        except ValueError as e:                       # a key the store refuses: skip it, keep the lane moving
+            logger.warning(f"Image lane {label}: skipped {key!r}: {e}")
+            continue
         # a failed upgrade hands back the old row (file kept): still a failure
         # as far as "is the CDN down" goes
         if row and not row.get("failed_at"):
