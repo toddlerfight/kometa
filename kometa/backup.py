@@ -102,6 +102,14 @@ def backup_now(dest_root: str | None = None, db_path: str | None = None, covers_
     os.makedirs(dest_root, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d")
     out = {"dest": dest_root, "started_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    # Recorded as 'in progress' before the first byte: a run cut off by a restart
+    # (2026-10-15: three deploys in ten minutes killed a manual run mid-mirror)
+    # used to leave the OLD record standing, as if nothing had happened.
+    try:
+        db.set_config({"backup_last": json.dumps({**out, "ok": False, "running": True,
+                                                  "error": "interrupted — Kometa restarted during the run"})}, db_path)
+    except Exception:
+        pass
     try:
         path, size = _copy_db(db_path, dest_root, stamp)
         out.update(db_file=os.path.basename(path), db_bytes=size)
@@ -122,11 +130,16 @@ def backup_now(dest_root: str | None = None, db_path: str | None = None, covers_
 
 
 def last(db_path: str | None = None) -> dict:
+    """The last run's record. One marked 'running' while no run is in this process
+    was cut off by a restart: it comes back as a failed run, which is what it was."""
     try:
         raw = db.get_config(db_path or DB_PATH).get("backup_last")
-        return json.loads(raw) if raw else {}
+        out = json.loads(raw) if raw else {}
     except Exception:
         return {}
+    if out.get("running") and not _state["running"]:
+        out = {**out, "running": False, "ok": False, "error": out.get("error") or "interrupted — Kometa restarted during the run"}
+    return out
 
 
 def status() -> dict:

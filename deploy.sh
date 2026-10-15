@@ -21,6 +21,11 @@ DOCKER="${KOMETA_DOCKER:-docker}"
 SSH="ssh -o IdentitiesOnly=yes -p $PORT -i $KEY $USER_@$HOST"
 
 echo "deploying to $HOST:$APP_DIR ..."
+# A restart kills a backup mid-mirror and leaves no record (2026-10-15: three
+# deploys in ten minutes ate a manual run). Ask first; KOMETA_DEPLOY_FORCE=1 overrides.
+if [ -z "${KOMETA_DEPLOY_FORCE:-}" ] && $SSH "curl -s -m 5 -H \"Authorization: Bearer \$(cat ~/.kometa-claude-token 2>/dev/null)\" http://localhost:6969/api/backup" 2>/dev/null | grep -q '"running": *true'; then
+  echo "  ✗ a backup is running on $HOST — wait for it (curl /api/backup), or KOMETA_DEPLOY_FORCE=1"; exit 1
+fi
 "$ROOT/stamp.sh"
 
 # Sync the whole package. Excludes: __pycache__ is root-owned by the container
