@@ -19,9 +19,22 @@ Rules that came out of the design rounds and the baseline harness run:
 
 All local, read from an index built once and kept warm; nothing asks a catalogue.
 It runs behind config `related_engine` = 'combined' until the owner switches it on.
+
+Phase 2 (2026-10-17, the design partner's build, reviewed on live data) adds two
+channels, each behind its own switch:
+- config `related_themes` = 'on': themes read out of the issue descriptions (vampires,
+  heists, time travel…) join the genre channel, below a file's or GCD's own label;
+- config `related_community` = 'boost': "liked by the same readers" (CBR's reviewers,
+  centred per person) lifts a card another channel earned; = 'cards' lets it make a
+  card on its own. Those reviewers co-read by era — Saga's strongest neighbours are
+  Hawkeye and Batman (2011), Monstress's include Spider-Man/Deadpool — so 'cards'
+  waits for the owner's blind scoring.
+And an anthology's one-off contributors stop being a creator link: The Joker 80th
+Anniversary Special put Fiona Staples' pin-up in Saga's top five.
 """
 import json
 import math
+import re
 import threading
 import time
 from collections import Counter, defaultdict
@@ -58,6 +71,60 @@ HUB_TOP = 5                         # hubness is counted over the top 5 rows peo
 HUB_DAMP = 0.5                      # score / (1 + 0.5 · log2(rows it's in / the median)) above the median
 HUB_GATE, HUB_PASSES = 0.03, 6      # re-damp until no series is in more than 3% of top-5 rows
 INDEX_TTL_S = 300
+# A short run with more than 8 writers and artists per issue is an anthology: a one-off
+# contributor isn't a reason to recommend it (The Joker 80th Anniversary Special: 25 of
+# them in one issue, in 23 top-five rows; Fiona Staples' pin-up put it in Saga's top
+# five). Its own row still walks them all — Tom King's Batman is a fair pick from it.
+ANTHOLOGY_RUN, ANTHOLOGY_PEOPLE = 4, 8
+
+# --- phase 2: description themes ------------------------------------------------------
+DESC_THEME_TRUST = 0.5              # read out of a blurb: below a file's theme (0.6) or GCD's (0.8)
+# The design partner's 27 patterns. Keys that the tag vocabulary already has use its
+# name (record._THEMES), so a file's "occult" and a blurb's witchcraft are one theme.
+THEME_PATTERNS = {
+    "vampires": r"\b(?:vampire\w*|nosferatu|dracula|bloodsucker\w*|undead\s+covens?)\b",
+    "werewolves": r"\b(?:werewol(?:f|ves)|lycanthrop\w*|wolf-?man)\b",
+    "zombies": r"\b(?:zombie\w*|walking\s+dead|living\s+dead|undead\s+horde\w*|necromanc\w*)\b",
+    "ghosts": r"\b(?:haunted|haunting|poltergeist\w*|apparition\w*|specter\w*|spectre\w*|ectoplasm\w*|restless\s+spirit\w*)\b",
+    "demons": r"\b(?:demonic|hellspawn|underworld|satan\w*|hellfire|infernal|damnation|depths\s+of\s+hell|forces\s+of\s+hell)\b",
+    "occult": r"\b(?:witch(?:es|craft)?|coven\w*|occult\w*|ritual\s+magic|dark\s+magic|grimoire\w*|sorcer(?:y|er|ess)\w*)\b",
+    "monsters": r"\b(?:kaiju|giant\s+monster\w*|behemoth\w*|leviathan\w*|lovecraft\w*|eldritch|cosmic\s+horror)\b",
+    "aliens": r"\b(?:xenomorph\w*|extraterrestrial\w*|alien\s+(?:invasion|species|world\w*|planet\w*|threat|organism|lifeform\w*)|first\s+contact)\b",
+    "space opera": r"\b(?:starship\w*|spaceship\w*|interstellar|galactic\s+empire\w*|deep\s+space|space\s+station\w*|hyperspace|federation|rebel\s+alliance|bounty\s+hunter\w*)\b",
+    "time travel": r"\b(?:time\s+travel\w*|time\s+loop\w*|time\s+machine\w*|timeline\w*|temporal\s+(?:paradox|anomaly|rift)|chrononaut\w*|future\s+self)\b",
+    "multiverse": r"\b(?:multivers\w*|parallel\s+(?:world\w*|universe\w*|earth\w*)|alternate\s+(?:reality|realities|universe\w*|timeline\w*|dimension\w*)|interdimensional)\b",
+    "post-apocalyptic": r"\b(?:post-?apocalyp\w*|wasteland\w*|doomsday|nuclear\s+winter|after\s+the\s+end|collapsed\s+civilization|dying\s+earth)\b",
+    "cyberpunk": r"\b(?:cyberpunk|cyborg\w*|android\w*|artificial\s+intelligence|sentient\s+(?:robot\w*|ai|machine\w*)|virtual\s+reality|megacorp\w*)\b",
+    "heists": r"\b(?:heist\w*|bank\s+robber\w*|getaway\s+driver|con\s+artist\w*|crime\s+syndicate\w*|mob\s+boss\w*|cartel\w*|organized\s+crime)\b",
+    "serial killers": r"\b(?:serial\s+killer\w*|copycat\s+killer\w*|grisly\s+murder\w*|ritual\s+murder\w*|homicide\s+detective\w*|cold\s+case\w*)\b",
+    "noir": r"\b(?:private\s+(?:eye|investigator\w*|detective\w*)|hard-?boiled|femme\s+fatale|gumshoe|(?:crime|detective|hard-?boiled|neo-?)\s*noir)\b",
+    "espionage": r"\b(?:espionage|secret\s+agent\w*|double\s+agent\w*|covert\s+op\w*|black\s+ops|intelligence\s+agency|spy\s+thriller)\b",
+    "conspiracy": r"\b(?:conspirac\w*|cover-?up|secret\s+society|shadowy\s+cabal|shadowy\s+organization|deep\s+state)\b",
+    "revenge": r"\b(?:vendetta\w*|blood\s+feud\w*|quest\s+for\s+revenge|out\s+for\s+revenge|avenge\s+(?:the\s+)?(?:murder|death))\b",
+    "martial arts": r"\b(?:martial\s+art\w*|kung\s+fu|ninjutsu|ninja\w*|samurai|ronin|dojo|shogun\w*|katana)\b",
+    "sword and sorcery": r"\b(?:sword\s+and\s+sorcery|dungeon\w*|barbarian\w*|magic\s+sword|high\s+fantasy|dark\s+fantasy|elves|dwarv\w*|magical\s+realm\w*)\b",
+    "mythology": r"\b(?:mytholog\w*|folklore|pantheon|old\s+gods|norse\s+god\w*|greek\s+god\w*|arthurian|fairy\s+tale\w*|fable\w*)\b",
+    "war": r"\b(?:battlefield\w*|platoon\w*|trench\w*|world\s+war\s+(?:i|ii|one|two|three)|vietnam\s+war|cold\s+war|front\s+line\w*|war\s+zone\w*|special\s+forces)\b",
+    "survival": r"\b(?:shipwreck\w*|stranded|wilderness\s+survival|fight\s+for\s+survival|quarantine\s+zone)\b",
+    "prison": r"\b(?:maximum\s+security|prison\s+break|penitentiary|cellblock\w*|death\s+row|inmate\w*)\b",
+    "steampunk": r"\b(?:steampunk|clockwork|airship\w*|victorian\s+london|gaslamp)\b",
+    "pirates": r"\b(?:buccaneer\w*|galleon\w*|high\s+seas|mutiny|privateer\w*|pirate\s+ship\w*|pirate\s+crew)\b",
+}
+_THEME_RX = {k: re.compile(p, re.I) for k, p in THEME_PATTERNS.items()}
+# 10,000 issue blurbs take 1.5 s to read (one merged pattern was slower, 2.1 s), and the
+# index rebuilds whenever a record lands: a series' themes are kept against its blurbs
+_theme_memo: dict[tuple, tuple[int, list[str]]] = {}
+# Words that are also somebody's name: capitalised mid-sentence they're the Silk
+# Spectre (Watchmen came out "ghosts"), Cyborg, the Scarlet Witch, Leviathan
+# (Checkmate came out "monsters"), not the thing.
+_NAME_WORDS = re.compile(r"^(?:spectre|specter|cyborg|android|witch|leviathan)", re.I)
+
+# --- phase 2: liked by the same readers ----------------------------------------------
+COMMUNITY = (2.0, 0.4)              # cap, τ. The partner's τ 0.12 put five shared readers (1.4) level with a hundred (2.0)
+COMMUNITY_CARD_MIN = 1.0            # 'cards' only: a card of its own needs this much
+COMM_MIN_RATERS, COMM_MIN_POS = 5, 3     # people who rated both, and who liked both more than they like most things
+COMM_ALPHA, COMM_K = 0.05, 25.0     # the rest of a series' raters count a little; shrink by n / (n + 25)
+COMMUNITY_REASON = "Liked by the same readers"
 
 _ROLE_LABEL = {"writer": "Writer", "story": "Writer", "script": "Writer", "plot": "Writer", "artist": "Artist",
                "penciller": "Artist", "inker": "Inker", "colorist": "Colorist", "letterer": "Letterer"}
@@ -94,13 +161,18 @@ class Index:
         self.idf_median: dict[str, float] = {}
         self.franchise_members: dict[str, list[int]] = defaultdict(list)
         self.damp: dict[int, float] = {}                               # series → hub damping factor
+        self.opts: dict = {"themes": False, "community": "off"}
+        self.unposted: dict[str, dict[int, set]] = defaultdict(dict)  # channel → series → features others can't reach it by
+        self.community: dict[int, dict[int, float]] = {}               # series → series → raw similarity
 
     def finish(self):
         for ch, per in self.features.items():
             post: dict[str, list] = defaultdict(list)
+            hidden = self.unposted.get(ch, {})
             for sid, feats in per.items():
                 for k, w in feats.items():
-                    post[k].append((sid, w))
+                    if k not in hidden.get(sid, ()):
+                        post[k].append((sid, w))
             n = max(1, len(per))
             self.postings[ch] = post
             self.idf[ch] = {k: math.log(1 + n / len(v)) for k, v in post.items()}
@@ -114,9 +186,11 @@ class Index:
         return self
 
 
-def _owned_credits(path) -> dict[int, dict[str, tuple[float, str, str]]]:
+def _owned_credits(path, one_offs: dict | None = None) -> dict[int, dict[str, tuple[float, str, str]]]:
     """series → creator key → (role weight, role label, name), from the issues you own
-    where you own any credited ones, else the run's whole record."""
+    where you own any credited ones, else the run's whole record. For an anthology,
+    `one_offs` gets the contributors in only one of its issues: a way out of its row,
+    never a way in."""
     from kometa import record, related
     record.ensure_tables(path)
     per: dict[int, list[tuple[list, bool]]] = defaultdict(list)
@@ -146,6 +220,11 @@ def _owned_credits(path) -> dict[int, dict[str, tuple[float, str, str]]]:
                 if c[0]:
                     seen[c[:2]] += 1
                     info[c[:2]] = c[2]
+        strong = {k for k, role in seen if related._role_weight(role) >= STRONG_CREDIT}
+        anthology = total <= ANTHOLOGY_RUN and len(strong) / total > ANTHOLOGY_PEOPLE
+        issues_in: Counter = Counter()
+        for (k, role), n in seen.items():
+            issues_in[k] = max(issues_in[k], n)
         feats = {}
         for (k, role), n in seen.items():
             w = related._role_weight(role)
@@ -153,6 +232,8 @@ def _owned_credits(path) -> dict[int, dict[str, tuple[float, str, str]]]:
                 continue
             if k not in feats or w > feats[k][0]:
                 feats[k] = (w, _label(role), info[(k, role)])
+        if anthology and one_offs is not None:
+            one_offs[sid] = {k for k in feats if issues_in[k] < 2}
         out[sid] = feats
     return out
 
@@ -191,11 +272,21 @@ def _cast(path) -> tuple[dict, dict, dict, dict]:
     return chars, teams, unis, names
 
 
-def build_index(path=None) -> Index:
+def options(path=None) -> dict:
+    """The phase-2 switches, from config."""
+    cfg = db.get_config(path or DB_PATH)
+    mode = cfg.get("related_community") or "off"
+    return {"themes": cfg.get("related_themes") == "on",
+            "community": mode if mode in ("boost", "cards") else "off"}
+
+
+def build_index(path=None, opts: dict | None = None) -> Index:
     from kometa import related, record
     from kometa.family import attach_families
     path = path or DB_PATH
+    opts = options(path) if opts is None else opts
     ix = Index()
+    ix.opts = opts
     series = related._series_with_counts(path)
     ix.series = series
     rows = [dict(s) for s in series.values()]
@@ -208,7 +299,7 @@ def build_index(path=None) -> Index:
         for g in group:
             ix.family[g].add(s["id"])
     # creators (owned issues first), falling back to series_signals for runs with no record
-    credits = _owned_credits(path)
+    credits = _owned_credits(path, ix.unposted["creators"])
     sig = related._signals(path)
     for sid in set(sig) | set(credits):
         feats = credits.get(sid)
@@ -246,6 +337,13 @@ def build_index(path=None) -> Index:
             ix.features["genre"][sid] = feats
             for t in tags:
                 ix.labels["genre"].setdefault(t["key"], ("Theme: " if t["kind"] == "theme" else "Genre: ") + t["key"])
+    if opts.get("themes"):
+        for sid, keys in description_themes(path).items():
+            feats = ix.features["genre"].setdefault(sid, {})
+            for k in keys:
+                feats[k] = max(feats.get(k, 0.0), DESC_THEME_TRUST * THEME_MULT)
+                ix.labels["genre"].setdefault(k, f"Theme: {k}")
+    ix.community = _community(path) if opts.get("community") != "off" else {}
     # Metron's associated runs, mapped onto the shelf by Metron id
     by_metron = {}
     for s in series.values():
@@ -275,7 +373,9 @@ def build_index(path=None) -> Index:
     # Batman runs feed every Batman row), so it's re-counted with the damping applied
     # until no series is above the gate or HUB_PASSES runs out.
     rows = {sid: _score(ix, sid) for sid in ix.series}
-    limit = max(1, int(HUB_GATE * len(ix.series)))
+    # over the series that have a row, as the harness counts: arcs don't (832 rows, 840
+    # entries on 2026-10-17 let a 25th row through a gate of 24)
+    limit = max(1, int(HUB_GATE * sum(1 for s in ix.series.values() if s.get("kind") != "arc")))
     for _ in range(HUB_PASSES):
         indeg: Counter = Counter()
         for cands in rows.values():
@@ -294,7 +394,102 @@ def build_index(path=None) -> Index:
     return ix
 
 
-_cache = {"at": 0.0, "path": None, "fp": None, "ix": None}
+def description_themes(path=None) -> dict[int, list[str]]:
+    """series → up to 3 themes read out of its descriptions. A theme counts when the
+    series blurb names it twice, or once with one issue agreeing, or it's in 15% of
+    the issue blurbs (two at least)."""
+    path = path or DB_PATH
+    s_desc, i_descs = {}, defaultdict(list)
+    with db._connect(path) as conn:
+        try:
+            for sid, d in conn.execute("SELECT tracked_series_id, desc FROM series_record WHERE desc IS NOT NULL AND desc != ''"):
+                s_desc[sid] = d
+            for sid, d in conn.execute("SELECT tracked_series_id, desc FROM issue_record WHERE desc IS NOT NULL AND desc != ''"):
+                i_descs[sid].append(d)
+        except Exception:
+            return {}
+
+    def hits(rx, text) -> int:
+        n = 0
+        for m in rx.finditer(text or ""):
+            w, before = m.group(0), text[:m.start()].rstrip()
+            if _NAME_WORDS.match(w) and w[0].isupper() and before and before[-1] not in '.!?"\u201c':
+                continue                                # the Silk Spectre, not a spectre
+            n += 1
+        return n
+
+    out = {}
+    for sid in set(s_desc) | set(i_descs):
+        sd, ids = s_desc.get(sid, ""), sorted(i_descs.get(sid, []))
+        key = hash((sd, tuple(ids)))
+        memo = _theme_memo.get((path, sid))
+        if memo and memo[0] == key:
+            themes = memo[1]
+        else:
+            min_i = max(2, math.ceil(0.15 * len(ids))) if ids else 2
+            scored = []
+            for k, rx in _THEME_RX.items():
+                s_hits = hits(rx, sd)
+                per_issue = [hits(rx, t) for t in ids]
+                i_cnt, i_hits = sum(1 for h in per_issue if h), sum(per_issue)
+                if s_hits >= 2 or (s_hits >= 1 and i_cnt >= 1) or (i_cnt >= min_i and i_hits >= 2):
+                    scored.append((i_cnt / max(1, len(ids)) + (0.5 if s_hits else 0.0), i_hits + s_hits, k))
+            themes = [k for _, _, k in sorted(scored, reverse=True)[:3]]
+            _theme_memo[(path, sid)] = (key, themes)
+        if themes:
+            out[sid] = themes
+    return out
+
+
+def _community(path=None) -> dict[int, dict[int, float]]:
+    """series → series → how alike CBR's reviewers rate them: cosine over scores centred
+    on each person's own mean (someone who gives everything a 9 says little with a 9),
+    critics at 0.3, prolific raters damped, shrunk by n / (n + 25) shared raters."""
+    from kometa import cbr_people
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        try:
+            linked = cbr_people._linked(conn)
+            rows = conn.execute("SELECT person, series_path, AVG(score) FROM cbr_people_scores "
+                                "GROUP BY person, series_path").fetchall() if linked else []
+        except Exception:
+            return {}
+    by_p = defaultdict(list)
+    for p, sp, sc in rows:
+        by_p[p].append((sp, sc))
+    by_sid: dict[int, dict[str, float]] = defaultdict(dict)
+    for p, v in by_p.items():
+        on_shelf = sum(1 for sp, _ in v if sp in linked)
+        if len(v) < 2 or on_shelf < 2:
+            continue
+        mean = sum(sc for _, sc in v) / len(v)
+        w = (0.3 if p.startswith("critic:") else 1.0) / math.log2(2.0 + on_shelf)
+        for sp, sc in v:
+            if sp in linked:
+                by_sid[linked[sp]][p] = (sc - mean) * w
+    sq = {sid: sum(x * x for x in u.values()) for sid, u in by_sid.items()}
+    out: dict[int, dict[int, float]] = defaultdict(dict)
+    sids = list(by_sid)
+    for i, a in enumerate(sids):
+        ua = by_sid[a]
+        for b in sids[i + 1:]:
+            ub = by_sid[b]
+            shared = ua.keys() & ub.keys()
+            n = len(shared)
+            if n < COMM_MIN_RATERS or sum(1 for u in shared if ua[u] > 0 and ub[u] > 0) < COMM_MIN_POS:
+                continue
+            dot = sum(ua[u] * ub[u] for u in shared)
+            if dot <= 0:
+                continue
+            co_a, co_b = sum(ua[u] ** 2 for u in shared), sum(ub[u] ** 2 for u in shared)
+            na = math.sqrt(co_a + COMM_ALPHA * (sq[a] - co_a))
+            nb = math.sqrt(co_b + COMM_ALPHA * (sq[b] - co_b))
+            raw = dot / (na * nb) * n / (n + COMM_K)
+            out[a][b] = out[b][a] = raw
+    return dict(out)
+
+
+_cache = {"at": 0.0, "path": None, "fp": None, "ix": None, "opts": None}
 _lock = threading.Lock()
 
 
@@ -308,23 +503,27 @@ def _fingerprint(path) -> tuple:
         return (one("SELECT COUNT(*), MAX(fetched_at) FROM series_signals"),
                 one("SELECT COUNT(*), MAX(at) FROM series_tags"),
                 one("SELECT COUNT(*), MAX(fetched_at) FROM issue_record"),
-                one("SELECT COUNT(*), MAX(id) FROM tracked_series"))
+                one("SELECT COUNT(*), MAX(id) FROM tracked_series"),
+                one("SELECT COUNT(*), MAX(fetched_at) FROM series_record"),
+                one("SELECT COUNT(*), MAX(at) FROM cbr_people_scores"))
 
 
 def index(path=None) -> Index:
     """The warm index: rebuilt when what it reads has changed, at most every INDEX_TTL_S."""
     path = path or DB_PATH
     now = time.time()
+    opts = options(path)
     with _lock:
         c = _cache
-        if c["ix"] is not None and c["path"] == path and now - c["at"] < INDEX_TTL_S:
+        same = c["ix"] is not None and c["path"] == path and c.get("opts") == opts
+        if same and now - c["at"] < INDEX_TTL_S:
             return c["ix"]
         fp = _fingerprint(path)
-        if c["ix"] is not None and c["path"] == path and c["fp"] == fp:
+        if same and c["fp"] == fp:
             c["at"] = now
             return c["ix"]
-        ix = build_index(path)
-        c.update(at=now, path=path, fp=fp, ix=ix)
+        ix = build_index(path, opts)
+        c.update(at=now, path=path, fp=fp, ix=ix, opts=opts)
         return ix
 
 
@@ -439,6 +638,15 @@ def _score(ix: Index, series_id: int) -> list[dict]:
                 contrib[sid]["franchise"] = FRANCHISE_FLAT
                 reasons[sid]["franchise"] = label
                 can_card[sid] = True
+    if ix.opts.get("community") != "off":
+        # a boost to what another channel found; with 'cards', strong enough to stand alone
+        cap, tau = COMMUNITY
+        for sid, raw in (ix.community.get(series_id) or {}).items():
+            c = _saturate(raw, cap, tau)
+            contrib[sid]["community"] = c
+            reasons[sid]["community"] = COMMUNITY_REASON
+            if ix.opts["community"] == "cards" and c >= COMMUNITY_CARD_MIN:
+                can_card[sid] = True
     family = ix.family.get(series_id, set())
     out = []
     for sid, chans in contrib.items():
@@ -461,12 +669,26 @@ def _score(ix: Index, series_id: int) -> list[dict]:
     return out
 
 
-def related_combined(series_id: int, limit: int = 12, path=None, explain: bool = False) -> list[dict]:
-    """The phase-1 Related row for one series: same card shape as related.related(),
-    plus `channels` ({channel: contribution}) and `credit_strength` (the strongest
-    credit the two share, for the harness)."""
+_with_cache: dict = {}
+
+
+def _index_with(path, opts: dict) -> Index:
+    """An index built with these switches whatever config says — so the harness can
+    put the phase-2 settings side by side on one copy of the database."""
+    key = (path, tuple(sorted(opts.items())))
+    with _lock:
+        if key not in _with_cache:
+            _with_cache[key] = build_index(path, dict(opts))
+        return _with_cache[key]
+
+
+def related_combined(series_id: int, limit: int = 12, path=None, explain: bool = False,
+                     opts: dict | None = None) -> list[dict]:
+    """The Related row for one series: same card shape as related.related(), plus
+    `channels` ({channel: contribution}) and `credit_strength` (the strongest credit
+    the two share, for the harness). `opts` overrides the phase-2 switches (harness)."""
     path = path or DB_PATH
-    ix = index(path)
+    ix = index(path) if opts is None else _index_with(path, opts)
     ranked = _score(ix, series_id)
     for c in ranked:
         c["score"] = round(c["score"] * ix.damp.get(c["series_id"], 1.0), 2)

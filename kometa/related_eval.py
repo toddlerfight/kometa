@@ -53,7 +53,23 @@ def combined_engine(series_id: int, path: str) -> list[dict]:
     return related_combined.related_combined(series_id, limit=12, path=path)
 
 
-ENGINES = {"baseline": baseline_engine, "combined": combined_engine}
+def _combined_with(themes: bool, community: str):
+    def engine(series_id: int, path: str) -> list[dict]:
+        from kometa import related_combined
+        return related_combined.related_combined(series_id, limit=12, path=path,
+                                                 opts={"themes": themes, "community": community})
+    engine.__doc__ = f"The combiner with themes {'on' if themes else 'off'}, community {community}."
+    return engine
+
+
+# "combined" is whatever config has switched on; these pin the phase-2 switches
+ENGINES = {"baseline": baseline_engine, "combined": combined_engine,
+           "combined-p1": _combined_with(False, "off"),
+           "combined+themes": _combined_with(True, "off"),
+           "combined+boost": _combined_with(False, "boost"),
+           "combined+cards": _combined_with(False, "cards"),
+           "combined+themes+boost": _combined_with(True, "boost"),
+           "combined+themes+cards": _combined_with(True, "cards")}
 
 
 def _engine(name: str):

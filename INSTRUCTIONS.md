@@ -318,8 +318,34 @@ The recommendations work runs with an external agent writing briefs and commits 
 - **Owner decisions are never re-opened**: `match_status` manual + `metron_link`
   none, `locg_link = 'none'`, or `metron_checked_at = '9999-12-31 00:00:00'`.
   Sourcing cards are the owner's to confirm or decline.
-- **Step 3 (community blend) is not started** until the coverage audit is done and
-  its four defects are answered.
+- **Step 3 (community blend) ships as a boost only** (2026-10-17, review in
+  docs/related-eval/phase2-review-2026-10-17.md). Community-only cards (`cards`) stay
+  off until the owner has blind-scored them.
+- **A candidate engine never writes into the combiner's cached index.** Build your
+  own (`related_combined.related_combined(..., opts=...)` / `_index_with`). On
+  2026-10-16 a themes engine wrote into `rc.index()`'s index and every engine after it
+  in the same harness run inherited the themes: "community" and "themes + community"
+  printed identical numbers.
+
+## Related switches (2026-10-17)
+
+Related reads three switches from config. Set them in the container and restart, since
+the config cache is per process and PATCH /api/config ignores these keys:
+
+```bash
+docker exec kometa python3 -c "import kometa.db as d; d.set_config({'related_themes': 'on', 'related_community': 'boost'}, d.DB_PATH)"
+./deploy.sh          # or: docker compose restart kometa
+```
+
+| Key | Values | Live |
+|---|---|---|
+| `related_engine` | `combined` / anything else = the old engine | combined |
+| `related_themes` | `on` / off | on |
+| `related_community` | `boost` / `cards` / off | boost |
+
+Compare settings side by side on a copy of the live database with the harness
+variants `combined-p1`, `combined+themes`, `combined+boost`, `combined+cards`,
+`combined+themes+boost` and `combined+themes+cards` (see kometa/related_eval.py).
 
 ## New features: research → mock-up → build
 
