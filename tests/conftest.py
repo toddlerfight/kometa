@@ -3,11 +3,21 @@ DB, no external APIs, no NAS. Pass `path=db_path` to every db call; for the
 modules that read a module-level DB_PATH (acquisition), monkeypatch it.
 """
 import io
+import os
+import time
 import zipfile
 
-import pytest
+# The suite runs on the container's clock: UTC. Kometa's "today" comes from Python's
+# date.today() in some places and SQLite's date('now') (always UTC) in others; in the
+# container (TZ unset) they agree. On a Mac in Brisbane they differed by a day between
+# midnight and 10 am, and three date tests failed every night (2026-10-17). Set before
+# any test module computes a date at import.
+os.environ["TZ"] = "UTC"
+time.tzset()
 
-import kometa.db as db
+import pytest  # noqa: E402
+
+import kometa.db as db  # noqa: E402
 
 
 def make_cbz(path, pages=2):
