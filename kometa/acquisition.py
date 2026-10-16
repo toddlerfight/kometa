@@ -1523,8 +1523,9 @@ def _torrent_dead(item, qid, infohash, why: str) -> None:
             q.delete_torrent(infohash, delete_files=True)
     except Exception as e:
         logger.info(f"Torrent {infohash}: couldn't drop it from qBittorrent: {e}")
-    if item.get("kind") in (None, "issue") and (item.get("issue_number") or 0) >= 0 and _gc_rescue(item, qid):
-        logger.info(f"Torrent {infohash} ({why}); GetComics rescue landed qid {qid}")
+    if item.get("kind") in (None, "issue") and (item.get("issue_number") or 0) >= 0:
+        logger.info(f"Torrent {infohash} ({why}); trying GetComics for qid {qid}")
+        _rescue_later(item, qid, "Torrent", why, "torrent")      # off the poller's thread
         return
     db.update_queue_state(qid, "failed", error=f"Torrent: {why}", path=DB_PATH)
 

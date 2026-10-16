@@ -1462,3 +1462,23 @@ def test_a_rescue_with_no_takers_fails_the_row(db_path, monkeypatch):
     acq._rescue_later(item, qid, "Usenet", "#5 is incomplete: bad CRC", "usenet")   # inline in tests
     row = next(q for q in db.get_queue(db_path) if q["id"] == qid)
     assert row["state"] == "failed" and "bad CRC" in row["error"]
+
+
+def test_a_dead_torrent_hands_its_rescue_off_the_poller(db_path, monkeypatch):
+    """Same defect as the finalize worker: the GetComics download after a dead torrent
+    ran on the torrent poller's thread. It goes to the rescue thread; torrent is not
+    retried (it just died), GetComics is, else failed."""
+    import kometa.acquisition as acq
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    monkeypatch.setattr(acq, "_qbittorrent", lambda: None)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 5.0, db_path)
+    qid = next(q["id"] for q in db.get_queue(db_path))
+    item = {"id": qid, "tracked_series_id": sid, "title": "Saga", "issue_number": 5.0, "kind": "issue"}
+    asked = []
+    monkeypatch.setattr(acq, "_rescue_later", lambda item, q, label, err, channel: asked.append((q, label, channel)))
+    acq._torrent_dead(item, qid, "abc123", "no seeds for 3 days")
+    assert asked == [(qid, "Torrent", "torrent")]
+    pack = {"id": qid, "tracked_series_id": sid, "title": "Saga", "issue_number": -1, "kind": "list_pack"}
+    acq._torrent_dead(pack, qid, "abc123", "no seeds")                 # a pack has no GetComics shape: failed outright
+    assert next(q for q in db.get_queue(db_path) if q["id"] == qid)["state"] == "failed" and len(asked) == 1
