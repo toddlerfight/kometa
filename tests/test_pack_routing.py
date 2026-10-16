@@ -16,11 +16,11 @@ def big_backlog(db_path, tmp_path):
     folder = tmp_path / "New Avengers"
     folder.mkdir()
     sid = db.add_series(
-        komga_series_id=None, title="New Avengers", publisher="Marvel Comics",
+        title="New Avengers", publisher="Marvel Comics",
         year_began=2013, folder_path=str(folder), on_pull_list=True, path=db_path,
     )
-    db.upsert_issue_status_many(
-        [(sid, float(n), "2013-01-02", 0, None, None, None) for n in range(1, 34)],
+    db.upsert_issue_rows(
+        [(sid, float(n), "2013-01-02", 0, None, None) for n in range(1, 34)],
         path=db_path)
     return sid
 
@@ -187,7 +187,7 @@ def test_live_pack_is_never_touched(db_path, big_backlog, state):
 
 def test_series_with_no_owned_issues_never_reads_complete(db_path, tmp_path):
     """An empty catalogue isn't a finished one."""
-    sid = db.add_series(komga_series_id=None, title="Blank", publisher="Image",
+    sid = db.add_series(title="Blank", publisher="Image",
                         year_began=2020, folder_path=None, on_pull_list=True, path=db_path)
     qid = _pack_row(db_path, sid, "failed")
     assert db.retire_completed_packs(db_path) == 0

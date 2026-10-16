@@ -18,7 +18,7 @@ def _cal(db_path, sid):
 
 
 def _series(db_path, title):
-    return db.add_series(komga_series_id=None, title=title, publisher="Marvel",
+    return db.add_series(title=title, publisher="Marvel",
                          on_pull_list=True, path=db_path)
 
 

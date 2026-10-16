@@ -124,7 +124,7 @@ over a non-interactive ssh, so always use the absolute path). No rsync/scp — u
 
 Layout on ginbako:
 - `$KOMETA_COMPOSE_DIR` (`~/docker`) — holds `compose.yml` for every app on the box
-  (komga [retired from Kometa 2026-10-12], seerr, gitea, backlog, ...). `docker compose` commands must run from here.
+  (seerr, gitea, backlog, ...). `docker compose` commands must run from here.
 - `$KOMETA_APP_DIR` (`~/docker/apps/kometa`) — the deploy target. The bind mount is
   `./apps/kometa/kometa:/app/kometa`, so the tar extracts into `$KOMETA_APP_DIR` and
   the `kometa/` dir inside it *is* the live code.
@@ -133,8 +133,7 @@ Layout on ginbako:
 **Where those `$KOMETA_*` values live:** a gitignored `.env` in the repo root, read by
 `deploy.sh` (see `.env.example`). They are NOT in the repo and must never be — this
 is a public GitHub repo. The host has its own separate `.env` under `$KOMETA_APP_DIR`
-holding the app's `METRON_*` / `CV_API_KEY` (any `KOMGA_*` left there is dead — Komga
-is retired); the two files are unrelated,
+holding the app's `METRON_*` / `CV_API_KEY`; the two files are unrelated,
 don't confuse them. (`deploy.sh` still honours the legacy `NAS_*` names as a fallback
 so an old `.env` keeps working, but `KOMETA_*` wins.)
 
@@ -233,14 +232,12 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
 (`$KOMETA_HOST`); **SABnzbd, qBittorrent and Prowlarr are still on the NAS**
 (`$NAS_HOST`) — the `/volume1/...` paths below are correct for those.
 
-- **Komga — RETIRED 2026-10-12** (docs/library-enrichment-spec.md, K1–K5). Kometa
-  no longer talks to it: no client, no Settings card, no config keys, no series
-  linking, no covers, no imports. Do NOT configure or reintroduce it. What it held
-  was pulled in first (read history, reading lists/collections, a last metadata
-  harvest); those rows stay as data — `issue_record` rows with source `komga` are
-  stopgaps the catalogues overwrite, `reading_lists.source = 'komga'` is provenance,
-  and the `komga_series_id` / `komga_book_id` columns are kept but nothing reads or
-  writes them. Ownership is the folder on disk, the reader is Kometa's own.
+- **Komga — removed** (retired 2026-10-12, gone from code, schema, config and
+  ginbako 2026-10-16). Do NOT reintroduce it. What it held was pulled in first:
+  its metadata rows now carry source `comicinfo` (the files' own tags, which is what
+  it read), its reading lists carry source `imported`. Ownership is the folder on
+  disk, the reader is Kometa's own. (YondeB still connects to any OPDS server,
+  Komga included — that's for other people's servers, not this one.)
 - **Push to phones (kometa/push.py)** — two platforms, either may be set up alone; devices say
   which they speak when they register (`POST /api/push/devices`, `platform: apns|fcm`).
   - **iOS (APNs):** the Apple `.p8` key at `data/apns/AuthKey.p8` on ginbako (beside the DB, never in

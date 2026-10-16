@@ -37,22 +37,22 @@ def _seed(db, path):
 
     alpha = db.add_series(title="Test Comic Alpha", publisher="Image",
                           year_began=2024, folder_path=None, on_pull_list=True, path=path)
-    db.upsert_issue_status_many([
+    db.upsert_issue_rows([
         # #1 carries a locg id so the modal renders its Details/Variants tabs —
         # the LOCG endpoints those tabs hit are route-stubbed in `app` below.
-        (alpha, 1.0, past(300), True,  None, None, "555"),
-        (alpha, 2.0, past(200), True,  None, None, None),
-        (alpha, 3.0, past(100), False, None, None, None),   # missing
-        (alpha, 4.0, future(3), False, None, None, None),   # upcoming (pull list)
-        (alpha, 5.0, future(40), False, None, None, None),  # upcoming, later
+        (alpha, 1.0, past(300), True, None, "555"),
+        (alpha, 2.0, past(200), True, None, None),
+        (alpha, 3.0, past(100), False, None, None),   # missing
+        (alpha, 4.0, future(3), False, None, None),   # upcoming (pull list)
+        (alpha, 5.0, future(40), False, None, None),  # upcoming, later
     ], path=path)
     db.mark_synced(alpha, path)
 
     beta = db.add_series(title="Beta Saga", publisher="DC Comics",
                          year_began=2023, folder_path=None, on_pull_list=False, path=path)
-    db.upsert_issue_status_many([
-        (beta, 1.0, past(400), True, None, None, None),
-        (beta, 2.0, past(370), True, None, None, None),
+    db.upsert_issue_rows([
+        (beta, 1.0, past(400), True, None, None),
+        (beta, 2.0, past(370), True, None, None),
     ], path=path)
     db.mark_synced(beta, path)
     # Community scores for Beta's ★ sort: #1 beats #2, so ★ ≠ newest-first
@@ -62,8 +62,8 @@ def _seed(db, path):
 
     gamma = db.add_series(title="Gamma Run", publisher="Image",
                           year_began=2025, folder_path=None, on_pull_list=False, path=path)
-    db.upsert_issue_status_many([
-        (gamma, 1.0, past(50), False, None, None, None),
+    db.upsert_issue_rows([
+        (gamma, 1.0, past(50), False, None, None),
     ], path=path)
     db.mark_synced(gamma, path)
 

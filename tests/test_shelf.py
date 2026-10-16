@@ -29,7 +29,7 @@ def shelf(tmp_path, db_path, monkeypatch):
     make_book(untracked_dir / "Batman - Knightfall Omnibus.cbz", pages)
     (untracked_dir / "notes.pdf").write_bytes(b"%PDF")          # not readable here
     make_book(root / "DC Comics" / ".dupes" / "x #001.cbz", pages)   # quarantine: skipped
-    saga = db.add_series(komga_series_id=None, title="Saga", publisher="Image",
+    saga = db.add_series(title="Saga", publisher="Image",
                          folder_path=str(tracked_dir), path=db_path)
     return root, saga
 

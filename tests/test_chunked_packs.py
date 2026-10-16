@@ -240,7 +240,7 @@ class TestBatchDedupeShelfCheck:
         folder = tmp_path / "Curse Words"
         folder.mkdir()
         (folder / "Curse Words #003.cbz").write_bytes(_comic_bytes(3))
-        sid = db.add_series(komga_series_id=None, title="Curse Words", publisher="Image Comics",
+        sid = db.add_series(title="Curse Words", publisher="Image Comics",
                             year_began=2017, folder_path=str(folder), on_pull_list=True, path=db_path)
         db.queue_issue(sid, 3.0, db_path)
         item = next(q for q in db.get_queue(path=db_path) if q["issue_number"] == 3.0)

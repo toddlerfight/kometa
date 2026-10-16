@@ -887,7 +887,7 @@ class TestPackDupCascade:
 
     def _trade_series(self, db_path, folder):
         return db.add_series(
-            komga_series_id=None, title="Transmetropolitan",
+            title="Transmetropolitan",
             publisher="DC", year_began=1997, folder_path=str(folder),
             on_pull_list=True, path=db_path,
         )

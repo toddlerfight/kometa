@@ -1,6 +1,5 @@
 """After a file lands: the cover from the file and the shelf row for the book,
-now, locally. No Komga (retired 2026-10-12) — a legacy komga_series_id on the row
-changes nothing."""
+now, locally."""
 import kometa.db as db
 import kometa.acquisition as acq
 import kometa.shelf as shelf
@@ -8,7 +7,7 @@ from tests.conftest import make_cbz
 
 
 def _series(db_path, folder):
-    return db.add_series(komga_series_id="K1", title="Saga", publisher="Image", folder_path=str(folder), path=db_path)
+    return db.add_series(title="Saga", publisher="Image", folder_path=str(folder), path=db_path)
 
 
 def test_placement_makes_the_cover_and_indexes_the_folder(tmp_path, monkeypatch):
@@ -36,5 +35,5 @@ def test_placement_makes_the_cover_and_indexes_the_folder(tmp_path, monkeypatch)
 def test_index_series_folder_without_a_folder_is_a_no_op(tmp_path):
     db_path = str(tmp_path / "k.db")
     db.init_db(db_path)
-    sid = db.add_series(komga_series_id=None, title="Saga", publisher="Image", folder_path=None, path=db_path)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, path=db_path)
     assert shelf.index_series_folder(sid, db_path) == 0

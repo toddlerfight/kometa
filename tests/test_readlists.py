@@ -90,10 +90,9 @@ def test_bad_cbl_is_refused(shelf):
         rl.import_cbl(b"<ReadingList><Name>x</Name><Books/></ReadingList>", path=shelf)
 
 
-# Komga's lists came in through a one-time import (retired 2026-10-12). The rows it
-# left — source 'komga', a FILE NAME hint per book, series-grain collections —
-# must keep resolving off the shelf with no Komga anywhere.
-def test_komga_imported_lists_still_resolve_by_file_name(shelf):
+# Lists brought in once from elsewhere carry source 'imported', a FILE NAME hint per
+# book, and series-grain collections: they must keep resolving off the shelf.
+def test_imported_lists_still_resolve_by_file_name(shelf):
     lid = rl.save_list("Witchfinder arc", [
         {"series": "Sir Edward Grey, Witchfinder", "number": "2", "file": "Sir Edward Grey, Witchfinder #002.cbz"},
         {"series": "Hellboy: Seed of Destruction", "number": "1", "file": "Hellboy - Seed of Destruction #001.cbz"},
@@ -107,7 +106,7 @@ def test_komga_imported_lists_still_resolve_by_file_name(shelf):
     assert r["source"] == "imported"                                  # provenance kept
 
 
-def test_komga_imported_collections_still_resolve_as_whole_runs(shelf):
+def test_imported_collections_still_resolve_as_whole_runs(shelf):
     lid = rl.save_list("Mignolaverse", [
         {"series": "Hellboy: Seed of Destruction", "number": None},
         {"series": "B.P.R.D.: Plague of Frogs", "number": None},

@@ -94,11 +94,10 @@ def chain(store, monkeypatch):
     return th, asked
 
 
-def _with_catalogue(db_path, sid, n, komga_book="B1"):
-    # a legacy komga_book_id stays on the row (the column is kept): nothing may use it
+def _with_catalogue(db_path, sid, n):
     with db._connect(db_path) as conn:
-        conn.execute("UPDATE issue_status SET metron_image = 'https://cat/cover.jpg', komga_book_id = ? "
-                     "WHERE tracked_series_id = ? AND number = ?", (komga_book, sid, n))
+        conn.execute("UPDATE issue_status SET metron_image = 'https://cat/cover.jpg' "
+                     "WHERE tracked_series_id = ? AND number = ?", (sid, n))
 
 
 def test_the_file_cover_beats_the_catalogue_for_an_owned_issue(chain, store, tmp_path):
@@ -120,8 +119,8 @@ def test_a_cut_short_file_cover_falls_through_to_the_catalogue(chain, store, tmp
 
 
 def test_komga_is_never_a_cover_source_even_with_the_old_flag_set(chain, store, tmp_path, monkeypatch):
-    # Komga retired 2026-10-12: a leftover komga_book_id and a leftover
-    # komga_covers=1 row must not bring it back — no art anywhere is a 404
+    # Komga is gone: a leftover komga_covers=1 config row must not bring it
+    # back — no art anywhere is a 404
     th, asked = chain
     sid, _ = _owned(store, tmp_path, numbers=(1,), truncated=(1,))
     _with_catalogue(store, sid, 1)

@@ -145,7 +145,7 @@ class TestKeylessSync:
             for n in (1, 2, 3)
         ])
 
-        sid = db.add_series(komga_series_id=None, title="Saga",
+        sid = db.add_series(title="Saga",
                             publisher="Image", locg_series_id=100002, path=dbp)
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
@@ -168,7 +168,7 @@ class TestKeylessSync:
         for n in (1, 2):
             make_cbz(folder / f"Saga #{n:03d}.cbz")
 
-        sid = db.add_series(komga_series_id=None, title="Saga",
+        sid = db.add_series(title="Saga",
                             publisher="Image", folder_path=str(folder),
                             locg_series_id=100002, path=dbp)
         sync.sync_one(db.get_series_by_id(sid, dbp))
@@ -186,7 +186,7 @@ class TestKeylessSync:
         monkeypatch.setattr(sync, "get_issues_anon",
                             lambda sid: (_ for _ in ()).throw(AssertionError("should not run")))
 
-        sid = db.add_series(komga_series_id=None, title="Mystery",
+        sid = db.add_series(title="Mystery",
                             publisher="Image", path=dbp)  # no locg_series_id
         sync.sync_one(db.get_series_by_id(sid, dbp))
 
@@ -312,11 +312,10 @@ class TestEnrichTradesEditions:
 
 
 class TestSyncWithoutKomga:
-    """Komga is retired (2026-10-12): sync is the folder plus the catalogues and
-    nothing else. No Komga client exists to ask; a legacy komga_series_id on the
-    row is inert data — not cleared, not relinked, not used."""
+    """Komga is gone (retired 2026-10-12, out of the schema 2026-10-16): sync is the
+    folder plus the catalogues and nothing else, whatever config an old DB carries."""
 
-    def _setup(self, tmp_path, monkeypatch, komga_id=None, with_folder=True):
+    def _setup(self, tmp_path, monkeypatch, with_folder=True):
         dbp = str(tmp_path / "k.db")
         db.init_db(dbp)
         _all_sources_off(monkeypatch, dbp)
@@ -331,7 +330,7 @@ class TestSyncWithoutKomga:
         folder.mkdir(parents=True)
         make_cbz(folder / "Black Cat #001.cbz")
         make_cbz(folder / "Black Cat #002.cbz")
-        sid = db.add_series(komga_series_id=komga_id, title="Black Cat", publisher="Marvel",
+        sid = db.add_series(title="Black Cat", publisher="Marvel",
                             folder_path=str(folder) if with_folder else None, path=dbp)
         return dbp, sid
 
@@ -340,17 +339,11 @@ class TestSyncWithoutKomga:
         sync.sync_one(db.get_series_by_id(sid, dbp))
         owned = sorted(i["number"] for i in db.get_issues_for_series(sid, dbp) if i["owned"])
         assert owned == [1.0, 2.0]
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] is None   # nothing links it
-
-    def test_a_legacy_komga_id_is_left_as_data(self, tmp_path, monkeypatch):
-        dbp, sid = self._setup(tmp_path, monkeypatch, komga_id="OLDID")
-        sync.sync_one(db.get_series_by_id(sid, dbp))
-        assert db.get_series_by_id(sid, dbp)["komga_series_id"] == "OLDID"
-        assert len([i for i in db.get_issues_for_series(sid, dbp) if i["owned"]]) == 2
+        assert "komga_series_id" not in db.get_series_by_id(sid, dbp)
 
     def test_no_folder_is_not_looked_up_anywhere(self, tmp_path, monkeypatch):
         # Komga used to be asked for a folder; now a folder-less row just owns nothing
-        dbp, sid = self._setup(tmp_path, monkeypatch, komga_id="OLDID", with_folder=False)
+        dbp, sid = self._setup(tmp_path, monkeypatch, with_folder=False)
         sync.sync_one(db.get_series_by_id(sid, dbp))
         assert db.get_series_by_id(sid, dbp)["folder_path"] is None
         assert not any(i["owned"] for i in db.get_issues_for_series(sid, dbp))

@@ -108,15 +108,13 @@ def _resolve_arc_ownership(arc_series_id: int) -> dict:
                 on_disk[run["id"]] = _scan_folder_numbers(run["folder_path"], run.get("title") or "")
             n = _num(r.get("number"))
             owned = n is not None and n in on_disk[run["id"]]
-        # the book-id slot was the Komga link: nothing looks one up any more, but a
-        # stored one is data — carried as-is, never nulled
-        resolved.append((r["reading_order"], r.get("komga_book_id"), 1 if owned else 0))
-    db.set_arc_ownership(arc_series_id, resolved, DB_PATH)
+        resolved.append((r["reading_order"], 1 if owned else 0))
+    db.set_arc_owned(arc_series_id, resolved, DB_PATH)
 
     # (B) Collected edition: a tracked series named after the arc with comics in
     # its folder. Vintage arcs are usually owned this way, not as singles.
     coll = _owned_collection(s["title"]) if s else None
-    return {"owned": sum(1 for _, _b, o in resolved if o), "total": len(rows),
+    return {"owned": sum(1 for _, o in resolved if o), "total": len(rows),
             "collection": {"name": coll["title"], "series_id": coll["id"]} if coll else None}
 
 
@@ -286,9 +284,9 @@ def _create_range_arc(series: dict, name: str, first: int, last: int) -> dict:
         issues.append({"reading_order": k, "source_title": series["title"],
                        "number": str(num), "story_title": "", "cv_issue_id": None,
                        "cv_volume_id": series.get("cv_volume_id")})
-        resolved.append((k, si.get("komga_book_id"), si.get("owned", 0)))
+        resolved.append((k, si.get("owned", 0)))
     db.replace_arc_reading_order(new_id, issues, DB_PATH)
-    db.set_arc_ownership(new_id, resolved, DB_PATH)
+    db.set_arc_owned(new_id, resolved, DB_PATH)
     return db.get_series_by_id(new_id, DB_PATH)
 
 
@@ -427,8 +425,7 @@ def _track_participating(arc_series_id: int) -> dict:
 def _populate_participating_issues(arc_series_id: int) -> int:
     """Brick C: stamp each arc issue into its participating run's issue_status, so the
     run's card shows the issues THIS arc needs (owned/missing) and Fulfill can act on
-    them. Owned (and any legacy komga_book_id, as data) carries over from the arc's
-    resolved ownership."""
+    them. Owned carries over from the arc's resolved ownership."""
     rows = db.get_arc_reading_order(arc_series_id, DB_PATH)
     vids = {r.get("cv_volume_id") for r in rows if r.get("cv_volume_id")}
     ps_map = {vid: db.get_series_by_cv_volume(vid, DB_PATH) for vid in vids}
@@ -443,8 +440,8 @@ def _populate_participating_issues(arc_series_id: int) -> int:
             continue
         # Carry the arc issue's CV cover into the run's issue (metron_image) so the
         # scoped run's tiles show art instead of dead boxes — no full-volume pull.
-        batch.append((ps["id"], num, r.get("owned", 0), r.get("komga_book_id"), r.get("image_url")))
-    db.upsert_issue_status_bulk(batch, DB_PATH)
+        batch.append((ps["id"], num, r.get("owned", 0), r.get("image_url")))
+    db.upsert_owned_bulk(batch, DB_PATH)
     return len(batch)
 
 
@@ -463,9 +460,9 @@ def _stamp_arc_run_issues(run_id: int, arc_rows: list[dict], source_title: str, 
             num = float(r.get("number"))
         except (TypeError, ValueError):
             continue
-        batch.append((run_id, num, r.get("owned", 0), r.get("komga_book_id"), r.get("image_url")))
+        batch.append((run_id, num, r.get("owned", 0), r.get("image_url")))
     if batch:
-        db.upsert_issue_status_bulk(batch, DB_PATH)
+        db.upsert_owned_bulk(batch, DB_PATH)
     return len(batch)
 
 

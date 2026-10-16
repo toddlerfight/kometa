@@ -962,7 +962,7 @@ def list_series():
     return rows
 
 
-_SERIES_LIST_UNUSED = ("metron_fetched_at", "komga_series_id", "added_at", "metron_checked_at",
+_SERIES_LIST_UNUSED = ("metron_fetched_at", "added_at", "metron_checked_at",
                        "monitor_status", "locg_fetched_at", "metron_link", "locg_link")
 
 
@@ -1090,7 +1090,7 @@ def get_series(series_id: int):
             r["tracked_series_id"] = run["id"] if run else None
         owned = sum(1 for i in arc_issues if i["owned"])
         # 'collected' = a trade that collects this arc is ACTUALLY OWNED ON DISK. Disk
-        # is the only ownership source — a Komga metadata entry named after the arc does
+        # is the only ownership source — a catalogue entry named after the arc does
         # NOT count (that was the old lie: a "collected" arc whose trade had no files).
         coll = _owned_collection(s["title"])
         collection = {"name": coll["title"], "series_id": coll["id"]} if coll else None
@@ -1117,8 +1117,6 @@ def get_series(series_id: int):
         from kometa.arc import arc_includes_series
         arc_count = sum(1 for a in db.get_all_arcs(DB_PATH)
                         if arc_includes_series(a["source_titles"], s["title"])) or None
-    for i in issues:                       # Komga-era fields no screen reads (Komga is retired)
-        i.pop("komga_book_id", None)
     return dict(s, issues=issues, trade_count=trade_count, has_trades=has_trades, **_series_marks(series_id), **_family_for(series_id),
                 arc_count=arc_count, shelf_id=db.shelf_id_for_series(series_id, DB_PATH),
                 run_status=runstatus.compute(s, issues), **_summary(issues))
@@ -2116,7 +2114,7 @@ def set_folder(series_id: int, req: FolderRequest):
 
 # what no screen reads: indexer URLs with API keys in them (56 KB of the 171 KB
 # queue) and the per-row blacklists the acquisition side keeps for itself
-_QUEUE_PRIVATE = ("source_url", "failed_sources", "failed_channels", "sab_nzo_id", "torrent_hash", "komga_series_id")
+_QUEUE_PRIVATE = ("source_url", "failed_sources", "failed_channels", "sab_nzo_id", "torrent_hash")
 
 
 @app.get("/api/queue/summary")

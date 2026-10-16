@@ -37,7 +37,7 @@ def shelf(tmp_path, db_path, monkeypatch):
     make_book(folder / "Midnight Spider-Man #001.cbz",
               [("p10.jpg", 1600, 2460), ("p2.jpg", 1600, 2460), ("p1.jpg", 1600, 2460),
                ("p3.jpg", 3200, 2460)] + [(f"p{i}.jpg", 1600, 2460) for i in range(4, 10)])
-    sid = db.add_series(komga_series_id=None, title="Midnight Spider-Man", publisher="Marvel",
+    sid = db.add_series(title="Midnight Spider-Man", publisher="Marvel",
                         folder_path=str(folder), path=db_path)
     return db_path, sid
 

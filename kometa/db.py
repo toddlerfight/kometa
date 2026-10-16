@@ -1,11 +1,14 @@
 import os
 import json
+import logging
 import re
 import sqlite3
 import threading
 import unicodedata
 from contextlib import contextmanager
 from datetime import date, timedelta
+
+logger = logging.getLogger(__name__)
 
 # Single source of truth for the DB location. Other modules import this
 # (DB_PATH = db.DB_PATH) so the env var gets read exactly once, right here.
@@ -20,14 +23,17 @@ def init_db(path=DB_PATH):
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS tracked_series (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                komga_series_id   TEXT NOT NULL UNIQUE,
-                metron_series_id  INTEGER NOT NULL,
+                metron_series_id  INTEGER,
                 title             TEXT NOT NULL,
                 publisher         TEXT,
                 year_began        INTEGER,
                 added_at          TEXT DEFAULT (datetime('now')),
                 last_synced       TEXT,
-                on_pull_list      INTEGER NOT NULL DEFAULT 1
+                on_pull_list      INTEGER NOT NULL DEFAULT 1,
+                monitor_status    TEXT NOT NULL DEFAULT 'monitored',
+                folder_path       TEXT,
+                cv_volume_id      TEXT,
+                locg_series_id    INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS issue_status (
@@ -36,7 +42,6 @@ def init_db(path=DB_PATH):
                 number            REAL NOT NULL,
                 store_date        TEXT,
                 owned          INTEGER NOT NULL DEFAULT 0,
-                komga_book_id     TEXT,
                 UNIQUE(tracked_series_id, number)
             );
 
@@ -51,8 +56,6 @@ def init_db(path=DB_PATH):
                 fetched_at    TEXT DEFAULT (datetime('now'))
             );
 
-            -- A Komga book id outlives the file behind it: replace a coverless
-            -- #015 with a whole one at the same path and Komga keeps the id, so
             CREATE TABLE IF NOT EXISTS trades_cache (
                 tracked_series_id INTEGER PRIMARY KEY REFERENCES tracked_series(id),
                 data_json         TEXT NOT NULL,
@@ -111,7 +114,83 @@ def init_db(path=DB_PATH):
 
         """)
     _migrate(path)
+    _drop_komga(path)
     _seed_defaults(path)
+
+
+# Komga, retired 2026-10-12, removed from the schema 2026-10-16: its columns
+# (tracked_series.komga_series_id, issue_status / arc_issues.komga_book_id), its
+# version table and its config keys (a stored password among them).
+_KOMGA_CONFIG = ("komga_url", "komga_user", "komga_pass", "komga_library_id", "komga_enabled")
+
+
+def _rebuild_table(conn, table: str, edit) -> None:
+    """SQLite's documented rebuild: new table from the edited CREATE, copy, drop,
+    rename, indexes back. Keeps the AUTOINCREMENT counter — it runs ahead of the
+    highest id (deleted rows), and resetting it would let new rows reuse ids that
+    other tables may still point at."""
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()[0]
+    new = edit(ddl)
+    new = re.sub(r'^\s*CREATE TABLE\s+(?:IF NOT EXISTS\s+)?"?' + table + r'"?', f'CREATE TABLE "{table}__new"', new, count=1)
+    indexes = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", (table,))]
+    seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
+    conn.execute(new)
+    cols = ", ".join(f'"{r[1]}"' for r in conn.execute(f'PRAGMA table_info("{table}__new")'))
+    conn.execute(f'INSERT INTO "{table}__new" ({cols}) SELECT {cols} FROM "{table}"')
+    conn.execute(f'DROP TABLE "{table}"')
+    conn.execute(f'ALTER TABLE "{table}__new" RENAME TO "{table}"')
+    for sql in indexes:
+        conn.execute(sql)
+    if seq:
+        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (seq[0], table))
+
+
+def _drop_komga(path=DB_PATH) -> bool:
+    """Take Komga out of the schema, once, atomically. Its own connection with an
+    explicit transaction (the pooled one opens transactions implicitly), and foreign
+    keys off for the rebuild. Also fixes issue_status's REFERENCES "_ts_old": the
+    scar of the old rebuild that made komga_series_id nullable."""
+    conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+    try:
+        ddl = {r[0]: r[1] or "" for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")}
+        cols = lambda t: [r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')]
+        todo_ts = "komga_series_id" in cols("tracked_series")
+        todo_is = "komga_book_id" in cols("issue_status") or "_ts_old" in ddl.get("issue_status", "")
+        todo_ai = "arc_issues" in ddl and "komga_book_id" in cols("arc_issues")
+        todo_tbl = "komga_book_version" in ddl
+        todo_cfg = "config" in ddl and conn.execute(
+            f"SELECT 1 FROM config WHERE key IN ({','.join('?' * len(_KOMGA_CONFIG))})", _KOMGA_CONFIG).fetchone()
+        if not (todo_ts or todo_is or todo_ai or todo_tbl or todo_cfg):
+            return False
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            drop_book_id = lambda d: re.sub(r"\bkomga_book_id\s+TEXT\s*,\s*", "", d)
+            if todo_is:
+                _rebuild_table(conn, "issue_status", lambda d: re.sub(
+                    r'REFERENCES\s+"?_ts_old2?"?\s*\(id\)', "REFERENCES tracked_series(id)", drop_book_id(d)))
+            if todo_ai:
+                _rebuild_table(conn, "arc_issues", drop_book_id)
+            if todo_ts:
+                _rebuild_table(conn, "tracked_series", lambda d: re.sub(
+                    r"(\bmetron_series_id\s+INTEGER)\s+NOT NULL", r"\1",
+                    re.sub(r"\bkomga_series_id\s+TEXT[^,]*,\s*", "", d)))
+            if todo_tbl:
+                conn.execute("DROP TABLE komga_book_version")
+            if todo_cfg:
+                conn.execute(f"DELETE FROM config WHERE key IN ({','.join('?' * len(_KOMGA_CONFIG))})", _KOMGA_CONFIG)
+            left = [n for n, s in conn.execute("SELECT name, sql FROM sqlite_master WHERE sql LIKE '%komga%'")]
+            if left:
+                raise sqlite3.DatabaseError(f"Komga still in the schema after the rebuild: {left}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        logger.info("Komga removed from the schema (columns, version table, config keys)")
+        return True
+    finally:
+        conn.close()
 
 
 def once_per_db(fn):
@@ -209,8 +288,8 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
         if "locg_series_id" not in series_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN locg_series_id INTEGER")
-        # Story arcs ride the tracked_series machinery (folder, trades, queue,
-        # Komga link) as kind='arc'; their cross-title reading order lives in the
+        # Story arcs ride the tracked_series machinery (folder, trades, queue)
+        # as kind='arc'; their cross-title reading order lives in the
         # dedicated arc_issues table (issue_status is single-title, can't hold it).
         # NB: the kind/cv_arc_id COLUMNS are added AFTER the nullable-rebuilds below
         # — those recreate tracked_series and would drop anything added up here.
@@ -225,81 +304,12 @@ def _migrate(path=DB_PATH):
                 cv_issue_id     TEXT,
                 cv_volume_id    TEXT,
                 image_url       TEXT,
-                komga_book_id   TEXT,
                 owned           INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(arc_series_id, reading_order)
             )
         """)
 
-        # Make komga_series_id nullable — SQLite can't drop NOT NULL via ALTER, must rebuild
-        series_info = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(tracked_series)")}
-        if series_info.get("komga_series_id", 0) == 1:
-            conn.execute("ALTER TABLE tracked_series RENAME TO _ts_old")
-            conn.execute("""
-                CREATE TABLE tracked_series (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    komga_series_id   TEXT UNIQUE,
-                    metron_series_id  INTEGER NOT NULL,
-                    title             TEXT NOT NULL,
-                    publisher         TEXT,
-                    year_began        INTEGER,
-                    added_at          TEXT DEFAULT (datetime('now')),
-                    last_synced       TEXT,
-                    on_pull_list      INTEGER NOT NULL DEFAULT 1,
-                    monitor_status    TEXT NOT NULL DEFAULT 'monitored',
-                    folder_path       TEXT,
-                    cv_volume_id      TEXT,
-                    locg_series_id    INTEGER
-                )
-            """)
-            conn.execute("""
-                INSERT INTO tracked_series
-                    (id, komga_series_id, metron_series_id, title, publisher, year_began,
-                     added_at, last_synced, on_pull_list, monitor_status, folder_path,
-                     cv_volume_id, locg_series_id)
-                SELECT id, komga_series_id, metron_series_id, title, publisher, year_began,
-                       added_at, last_synced, on_pull_list, monitor_status, folder_path,
-                       cv_volume_id, locg_series_id
-                FROM _ts_old
-            """)
-            conn.execute("DROP TABLE _ts_old")
-
-        # Make metron_series_id nullable — fetch fresh PRAGMA after any prior rebuild
-        series_info2 = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(tracked_series)")}
-        if series_info2.get("metron_series_id", 0) == 1:
-            conn.execute("ALTER TABLE tracked_series RENAME TO _ts_old2")
-            conn.execute("""
-                CREATE TABLE tracked_series (
-                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    komga_series_id   TEXT UNIQUE,
-                    metron_series_id  INTEGER,
-                    title             TEXT NOT NULL,
-                    publisher         TEXT,
-                    year_began        INTEGER,
-                    added_at          TEXT DEFAULT (datetime('now')),
-                    last_synced       TEXT,
-                    on_pull_list      INTEGER NOT NULL DEFAULT 1,
-                    monitor_status    TEXT NOT NULL DEFAULT 'monitored',
-                    folder_path       TEXT,
-                    cv_volume_id      TEXT,
-                    locg_series_id    INTEGER
-                )
-            """)
-            conn.execute("""
-                INSERT INTO tracked_series
-                    (id, komga_series_id, metron_series_id, title, publisher, year_began,
-                     added_at, last_synced, on_pull_list, monitor_status, folder_path,
-                     cv_volume_id, locg_series_id)
-                SELECT id, komga_series_id, metron_series_id, title, publisher, year_began,
-                       added_at, last_synced, on_pull_list, monitor_status, folder_path,
-                       cv_volume_id, locg_series_id
-                FROM _ts_old2
-            """)
-            conn.execute("DROP TABLE _ts_old2")
-
-        # Arc columns go in AFTER both nullable-rebuilds above (they recreate
-        # tracked_series from the old column set, dropping anything added earlier).
-        # Fresh PRAGMA so this lands whatever the rebuilds left behind.
+        # Fresh PRAGMA: the ADD COLUMNs above may have changed the set.
         ts_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracked_series)")]
         if "kind" not in ts_cols:
             conn.execute("ALTER TABLE tracked_series ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
@@ -337,11 +347,6 @@ def _migrate(path=DB_PATH):
             conn.execute("ALTER TABLE arc_issues ADD COLUMN image_url TEXT")
 
         issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
-        # Rename the old in_komga column to owned — it always meant "owned on disk",
-        # never "present in Komga". Idempotent: only fires on DBs predating the rename.
-        if "in_komga" in issue_cols and "owned" not in issue_cols:
-            conn.execute("ALTER TABLE issue_status RENAME COLUMN in_komga TO owned")
-            issue_cols = [r[1] for r in conn.execute("PRAGMA table_info(issue_status)")]
         if "metron_image" not in issue_cols:
             conn.execute("ALTER TABLE issue_status ADD COLUMN metron_image TEXT")
         if "metron_issue_id" not in issue_cols:
@@ -535,7 +540,6 @@ def _migrate(path=DB_PATH):
 # entirely from compose/env instead of clicking through Settings. Seeded with
 # INSERT OR IGNORE (below), so it's first-run only — the UI stays the source of
 # truth after that, and changing the env later won't clobber UI edits.
-# (KOMGA_* went with Komga, retired 2026-10-12.)
 _ENV_SEEDED_CONFIG = {
     "comics_root":      "COMICS_ROOT",
 }
@@ -631,16 +635,16 @@ def nfc(p):
     return unicodedata.normalize("NFC", p) if isinstance(p, str) else p
 
 
-def add_series(komga_series_id=None, title=None, publisher=None,
+def add_series(title=None, publisher=None,
                year_began=None, folder_path=None, on_pull_list=True, locg_series_id=None,
                kind="series", cv_arc_id=None, cv_volume_id=None, path=DB_PATH) -> int:
     with _connect(path) as conn:
         cur = conn.execute("""
-            INSERT INTO tracked_series (komga_series_id, title, publisher,
+            INSERT INTO tracked_series (title, publisher,
                                         year_began, folder_path, on_pull_list, locg_series_id,
                                         kind, cv_arc_id, cv_volume_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (komga_series_id, title, publisher, year_began,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (title, publisher, year_began,
               nfc(folder_path), int(on_pull_list), locg_series_id, kind, cv_arc_id, cv_volume_id))
         return cur.lastrowid
 
@@ -692,10 +696,10 @@ def remove_series(series_id, path=DB_PATH):
 def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
     """Wipe + insert an arc's cross-title reading order. `issues` = list of dicts
     {reading_order, source_title, number, story_title, cv_issue_id, cv_volume_id}.
-    Preserves any komga_book_id/owned already resolved (matched on reading_order)."""
+    Preserves ownership already resolved (matched on reading_order)."""
     with _connect(path) as conn:
         prior = {r["reading_order"]: dict(r) for r in conn.execute(
-            "SELECT reading_order, komga_book_id, owned FROM arc_issues WHERE arc_series_id = ?",
+            "SELECT reading_order, owned FROM arc_issues WHERE arc_series_id = ?",
             (arc_series_id,))}
         conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (arc_series_id,))
         for it in issues:
@@ -703,13 +707,11 @@ def replace_arc_reading_order(arc_series_id, issues, path=DB_PATH):
             keep = prior.get(ro, {})
             conn.execute("""
                 INSERT INTO arc_issues (arc_series_id, reading_order, source_title, number,
-                                        story_title, cv_issue_id, cv_volume_id, image_url,
-                                        komga_book_id, owned)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        story_title, cv_issue_id, cv_volume_id, image_url, owned)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (arc_series_id, ro, it.get("source_title"), it.get("number"),
                   it.get("story_title"), it.get("cv_issue_id"), it.get("cv_volume_id"),
-                  it.get("image_url"),
-                  keep.get("komga_book_id"), keep.get("owned", 0)))
+                  it.get("image_url"), keep.get("owned", 0)))
 
 
 def get_arc_reading_order(arc_series_id, path=DB_PATH):
@@ -719,15 +721,13 @@ def get_arc_reading_order(arc_series_id, path=DB_PATH):
             (arc_series_id,))]
 
 
-def set_arc_ownership(arc_series_id, resolved, path=DB_PATH):
+def set_arc_owned(arc_series_id, resolved, path=DB_PATH):
     """Stamp cross-title ownership onto an arc's rows. resolved = list of
-    (reading_order, komga_book_id | None, owned 0/1) — one per arc_issue."""
+    (reading_order, owned 0/1) — one per arc_issue."""
     with _connect(path) as conn:
-        for ro, book_id, owned in resolved:
-            conn.execute(
-                "UPDATE arc_issues SET komga_book_id = ?, owned = ? "
-                "WHERE arc_series_id = ? AND reading_order = ?",
-                (book_id, int(owned), arc_series_id, ro))
+        for ro, owned in resolved:
+            conn.execute("UPDATE arc_issues SET owned = ? WHERE arc_series_id = ? AND reading_order = ?",
+                         (int(owned), arc_series_id, ro))
 
 
 def find_series_by_title(title, path=DB_PATH):
@@ -901,36 +901,36 @@ def set_owned_bulk(tracked_series_id, numbers, owned, path=DB_PATH):
 
 
 _UPSERT_ISSUE_SQL = """
-    INSERT INTO issue_status (tracked_series_id, number, store_date, owned, komga_book_id, metron_image, locg_issue_id, metron_issue_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO issue_status (tracked_series_id, number, store_date, owned, metron_image, locg_issue_id, metron_issue_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(tracked_series_id, number) DO UPDATE SET
         store_date      = COALESCE(excluded.store_date, store_date),
         owned        = excluded.owned,
-        komga_book_id   = excluded.komga_book_id,
         metron_image    = excluded.metron_image,
         locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id),
         metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id)
 """
 
 
-def upsert_issue_status(tracked_series_id, number, store_date, owned, komga_book_id=None, metron_image=None,
+def upsert_issue_status(tracked_series_id, number, store_date, owned, metron_image=None,
                         locg_issue_id=None, metron_issue_id=None, path=DB_PATH):
     with _connect(path) as conn:
         conn.execute(_UPSERT_ISSUE_SQL,
-                     (tracked_series_id, number, store_date, int(owned), komga_book_id, metron_image,
+                     (tracked_series_id, number, store_date, int(owned), metron_image,
                       locg_issue_id, metron_issue_id))
 
 
-def upsert_issue_status_many(rows, path=DB_PATH):
+def upsert_issue_rows(rows, path=DB_PATH):
     """Full-fidelity upsert_issue_status for many rows in ONE transaction. rows =
-    (tracked_series_id, number, store_date, owned, komga_book_id, metron_image,
-    locg_issue_id[, metron_issue_id]) tuples. The per-issue sync loop was paying
+    (tracked_series_id, number, store_date, owned, metron_image, locg_issue_id
+    [, metron_issue_id]) tuples. (Renamed from upsert_issue_status_many when the
+    Komga book-id slot left the tuple: a stale caller fails, it doesn't shift.) The per-issue sync loop was paying
     a connect/commit (fsync) cycle per issue, per series, per sync."""
     if not rows:
         return
     with _connect(path) as conn:
         conn.executemany(_UPSERT_ISSUE_SQL,
-                         [(r[0], r[1], r[2], int(r[3]), r[4], r[5], r[6], r[7] if len(r) > 7 else None)
+                         [(r[0], r[1], r[2], int(r[3]), r[4], r[5], r[6] if len(r) > 6 else None)
                           for r in rows])
 
 
@@ -1213,23 +1213,23 @@ def queue_issues_bulk(pairs, path=DB_PATH):
     return len(pairs)
 
 
-def upsert_issue_status_bulk(rows, path=DB_PATH):
+def upsert_owned_bulk(rows, path=DB_PATH):
     """Upsert many issues in ONE transaction (same fsync reason as above). rows =
-    list of (tracked_series_id, number, owned, komga_book_id[, image]). The optional
-    5th element is a cover URL stored in metron_image (COALESCE'd — a real cover is
-    never nulled by a later row that lacks one). Leaves other metadata untouched."""
+    list of (tracked_series_id, number, owned[, image]). The optional 4th element
+    is a cover URL stored in metron_image (COALESCE'd — a real cover is never nulled
+    by a later row that lacks one). Leaves other metadata untouched. (Renamed from
+    upsert_issue_status_bulk when the Komga book-id slot left the tuple.)"""
     with _connect(path) as conn:
         for row in rows:
-            sid, num, owned, kbid = row[0], row[1], row[2], row[3]
-            image = row[4] if len(row) > 4 else None
+            sid, num, owned = row[0], row[1], row[2]
+            image = row[3] if len(row) > 3 else None
             conn.execute("""
-                INSERT INTO issue_status (tracked_series_id, number, owned, komga_book_id, metron_image)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO issue_status (tracked_series_id, number, owned, metron_image)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                     owned         = excluded.owned,
-                    komga_book_id = excluded.komga_book_id,
                     metron_image  = COALESCE(excluded.metron_image, metron_image)
-            """, (sid, num, int(owned), kbid, image))
+            """, (sid, num, int(owned), image))
     return len(rows)
 
 
@@ -1364,7 +1364,7 @@ def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):
 def get_queue(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began
+            SELECT q.*, s.title, s.publisher, s.year_began
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             ORDER BY q.updated_at DESC
@@ -1403,7 +1403,7 @@ def reset_stuck_queue_items(path=DB_PATH):
 def get_queued_items(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.komga_series_id, s.year_began, s.folder_path, s.page_max
+            SELECT q.*, s.title, s.publisher, s.year_began, s.folder_path, s.page_max
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
             WHERE q.state = 'queued' AND COALESCE(q.kind, 'issue') != 'list_pack'
@@ -1630,12 +1630,11 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
             )
         conn.execute("""
             INSERT INTO issue_status (tracked_series_id, number, store_date, owned,
-                                      komga_book_id, metron_image, locg_issue_id)
-            VALUES (?, ?, ?, 1, NULL, NULL, NULL)
+                                      metron_image, locg_issue_id)
+            VALUES (?, ?, ?, 1, NULL, NULL)
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
                 owned        = excluded.owned,
-                komga_book_id   = excluded.komga_book_id,
                 metron_image    = excluded.metron_image,
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
         """, (tracked_series_id, issue_number, store_date))

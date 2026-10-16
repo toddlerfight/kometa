@@ -200,9 +200,9 @@ def sync_one(series: dict, force: bool = False):
     # So the loops above legitimately leave issue_map empty here; that's fine.
 
     # --- Upsert merged issue list (one transaction — not a connection per issue) ---
-    db.upsert_issue_status_many(
+    db.upsert_issue_rows(
         [(series["id"], num, data["store_date"], num in owned_numbers,
-          None, data.get("image"), data.get("locg_issue_id"), data.get("metron_issue_id"))
+          data.get("image"), data.get("locg_issue_id"), data.get("metron_issue_id"))
          for num, data in issue_map.items()],
         path=DB_PATH,
     )
@@ -262,8 +262,7 @@ def enrich_trades(series: dict, trades: list[dict],
                   landed: dict[str, str] | None = None) -> list[dict]:
     """Stamp the stored facts onto each trade: `owned` (an edition's file is in the
     folder) and `file` (which one). Computed at sync time and cached so request
-    handlers never fold-scan. (A third, `komga_book_id`, was Komga's read link;
-    the reader opens the file by name, and Komga is retired.)
+    handlers never fold-scan.
 
     landed: {lowercased file name: edition id} for the trades Kometa downloaded
     itself (db.landed_trade_files) — the surest word on which edition a file IS."""
@@ -438,8 +437,8 @@ def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:
         [num for num in owned_numbers if num in existing and not existing[num]["owned"]],
         True, DB_PATH,
     )
-    db.upsert_issue_status_many(
-        [(series["id"], num, None, True, None, None, None)  # straight from disk
+    db.upsert_issue_rows(
+        [(series["id"], num, None, True, None, None)  # straight from disk
          for num in owned_numbers if num not in existing],
         path=DB_PATH,
     )

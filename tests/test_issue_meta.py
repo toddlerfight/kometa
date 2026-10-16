@@ -92,8 +92,8 @@ class TestResolver:
 class TestPlumbing:
     def test_upsert_keeps_metron_issue_id(self, db_path):
         sid = db.add_series(title="Absolute Batman", publisher="DC", path=db_path)
-        db.upsert_issue_status_many([(sid, 25.0, "2026-10-28", False, None, "img", None, 182969)], path=db_path)
-        db.upsert_issue_status_many([(sid, 25.0, "2026-10-28", False, None, "img", "locg9")], path=db_path)  # 7-tuple
+        db.upsert_issue_rows([(sid, 25.0, "2026-10-28", False, "img", None, 182969)], path=db_path)
+        db.upsert_issue_rows([(sid, 25.0, "2026-10-28", False, "img", "locg9")], path=db_path)  # 6-tuple
         row = db.get_issues_for_series(sid, db_path)[0]
         assert row["metron_issue_id"] == 182969 and row["locg_issue_id"] == "locg9"
 

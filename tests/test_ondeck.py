@@ -32,10 +32,10 @@ def lib(tmp_path, db_path, monkeypatch):
     books[("saga", "tpb")] = _book(str(root / "Saga" / "Saga v01 TPB.cbz"), None, saga, sh_saga, db_path)
     for n in (1, 2):
         books[("low", n)] = _book(str(root / "Low" / f"Low #00{n}.cbz"), float(n), low, sh_low, db_path)
-    db.upsert_issue_status_many([(saga, float(n), "2024-01-01", n <= 3, None, None, None) for n in (1, 2, 3)]
-                                + [(saga, 4.0, "2099-01-01", False, None, None, None)], path=db_path)
-    db.upsert_issue_status_many([(low, 1.0, "2024-01-01", True, None, None, None), (low, 2.0, "2024-02-01", True, None, None, None),
-                                 (low, 3.0, "2024-03-01", False, None, None, None)], path=db_path)
+    db.upsert_issue_rows([(saga, float(n), "2024-01-01", n <= 3, None, None) for n in (1, 2, 3)]
+                                + [(saga, 4.0, "2099-01-01", False, None, None)], path=db_path)
+    db.upsert_issue_rows([(low, 1.0, "2024-01-01", True, None, None), (low, 2.0, "2024-02-01", True, None, None),
+                                 (low, 3.0, "2024-03-01", False, None, None)], path=db_path)
     return {"db": db_path, "saga": saga, "low": low, "b": books}
 
 
@@ -136,7 +136,7 @@ def test_quick_reads_are_complete_short_runs_never_opened(lib, monkeypatch, db_p
     mini = db.add_series(title="Mini", publisher="Image", folder_path=str(root / "Mini"), on_pull_list=False, path=db_path)
     sh = db.upsert_shelf_series(str(root / "Mini"), "Mini", "Image", mini, 3, "2026-10-08T00:00:00.000000Z", db_path)
     ids = [_book(str(root / "Mini" / f"Mini #00{n}.cbz"), float(n), mini, sh, db_path) for n in (1, 2, 3)]
-    db.upsert_issue_status_many([(mini, float(n), "2025-01-01", True, None, None, None) for n in (1, 2, 3)], path=db_path)
+    db.upsert_issue_rows([(mini, float(n), "2025-01-01", True, None, None) for n in (1, 2, 3)], path=db_path)
     rows = od.quick_reads(path=db_path)
     # Saga has #4 still to come and Low is missing #3: neither is complete
     assert [(r["series"], r["label"], r["issues"]) for r in rows] == [("Mini", "#1", 3)]

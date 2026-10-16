@@ -45,8 +45,8 @@ class TestDb:
         _seed(db_path, series)
         db.set_issue_ignored(series, 0.0, True, db_path)
         # both upsert shapes sync uses
-        db.upsert_issue_status_many([(series, 0.0, PAST, False, None, None, "123")], db_path)
-        db.upsert_issue_status_bulk([(series, 0.0, False, None)], db_path)
+        db.upsert_issue_rows([(series, 0.0, PAST, False, None, "123")], db_path)
+        db.upsert_owned_bulk([(series, 0.0, False)], db_path)
         i0 = next(i for i in db.get_issues_for_series(series, db_path) if i["number"] == 0.0)
         assert i0["ignored"] == 1
 

@@ -34,9 +34,9 @@ def lib(tmp_path, db_path, monkeypatch):
                         year_began=2018, on_pull_list=False, path=db_path)
     db.set_metron_series_id(sid, 7, db_path)
     db.set_match_status(sid, "auto", db_path)
-    db.upsert_issue_status_many([(sid, 1.0, "2018-09-19", True, None, None, None, 26),
-                                 (sid, 2.0, "2018-12-12", True, None, None, None, 400),
-                                 (sid, 3.0, "2019-06-26", True, None, None, None, 3002)], path=db_path)
+    db.upsert_issue_rows([(sid, 1.0, "2018-09-19", True, None, None, 26),
+                                 (sid, 2.0, "2018-12-12", True, None, None, 400),
+                                 (sid, 3.0, "2019-06-26", True, None, None, 3002)], path=db_path)
     shelf_id = db.upsert_shelf_series(str(folder), "Batman - Damned", "DC Comics", sid, 5, "2026-10-08T00:00:00.000000Z", db_path)
     db.index_books([(str(folder / "Batman - Damned #002.cbz"), 10, 1.0, 2.0, shelf_id, sid)], db_path)
     book = db.get_book_by_path(str(folder / "Batman - Damned #002.cbz"), db_path) if hasattr(db, "get_book_by_path") else None

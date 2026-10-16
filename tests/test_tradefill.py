@@ -37,7 +37,7 @@ def _ff_world():
 
 
 def _stuck(path, sid, numbers, date="2003-01-01"):
-    db.upsert_issue_status_many([(sid, float(n), date, False, None, None, None) for n in numbers], path=path)
+    db.upsert_issue_rows([(sid, float(n), date, False, None, None) for n in numbers], path=path)
     db.queue_issues_bulk([(sid, float(n)) for n in numbers], path)
     with db._connect(path) as c:
         c.execute("UPDATE download_queue SET state = 'not_found' WHERE tracked_series_id = ?", (sid,))
@@ -111,7 +111,7 @@ def test_an_owned_trade_covers_its_issues_for_counts_and_reading_lists(db_path, 
     ff = db.add_series(title="Fantastic Four", publisher="Marvel", year_began=1998, folder_path=str(root / "Fantastic Four"),
                        on_pull_list=False, path=db_path)
     _shelf(db_path, root, "Fantastic Four", ["Fantastic Four Vol. 02 - Unthinkable (2003).cbz"], tracked=ff)
-    db.upsert_issue_status_many([(ff, float(n), "2003-01-01", False, None, None, None) for n in (67, 500, 503)], path=db_path)
+    db.upsert_issue_rows([(ff, float(n), "2003-01-01", False, None, None) for n in (67, 500, 503)], path=db_path)
     tf.ensure_tables(db_path)
     tf.edition(9002, db_path, world["get"])
     db.set_trades(ff, [{"title": "Fantastic Four Vol. 2: Unthinkable TPB", "vol": 2, "owned": True,
@@ -407,8 +407,8 @@ def test_a_pulled_series_sweeps_singles_even_when_a_trade_covers_them(db_path):
     # acquired when wanted per-trade. #13 (unreleased) still waits for its date.
     sid = db.add_series(title="The Seasons", publisher="Image", folder_path="/x/The Seasons",
                         on_pull_list=True, path=db_path)
-    db.upsert_issue_status_many([(sid, 12.0, "2026-10-14", False, None, None, None),
-                                 (sid, 13.0, "2026-10-21", False, None, None, None)], path=db_path)
+    db.upsert_issue_rows([(sid, 12.0, "2026-10-14", False, None, None),
+                                 (sid, 13.0, "2026-10-21", False, None, None)], path=db_path)
     with db._connect(db_path) as c:
         c.execute("UPDATE tracked_series SET monitor_status='monitored' WHERE id=?", (sid,))
         c.execute("UPDATE issue_status SET covered_by='/x/The Seasons/Vol 3 TP.cbz' WHERE tracked_series_id=?", (sid,))

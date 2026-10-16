@@ -273,7 +273,7 @@ def test_the_trickle_re_reads_metron_rows_from_the_old_parser_a_few_at_a_time(db
     rec.ensure_tables(db_path)
     with db._connect(db_path) as c:
         for sid in ids:                                                     # rows written by the old parser
-            c.execute("INSERT INTO series_record (tracked_series_id, source, fetched_at, fill_state) VALUES (?, 'komga', datetime('now'), 'full')", (sid,))
+            c.execute("INSERT INTO series_record (tracked_series_id, source, fetched_at, fill_state) VALUES (?, 'comicinfo', datetime('now'), 'full')", (sid,))
     asked = []
     monkeypatch.setattr(metron_client, "series_detail", lambda mid: asked.append(mid) or dict(SERIES_DETAIL))
     monkeypatch.setattr(rec, "pending_issues", lambda path, limit=0: [])
