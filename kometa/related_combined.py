@@ -71,6 +71,10 @@ HUB_TOP = 5                         # hubness is counted over the top 5 rows peo
 HUB_DAMP = 0.5                      # score / (1 + 0.5 · log2(rows it's in / the median)) above the median
 HUB_GATE, HUB_PASSES = 0.03, 6      # re-damp until no series is in more than 3% of top-5 rows
 INDEX_TTL_S = 300
+# ...but a series the index has nothing on gets a look sooner: Absolute Evil, tracked at
+# 06:21 on 2026-10-17 a minute after a restart built the index, had its credits by
+# 06:23 and an empty row until 06:26 — the page had given up by then
+FRESH_RECHECK_S = 20
 # A short run with more than 8 writers and artists per issue is an anthology: a one-off
 # contributor isn't a reason to recommend it (The Joker 80th Anniversary Special: 25 of
 # them in one issue, in 23 top-five rows; Fiona Staples' pin-up put it in Saga's top
@@ -508,15 +512,24 @@ def _fingerprint(path) -> tuple:
                 one("SELECT COUNT(*), MAX(at) FROM cbr_people_scores"))
 
 
-def index(path=None) -> Index:
-    """The warm index: rebuilt when what it reads has changed, at most every INDEX_TTL_S."""
+def _knows(ix: Index, series_id: int) -> bool:
+    """Has the index got anything a fill brings? (Not the franchise: that's the title,
+    there from the moment a series is tracked.)"""
+    return any(series_id in per for per in ix.features.values()) or bool(
+        ix.lists.get(series_id) or ix.associated.get(series_id))
+
+
+def index(path=None, want: int | None = None) -> Index:
+    """The warm index: rebuilt when what it reads has changed, at most every INDEX_TTL_S —
+    or every FRESH_RECHECK_S when asked for a series (`want`) it has nothing on."""
     path = path or DB_PATH
     now = time.time()
     opts = options(path)
     with _lock:
         c = _cache
         same = c["ix"] is not None and c["path"] == path and c.get("opts") == opts
-        if same and now - c["at"] < INDEX_TTL_S:
+        ttl = INDEX_TTL_S if want is None or not same or _knows(c["ix"], want) else FRESH_RECHECK_S
+        if same and now - c["at"] < ttl:
             return c["ix"]
         fp = _fingerprint(path)
         if same and c["fp"] == fp:
@@ -688,7 +701,7 @@ def related_combined(series_id: int, limit: int = 12, path=None, explain: bool =
     `channels` ({channel: contribution}) and `credit_strength` (the strongest credit
     the two share, for the harness). `opts` overrides the phase-2 switches (harness)."""
     path = path or DB_PATH
-    ix = index(path) if opts is None else _index_with(path, opts)
+    ix = index(path, want=series_id) if opts is None else _index_with(path, opts)
     ranked = _score(ix, series_id)
     for c in ranked:
         c["score"] = round(c["score"] * ix.damp.get(c["series_id"], 1.0), 2)

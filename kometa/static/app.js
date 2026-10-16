@@ -1295,8 +1295,10 @@ function _relSkeletons(n) {
 
 function _paintRelated(id, d, attempt = 0) {
   if (currentView !== 'series-detail' || currentParams.id !== id) return;
-  // the catalogue is being asked in the background: look again in a few seconds, a few times
-  if (d.pending && attempt < 4) setTimeout(() => _loadRelated(id, attempt + 1), 4000);
+  // the catalogue is being asked in the background: look again. A new run's credits come
+  // off Metron's queue in two to four minutes (Absolute Evil two, Dark Wolverine four,
+  // 2026-10-17); four looks over 16 s left the placeholder up for good. Leaving stops it.
+  if (d.pending && attempt < 24) setTimeout(() => _loadRelated(id, attempt + 1), attempt < 4 ? 4000 : 15000);
   const app = document.getElementById('app');
   // one row per weighty credit — "More from Paul Pope" — the name is the reason
   const creators = d.creators || [];
