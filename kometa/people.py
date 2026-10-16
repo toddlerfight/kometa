@@ -2,8 +2,8 @@
 
 One index of every credited person on the shelf, built from the two places
 credits live: series_signals (Metron's creators per run, with ids) and
-issue_record (per-issue credits from Metron, LOCG, ComicInfo and Komga — the
-last two have names only). A person is keyed by their normalised name, so
+issue_record (per-issue credits from Metron, LOCG and ComicInfo — the last
+two have names only). A person is keyed by their normalised name, so
 'José Villarrubia' from Metron and 'Jose Villarrubia' from a ComicInfo file
 are one person, and the Metron id rides along when any source had it.
 

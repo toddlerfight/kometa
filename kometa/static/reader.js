@@ -1187,7 +1187,7 @@ async function renderReadList(id) {
     l.books_reading ? `<span class="chip chip-reading" title="books started">${l.books_reading} READING</span>` : '',
   ].filter(Boolean).join('');
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
-    ${l.source === 'komga' ? 'FROM KOMGA' : 'CBL'} · ${l.total} ENTR${l.total === 1 ? 'Y' : 'IES'} · ${books.length} BOOK${books.length === 1 ? '' : 'S'} ON THE SHELF</span>`;
+    ${l.source === 'cbl' ? 'CBL' : 'IMPORTED'} · ${l.total} ENTR${l.total === 1 ? 'Y' : 'IES'} · ${books.length} BOOK${books.length === 1 ? '' : 'S'} ON THE SHELF</span>`;
   document.getElementById('topbar-actions').innerHTML = `
     ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${_rlStarted(l) ? 'Continue' : 'Start'}</button>`

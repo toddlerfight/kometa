@@ -71,6 +71,7 @@ def ensure_tables(path=None):
             # a rotten URL is cleared by the proxy so the next open asks again
             conn.execute("ALTER TABLE reading_list_items ADD COLUMN cover_checked_at TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rli_list ON reading_list_items(list_id, position)")
+        conn.execute("UPDATE reading_lists SET source = 'imported' WHERE source = 'komga'")     # Komga's gone, its label too
 
 
 class CblError(ValueError):
@@ -144,9 +145,8 @@ def import_cbl(data: bytes, source_ref: str | None = None, path=None) -> int:
     return save_list(parsed["name"], parsed["items"], "cbl", source_ref, path)
 
 
-# Komga's read lists and collections came in through a one-time import here
-# (source 'komga' on those rows is their provenance). Komga is retired
-# (2026-10-12): the import, and its button, are gone.
+# Lists brought in from elsewhere once (before .cbl import existed) carry source
+# 'imported'; .cbl files carry 'cbl'.
 
 
 def get_lists(path=None) -> list[dict]:

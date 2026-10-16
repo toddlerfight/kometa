@@ -243,7 +243,7 @@ def details(issue: dict, path=None) -> dict:
     book_id = books[0]["id"] if books else None
     ids = [b["id"] for b in books]
     if row and row.get("fill_state") in ("full", "partial"):
-        # a stopgap (the uploader's tags, Komga): shown now, a catalogue asked behind, as today
+        # a stopgap (the uploader's tags): shown now, a catalogue asked behind, as today
         def refresh():
             outcome = None
             try:

@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 RECORD_TTL_DAYS = 90          # a full row is refreshed on interaction once this old
 RECORD_MISS_TTL_DAYS = 7      # a row with nothing to ask is asked again after this
-# what the file's own tags or Komga said: a stopgap, shown until a catalogue answers,
-# never a reason not to ask one — and never thrown away for a miss
-STOPGAP_SOURCES = ("comicinfo", "komga")
+# what the file's own tags said: a stopgap, shown until a catalogue answers, never a
+# reason not to ask one — and never thrown away for a miss
+STOPGAP_SOURCES = ("comicinfo",)
 # what a catalogue said — or our own ComicInfo carrying it back ('comicinfo-kometa',
 # step 5a): catalogue-grade, kept fresh on the record TTL like any catalogue row
 CATALOGUE_SOURCES = ("metron", "locg", "gcd", "comicinfo-kometa")
@@ -94,6 +94,10 @@ def ensure_tables(path=None):
             label TEXT, kind TEXT, at TEXT,
             PRIMARY KEY (tracked_series_id, source, key))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_series_tags_key ON series_tags(key)")
+        # Rows Komga harvested were its read of the files' ComicInfo — the same provenance
+        # as 'comicinfo', and treated the same everywhere. Komga is gone; so is its label.
+        conn.execute("UPDATE series_record SET source = 'comicinfo' WHERE source = 'komga'")
+        conn.execute("UPDATE issue_record SET source = 'comicinfo' WHERE source = 'komga'")
         for sid, gj in conn.execute("""SELECT tracked_series_id, genres_json FROM series_record
                                        WHERE genres_json IS NOT NULL AND genres_json NOT IN ('', '[]')""").fetchall():
             try:
@@ -475,7 +479,7 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
                    OR (r.fill_state = 'miss' AND r.fetched_at < ?)
                    -- a stopgap row (file tags / Komga): ask now when there's a catalogue id to ask,
                    -- else look again in a week in case one has been matched since
-                   OR (r.source IN ('comicinfo', 'komga')
+                   OR (r.source = 'comicinfo'
                        AND (i.metron_issue_id IS NOT NULL OR i.locg_issue_id IS NOT NULL OR r.fetched_at < ?))
                    -- owned issues Metron filled before its extra fields were kept: once more each
                    OR (r.source = 'metron' AND r.extra_json IS NULL AND i.owned = 1 AND i.metron_issue_id IS NOT NULL)

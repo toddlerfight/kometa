@@ -8,9 +8,7 @@ in the browser cache (30d max-age) — a grid render must never turn into a
 per-tile network expedition.
 
 The record's own store (kometa/images.py, kometa/covers.py) comes first — page 1
-of the file you own, made by Kometa — then the catalogue. Komga was a last resort
-behind a flag until it was retired (2026-10-12); the posters harvested from it
-before then are local store rows, still served first.
+of the file you own, made by Kometa — then the catalogue.
 """
 import os
 import threading
@@ -129,7 +127,7 @@ COVER_MAX_AGE = 86400
 
 
 def _store_response(key: str, source: str, max_age: int = COVER_MAX_AGE) -> Response | None:
-    """Bytes the record's store holds for a key — file covers, Komga posters —
+    """Bytes the record's store holds for a key — file covers, catalogue covers —
     with the source named in the headers so a tile can say where it came from."""
     from kometa import coverupgrade, images
     p = coverupgrade.better_path(key, DB_PATH) or images.local_path(key, DB_PATH)   # a bigger copy of the same cover first
@@ -188,17 +186,13 @@ def series_thumbnail(series_id: int, fast: int = 0):
 
 
 def _series_thumbnail(series_id: int):
-    """The run's card. Order: a poster you set in Komga (harvested into the store
-    before it was retired) → page 1 of the lowest owned issue, from the store →
+    """The run's card. Order: page 1 of the lowest owned issue, from the store →
     the catalogue's cover from the store → the catalogue live → a trade's cover →
     page 1 made on the spot."""
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
     from kometa import covers, images
-    resp = _store_response(covers.series_komga_key(series_id), "komga-poster")
-    if resp:
-        return resp
     resp = _store_response(covers.series_file_key(series_id), "file")
     if resp:
         return resp

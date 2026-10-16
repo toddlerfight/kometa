@@ -29,7 +29,7 @@ def _owned_record(path) -> dict:
         rows = conn.execute("""
             SELECT
               SUM(CASE WHEN r.source IN ('metron', 'locg', 'gcd', 'comicinfo-kometa') AND r.fill_state != 'miss' THEN 1 ELSE 0 END) AS catalogue,
-              SUM(CASE WHEN r.source IN ('comicinfo', 'komga') THEN 1 ELSE 0 END) AS stopgap,
+              SUM(CASE WHEN r.source = 'comicinfo' THEN 1 ELSE 0 END) AS stopgap,
               SUM(CASE WHEN r.tracked_series_id IS NULL OR r.fill_state = 'miss' THEN 1 ELSE 0 END) AS no_record,
               SUM(CASE WHEN i.metron_issue_id IS NULL AND (i.locg_issue_id IS NULL OR i.locg_issue_id = '') THEN 1 ELSE 0 END) AS no_catalogue_id,
               SUM(CASE WHEN r.variants_at IS NOT NULL THEN 1 ELSE 0 END) AS variant_lists,
@@ -476,7 +476,7 @@ def gcd_fill_candidates(path=None) -> list[dict]:
             LEFT JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
             WHERE s.gcd_link = 'linked' AND s.gcd_series_id IS NOT NULL AND i.owned = 1 AND i.metron_issue_id IS NULL
               AND (s.kind IS NULL OR s.kind != 'arc')
-              AND (r.tracked_series_id IS NULL OR r.fill_state IN ('miss', 'variants') OR r.source IN ('comicinfo', 'komga'))
+              AND (r.tracked_series_id IS NULL OR r.fill_state IN ('miss', 'variants') OR r.source = 'comicinfo')
               AND NOT (COALESCE(r.source, '') = 'gcd' AND r.fetched_at >= ?)
             ORDER BY s.on_pull_list DESC, i.tracked_series_id, i.number""", (cutoff,))]
 

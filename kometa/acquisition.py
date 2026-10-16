@@ -1352,7 +1352,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
 
         # A junk sibling under a DIFFERENT extension (#003.cbr next to the
         # #003.cbz we just landed) would otherwise sit there forever, invisible
-        # to ownership but very visible to Komga. Only files for THIS issue, only
+        # to ownership but very visible on the shelf. Only files for THIS issue, only
         # ones that fail the same ownership test, only after a good file landed.
         for sib in _unusable_siblings(dest_dir, dest_path, title, issue_number):
             try:

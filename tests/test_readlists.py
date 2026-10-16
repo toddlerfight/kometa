@@ -98,20 +98,20 @@ def test_komga_imported_lists_still_resolve_by_file_name(shelf):
         {"series": "Sir Edward Grey, Witchfinder", "number": "2", "file": "Sir Edward Grey, Witchfinder #002.cbz"},
         {"series": "Hellboy: Seed of Destruction", "number": "1", "file": "Hellboy - Seed of Destruction #001.cbz"},
         {"series": "Gone", "number": "1", "file": "Gone #001.cbz"},
-    ], "komga", "rl1", shelf)
+    ], "imported", "rl1", shelf)
     r = rl.resolve(lid, path=shelf)
     e = r["entries"]
     assert e[0]["status"] == "owned" and e[0]["books"][0]["label"] == "#2"
     assert e[1]["status"] == "owned" and [b["label"] for b in e[1]["books"]] == ["#1"]   # one file, not the whole run
     assert e[2]["status"] == "not_on_shelf"
-    assert r["source"] == "komga"                                    # provenance kept
+    assert r["source"] == "imported"                                  # provenance kept
 
 
 def test_komga_imported_collections_still_resolve_as_whole_runs(shelf):
     lid = rl.save_list("Mignolaverse", [
         {"series": "Hellboy: Seed of Destruction", "number": None},
         {"series": "B.P.R.D.: Plague of Frogs", "number": None},
-    ], "komga", "c1", shelf)
+    ], "imported", "c1", shelf)
     r = rl.resolve(lid, path=shelf)
     assert [e["status"] for e in r["entries"]] == ["owned", "owned"]
     assert [b["label"] for b in r["entries"][0]["books"]] == ["#1", "#2"]   # the whole run, in order

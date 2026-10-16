@@ -42,10 +42,6 @@ def series_file_key(series_id: int) -> str:
     return f"series/{int(series_id)}/file"
 
 
-def series_komga_key(series_id: int) -> str:
-    return f"series/{int(series_id)}/komga"
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -257,7 +253,7 @@ def _record_is_open(series_id: int, number: float, path) -> bool:
     a catalogue row (metron/locg) is never overwritten by a file's own tags."""
     from kometa import record
     row = record.get_issue(series_id, number, path)
-    return row is None or row.get("fill_state") == "miss" or row.get("source") in (None, "", "comicinfo", "komga")
+    return row is None or row.get("fill_state") == "miss" or row.get("source") in (None, "", "comicinfo")
 
 
 def harvest_comicinfo(book: dict, path=None, issue: dict | None = None) -> bool:

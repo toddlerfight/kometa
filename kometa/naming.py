@@ -23,7 +23,7 @@ PIPELINE_EXTS = frozenset({'.cbz', '.cbr', '.zip', '.rar'})
 
 def _strip_ext(filename: str) -> str:
     """Drop a REAL file extension, nothing else. splitext thinks everything after
-    the last dot is an extension — hand it a Komga book name (no extension at all)
+    the last dot is an extension — hand it a bare book name (no extension at all)
     and 'Avengers #034.2' loses its .2, '034.1 (2014) (Digital)' loses the lot.
     Point issues silently collapse onto their parent. An extension is short,
     alphanumeric, and has a letter in it; '.2' and '.1 (2014)' are neither."""
@@ -271,7 +271,7 @@ _VOL_FILE_RE = re.compile(r'\b(?:vol(?:ume)?\.?\s*|v)(\d+)', re.IGNORECASE)
 
 
 def parse_volume_number(name: str) -> int | None:
-    """Volume number of a COLLECTED EDITION from a filename or Komga book name, or
+    """Volume number of a COLLECTED EDITION from a filename or book name, or
     None. The trade analogue of parse_issue_number, with a critical guard: a name
     carrying an issue number (#001) is a single issue that merely labels its arc
     ('Saga - Vol. 1 #001') — NOT a trade. Don't splitext: it mis-splits on the dot
@@ -306,7 +306,7 @@ _EDITION_WORDS = ("absolute", "omnibus", "deluxe", "compendium", "premiere")   #
 
 def edition_keywords(name: str) -> frozenset:
     """The special-edition words present in a trade title / filename. Ownership and
-    Komga matching require the trade's set to EQUAL the file's set: a plain TPB
+    matching require the trade's set to EQUAL the file's set: a plain TPB
     (empty set) never claims an Absolute file, and vice versa."""
     low = name.lower()
     return frozenset(w for w in _EDITION_WORDS if w in low)

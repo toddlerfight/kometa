@@ -145,7 +145,7 @@ def start(phase: str, fn, *args, **kw) -> dict:
 
 
 # --- scope: the user's go ---------------------------------------------------------------
-_STOPGAP = ("comicinfo", "komga")
+_STOPGAP = ("comicinfo",)
 
 
 def _plan(path) -> list[dict]:

@@ -352,8 +352,8 @@ def _rebuild_as_cbz(src_path: str, variant_pages: list, extracted_dir: str | Non
         raise
 
     # CBR→CBZ conversion: the verified replacement is on disk, so the source
-    # .cbr is now a 180MB duplicate that makes Komga see two books for one
-    # issue. Remove it — failure here is logged, never fatal.
+    # .cbr is now a 180MB duplicate that makes the shelf and the reader see two
+    # books for one issue. Remove it — failure here is logged, never fatal.
     if out_path != src_path:
         try:
             os.remove(src_path)
@@ -1310,7 +1310,7 @@ def force_readable_tree(dest_dir: str) -> None:
 
 
 # Extensions we bother re-stamping: everything ownership counts, plus .epub —
-# Komga serves those even though no scanner claims them. (The zoo this comment
+# the shelf serves those even though no scanner claims them. (The zoo this comment
 # used to disavow is dead; naming.py holds the one true set now.)
 _COMIC_LIB_EXTS = OWNED_EXTS | {'.epub'}
 
@@ -1540,7 +1540,7 @@ def download_trade(
         filename = _server_filename(r, hint_filename, url)
         if not filename:
             # GetComics gave no Content-Disposition — name it from the trade itself so
-            # Komga reads something sane, not "trade.cbz".
+            # the shelf reads something sane, not "trade.cbz".
             base = fallback_name or "trade"
             filename = f"{_safe(base)}{_detect_ext(r, hint_filename, url)}"
         filename = _safe(os.path.basename(filename))
@@ -1585,8 +1585,8 @@ def download_trade(
         logger.info(f"Trade pack: {len(extracted)} file(s) from {os.path.basename(dest_path)}")
     elif _pack_comic_count(dest_path) > 1:
         # A pack whose every file was already in the library: nothing new, and
-        # leaving the raw multi-comic ZIP behind plants a fake "trade" Komga
-        # can't read. Remove it and report the dupe honestly.
+        # leaving the raw multi-comic ZIP behind plants a fake "trade" no reader
+        # can open. Remove it and report the dupe honestly.
         os.remove(dest_path)
         raise DuplicateIssueError("Pack contained no files not already in library")
 
