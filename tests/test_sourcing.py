@@ -298,3 +298,43 @@ def test_the_owners_no_run_answers_are_never_sourced(db_path, monkeypatch):
     never = locg_only("Five Years- Omnibus", metron_checked_at="9999-12-31 00:00:00")
     picked = {r["id"] for r in src.sourcing_candidates_query(path=db_path, limit=10)}
     assert machine in picked and declined not in picked and never not in picked
+
+
+def test_collected_edition_penalty_and_flag(db_path, monkeypatch):
+    """Collected-edition candidates (HC/TPB/Omnibus) take a 15-pt title penalty when
+    evaluated against a regular single-issue run, are flagged with is_edition, and
+    sort behind regular series candidates."""
+    monkeypatch.setattr(src, "DB_PATH", db_path)
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+
+    # 1. Edition detection
+    assert src.is_collected_edition("Batman: Hush 20th Anniversary Edition HC") is True
+    assert src.is_collected_edition("Saga Vol. 1 TPB") is True
+    assert src.is_collected_edition("East of West - Omnibus") is True
+    assert src.is_collected_edition("Batman: Hush (2003)") is False
+    assert src.is_collected_edition("East of West") is False
+
+    # 2. Title penalty: 25 - 15 = 10 pts
+    assert src.score_title("Batman: Hush", "Batman: Hush 20th Anniversary Edition HC") == 10.0
+    # Regular stripped match without edition: 25 pts
+    assert src.score_title("Saga", "Saga Vol. 1") == 25.0
+    assert src.score_title("Saga", "Saga Vol. 1 TPB") == 10.0
+    # Both are collected editions: no penalty (40 pts)
+    assert src.score_title("Batman: Hush Deluxe Edition", "Batman: Hush Deluxe Edition") == 40.0
+
+    # 3. Candidate scoring and sorting: regular run sorts ahead of collected edition
+    shelf = {"title": "Batman: Hush", "publisher": "DC Comics", "year_began": 2003}
+    cand_regular = {"title": "Batman: Hush", "publisher": "DC Comics", "year": 2003, "issue_count": 12}
+    cand_edition = {"title": "Batman: Hush 20th Anniversary Edition HC", "publisher": "DC Comics", "year": 2022, "issue_count": 1}
+
+    sc_reg = src.score_candidate(shelf, cand_regular, shelf_total=12)
+    sc_ed = src.score_candidate(shelf, cand_edition, shelf_total=12)
+
+    # Regular run scores 100, edition takes title penalty (10) + count mismatch (0) + year mismatch (0) + pub (30) = 40 (discarded for 12-issue shelf)
+    assert sc_reg == 100.0
+    assert sc_ed == 0.0
+
+    # For a 0-issue shelf run (like the uncollected Hush id 73):
+    sc_ed_uncounted = src.score_candidate(shelf, cand_edition, shelf_total=0)
+    assert sc_ed_uncounted == 50.0  # 10 title + 30 pub + 10 neutral count + 0 year = 50.0 (moderate floor)
+

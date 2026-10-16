@@ -1860,6 +1860,7 @@ function _sourcingRowHtml(s, i) {
       <div class="sourcing-cand-info u-truncate" style="margin-right:12px">
         <span style="font-weight:600;color:var(--tx)">${esc(c.title)}</span>
         <span class="u-label" style="margin-left:6px;color:var(--tq)">${esc([c.publisher, c.year, c.issue_count != null ? `${c.issue_count} issues` : null].filter(Boolean).join(' · '))}</span>
+        ${c.is_edition ? '<span class="nm-status amber" style="margin-left:8px;font-size:10px;padding:1px 6px">Collected edition</span>' : ''}
         <span class="nm-status ${c.confidence === 'high' ? 'green' : 'amber'}" style="margin-left:8px;font-size:10px;padding:1px 6px">${c.confidence === 'high' ? 'High' : 'Moderate'} (${c.score} pts)</span>
       </div>
       <button class="btn btn-primary btn-sm" onclick="_sourcingConfirm(${s.id}, ${c.id})">Confirm</button>

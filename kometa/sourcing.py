@@ -8,6 +8,7 @@ in Needs Matching for explicit one-click owner confirmation.
 """
 import json
 import logging
+import re
 from datetime import datetime, timezone
 import kometa.db as db
 from kometa.naming import norm_key, _pub_key
@@ -43,11 +44,27 @@ def is_imprint_concordant(pub_a: str | None, pub_b: str | None) -> bool:
     return False
 
 
+COLLECTED_EDITION_RE = re.compile(
+    r"\b(hc|hardcover|tpb|trade\s+paperback|omnibus|deluxe\s+edition|anniversary\s+edition|collected\s+edition|compendium|graphic\s+novel|gn)\b",
+    re.IGNORECASE,
+)
+
+
+def is_collected_edition(title: str | None) -> bool:
+    """True if title indicates a collected edition (HC, TPB, Omnibus, etc)."""
+    return bool(COLLECTED_EDITION_RE.search(title or ""))
+
+
+EDITION_PENALTY = 15.0
+
+
 def score_title(shelf_title: str, cand_title: str) -> float:
     """Title concordance (max 40 pts).
     - 40: Exact normalized match
     - 35: Title variant match (colon/dash, leading the)
     - 25: Edition / subtitle stripped match
+    - Edition penalty (-15 pts): applied if candidate is a collected edition (HC/TPB/Omnibus)
+      while the shelf title is not.
     - 0: Non-match
     """
     st_clean = _clean_title(shelf_title or "")
@@ -55,26 +72,29 @@ def score_title(shelf_title: str, cand_title: str) -> float:
     if not st_clean or not ct_clean:
         return 0.0
 
+    score = 0.0
     st_raw = norm_key(st_clean)
     ct_raw = norm_key(ct_clean)
     if st_raw == ct_raw:
-        return 40.0
+        score = 40.0
+    else:
+        the = lambda k: k[4:] if k.startswith("the ") else k
+        st_norm = the(st_raw)
+        ct_norm = the(ct_raw)
 
-    the = lambda k: k[4:] if k.startswith("the ") else k
-    st_norm = the(st_raw)
-    ct_norm = the(ct_raw)
+        if st_norm == ct_norm:
+            score = 35.0
+        else:
+            variants = {the(norm_key(t)) for t in title_variants(st_clean)}
+            if ct_norm in variants:
+                score = 35.0
+            elif cbr.series_slug(st_clean) == cbr.series_slug(ct_clean):
+                score = 25.0
 
-    if st_norm == ct_norm:
-        return 35.0
+    if score > 0.0 and is_collected_edition(cand_title) and not is_collected_edition(shelf_title):
+        score -= EDITION_PENALTY
 
-    variants = {the(norm_key(t)) for t in title_variants(st_clean)}
-    if ct_norm in variants:
-        return 35.0
-
-    if cbr.series_slug(st_clean) == cbr.series_slug(ct_clean):
-        return 25.0
-
-    return 0.0
+    return max(score, 0.0)
 
 
 def score_publisher(shelf_pub: str | None, cand_pub: str | None) -> float:
@@ -225,17 +245,21 @@ def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
                 sc = score_candidate(s, r, s.get("shelf_total"))
                 tier = confidence_tier(sc)
                 if tier:
+                    cand_title = r.get("title") or r.get("name") or ""
+                    is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title"))
                     scored_cands.append({
                         "id": mid,
-                        "title": r.get("title") or r.get("name") or "",
+                        "title": cand_title,
                         "publisher": r.get("publisher") or "",
                         "year": r.get("year"),
                         "issue_count": r.get("issue_count") or r.get("count"),
                         "score": sc,
                         "confidence": tier,
+                        "is_edition": is_ed,
                     })
 
-            scored_cands.sort(key=lambda c: -c["score"])
+            # Regular series matches sort before collected editions, then by score descending
+            scored_cands.sort(key=lambda c: (c.get("is_edition", False), -c["score"]))
             top_cands = scored_cands[:3]
 
             conn.execute(
