@@ -2454,7 +2454,10 @@ async function renderSeriesDetail(id) {
           // Only claim "Syncing…" while a sync is genuinely pending (never synced). Once
           // last_synced is set and there are still no issues, the sync is DONE and empty —
           // say so, don't spin a lie the user has to reload to escape.
-          : s.locg_series_id && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
+          // Keyed on "never synced", not on which catalogue the id came from: a run tracked
+          // from a Metron result has no LOCG id until that first sync lands, and showed
+          // "Nothing here." for the 30 s it took (The Joker Presents: A Puzzlebox, 2026-10-16).
+          : (s.locg_series_id || s.metron_series_id) && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
           : 'Nothing here.'}</div>`}</div>`}
   `);
 
@@ -2487,7 +2490,7 @@ async function renderSeriesDetail(id) {
   // through setDetailTab → here) REPLACES the poller instead of stacking a new
   // 3s loop on top of the old one every visit.
   clearInterval(_detailPollId);
-  if (s.locg_series_id && total === 0 && !s.has_trades && detailTab !== 'trades'
+  if ((s.locg_series_id || s.metron_series_id) && total === 0 && !s.has_trades && detailTab !== 'trades'
       && (!s.last_synced || _autoSynced.has(id)) && !_autoPollDone.has(id)) {
     const _syncedAt = s.last_synced || null;
     const _stopAt = Date.now() + 90000;
