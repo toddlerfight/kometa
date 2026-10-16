@@ -314,7 +314,8 @@ def _migrate(path=DB_PATH):
         # The Grand Comics Database run for series Metron hasn't got (harvest 1g):
         # gcd_link 'linked' / 'none' / 'ambiguous' (candidates kept for you to pick).
         # Same rule as above: after the rebuilds, or they'd drop them.
-        for col, typ in (("gcd_series_id", "INTEGER"), ("gcd_link", "TEXT"), ("gcd_candidates_json", "TEXT")):
+        for col, typ in (("gcd_series_id", "INTEGER"), ("gcd_link", "TEXT"), ("gcd_candidates_json", "TEXT"),
+                         ("metron_checked_at", "TEXT"), ("metron_candidates_json", "TEXT")):
             if col not in ts_cols:
                 conn.execute(f"ALTER TABLE tracked_series ADD COLUMN {col} {typ}")
         if "cv_volume_id" not in ts_cols:

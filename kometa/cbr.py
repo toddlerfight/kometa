@@ -92,16 +92,23 @@ def year_hint(s: dict, path=None) -> int | None:
             return int(r[0])
         mid = s.get("metron_series_id")
         if mid:
-            from kometa import metron_client
-            try:
-                d = metron_client.series_detail(mid)
-                if d.get("year"):
-                    yr = int(d["year"])
-                    conn.execute("UPDATE tracked_series SET year_began = ? WHERE id = ?", (yr, s["id"]))
-                    s["year_began"] = yr
-                    return yr
-            except Exception:
-                pass
+            chk = conn.execute("SELECT metron_checked_at FROM tracked_series WHERE id = ?", (s["id"],)).fetchone()
+            checked_at = chk[0] if chk else None
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+            if not checked_at or checked_at < cutoff:
+                from kometa import metron_client
+                try:
+                    d = metron_client.series_detail(mid)
+                    now_str = _now()
+                    if d.get("year"):
+                        yr = int(d["year"])
+                        conn.execute("UPDATE tracked_series SET year_began = ?, metron_checked_at = ? WHERE id = ?", (yr, now_str, s["id"]))
+                        s["year_began"] = yr
+                        return yr
+                    else:
+                        conn.execute("UPDATE tracked_series SET metron_checked_at = ? WHERE id = ?", (now_str, s["id"]))
+                except Exception:
+                    pass
     return None
 
 

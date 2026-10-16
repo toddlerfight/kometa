@@ -57,6 +57,33 @@ def test_year_hint_from_metron_series_fallback(db_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_year_hint_negative_result_cached_in_metron_checked_at(db_path, monkeypatch):
+    import kometa.metron_client as mc
+    sid = db.add_series(title="Yearless Series", publisher="Unknown", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = 9999, year_began = NULL, metron_checked_at = NULL WHERE id = ?", (sid,))
+
+    calls = []
+    def fake_detail(mid):
+        calls.append(mid)
+        return {}   # Metron has no year for this run
+
+    monkeypatch.setattr(mc, "series_detail", fake_detail)
+
+    s = db.get_series_by_id(sid, db_path)
+    assert cbr.year_hint(s, path=db_path) is None
+    assert len(calls) == 1
+
+    # Verify metron_checked_at was stamped and year_began was NOT set to 0
+    row = db.get_series_by_id(sid, db_path)
+    assert row["year_began"] is None
+    assert row["metron_checked_at"] is not None
+
+    # Next call within 30 days skips the Metron API call
+    assert cbr.year_hint(row, path=db_path) is None
+    assert len(calls) == 1
+
+
 def test_matches_handles_subtitled_runs_and_verifies_year():
     # Matching clean title against page heading
     s = {"title": "Mister Miracle - The Deluxe Edition"}
