@@ -327,3 +327,25 @@ def test_the_file_genres_are_re_keyed_on_every_start(db_path):
     rec.ensure_tables.reset()
     rec.ensure_tables(db_path)
     assert sorted(t["key"] for t in rec.tags_for(sid, db_path)) == ["action", "adventure"]
+
+
+def test_an_locg_record_gives_way_to_metron_once_the_issue_has_a_metron_id(db_path, monkeypatch):
+    """The sourcing deck links LOCG-only runs to Metron (2026-10-16). Their issues
+    already had LOCG records — names, no creator ids — fresh for 90 days. Once the
+    harvest stamps a Metron id on the issue, the record must be re-read from Metron,
+    keeping the readers' scores; before, a fresh LOCG row was handed straight back."""
+    sid = _series(db_path)
+    rec.write_issue(sid, 2.0, LOCG, "locg", "partial", {"locg_issue_id": "55"}, db_path)
+    rec.set_community(sid, 2.0, {"rating": 4.5}, db_path)
+    picked = lambda: [(p["tracked_series_id"], p["number"]) for p in rec.pending_issues(db_path)]
+    assert (sid, 2.0) not in picked()                                       # no Metron id yet: LOCG's answer stands
+    asked = []
+    m = lambda issue, path: asked.append(issue["number"]) or METRON
+    assert rec.fill_issue(sid, 2.0, db_path, metron=m)["source"] == "locg" and asked == []
+    with db._connect(db_path) as c:
+        c.execute("UPDATE issue_status SET metron_issue_id = 202 WHERE tracked_series_id = ? AND number = 2.0", (sid,))
+    assert (sid, 2.0) in picked()
+    row = rec.fill_issue(sid, 2.0, db_path, metron=m)
+    assert asked == [2.0] and row["source"] == "metron" and row["credits"][0]["metron_creator_id"] == 7
+    assert rec.get_issue(sid, 2.0, db_path)["community"] == {"rating": 4.5}   # readers' scores survive the re-read
+    assert (sid, 2.0) not in picked()                                       # and it's done: no re-pick every tick
