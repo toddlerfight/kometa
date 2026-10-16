@@ -394,3 +394,51 @@ def test_fill_signals_filters_guest_creators_below_twenty_percent_presence(db_pa
     assert "Scott Snyder" not in creators_by_name
 
 
+def test_fill_signals_metron_series_safety_net(db_path, monkeypatch):
+    """Mister Miracle Deluxe: local issue has no metron_issue_id, but series has metron_series_id.
+    Safety net falls back to metron_client.series_issues for single-issue or exact number match."""
+    import kometa.metron_client as mc
+    mm = db.add_series(title="Mister Miracle Deluxe", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = 13649 WHERE id = ?", (mm,))
+    db.upsert_issue_status(mm, 1.0, None, 1, path=db_path)  # no metron_issue_id
+
+    monkeypatch.setattr(mc, "series_issues", lambda sid: [{"number": 1.0, "metron_issue_id": 156149}] if sid == 13649 else [])
+    detail_called = []
+    def fake_detail(mid):
+        detail_called.append(mid)
+        return {"credits": [{"role": "Writer", "name": "Tom King", "metron_creator_id": 501},
+                            {"role": "Artist", "name": "Mitch Gerads", "metron_creator_id": 502}], "arcs": []}
+
+    assert rel.fill_signals(mm, db_path, detail=fake_detail) is True
+    assert detail_called == [156149]
+    sig = rel._signals(db_path)[mm]
+    names = {c["name"] for c in sig["creators"]}
+    assert "Tom King" in names and "Mitch Gerads" in names
+
+    # Also check that issue_status was updated with the Metron issue ID
+    issues = db.get_issues_for_series(mm, db_path)
+    assert issues[0]["metron_issue_id"] == 156149
+
+
+def test_fill_signals_metron_series_never_guesses_on_mismatched_numbers(db_path, monkeypatch):
+    """Multi-issue series with mismatched issue numbers must NEVER write a guessed Metron issue ID."""
+    import kometa.metron_client as mc
+    sid = db.add_series(title="Multi Run", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = 9999 WHERE id = ?", (sid,))
+    # Local owned issue is #99.0
+    db.upsert_issue_status(sid, 99.0, None, 1, path=db_path)
+
+    # Metron has multiple issues #1.0 and #2.0 (neither is #99.0)
+    monkeypatch.setattr(mc, "series_issues", lambda s_id: [
+        {"number": 1.0, "metron_issue_id": 1001},
+        {"number": 2.0, "metron_issue_id": 1002}
+    ] if s_id == 9999 else [])
+
+    assert rel.fill_signals(sid, db_path) is False
+    # Local issue must remain unlinked (not guessed)
+    issues = db.get_issues_for_series(sid, db_path)
+    assert issues[0]["metron_issue_id"] is None
+
+

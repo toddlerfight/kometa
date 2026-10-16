@@ -163,10 +163,42 @@ def test_runs_matched_after_their_last_sync_are_synced_most_owned_first(db_path,
     for n in range(1, 4):
         db.upsert_issue_status(a, float(n), None, 1, path=db_path)
     db.upsert_issue_status(b, 1.0, None, 1, path=db_path)
-    db.upsert_issue_status(c, 1.0, None, 1, path=db_path)
+    db.upsert_issue_status(c, 1.0, None, 1, metron_issue_id=999, path=db_path)
     synced = []
     assert harvest.issue_ids_tick(limit=5, path=db_path, sync=lambda s: synced.append(s["title"])) == 2
     assert synced == ["Hellblazer", "The Woods"]
+
+
+def test_runs_with_metron_fetched_at_but_no_issue_ids_are_resynced(db_path, monkeypatch):
+    """Mister Miracle Deluxe: metron_fetched_at was stamped before issue IDs landed.
+    The harvest must re-queue it, but retry at most daily if owned issues have no Metron ids."""
+    from datetime import datetime, timedelta, timezone
+    from kometa.sync import _issues_due
+    monkeypatch.setattr(mc, "configured", lambda: True)
+    monkeypatch.setattr(mc, "harvest_share_spent", lambda: False)
+    mm = db.add_series(title="Mister Miracle Deluxe", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    
+    # Tried recently (1 hour ago)
+    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = 13649, metron_fetched_at = ? WHERE id = ?", (recent, mm))
+    db.upsert_issue_status(mm, 1.0, None, 1, path=db_path)  # no metron_issue_id
+
+    # Within the 1-day retry window: must NOT be retried
+    assert not any(s["id"] == mm for s in harvest.unfetched_series(path=db_path))
+    s_obj = db.get_series_by_id(mm, db_path)
+    assert _issues_due(s_obj, "metron_fetched_at", path=db_path) is False
+
+    # Past the 1-day retry window (e.g. 25 hours ago): SHOULD be returned for daily retry
+    stale = (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_fetched_at = ? WHERE id = ?", (stale, mm))
+
+    s_obj = db.get_series_by_id(mm, db_path)
+    assert _issues_due(s_obj, "metron_fetched_at", path=db_path) is True
+    synced = []
+    assert harvest.issue_ids_tick(limit=5, path=db_path, sync=lambda s: synced.append(s["title"])) == 1
+    assert synced == ["Mister Miracle Deluxe"]
 
 
 def test_issue_ids_tick_rests_when_the_harvest_share_is_spent(db_path, monkeypatch):

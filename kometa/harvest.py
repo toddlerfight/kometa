@@ -98,20 +98,29 @@ def get_misses(limit: int = 200):
 
 # --- issue ids for runs matched after their last sync (1d) -----------------------
 IDS_PER_TICK = 3
+METRON_ISSUE_RECHECK_DAYS = 1
 
 
-def unfetched_series(path=None, limit: int = IDS_PER_TICK) -> list[dict]:
+def unfetched_series(path=None, limit: int = IDS_PER_TICK, now=None) -> list[dict]:
     """Runs matched to Metron whose issue list was never fetched — linked after
     their last sync, then left for the weekly not-pulled cycle (2026-10-12: 27
     runs, 517 owned issues, Hellblazer among them, with no issue ids at all).
-    Most owned issues first."""
+    Retried at most daily if owned issues have no Metron ids. Most owned issues first."""
     path = path or DB_PATH
+    from datetime import datetime, timedelta, timezone
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=METRON_ISSUE_RECHECK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     with db._connect(path) as conn:
         ids = [r[0] for r in conn.execute("""
             SELECT s.id FROM tracked_series s JOIN issue_status i ON i.tracked_series_id = s.id
-            WHERE s.metron_series_id IS NOT NULL AND s.metron_fetched_at IS NULL
+            WHERE s.metron_series_id IS NOT NULL
+              AND (s.metron_fetched_at IS NULL
+                   OR (s.metron_fetched_at < ?
+                       AND NOT EXISTS (
+                           SELECT 1 FROM issue_status i2
+                           WHERE i2.tracked_series_id = s.id AND i2.metron_issue_id IS NOT NULL AND i2.owned = 1
+                       )))
               AND (s.kind IS NULL OR s.kind != 'arc') AND i.owned = 1
-            GROUP BY s.id ORDER BY COUNT(*) DESC, s.id LIMIT ?""", (limit,))]
+            GROUP BY s.id ORDER BY COUNT(*) DESC, s.id LIMIT ?""", (cutoff, limit))]
     return [s for s in (db.get_series_by_id(i, path) for i in ids) if s]
 
 

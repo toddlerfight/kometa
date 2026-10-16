@@ -51,18 +51,26 @@ DORMANT_REFRESH_DAYS = 30    # a finished run's list: monthly at most
 TRADES_REFRESH_DAYS = 30
 
 
-def _issues_due(series: dict, stamp_key: str = "locg_fetched_at") -> bool:
+def _issues_due(series: dict, stamp_key: str = "locg_fetched_at", path=None) -> bool:
     """Should this (non-forced) sync refetch an issue list (LOCG or Metron)?"""
     from datetime import date, datetime, timedelta, timezone
+    p = path or DB_PATH
     fetched = series.get(stamp_key)
     if not fetched:
         return True                                   # never fetched (or relinked)
     recent = str(date.today() - timedelta(days=ACTIVE_WINDOW_DAYS))
     if any(i.get("store_date") and i["store_date"] >= recent
-           for i in db.get_issues_for_series(series["id"], DB_PATH)):
+           for i in db.get_issues_for_series(series["id"], p)):
         return True                                   # ongoing: cadence is the caller's
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DORMANT_REFRESH_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    return fetched < cutoff                           # finished run: monthly at most
+    if fetched < cutoff:
+        return True
+    if stamp_key == "metron_fetched_at" and series.get("metron_series_id"):
+        issues = db.get_issues_for_series(series["id"], p)
+        if issues and not any(i.get("metron_issue_id") for i in issues if i.get("owned")):
+            retry_cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+            return fetched < retry_cutoff
+    return False
 
 
 LOCG_WITH_METRON_DAYS = 7   # Metron has the list; LOCG only adds far-ahead solicits
@@ -137,9 +145,8 @@ def sync_one(series: dict, force: bool = False):
                         for mi in metron_client.series_issues(run):
                             issue_map.setdefault(mi["number"], {"store_date": mi["store_date"], "image": mi["image"],
                                                                 "locg_issue_id": None, "metron_issue_id": mi.get("metron_issue_id")})
-                    if issue_map:
-                        from datetime import datetime, timezone
-                        db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
+                    from datetime import datetime, timezone
+                    db.set_metron_fetched(series["id"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), DB_PATH)
                     if series.get("metron_type") is None or series.get("metron_status_at") is None:
                         # once per series: what KIND of run this is (one-shot, limited,
                         # trade…) — kometa/singles.py reads it to tell a stub from a book —

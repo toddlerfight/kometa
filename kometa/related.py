@@ -131,6 +131,45 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
                 creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
         arcs = [a for a in (d.get("arcs") or []) if a]
     asked = bool(issue) or bool(rows)
+    if not asked:
+        # Safety net: series has a Metron series ID, but local issues have no Metron issue IDs yet.
+        # Restrict to series with exactly one Metron issue and one local issue, or match by issue number; never guess.
+        s_ = db.get_series_by_id(series_id, path)
+        if s_ and s_.get("metron_series_id"):
+            from kometa import metron_client
+            try:
+                m_issues = metron_client.series_issues(s_["metron_series_id"])
+                local_issues = db.get_issues_for_series(series_id, path)
+                owned_issues = [i for i in local_issues if i.get("owned")]
+                matched_mid, matched_num = None, None
+
+                if len(m_issues) == 1 and len(owned_issues) == 1:
+                    # Exactly one Metron issue and one local issue (e.g. Deluxe Edition / one-shot)
+                    matched_mid = m_issues[0].get("metron_issue_id")
+                    matched_num = owned_issues[0].get("number")
+                elif m_issues and owned_issues:
+                    # Match strictly by exact issue number
+                    m_by_num = {float(mi["number"]): mi.get("metron_issue_id")
+                                for mi in m_issues if mi.get("number") is not None}
+                    for oi in owned_issues:
+                        num = oi.get("number")
+                        if num is not None and float(num) in m_by_num:
+                            matched_mid = m_by_num[float(num)]
+                            matched_num = num
+                            break
+
+                if matched_mid:
+                    d = (detail or metron_client.issue_detail)(matched_mid)
+                    for c in d.get("credits") or []:
+                        if c.get("name"):
+                            creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
+                    arcs = [a for a in (d.get("arcs") or []) if a]
+                    with db._connect(path) as conn:
+                        conn.execute("UPDATE issue_status SET metron_issue_id = ? WHERE tracked_series_id = ? AND number = ?",
+                                     (matched_mid, series_id, matched_num))
+                    asked = True
+            except Exception as e:
+                logger.info(f"Signals: Metron series fallback skipped for {series_id}: {e}")
     with db._connect(path) as conn:
         # Nothing to ask yet (the issues or their credits haven't landed): the empty answer
         # is dated so it's looked at again tomorrow, not in a month. 4 Kids Walk Into A Bank
