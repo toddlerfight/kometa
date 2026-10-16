@@ -905,6 +905,20 @@ select.settings-input {
 
 .issue-tile:hover .issue-tile-img img { transform: scale(var(--zoom)); }
 
+/* Skeleton tiles: the issue grid's shape while a just-tracked run's first sync lands.
+   The sheen is a translated pseudo-element (transform only); Reduce Motion gets the
+   flat block. */
+.issue-tile.skeleton .issue-tile-img { background: var(--su2); }
+.issue-tile.skeleton .issue-tile-img::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--su3) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: skeleton-sheen 1.4s var(--ease-in-out) infinite;
+}
+.issue-tile.skeleton .issue-tile-num { height: 12px; width: 36px; margin-top: 6px; border-radius: 3px; background: var(--su2); }
+@keyframes skeleton-sheen { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .issue-tile.skeleton .issue-tile-img::after { animation: none; display: none; } }
+
 .issue-tile-img.missing  { background: var(--su2); }
 .issue-tile-img.upcoming { background: var(--su2); }
 .issue-tile-img.today    { background: var(--su2); }

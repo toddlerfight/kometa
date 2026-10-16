@@ -1128,9 +1128,9 @@ function _trendCard(e) {
   const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
   const action = owned ? ''
     : e.metron_series_id
-      ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
+      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
     : e.locg_series_id      // Metron hasn't got it; LOCG has
-      ? `<button class="od-menu rel-get" title="Track this series (pull list off)" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ locg_id: e.locg_series_id, title: e.locg_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: false }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
+      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ locg_id: e.locg_series_id, title: e.locg_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
       : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
   return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" title="${esc(e.title)} · ${esc(e.publisher || '')}">
     <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(_ext(e.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
@@ -1261,11 +1261,11 @@ function _gapCard(r) {
 // the catalogue's cover, and Track puts it on the shelf (pull list off).
 function _catalogueCard(r) {
   const why = (r.why || []).join(' · ');
-  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
+  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: true }).replace(/"/g, '&quot;');
   const open = `showCatalogueModal(${JSON.stringify(r).replace(/"/g, '&quot;')})`;
   return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}" onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' ')${open}">
     <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(_ext(r.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
-      <button class="od-menu rel-get" title="Track this series (pull list off)" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
+      <button class="od-menu rel-get" title="Track this series and put it on the pull list" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
       <div class="series-card-count" style="color:var(--tq)">${r.year || ''}</div></div>
     <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
@@ -1433,7 +1433,7 @@ function showCatalogueModal(r) {
   const why = (r.why || []).filter(Boolean);
   const anchor = r.metron_series_id ? { metron_id: r.metron_series_id } : r.locg_series_id ? { locg_id: r.locg_series_id } : null;
   const payload = JSON.stringify({ ...anchor, title: r.metron_title || r.title, publisher_name: r.publisher || '',
-    year_began: r.year || null, on_pull_list: false }).replace(/"/g, '&quot;');
+    year_began: r.year || null, on_pull_list: true }).replace(/"/g, '&quot;');
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
@@ -2045,7 +2045,7 @@ function _issueTileHtml(s, issue) {
       </div>`;
     }
     const searchBtn = (st === 'missing' || st === 'today')
-      ? `<button class="issue-tile-search" title="Search for this issue" aria-label="Search for issue ${fmtNum(issue.number)}" data-dl="${s.id}:${issue.number}"
+      ? `<button class="issue-tile-search" title="Get this issue" aria-label="Get issue ${fmtNum(issue.number)}" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
     return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}" tabindex="0" role="button"
@@ -2449,16 +2449,16 @@ async function renderSeriesDetail(id) {
       ? `<div id="trades-panel" class="trades-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for trades…</div></div>`
       : detailTab === 'arcs'
       ? `<div id="arcs-panel" class="arcs-body"><div class="state-msg" style="padding:20px 0;font-size:11px">Looking for arcs…</div></div>`
-      : `<div class="issue-grid">${tiles || `<div class="state-msg" style="grid-column:1/-1">${
+      : `<div class="issue-grid">${tiles || (
+          // A run tracked seconds ago: its issue list is still coming off the catalogue (30 s for
+          // The Joker Presents: A Puzzlebox, 2026-10-16). Cover-sized skeletons where the tiles
+          // will land, not a sentence — the poller below swaps them for the real grid.
+          (s.locg_series_id || s.metron_series_id) && total === 0 && !s.last_synced && !s.has_trades
+            ? Array.from({ length: 12 }, () => `<div class="issue-tile skeleton" aria-hidden="true"><div class="issue-tile-img"></div><div class="issue-tile-num"></div></div>`).join('')
+            : `<div class="state-msg" style="grid-column:1/-1">${
           total === 0 && s.has_trades ? 'No single issues — collected in Trades →'
-          // Only claim "Syncing…" while a sync is genuinely pending (never synced). Once
-          // last_synced is set and there are still no issues, the sync is DONE and empty —
-          // say so, don't spin a lie the user has to reload to escape.
-          // Keyed on "never synced", not on which catalogue the id came from: a run tracked
-          // from a Metron result has no LOCG id until that first sync lands, and showed
-          // "Nothing here." for the 30 s it took (The Joker Presents: A Puzzlebox, 2026-10-16).
-          : (s.locg_series_id || s.metron_series_id) && total === 0 ? (s.last_synced ? 'No issues found for this series.' : 'Syncing issues…')
-          : 'Nothing here.'}</div>`}</div>`}
+          : (s.locg_series_id || s.metron_series_id) && total === 0 ? 'No issues found for this series.'
+          : 'Nothing here.'}</div>`)}</div>`}
   `);
 
   if (detailTab === 'trades') _loadTradesPanel(id);
