@@ -47,14 +47,16 @@ _YEAR_RE = re.compile(r"\((\d{4})\)")
 
 
 def _clean_title(folder_name: str) -> str:
-    """Folder names carry scars — '- Batman - Lost', 'Alien vs Predator -'."""
-    return folder_name.strip().strip("-").strip() or folder_name
+    """Folder names carry scars — '- Batman - Lost', 'Alien vs Predator -', '6 - Daddy\'s Little Girl'."""
+    t = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", folder_name).strip()
+    return t.strip("-").strip() or folder_name
 
 
 def _title_and_year(title: str) -> tuple[str, int | None]:
-    m = _YEAR_RE.search(title)
+    t = _clean_title(title)
+    m = _YEAR_RE.search(t)
     year = int(m.group(1)) if m else None
-    return _YEAR_RE.sub("", title).strip(), year
+    return _YEAR_RE.sub("", t).strip(), year
 
 
 def _file_years(folder: str) -> list[int]:

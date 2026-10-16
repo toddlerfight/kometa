@@ -17,6 +17,15 @@ def test_series_slug_normalisation():
     assert cbr.series_slug("Saga Vol. 1") == "saga"
     assert cbr.series_slug("Aliens - Tribes GN") == "aliens-tribes"
 
+    # Leading hyphen and track number prefixes
+    assert cbr.series_slug("- Army of Darkness") == "army-of-darkness"
+    assert cbr.series_slug("- Batman - Lost") == "batman-lost"
+    assert cbr.series_slug("- Hawkman - Found") == "hawkman-found"
+    assert cbr.series_slug("1 - Silent Night") == "silent-night"
+    assert cbr.series_slug("6 - Daddy's Little Girl") == "daddys-little-girl"
+    assert cbr.series_slug("1602- Witch Hunter Angela") == "1602-witch-hunter-angela"
+
+
 
 def test_year_hint_from_metron_series_fallback(db_path, monkeypatch):
     import kometa.metron_client as mc

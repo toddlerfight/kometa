@@ -237,6 +237,7 @@ def title_variants(title: str) -> list[str]:
     """Folders say 'Hellblazer - Bad Blood'; the catalogue says 'Hellblazer: Bad
     Blood'. Metron's name filter is literal, so ask both ways."""
     t = re.sub(r"\(\d{4}\)", "", title).strip()
+    t = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", t).strip().strip("-").strip()
     colon = re.sub(r"\s*-\s+", ": ", t, count=1)
     colon = re.sub(r"(\w)- ", r"\1: ", colon, count=1)
     return [t] if colon == t else [t, colon]

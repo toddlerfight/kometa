@@ -274,3 +274,25 @@ def test_a_new_run_is_never_matched_to_an_old_one_of_the_same_name():
     new = {"title": "Batman: Shadow of the Bat", "publisher": "DC Comics", "year_began": 2027, "folder_path": "/comics/DC Comics/Batman- Shadow of the Bat"}
     assert _confident_row(rows, new) is None
     assert _confident_row(rows, dict(new, year_began=1992))["id"] == 2172
+
+
+def test_clean_title_and_title_and_year_strip_leading_hyphen_and_track_prefixes():
+    # Leading hyphen
+    assert si._clean_title("- Army of Darkness") == "Army of Darkness"
+    assert si._clean_title("- Dark Days - The Forge") == "Dark Days - The Forge"
+    assert si._clean_title("- Batman - Lost") == "Batman - Lost"
+    assert si._clean_title("- Hawkman - Found") == "Hawkman - Found"
+    assert si._title_and_year("- Batman - Lost") == ("Batman - Lost", None)
+
+    # Track number prefixes (1-2 digits with hyphen)
+    assert si._clean_title("1 - Silent Night") == "Silent Night"
+    assert si._clean_title("6 - Daddy's Little Girl") == "Daddy's Little Girl"
+    assert si._clean_title("2 - The Babe Wore Red and Other Stories") == "The Babe Wore Red and Other Stories"
+    assert si._title_and_year("6 - Daddy's Little Girl") == ("Daddy's Little Girl", None)
+
+    # Numbers that are part of title, not track prefixes, remain untouched
+    assert si._clean_title("1602- Witch Hunter Angela") == "1602- Witch Hunter Angela"
+    assert si._clean_title("100 Bullets (1999)") == "100 Bullets (1999)"
+    assert si._title_and_year("100 Bullets (1999)") == ("100 Bullets", 1999)
+    assert si._clean_title("4 Kids Walk Into A Bank") == "4 Kids Walk Into A Bank"
+

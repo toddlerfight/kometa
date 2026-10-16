@@ -70,6 +70,7 @@ def series_slug(title: str | None) -> str:
     """'The Amazing Spider-Man (2025)' → 'amazing-spider-man'; 'Miles Morales:
     Spider-Man' → 'miles-morales-spider-man'; 'Alien Vs. X-Men' → 'alien-vs.-x-men'."""
     t = _YEAR_RE.sub("", title or "").strip()
+    t = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", t).strip().strip("-").strip()
     t = re.sub(r"\b(the deluxe edition|deluxe edition|omnibus|(?:\d+(?:th|st|nd|rd)\s+)?anniversary edition|vol(?:\.|ume)?\s*\d+|gn)\b.*$", "", t, flags=re.I).strip(" -:")
     t = re.sub(r"\s+-\s+", ": ", t)                         # a folder's 'Dune- House' / ' - ' is a colon
     t = re.sub(r"^\s*the\s+", "", t, flags=re.I).lower()

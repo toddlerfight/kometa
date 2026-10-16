@@ -17,6 +17,12 @@ class TestClient:
         assert mc.title_variants("Joker- Killer Smile") == ["Joker- Killer Smile", "Joker: Killer Smile"]
         assert mc.title_variants("Batman (2016)") == ["Batman"]
         assert mc.title_variants("Spider-Gwen") == ["Spider-Gwen"]           # inner hyphen untouched
+        # Leading hyphens and track prefixes are stripped before generating colon variants
+        assert mc.title_variants("- Batman - Lost") == ["Batman - Lost", "Batman: Lost"]
+        assert mc.title_variants("- Hawkman - Found") == ["Hawkman - Found", "Hawkman: Found"]
+        assert mc.title_variants("6 - Daddy's Little Girl") == ["Daddy's Little Girl"]
+        assert mc.title_variants("1 - Silent Night") == ["Silent Night"]
+        assert mc.title_variants("1602- Witch Hunter Angela") == ["1602- Witch Hunter Angela", "1602: Witch Hunter Angela"]
 
     def test_429_pauses_every_caller_and_is_not_no_results(self, monkeypatch):
         monkeypatch.setattr(mc, "_creds", lambda: ("u", "p"))
