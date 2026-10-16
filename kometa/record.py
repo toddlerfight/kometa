@@ -136,6 +136,7 @@ _GENRE_ALIASES = {"super hero": "superhero", "super-hero": "superhero", "superhe
                   "nonfiction": "non-fiction", "non fiction": "non-fiction", "sci-fi": "science fiction",
                   "sci fi": "science fiction", "scifi": "science fiction", "humour": "humor"}
 FILE_THEME_TRUST = 0.6                           # a file's theme label, beside a catalogue's genres
+GCD_TRUST = 0.8                                  # GCD's story genres: a catalogue, finer than Metron's
 
 
 def genre_keys(label: str) -> list[tuple[str, str]]:
@@ -164,22 +165,22 @@ def effective_tags(series_id: int, path=None) -> list[dict]:
     and what <Genre> is written from. Once Metron has answered, its coarse genres are
     the series' genres: the files' coarse labels are dropped, not merged. (Metron only
     says what a run IS, never what it isn't, so "keep the file labels Metron didn't
-    mention" would keep Saga's 'superhero' and 'horror' — the partner's trap.) The
-    files' themes stay at FILE_THEME_TRUST. 'other' never appears."""
+    mention" would keep Saga's 'superhero' and 'horror' — the partner's trap.) Themes
+    stay: GCD's at GCD_TRUST, the files' at FILE_THEME_TRUST. With no Metron answer,
+    GCD's and the files' genres stand in at those weights. 'other' never appears."""
     rows = tags_for(series_id, path)
     has_metron = any(r["source"] == "metron" for r in rows)
     out, seen = [], set()
     for r in rows:
         if r["kind"] == "other" or r["key"] in seen:
             continue
+        trust = GCD_TRUST if r["source"] == "gcd" else FILE_THEME_TRUST
         if r["source"] == "metron":
             w = 1.0
-        elif r["kind"] == "theme":
-            w = FILE_THEME_TRUST
-        elif not has_metron:
-            w = FILE_THEME_TRUST                 # no catalogue answer yet: the files' genres stand in
+        elif r["kind"] == "theme" or not has_metron:
+            w = trust                            # a theme, or no Metron answer yet: stands in at its source's trust
         else:
-            continue                             # a coarse file genre, superseded by Metron's
+            continue                             # a coarse genre from elsewhere, superseded by Metron's
         seen.add(r["key"])
         out.append({**r, "weight": w})
     return out
@@ -203,7 +204,7 @@ def tags_for(series_id: int, path=None) -> list[dict]:
     ensure_tables(path)
     with db._connect(path) as conn:
         rows = conn.execute("""SELECT key, label, kind, source FROM series_tags WHERE tracked_series_id = ?
-            ORDER BY CASE source WHEN 'metron' THEN 0 ELSE 1 END, key""", (series_id,)).fetchall()
+            ORDER BY CASE source WHEN 'metron' THEN 0 WHEN 'gcd' THEN 1 ELSE 2 END, key""", (series_id,)).fetchall()
     return [dict(r) for r in rows]
 
 

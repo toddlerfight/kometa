@@ -35,7 +35,6 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 
 - [ ] `komga_import.py` — has the one-time Komga reading-history import run? If yes, delete it.
 - [x] Trades belong to a series (2026-10-12: the Collected editions report — wiki, else 'by name' for edition-named books; one click files each): how folders like *Batman: Hush* / *Year One Deluxe* get filed under their parent run. Proposal: Kometa suggests the parent from the folder name, you confirm each; it becomes a trade on that run's Trades tab, readable, counted toward what it collects, never needs matching.
-- [ ] Two failed trade downloads: *Fantastic Four: Unthinkable* (stalled in SABnzbd), *Avengers Academy Vol. 2* (GetComics cut off) — retry or drop.
 
 ## Parked
 

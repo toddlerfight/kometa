@@ -390,3 +390,45 @@ def test_a_bogus_pack_year_cannot_force_a_wrong_link(db_path):
     db.upsert_book("/comics/Marvel Comics/Black Cat/Black Cat #001 (2015).cbz", 1, 1.0, [], tracked_series_id=sid, number=1.0, path=db_path)
     s = db.get_series_by_id(sid, db_path)
     assert harvest.gcd_tiebreak(s, _cands(), db_path, _Pubs({10: "Aspen MLT", 20: "Marvel"})) is None   # 2015 fits none: stays yours
+
+
+# --- story genres per run (recommendations step 4) -----------------------------------
+def test_gcd_genre_pairs_split_into_the_shelf_vocabulary():
+    assert harvest.gcd_genre_labels(["superhero", "horror-suspense", "Detective-Mystery", "post-apocalyptic"]) == [
+        "superhero", "horror", "suspense", "detective", "mystery", "post-apocalyptic"]
+
+
+def test_gcd_genres_one_ask_per_run_and_none_when_the_record_already_says(db_path):
+    db.set_config({"gcd_user": "me", "gcd_pass": "pw"}, db_path)
+    asked = db.add_series(title="Asked", publisher="Image", folder_path=None, on_pull_list=True, path=db_path)
+    local = db.add_series(title="Already Said", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    for sid in (asked, local):
+        db.upsert_issue_status(sid, 1.0, "2020-01-01", 1, path=db_path)
+    rec.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO issue_record (tracked_series_id, number, source, fill_state, extra_json) VALUES (?, 1.0, 'metron', 'full', ?)",
+                  (asked, json.dumps({"gcd_id": 501})))
+        c.execute("INSERT INTO issue_record (tracked_series_id, number, source, fill_state, extra_json) VALUES (?, 1.0, 'gcd', 'full', ?)",
+                  (local, json.dumps({"gcd_id": 777, "genre": ["fantasy"]})))
+    calls = []
+    class Fake:
+        def issue_detail(self, gid):
+            calls.append(gid)
+            return {"extra": {"gcd_id": gid, "genre": ["superhero", "horror-suspense"]}}
+    assert harvest.gcd_genre_tick(limit=5, path=db_path, client=Fake()) == 2
+    assert calls == [501]                                                    # the GCD-filled record needed no request
+    assert sorted(t["key"] for t in rec.tags_for(asked, db_path)) == ["horror", "superhero", "suspense"]
+    assert [t["key"] for t in rec.tags_for(local, db_path)] == ["fantasy"]
+    assert harvest.gcd_genre_tick(limit=5, path=db_path, client=Fake()) == 0 and calls == [501]   # asked once
+
+
+def test_gcd_genres_sit_between_metron_and_the_files(db_path):
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    rec.set_tags(sid, "gcd", ["science fiction", "suspense"], db_path)
+    rec.set_tags(sid, "comicinfo", ["fantasy", "zombies"], db_path)
+    eff = lambda: {(t["key"], t["source"], t["weight"]) for t in rec.effective_tags(sid, db_path)}
+    assert eff() == {("science fiction", "gcd", rec.GCD_TRUST), ("suspense", "gcd", rec.GCD_TRUST),
+                     ("fantasy", "comicinfo", rec.FILE_THEME_TRUST), ("zombies", "comicinfo", rec.FILE_THEME_TRUST)}
+    rec.set_tags(sid, "metron", ["Fantasy", "Science Fiction"], db_path)    # Metron answers: its coarse genres rule
+    assert eff() == {("fantasy", "metron", 1.0), ("science fiction", "metron", 1.0),
+                     ("suspense", "gcd", rec.GCD_TRUST), ("zombies", "comicinfo", rec.FILE_THEME_TRUST)}

@@ -261,13 +261,17 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     # traffic, so no harvest wrapper (kometa/harvest.py, 1g). Both no-op without
     # a login or with the Settings toggle off.
     try:
-        from kometa.harvest import gcd_link_tick, gcd_fill_tick
+        from kometa.harvest import gcd_link_tick, gcd_fill_tick, gcd_genre_tick
         scheduler.add_job(gcd_link_tick, IntervalTrigger(minutes=10), id="harvest_gcd_link",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=7))
         scheduler.add_job(gcd_fill_tick, IntervalTrigger(minutes=10), id="harvest_gcd_fill",
                           replace_existing=True, coalesce=True, max_instances=1,
                           next_run_time=datetime.now(TZ) + timedelta(minutes=9))
+        # one run's story genres a tick, on the same allowance (recommendations step 4)
+        scheduler.add_job(gcd_genre_tick, IntervalTrigger(minutes=10), id="harvest_gcd_genres",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=5))
     except Exception as e:
         logger.warning(f"GCD harvest not scheduled: {e}")
     # The polite extras (1i): PRH's print covers, Open Library's book ratings and

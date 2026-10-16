@@ -243,6 +243,15 @@ GCD_LINK_PER_TICK = 3
 GCD_FILL_BUDGET = 12                # GCD requests per tick (series lists + issues): ~1,700 a day at 10 min
 GCD_SERIES_TTL_DAYS = 30            # a run's issue list is asked again after this
 GCD_CANDIDATES_KEPT = 8
+# Step 4 of the recommendations design (owner said yes, 2026-10-16): GCD's story
+# genres, one issue per run, on GCD's own allowance — never Metron's.
+GCD_GENRE_PER_TICK = 1              # ~144 a day; the client's daily cap holds the total under 1,800
+GCD_GENRE_RETRY_DAYS = 180
+# GCD writes some genres as hyphen pairs; split them into the keys the rest of the
+# shelf uses. Hyphenated words that are one genre (post-apocalyptic) aren't here.
+_GCD_GENRE_SPLIT = {"horror-suspense": ["horror", "suspense"], "detective-mystery": ["detective", "mystery"],
+                    "western-frontier": ["western"], "satire-parody": ["satire", "parody"],
+                    "anthropomorphic-funny animals": ["animals"]}
 _YEAR_RE = re.compile(r"\((\d{4})\)")
 
 
@@ -252,6 +261,9 @@ def ensure_gcd_tables(path=None):
         # one fetch of a run's issue list serves every owned issue in it for a month
         conn.execute("""CREATE TABLE IF NOT EXISTS gcd_series_cache (
             gcd_series_id INTEGER PRIMARY KEY, detail_json TEXT, fetched_at TEXT)""")
+        # a run whose genres GCD has been asked for — answered or not — and when
+        conn.execute("""CREATE TABLE IF NOT EXISTS gcd_genre_asks (
+            tracked_series_id INTEGER PRIMARY KEY, gcd_issue_id INTEGER, at TEXT)""")
 
 
 def _gcd_on(path) -> bool:
@@ -555,3 +567,81 @@ def gcd_status(path=None) -> dict:
     return out
 
 
+# --- GCD story genres per run (recommendations design, step 4) -----------------------
+def gcd_genre_labels(raw: list[str]) -> list[str]:
+    """GCD's genre strings as labels the shelf's vocabulary keys (record.genre_keys)."""
+    out = []
+    for g in raw or []:
+        g = (g or "").strip()
+        for part in _GCD_GENRE_SPLIT.get(g.lower(), [g]):
+            if part and part not in out:
+                out.append(part)
+    return out
+
+
+def gcd_genre_candidates(path=None, limit: int = GCD_GENRE_PER_TICK) -> list[dict]:
+    """Runs with an issue GCD knows (Metron hands over a gcd_id per issue; GCD's own
+    fill writes one too) whose genres haven't been asked for lately: the lowest
+    owned such issue per run, pull list first, then the runs you own most of."""
+    path = path or DB_PATH
+    ensure_gcd_tables(path)
+    from kometa import record
+    record.ensure_tables(path)
+    cutoff = (datetime.utcnow() - timedelta(days=GCD_GENRE_RETRY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with db._connect(path) as conn:
+        rows = conn.execute("""
+            SELECT r.tracked_series_id, r.number, r.extra_json
+            FROM issue_record r JOIN tracked_series s ON s.id = r.tracked_series_id
+            JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
+            LEFT JOIN gcd_genre_asks a ON a.tracked_series_id = r.tracked_series_id
+            WHERE (s.kind IS NULL OR s.kind != 'arc') AND r.extra_json LIKE '%"gcd_id"%'
+              AND (a.tracked_series_id IS NULL OR a.at < ?)
+            ORDER BY s.on_pull_list DESC,
+                     (SELECT COUNT(*) FROM issue_status o WHERE o.tracked_series_id = s.id AND o.owned = 1) DESC,
+                     i.owned DESC, r.tracked_series_id, r.number""", (cutoff,)).fetchall()
+    out, seen = [], set()
+    for sid, number, xj in rows:
+        if sid in seen:
+            continue
+        try:
+            extra = json.loads(xj) or {}
+        except (TypeError, ValueError):
+            continue
+        if not extra.get("gcd_id"):
+            continue
+        seen.add(sid)
+        out.append({"tracked_series_id": sid, "number": number, "gcd_id": int(extra["gcd_id"]),
+                    "genre": extra.get("genre")})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def gcd_genre_tick(limit: int = GCD_GENRE_PER_TICK, path=None, client=None) -> int:
+    """Scheduler tick: GCD's story genres for a run, into series_tags as source 'gcd'.
+    A record GCD already filled says them (no request); otherwise one issue is asked.
+    An answer with no genres is still an answer: the run isn't asked again for
+    GCD_GENRE_RETRY_DAYS. Stops at GCD's refusal or its daily cap."""
+    path = path or DB_PATH
+    if not _gcd_on(path):
+        return 0
+    if client is None:
+        from kometa import gcd_client as client
+    from kometa import record
+    from kometa.gcd_client import GCDUnavailable
+    done = 0
+    for c in gcd_genre_candidates(path, limit):
+        genres = c["genre"]
+        if genres is None:
+            try:
+                d = client.issue_detail(c["gcd_id"])
+            except GCDUnavailable as e:
+                logger.info(f"GCD genres paused: {e}")
+                break
+            genres = ((d or {}).get("extra") or {}).get("genre") or []
+        record.set_tags(c["tracked_series_id"], "gcd", gcd_genre_labels(genres), path)
+        with db._connect(path) as conn:
+            conn.execute("INSERT OR REPLACE INTO gcd_genre_asks VALUES (?, ?, datetime('now'))",
+                         (c["tracked_series_id"], c["gcd_id"]))
+        done += 1
+    return done
