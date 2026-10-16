@@ -475,3 +475,34 @@ def test_missing_creator_ids_are_asked_about_daily_and_the_oldest_row_goes_first
                   (json.dumps([{"role": "writer", "name": "Matthew Rosenberg", "id": 7}]), ids["Puzzlebox"]))   # filled: no longer due
     filled.clear()
     assert rel.trickle_signals(limit=1, path=db_path) == 1 and filled == [ids["Avengers"]]
+
+
+def test_the_series_page_fills_an_empty_row_and_says_pending_while_it_does(db_path, monkeypatch):
+    """Puzzlebox, 2026-10-16: its signals row was written empty before its issues landed.
+    Opening the page asked for nothing and said 'not pending', so no Related row and no
+    placeholder. An empty row on a run with credits on disk is filled on view and pending;
+    missing creator ids alone never are (LOCG credits never carry them)."""
+    monkeypatch.setattr(rel, "DB_PATH", db_path)
+    fills = []
+    monkeypatch.setattr(rel, "_safe_fill", lambda sid: fills.append(sid))
+    class Now:
+        def __init__(self, target, daemon=None): self.t = target
+        def start(self): self.t()
+    monkeypatch.setattr(rel.threading, "Thread", Now)
+    sid = db.add_series(title="The Joker Presents: A Puzzlebox", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    rel.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET added_at = datetime('now', '-3 days') WHERE id = ?", (sid,))
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) VALUES (?, '[]', '[]', datetime('now', '-29 days'))", (sid,))
+    assert rel.api_related(sid)["pending"] is False and fills == []          # empty, nothing on disk, not new: quiet
+    db.upsert_issue_status(sid, 1.0, "2021-01-01", 1, metron_issue_id=162437, path=db_path)
+    assert rel.api_related(sid)["pending"] is True and fills == [sid]        # credits to read now: fill + placeholder
+    fills.clear()
+    with db._connect(db_path) as c:
+        c.execute("UPDATE series_signals SET creators_json = ?, fetched_at = datetime('now') WHERE tracked_series_id = ?",
+                  (json.dumps([{"role": "writer", "name": "Matthew Rosenberg", "id": None}]), sid))
+    assert rel.api_related(sid)["pending"] is False                          # missing ids alone: no forever-placeholder
+    new = db.add_series(title="Just Tracked", publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) VALUES (?, '[]', '[]', datetime('now', '-29 days'))", (new,))
+    assert rel.api_related(new)["pending"] is True                           # tracked today, issues still landing

@@ -1287,6 +1287,12 @@ async function _loadRelated(id, attempt = 0) {
   _paintRelated(id, d, attempt);
 }
 
+// The Related row's shape while a run's credits are still being read: a new series
+// waits for them (its issues are landing), and the row says so by being there, empty.
+function _relSkeletons(n) {
+  return Array.from({ length: n }, () => `<div class="series-card rel-card skeleton"><div class="series-card-img-wrap"></div><div class="series-card-footer"><div class="series-card-title"></div></div></div>`).join('');
+}
+
 function _paintRelated(id, d, attempt = 0) {
   if (currentView !== 'series-detail' || currentParams.id !== id) return;
   // the catalogue is being asked in the background: look again in a few seconds, a few times
@@ -1294,14 +1300,14 @@ function _paintRelated(id, d, attempt = 0) {
   const app = document.getElementById('app');
   // one row per weighty credit — "More from Paul Pope" — the name is the reason
   const creators = d.creators || [];
-  const sig = { r: d.related.map(x => x.series_id), c: creators.map(r => [r.creator_id, r.items.map(i => i.series_id || i.metron_series_id)]) };
+  const sig = { p: !!d.pending, r: d.related.map(x => x.series_id), c: creators.map(r => [r.creator_id, r.items.map(i => i.series_id || i.metron_series_id)]) };
   if (_rowUnchanged('.rel-row', sig)) return;
   app.querySelector('.rel-row')?.remove();
   if (!d.related.length && !creators.length && !d.pending) return;
   app.insertAdjacentHTML('beforeend', `<div class="od-row rel-row">
     <div class="od-head"><span class="series-card-title">Related</span></div>
     ${d.related.length ? `<div class="series-grid">${d.related.map(_relCard).join('')}</div>`
-      : '<div class="od-empty">Nothing on the shelf yet — the catalogue is still being asked about this series.</div>'}
+      : d.pending ? `<div class="series-grid" aria-hidden="true">${_relSkeletons(6)}</div>` : ''}
     ${creators.map(r => `<div class="od-head" style="margin-top:14px"><span class="series-card-title">More from ${esc(r.name)}</span></div>
       <div class="series-grid">${r.items.map(_relCard).join('')}</div>`).join('')}
   </div>`);

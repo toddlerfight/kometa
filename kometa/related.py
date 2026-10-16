@@ -828,6 +828,25 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}
 
 
+def _askable_one(series_id: int, path=None) -> bool:
+    """_askable for one series — two indexed lookups, not two table scans per page view."""
+    path = path or DB_PATH
+    from kometa.record import ensure_tables as _rec
+    _rec(path)
+    with db._connect(path) as conn:
+        return bool(conn.execute("SELECT 1 FROM issue_record WHERE tracked_series_id = ? AND credits_json IS NOT NULL "
+                                 "AND credits_json NOT IN ('', '[]') LIMIT 1", (series_id,)).fetchone()
+                    or conn.execute("SELECT 1 FROM issue_status WHERE tracked_series_id = ? AND metron_issue_id IS NOT NULL "
+                                    "LIMIT 1", (series_id,)).fetchone())
+
+
+def _added_within(s: dict, days: float) -> bool:
+    try:
+        return datetime.strptime((s.get("added_at") or "")[:19], "%Y-%m-%d %H:%M:%S") > datetime.utcnow() - timedelta(days=days)
+    except ValueError:
+        return False
+
+
 def _safe_fill(series_id: int):
     try:
         fill_signals(series_id, DB_PATH)
@@ -842,10 +861,18 @@ def api_related(series_id: int):
     if not s:
         raise HTTPException(404)
     sig = _signals(DB_PATH)
-    pending = False
-    if series_id not in sig or _stale(sig[series_id]["fetched_at"]) or _needs_ids(sig[series_id]):
-        pending = True
+    g = sig.get(series_id)
+    # An EMPTY row on a run whose credits are now on disk counts too: Puzzlebox had one
+    # (its row was written before its issues landed), so opening its page asked for
+    # nothing and said "not pending" — the Related row simply wasn't there (2026-10-16).
+    empty_askable = bool(g) and not g["creators"] and _askable_one(series_id, DB_PATH)
+    if g is None or _stale(g["fetched_at"]) or _needs_ids(g) or empty_askable:
         threading.Thread(target=lambda: _safe_fill(series_id), daemon=True).start()
+    # pending = the clients draw a placeholder row and look again. Not for missing creator
+    # ids: LOCG credits never carry them, so that would be a placeholder forever. A run
+    # tracked in the last day with no credits yet is pending too — its issues are landing.
+    pending = (g is None or _stale(g["fetched_at"]) or empty_askable
+               or (not g["creators"] and _added_within(s, days=1)))
     out, out_pending = [], False
     try:
         out, out_pending = outward([series_id], limit=8, cached_only=True)
