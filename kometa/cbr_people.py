@@ -75,25 +75,64 @@ def _stop_aware_sleep(seconds: float):
 limiter.sleep = _stop_aware_sleep         # a deploy doesn't sit out a 60 s gap
 
 
+def _path_key(sp: str) -> tuple[str, int | None]:
+    """'/comic-books/reviews/image-comics/ghost-pepper-(2025)' → ('ghost-pepper', 2025)."""
+    seg = sp.rstrip("/").rsplit("/", 1)[-1].lower()
+    m = re.search(r"-?\((\d{4})\)$", seg)
+    slug = seg[:m.start()] if m else seg
+    return re.sub(r"^the-", "", slug), int(m.group(1)) if m else None
+
+
 @db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS cbr_people (
             person TEXT PRIMARY KEY, kind TEXT NOT NULL, ref TEXT NOT NULL, name TEXT, outlet TEXT,
             first_seen TEXT, fetched_at TEXT, status TEXT, tries INTEGER NOT NULL DEFAULT 0, scores INTEGER)""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS cbr_people_scores (
-            person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
-            date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number))""")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series ON cbr_people_scores(series_path)")
+
+        r = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores'").fetchone()
+        if r is None:
+            conn.execute("""CREATE TABLE IF NOT EXISTS cbr_people_scores (
+                person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+                date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)) WITHOUT ROWID""")
+        elif "WITHOUT ROWID" not in r[0].upper():
+            conn.execute("DROP INDEX IF EXISTS idx_cbr_people_scores_series")
+            conn.execute("""CREATE TABLE cbr_people_scores_v2 (
+                person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+                date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)
+            ) WITHOUT ROWID""")
+            conn.execute("""INSERT INTO cbr_people_scores_v2 (person, series_path, number, score, date, via, at)
+                SELECT person, series_path, number, score, date, via, at FROM cbr_people_scores""")
+            conn.execute("DROP TABLE cbr_people_scores")
+            conn.execute("ALTER TABLE cbr_people_scores_v2 RENAME TO cbr_people_scores")
+
+        conn.execute("DROP INDEX IF EXISTS idx_cbr_people_scores_series")
+
         conn.execute("""CREATE TABLE IF NOT EXISTS cbr_people_pages (
             page_path TEXT PRIMARY KEY, series_path TEXT, number TEXT, fetched_at TEXT, status TEXT,
             tries INTEGER NOT NULL DEFAULT 0, scores INTEGER)""")
-        conn.execute("CREATE TABLE IF NOT EXISTS cbr_people_series (series_path TEXT PRIMARY KEY, name TEXT)")
+
+        conn.execute("""CREATE TABLE IF NOT EXISTS cbr_people_series (
+            series_path TEXT PRIMARY KEY, name TEXT, first_year INTEGER)""")
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(cbr_people_series)")}
+        if "first_year" not in cols:
+            conn.execute("ALTER TABLE cbr_people_series ADD COLUMN first_year INTEGER")
+            for sp, in conn.execute("SELECT series_path FROM cbr_people_series WHERE first_year IS NULL").fetchall():
+                _, y = _path_key(sp)
+                if y:
+                    conn.execute("UPDATE cbr_people_series SET first_year = ? WHERE series_path = ?", (y, sp))
+
         conn.execute("CREATE TABLE IF NOT EXISTS cbr_people_state (key TEXT PRIMARY KEY, value TEXT)")
+        if _get_state(conn, "scores_version") is None:
+            _bump_scores_version(conn)
 
 
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _bump_scores_version(conn) -> None:
+    _set_state(conn, "scores_version", str(time.time()))
 
 
 def _now_local() -> datetime:
@@ -113,6 +152,7 @@ def _get_state(conn, key: str) -> str | None:
 
 def _set_state(conn, key: str, value) -> None:
     conn.execute("INSERT OR REPLACE INTO cbr_people_state (key, value) VALUES (?, ?)", (key, str(value)))
+
 
 
 # --- parsing ----------------------------------------------------------------------------
@@ -322,6 +362,19 @@ def record_issue_page(page_path: str, sp: str, num: str, parsed: dict, path=None
                 _put_score(conn, who, sp, num, c["score"], c["date"], "issue")
         n = len(parsed["critics"]) + len(parsed["users"])
         _mark_page(conn, page_path, sp, num, "done", n)
+        _, y = _path_key(sp)
+        dates = [c["date"][:4] for kind in ("critics", "users") for c in parsed[kind] if c.get("date") and len(c["date"]) >= 4 and c["date"][:4].isdigit()]
+        year = min([int(d) for d in dates]) if dates else y
+        if year:
+            conn.execute("""INSERT INTO cbr_people_series (series_path, name, first_year) VALUES (?, NULL, ?)
+                ON CONFLICT(series_path) DO UPDATE SET
+                    first_year = CASE
+                        WHEN first_year IS NULL THEN excluded.first_year
+                        WHEN excluded.first_year IS NOT NULL AND excluded.first_year < first_year THEN excluded.first_year
+                        ELSE first_year
+                    END""", (sp, year))
+        if n:
+            _bump_scores_version(conn)
     return n
 
 
@@ -332,11 +385,27 @@ def record_profile(person: str, parsed: dict, path=None) -> int:
             _put_score(conn, person, s["series_path"], s["number"], s["score"], s["date"], "profile")
             if s["series_name"] and re.fullmatch(r"\d+(?:\.\d+)?", s["number"]):   # 'Run #12' names the run;
                 # an annual or special's link text ('Adventure Time: 2013 SPOooktacular') doesn't
-                conn.execute("INSERT OR REPLACE INTO cbr_people_series (series_path, name) VALUES (?, ?)",
-                             (s["series_path"], s["series_name"]))
+                year = None
+                if s.get("date") and len(s["date"]) >= 4 and s["date"][:4].isdigit():
+                    year = int(s["date"][:4])
+                else:
+                    _, y = _path_key(s["series_path"])
+                    year = y
+                conn.execute("""INSERT INTO cbr_people_series (series_path, name, first_year) VALUES (?, ?, ?)
+                    ON CONFLICT(series_path) DO UPDATE SET
+                        name = COALESCE(excluded.name, name),
+                        first_year = CASE
+                            WHEN first_year IS NULL THEN excluded.first_year
+                            WHEN excluded.first_year IS NOT NULL AND excluded.first_year < first_year THEN excluded.first_year
+                            ELSE first_year
+                        END""",
+                             (s["series_path"], s["series_name"], year))
         conn.execute("UPDATE cbr_people SET fetched_at = ?, status = 'done', tries = 0, scores = ? WHERE person = ?",
                      (_stamp(), len(parsed["scores"]), person))
+        if parsed["scores"]:
+            _bump_scores_version(conn)
     return len(parsed["scores"])
+
 
 
 def _failed(conn, job: tuple, why: str, shape: bool):
@@ -552,13 +621,6 @@ def seed_weights(path=None) -> dict[int, float]:
     return {sid: round(w, 3) for sid, w in out.items() if w}
 
 
-def _path_key(sp: str) -> tuple[str, int | None]:
-    """'/comic-books/reviews/image-comics/ghost-pepper-(2025)' → ('ghost-pepper', 2025)."""
-    seg = sp.rstrip("/").rsplit("/", 1)[-1].lower()
-    m = re.search(r"-?\((\d{4})\)$", seg)
-    slug = seg[:m.start()] if m else seg
-    return re.sub(r"^the-", "", slug), int(m.group(1)) if m else None
-
 
 def _owned(conn) -> tuple[set[int], dict[str, list[int | None]]]:
     """What's on disk: tracked runs with an owned issue or a book row, and
@@ -715,9 +777,21 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
         with db._connect(path) as conn:
             qs = ",".join("?" * len(top))
             first_year = {r[0]: r[1] for r in conn.execute(
-                f"""SELECT series_path, MIN(substr(date, 1, 4)) FROM cbr_people_scores
-                    WHERE series_path IN ({qs}) AND date LIKE '____-__-__' GROUP BY series_path""",
+                f"SELECT series_path, first_year FROM cbr_people_series "
+                f"WHERE series_path IN ({qs}) AND first_year IS NOT NULL",
                 [sp for _, sp in top])}
+            missing = [sp for _, sp in top if sp not in first_year]
+            if missing:
+                mqs = ",".join("?" * len(missing))
+                for r in conn.execute(
+                    f"SELECT series_path, MIN(substr(date, 1, 4)) FROM cbr_people_scores "
+                    f"WHERE series_path IN ({mqs}) AND date LIKE '____-__-__' GROUP BY series_path",
+                    missing):
+                    if r[1]:
+                        first_year[r[0]] = r[1]
+                        conn.execute("INSERT INTO cbr_people_series (series_path, first_year) VALUES (?, ?) "
+                                     "ON CONFLICT(series_path) DO UPDATE SET first_year = COALESCE(first_year, excluded.first_year)",
+                                     (r[0], int(r[1])))
     liked_seeds = [sp for sp in seed_paths if seeds[seed_paths[sp]] > 0]
     items = []
     for s, sp in top:
@@ -735,7 +809,7 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
         fy = first_year.get(sp)
         items.append({
             "series_path": sp, "name": _display_name(sp, d["names"].get(sp)),
-            "year": year or (int(fy) if fy and fy.isdigit() else None),
+            "year": year or (int(fy) if fy and str(fy).isdigit() else None),
             "publisher": pub, "publisher_name": _PUBLISHER_NAMES.get(pub) or pub.replace("-", " ").title(),
             "url": SITE + sp, "score": round(s, 4), "supporters": len(who),
             "critics": sum(1 for p in who if kind[p] == "critic"), "users": sum(1 for p in who if kind[p] == "user"),

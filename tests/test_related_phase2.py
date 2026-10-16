@@ -159,9 +159,10 @@ def test_community_memo_skips_rebuild_on_unrelated_changes_and_recomputes_when_s
     assert rc._comm_memo[db_path][0] == key1
 
     # Now a score lands in cbr_people_scores
-    with db._connect(db_path) as c:
-        c.execute("INSERT OR REPLACE INTO cbr_people_scores (person, series_path, number, score, date, via, at) "
-                  "VALUES ('user:999', '/comic-books/reviews/image-comics/run-1', '1', 10.0, '2026-10-17', 'issue', '2026-10-17 07:00:00')")
+    people.record_issue_page("/issue-page", f"/comic-books/reviews/image-comics/run-{a}", "1",
+                             {"critics": [], "users": [{"ref": "999", "name": "U999", "score": 10.0, "date": "2026-10-17"}]},
+                             path=db_path)
+
 
     # Calling _community recomputes and gets a new memo key
     third = rc._community(db_path)

@@ -174,14 +174,16 @@ EOF
 - [x] Pin community memoisation invalidation behavior in `tests/test_related_phase2.py`.
 - [ ] Run one-time delete of legacy `metron:%` rows in `issue_details_cache` on production.
 
-### Phase 2: First-Year Cache & Index Deprecation
-- [ ] Add `first_year` column to `cbr_people_series` and populate it at harvest.
-- [ ] Update `recommend()` in `kometa/cbr_people.py` to read `first_year` from `cbr_people_series`.
-- [ ] Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py:87`.
-- [ ] Drop `idx_cbr_people_scores_series` (reclaims 53 MB without query regression).
+### Phase 2: First-Year Cache & Index Deprecation (Completed)
+- [x] Add `first_year` column to `cbr_people_series` and populate it at harvest.
+- [x] Update `recommend()` in `kometa/cbr_people.py` to read `first_year` from `cbr_people_series`.
+- [x] Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py`.
+- [x] Drop `idx_cbr_people_scores_series` inside `ensure_tables()` (reclaims 53 MB without query regression).
 
-### Phase 3: `WITHOUT ROWID` Migration & Space Reclamation
-- [ ] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).
-- [ ] Implement one-time atomic table migration to `WITHOUT ROWID` with explicit column list in `cbr_people.ensure_tables()`.
+### Phase 3: `WITHOUT ROWID` Migration & Space Reclamation (Completed)
+- [x] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).
+- [x] Implement one-time atomic table migration to `WITHOUT ROWID` with explicit column list in `cbr_people.ensure_tables()`.
+- [x] Add automated test covering migration, data preservation, `WITHOUT ROWID` enforcement, and version tracking in `tests/test_cbr_people.py`.
 - [ ] Run `VACUUM` via Python on production outside nightly backup window (shrinks DB from 328 MB $\to$ ~211 MB):
   `docker exec kometa python3 -c "import sqlite3; c = sqlite3.connect('/data/kometa.db', timeout=60); c.execute('VACUUM'); c.close()"`
+

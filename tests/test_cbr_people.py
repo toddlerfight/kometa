@@ -347,3 +347,69 @@ def test_a_refusal_never_sets_a_page_aside(db_path):
     for _ in range(5):
         cp.tick(db_path, now=NIGHT, get=refused)
     assert cp.next_job(db_path)[1] == f"{R}alpha/1"                  # their 'slow down', not the page's fault
+
+
+def test_cbr_people_scores_is_without_rowid_and_tracks_scores_version(db_path):
+    cp.ensure_tables(db_path)
+    with db._connect(db_path) as conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores'").fetchone()[0]
+        assert "WITHOUT ROWID" in schema.upper()
+        # WITHOUT ROWID tables do not have rowid
+        with pytest.raises(Exception, match="no such column: rowid"):
+            conn.execute("SELECT rowid FROM cbr_people_scores")
+        # index is dropped
+        idx = conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_cbr_people_scores_series'").fetchone()
+        assert idx is None
+
+    # Version tracking bumps on page record
+    with db._connect(db_path) as conn:
+        v0 = cp._get_state(conn, "scores_version")
+    assert v0 is not None
+    cp.record_issue_page("/issue-page", "/comic-books/reviews/image-comics/run-1", "1",
+                         {"critics": [], "users": [{"ref": "1", "name": "U1", "score": 9.0, "date": "2026-10-17"}]},
+                         path=db_path)
+    with db._connect(db_path) as conn:
+        v1 = cp._get_state(conn, "scores_version")
+        assert v1 is not None and v1 != v0
+
+
+def test_cbr_people_series_first_year_cached_and_read_by_recommend(db_path):
+    cp.ensure_tables(db_path)
+    # Profile record sets first_year
+    cp.record_profile("user:1", {
+        "name": "User 1", "outlet": None,
+        "scores": [{"series_path": "/comic-books/reviews/image-comics/saga-(2012)",
+                    "series_name": "Saga (2012)", "number": "1", "score": 9.5, "date": "2012-03-14"}]
+    }, path=db_path)
+    with db._connect(db_path) as conn:
+        r = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image-comics/saga-(2012)'").fetchone()
+        assert r is not None and r[0] == 2012
+
+
+def test_legacy_scores_table_and_series_index_migrates_cleanly(tmp_path):
+    legacy_path = str(tmp_path / "legacy.db")
+    with db._connect(legacy_path) as conn:
+        conn.execute("""CREATE TABLE cbr_people_scores (
+            person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+            date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number))""")
+        conn.execute("CREATE INDEX idx_cbr_people_scores_series ON cbr_people_scores(series_path)")
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('user:1', '/comic-books/reviews/image/alpha-(2020)', '1', 9.0, '2020-01-01', 'issue', '2026-10-17')")
+        conn.execute("CREATE TABLE cbr_people_series (series_path TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/image/alpha-(2020)', 'Alpha')")
+
+    # Migration happens inside ensure_tables
+    cp.ensure_tables(legacy_path)
+
+    with db._connect(legacy_path) as conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores'").fetchone()[0]
+        assert "WITHOUT ROWID" in schema.upper()
+        # Row preserved
+        rows = conn.execute("SELECT person, series_path, score FROM cbr_people_scores").fetchall()
+        assert [tuple(r) for r in rows] == [('user:1', '/comic-books/reviews/image/alpha-(2020)', 9.0)]
+        # Index dropped
+        idx = conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_cbr_people_scores_series'").fetchone()
+        assert idx is None
+        # first_year column added and backfilled
+        series_row = conn.execute("SELECT name, first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/alpha-(2020)'").fetchone()
+        assert tuple(series_row) == ('Alpha', 2020)
+

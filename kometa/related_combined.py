@@ -450,14 +450,17 @@ _comm_memo: dict[tuple, tuple[tuple, dict[int, dict[int, float]]]] = {}
 
 def _cbr_fingerprint(conn):
     try:
+        r = conn.execute("SELECT value FROM cbr_people_state WHERE key = 'scores_version'").fetchone()
+        if r and r[0] is not None:
+            return r[0]
+    except Exception:
+        pass
+    try:
         r = conn.execute("SELECT MAX(rowid) FROM cbr_people_scores").fetchone()
         return r[0] if r else None
     except Exception:
-        try:
-            r = conn.execute("SELECT value FROM cbr_people_state WHERE key = 'scores_version'").fetchone()
-            return r[0] if r else None
-        except Exception:
-            return None
+        return None
+
 
 
 def _community(path=None) -> dict[int, dict[int, float]]:
