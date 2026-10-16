@@ -338,3 +338,66 @@ def test_collected_edition_penalty_and_flag(db_path, monkeypatch):
     sc_ed_uncounted = src.score_candidate(shelf, cand_edition, shelf_total=0)
     assert sc_ed_uncounted == 50.0  # 10 title + 30 pub + 10 neutral count + 0 year = 50.0 (moderate floor)
 
+
+def test_candidate_issue_count_below_max_owned_is_discarded():
+    # All-Star Western: owned #12, candidate 1970 has 11 issues -> discarded (0.0)
+    shelf = {"title": "All-Star Western", "publisher": "DC Comics", "max_owned_issue": 12.0, "owned_count": 3}
+    cand_1970 = {"title": "All-Star Western", "publisher": "DC Comics", "year": 1970, "issue_count": 11}
+    assert src.score_candidate(shelf, cand_1970, shelf_total=35) == 0.0
+
+    # Candidate with 34 issues (>= 12.0) is not discarded by this check
+    cand_2011 = {"title": "All-Star Western", "publisher": "DC Comics", "year": 2011, "issue_count": 34}
+    assert src.score_candidate(shelf, cand_2011, shelf_total=35) > 0.0
+
+
+def test_shelf_run_without_year_capped_at_moderate_unless_pinned():
+    # Captain Marvel: owned #6-7 (owned_count=2, max_owned=7.0), no year_began, several candidate volumes
+    shelf = {"title": "Captain Marvel", "publisher": "Marvel Comics", "year_began": None, "owned_count": 2, "max_owned_issue": 7.0}
+    cand_2019 = {"title": "Captain Marvel", "publisher": "Marvel", "year": 2019, "issue_count": 50}
+    # Unpinned: title (40) + pub (30) + neutral year (5) + issue count match (20) = 95.0, but capped at 75.0 (Moderate)
+    sc = src.score_candidate(shelf, cand_2019, shelf_total=50)
+    assert sc == 75.0
+    assert src.confidence_tier(sc) == "moderate"
+
+    # Dead Body Road: owns all 6 issues of 6 (owned_count=6, cand_count=6), no year_began -> pinned by issue range!
+    shelf_dbr = {"title": "Dead Body Road", "publisher": "Image Comics", "year_began": None, "owned_count": 6, "max_owned_issue": 6.0}
+    cand_dbr = {"title": "Dead Body Road", "publisher": "Skybound", "year": 2013, "issue_count": 6}
+    sc_dbr = src.score_candidate(shelf_dbr, cand_dbr, shelf_total=6)
+    assert sc_dbr == 90.0  # Not capped at 75.0 because issue range pins it!
+    assert src.confidence_tier(sc_dbr) == "high"
+
+    # Avengers (2018): year is in title or year_began -> pinned by year!
+    shelf_avengers = {"title": "Avengers (2018)", "publisher": "Marvel Comics", "year_began": 2018, "owned_count": 3, "max_owned_issue": 20.0}
+    cand_avengers = {"title": "Avengers", "publisher": "Marvel", "year": 2018, "issue_count": 66}
+    sc_av = src.score_candidate(shelf_avengers, cand_avengers, shelf_total=66)
+    assert sc_av >= 80.0
+    assert src.confidence_tier(sc_av) == "high"
+
+
+def test_edition_penalty_skipped_for_single_book():
+    # Battling Boy owns #1 (owned_count=1, max_owned=1.0), candidate has "GN" -> no edition penalty!
+    shelf = {"title": "Battling Boy", "publisher": "First Second Books", "owned_count": 1, "max_owned_issue": 1.0}
+    cand_gn = {"title": "Battling Boy GN", "publisher": "First Second Books", "year": 2013, "issue_count": 1}
+    assert src.score_title("Battling Boy", "Battling Boy GN", is_single_book=True) == 25.0  # No 15-pt penalty
+    sc = src.score_candidate(shelf, cand_gn, shelf_total=1)
+    assert sc >= 65.0
+
+
+def test_rescore_deck_recomputes_stored_cards_without_requerying(db_path, monkeypatch):
+    monkeypatch.setattr(src, "DB_PATH", db_path)
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    # Series with cand 1970 that should be discarded
+    sid = db.add_series(title="All-Star Western", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 12.0, "1972-01-01", 1, path=db_path)
+    cands = [{"id": 5484, "title": "All-Star Western", "publisher": "DC Comics", "year": 1970, "issue_count": 11, "score": 75.0, "confidence": "moderate"}]
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET locg_series_id = 1234, metron_candidates_json = ? WHERE id = ?", (json.dumps(cands), sid))
+
+    # Rescore deck
+    n = src.rescore_deck(db_path)
+    assert n == 1
+    row = db.get_series_by_id(sid, db_path)
+    # Candidate with 11 issues was discarded, so stored candidates is empty
+    assert json.loads(row["metron_candidates_json"]) == []
+
+

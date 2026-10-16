@@ -58,13 +58,13 @@ def is_collected_edition(title: str | None) -> bool:
 EDITION_PENALTY = 15.0
 
 
-def score_title(shelf_title: str, cand_title: str) -> float:
+def score_title(shelf_title: str, cand_title: str, is_single_book: bool = False) -> float:
     """Title concordance (max 40 pts).
     - 40: Exact normalized match
     - 35: Title variant match (colon/dash, leading the)
     - 25: Edition / subtitle stripped match
     - Edition penalty (-15 pts): applied if candidate is a collected edition (HC/TPB/Omnibus)
-      while the shelf title is not.
+      while the shelf title is not, unless the shelf run is a single book (e.g. GN).
     - 0: Non-match
     """
     st_clean = _clean_title(shelf_title or "")
@@ -92,7 +92,8 @@ def score_title(shelf_title: str, cand_title: str) -> float:
                 score = 25.0
 
     if score > 0.0 and is_collected_edition(cand_title) and not is_collected_edition(shelf_title):
-        score -= EDITION_PENALTY
+        if not is_single_book:
+            score -= EDITION_PENALTY
 
     return max(score, 0.0)
 
@@ -155,7 +156,29 @@ def score_candidate(shelf_series: dict, candidate: dict, shelf_total: int | None
     """Combined candidate score (0 to 100 points).
     Returns total score if >= 50, else 0.0 (discarded).
     """
-    t_score = score_title(shelf_series.get("title") or "", candidate.get("title") or candidate.get("name") or "")
+    # 1. Candidate issue count cannot be below the highest owned issue number
+    cand_count = candidate.get("issue_count") or candidate.get("count")
+    max_owned = shelf_series.get("max_owned_issue")
+    if max_owned is not None and cand_count is not None:
+        try:
+            if float(cand_count) < float(max_owned):
+                return 0.0  # Run cannot have fewer issues than an owned issue number
+        except (ValueError, TypeError):
+            pass
+
+    # Check if shelf run is a single book (e.g. Graphic Novel, one-shot)
+    owned_count = shelf_series.get("owned_count")
+    shelf_total = shelf_total if shelf_total is not None else shelf_series.get("shelf_total")
+    is_single_book = (
+        (owned_count == 1 and (max_owned is None or max_owned <= 1.0))
+        or (shelf_total == 1 and (max_owned is None or max_owned <= 1.0))
+    )
+
+    t_score = score_title(
+        shelf_series.get("title") or "",
+        candidate.get("title") or candidate.get("name") or "",
+        is_single_book=is_single_book,
+    )
     if t_score <= 0.0:
         return 0.0  # Title stem must match at least stripped level
 
@@ -164,11 +187,38 @@ def score_candidate(shelf_series: dict, candidate: dict, shelf_total: int | None
     if p_score == 0.0 and t_score < 40.0:
         return 0.0
 
-    i_score = score_issue_count(shelf_total, candidate.get("issue_count") or candidate.get("count"))
-    y_score = score_year(shelf_series.get("year_began"), candidate.get("year"))
+    i_score = score_issue_count(shelf_total, cand_count)
+
+    shelf_year = shelf_series.get("year_began")
+    if not shelf_year:
+        m = re.search(r"\((\d{4})\)", shelf_series.get("title") or "")
+        if m:
+            shelf_year = int(m.group(1))
+
+    cand_year = candidate.get("year")
+    y_score = score_year(shelf_year, cand_year)
 
     total = t_score + p_score + i_score + y_score
-    return round(total, 1) if total >= 50.0 else 0.0
+    if total < 50.0:
+        return 0.0
+
+    # When the shelf run has no year, don't award full confidence (>= 80) on title + publisher alone.
+    # Cap at moderate (75.0) unless year or issue range pins it.
+    if not shelf_year:
+        pinned_by_range = False
+        if cand_count is not None:
+            try:
+                c_cnt = int(cand_count)
+                if is_single_book and c_cnt == 1:
+                    pinned_by_range = True
+                elif owned_count is not None and owned_count >= 3 and abs(int(owned_count) - c_cnt) <= 1:
+                    pinned_by_range = True
+            except (ValueError, TypeError):
+                pass
+        if not pinned_by_range:
+            total = min(total, 75.0)
+
+    return round(total, 1)
 
 
 def confidence_tier(score: float) -> str | None:
@@ -198,7 +248,10 @@ def sourcing_candidates_query(path=None, limit: int = PER_TICK) -> list[dict]:
             books = conn.execute("SELECT count(*) FROM books WHERE tracked_series_id = ?", (sid,)).fetchone()[0]
             owned = conn.execute("SELECT count(*) FROM issue_status WHERE tracked_series_id = ? AND owned = 1", (sid,)).fetchone()[0]
             missing = conn.execute("SELECT count(*) FROM issue_status WHERE tracked_series_id = ? AND owned = 0", (sid,)).fetchone()[0]
+            max_owned = conn.execute("SELECT MAX(number) FROM issue_status WHERE tracked_series_id = ? AND owned = 1", (sid,)).fetchone()[0]
             r["shelf_total"] = max(books, owned + missing)
+            r["owned_count"] = owned if owned > 0 else books
+            r["max_owned_issue"] = max_owned
     return rows
 
 
@@ -214,6 +267,8 @@ def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
 
     if not client.configured():
         return 0
+
+    ensure_deck_rescored(path)
 
     to_search = sourcing_candidates_query(path, limit=limit)
     if not to_search:
@@ -246,7 +301,14 @@ def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
                 tier = confidence_tier(sc)
                 if tier:
                     cand_title = r.get("title") or r.get("name") or ""
-                    is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title"))
+                    owned_count = s.get("owned_count") or 0
+                    max_owned = s.get("max_owned_issue")
+                    shelf_total = s.get("shelf_total")
+                    is_single_book = (
+                        (owned_count == 1 and (max_owned is None or max_owned <= 1.0))
+                        or (shelf_total == 1 and (max_owned is None or max_owned <= 1.0))
+                    )
+                    is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title")) and not is_single_book
                     scored_cands.append({
                         "id": mid,
                         "title": cand_title,
@@ -270,3 +332,74 @@ def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
             logger.info(f"Sourcing: {s['title']!r} -> {len(top_cands)} candidate(s) stored")
 
     return processed
+
+
+def rescore_deck(path=None) -> int:
+    """Recomputes scores for all candidate cards already in the deck without re-querying Metron."""
+    path = path or DB_PATH
+    updated = 0
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT id, title, publisher, year_began, folder_path, metron_candidates_json
+            FROM tracked_series
+            WHERE metron_candidates_json IS NOT NULL
+              AND metron_candidates_json != '[]'
+              AND metron_series_id IS NULL
+        """).fetchall()]
+        for s in rows:
+            sid = s["id"]
+            books = conn.execute("SELECT count(*) FROM books WHERE tracked_series_id = ?", (sid,)).fetchone()[0]
+            owned = conn.execute("SELECT count(*) FROM issue_status WHERE tracked_series_id = ? AND owned = 1", (sid,)).fetchone()[0]
+            missing = conn.execute("SELECT count(*) FROM issue_status WHERE tracked_series_id = ? AND owned = 0", (sid,)).fetchone()[0]
+            max_owned = conn.execute("SELECT MAX(number) FROM issue_status WHERE tracked_series_id = ? AND owned = 1", (sid,)).fetchone()[0]
+            s["shelf_total"] = max(books, owned + missing)
+            s["owned_count"] = owned if owned > 0 else books
+            s["max_owned_issue"] = max_owned
+
+            try:
+                cands = json.loads(s.get("metron_candidates_json") or "[]")
+            except Exception:
+                cands = []
+            if not cands:
+                continue
+
+            scored_cands = []
+            is_single_book = (
+                (s["owned_count"] == 1 and (max_owned is None or max_owned <= 1.0))
+                or (s["shelf_total"] == 1 and (max_owned is None or max_owned <= 1.0))
+            )
+
+            for c in cands:
+                sc = score_candidate(s, c, s["shelf_total"])
+                tier = confidence_tier(sc)
+                if tier:
+                    cand_title = c.get("title") or c.get("name") or ""
+                    is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title")) and not is_single_book
+                    scored_cands.append({
+                        "id": c["id"],
+                        "title": cand_title,
+                        "publisher": c.get("publisher") or "",
+                        "year": c.get("year"),
+                        "issue_count": c.get("issue_count") or c.get("count"),
+                        "score": sc,
+                        "confidence": tier,
+                        "is_edition": is_ed,
+                    })
+
+            scored_cands.sort(key=lambda c: (c.get("is_edition", False), -c["score"]))
+            top_cands = scored_cands[:3]
+            conn.execute(
+                "UPDATE tracked_series SET metron_candidates_json = ? WHERE id = ?",
+                (json.dumps(top_cands), sid),
+            )
+            updated += 1
+    return updated
+
+
+def ensure_deck_rescored(path=None):
+    """Ensures existing candidate cards in the deck are re-scored once with v2 rules."""
+    path = path or DB_PATH
+    cfg = db.get_config(path)
+    if not cfg.get("sourcing_rescore_v2"):
+        rescore_deck(path)
+        db.set_config({"sourcing_rescore_v2": "1"}, path)

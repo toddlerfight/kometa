@@ -1751,6 +1751,8 @@ class SourcingDeclineRequest(BaseModel):
 
 @app.get("/api/sourcing/candidates")
 def sourcing_candidates():
+    from kometa import sourcing
+    sourcing.ensure_deck_rescored(DB_PATH)
     with db._connect(DB_PATH) as conn:
         rows = [dict(r) for r in conn.execute("""
             SELECT s.id, s.title, s.publisher, s.year_began, s.folder_path, s.locg_series_id, s.metron_candidates_json,
