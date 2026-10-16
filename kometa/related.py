@@ -37,6 +37,19 @@ _ROLE_WEIGHT = {"writer": 3.0, "story": 3.0, "script": 3.0, "plot": 2.0, "artist
                 "inker": 1.0, "colorist": 0.5, "letterer": 0.25, "cover": 0.0}
 
 
+def _role_weight(role: str | None) -> float:
+    """Weight for creator roles. Unknown roles (editor, designer, executive producer,
+    cover artist) default strictly to 0.0 so editorial staff never pollutes relations."""
+    if not role:
+        return 0.0
+    r = role.lower().strip()
+    if r in _ROLE_WEIGHT:
+        return _ROLE_WEIGHT[r]
+    if "," in r:
+        return max((_ROLE_WEIGHT.get(p.strip(), 0.0) for p in r.split(",")), default=0.0)
+    return 0.0
+
+
 @db.once_per_db
 def ensure_tables(path=None):
     with db._connect(path or DB_PATH) as conn:
@@ -115,7 +128,7 @@ def _signals(path) -> dict[int, dict]:
 
 def _needs_ids(sig: dict) -> bool:
     """Signals written before creator ids were kept can't look outward."""
-    return any(c.get("id") is None for c in sig.get("creators", []) if _ROLE_WEIGHT.get(c.get("role"), 1.0) >= 2.0)
+    return any(c.get("id") is None for c in sig.get("creators", []) if _role_weight(c.get("role")) >= 2.0)
 
 
 def _stale(fetched_at: str | None) -> bool:
@@ -220,7 +233,7 @@ def _creator_index(sig: dict[int, dict]) -> dict[str, list[tuple[int, float]]]:
     for sid, s in sig.items():
         seen = {}
         for c in s["creators"]:
-            w = _ROLE_WEIGHT.get(c["role"], 1.0)
+            w = _role_weight(c.get("role"))
             if w <= 0:
                 continue
             k = norm_key(c["name"])
@@ -239,7 +252,7 @@ def related(series_id: int, limit: int = 12, path=None, signals=None, neighbours
     cidx = _creator_index(sig)
     mine = {}
     for c in me["creators"]:
-        w = _ROLE_WEIGHT.get(c["role"], 1.0)
+        w = _role_weight(c.get("role"))
         if w > 0:
             mine[norm_key(c["name"])] = (max(mine.get(norm_key(c["name"]), (0, ""))[0], w), c["name"])
     for k, (w, name) in mine.items():
@@ -595,7 +608,7 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
     weight: dict[int, tuple[float, str, str]] = {}
     for seed in seed_ids:
         for c in sig.get(seed, {}).get("creators", []):
-            w = _ROLE_WEIGHT.get(c.get("role"), 1.0)
+            w = _role_weight(c.get("role"))
             if w >= 2.0 and c.get("id"):
                 prev = weight.get(c["id"], (0, "", ""))
                 weight[c["id"]] = (prev[0] + w, c["name"], "wrote" if w >= 3 else "drew")
@@ -676,7 +689,7 @@ def _top_creators(series_id: int, sig: dict[int, dict], max_creators: int) -> li
     """(id, name, verb) for the series' weightiest credited people with a Metron id."""
     weight: dict[int, tuple[float, str, str]] = {}
     for c in sig.get(series_id, {}).get("creators", []):
-        w = _ROLE_WEIGHT.get(c.get("role"), 1.0)
+        w = _role_weight(c.get("role"))
         if w >= 2.0 and c.get("id"):
             prev = weight.get(c["id"], (0, "", ""))
             weight[c["id"]] = (prev[0] + w, c["name"], "wrote" if w >= 3 else "drew")

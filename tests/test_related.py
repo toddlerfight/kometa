@@ -219,3 +219,59 @@ def test_trickle_covers_locg_only_runs(db_path):
         c.execute("UPDATE tracked_series SET locg_series_id = 999 WHERE id = ?", (sid,))
     assert rel.trickle_signals(path=db_path) == 1                 # it gets a row (empty, retried tomorrow) instead of never
     assert sid in rel._signals(db_path)
+
+
+def test_role_weights_and_editorial_filtering(db_path):
+    # Test _role_weight lookup directly
+    assert rel._role_weight("writer") == 3.0
+    assert rel._role_weight("story") == 3.0
+    assert rel._role_weight("script") == 3.0
+    assert rel._role_weight("plot") == 2.0
+    assert rel._role_weight("artist") == 2.0
+    assert rel._role_weight("penciller") == 2.0
+    assert rel._role_weight("inker") == 1.0
+    assert rel._role_weight("colorist") == 0.5
+    assert rel._role_weight("letterer") == 0.25
+    assert rel._role_weight("cover") == 0.0
+
+    # Unhandled/editorial/production roles must strictly default to 0.0
+    assert rel._role_weight("editor") == 0.0
+    assert rel._role_weight("editor-in-chief") == 0.0
+    assert rel._role_weight("designer") == 0.0
+    assert rel._role_weight("executive producer") == 0.0
+    assert rel._role_weight("cover artist") == 0.0
+    assert rel._role_weight("production") == 0.0
+    assert rel._role_weight(None) == 0.0
+    assert rel._role_weight("some random credit") == 0.0
+
+    # Compound roles take the maximum valid sub-role
+    assert rel._role_weight("writer, artist") == 3.0
+    assert rel._role_weight("artist, colorist") == 2.0
+    assert rel._role_weight("editor, designer") == 0.0
+
+    # Test related() integration: shared editor or designer must NOT relate
+    s1 = _series(db_path, "Avengers", [
+        ("writer", "Jonathan Hickman"),
+        ("editor", "Tom Brevoort"),
+        ("designer", "Idis Designer")
+    ])
+    s2 = _series(db_path, "Fantastic Four", [
+        ("writer", "Jonathan Hickman"),
+        ("editor", "Tom Brevoort")
+    ])
+    s3 = _series(db_path, "Spider-Man", [
+        ("writer", "Dan Slott"),
+        ("editor", "Tom Brevoort"),
+        ("designer", "Idis Designer")
+    ])
+
+    recs = rel.related(s1, path=db_path)
+    by_title = {r["title"]: r for r in recs}
+
+    # Fantastic Four shares Jonathan Hickman (writer = 3.0)
+    assert "Fantastic Four" in by_title
+    assert by_title["Fantastic Four"]["score"] == 3.0
+    assert by_title["Fantastic Four"]["why"] == ["Jonathan Hickman"]
+
+    # Spider-Man shares ONLY editor (Tom Brevoort) and designer (Idis Designer) -> must NOT relate!
+    assert "Spider-Man" not in by_title
