@@ -70,6 +70,7 @@ def series_slug(title: str | None) -> str:
     """'The Amazing Spider-Man (2025)' → 'amazing-spider-man'; 'Miles Morales:
     Spider-Man' → 'miles-morales-spider-man'; 'Alien Vs. X-Men' → 'alien-vs.-x-men'."""
     t = _YEAR_RE.sub("", title or "").strip()
+    t = re.sub(r"\b(the deluxe edition|deluxe edition|omnibus|(?:\d+(?:th|st|nd|rd)\s+)?anniversary edition|vol(?:\.|ume)?\s*\d+|gn)\b.*$", "", t, flags=re.I).strip(" -:")
     t = re.sub(r"\s+-\s+", ": ", t)                         # a folder's 'Dune- House' / ' - ' is a colon
     t = re.sub(r"^\s*the\s+", "", t, flags=re.I).lower()
     t = re.sub(r"[^a-z0-9 .\-]", "", t)
@@ -78,7 +79,7 @@ def series_slug(title: str | None) -> str:
 
 def year_hint(s: dict, path=None) -> int | None:
     """The run's start year: the folder's '(YYYY)', else the catalogue's
-    year_began, else the earliest owned issue's date."""
+    year_began, else the earliest owned issue's date, else the linked Metron series start year."""
     from kometa.harvest import _year_hint
     y = _year_hint(s) or s.get("year_began")
     if y:
@@ -86,7 +87,21 @@ def year_hint(s: dict, path=None) -> int | None:
     with db._connect(path or DB_PATH) as conn:
         r = conn.execute("""SELECT MIN(substr(store_date, 1, 4)) FROM issue_status
             WHERE tracked_series_id = ? AND owned = 1 AND store_date LIKE '____-%'""", (s["id"],)).fetchone()
-    return int(r[0]) if r and r[0] else None
+        if r and r[0]:
+            return int(r[0])
+        mid = s.get("metron_series_id")
+        if mid:
+            from kometa import metron_client
+            try:
+                d = metron_client.series_detail(mid)
+                if d.get("year"):
+                    yr = int(d["year"])
+                    conn.execute("UPDATE tracked_series SET year_began = ? WHERE id = ?", (yr, s["id"]))
+                    s["year_began"] = yr
+                    return yr
+            except Exception:
+                pass
+    return None
 
 
 def candidate_urls(s: dict, year: int | None) -> list[str]:
@@ -160,7 +175,10 @@ def matches(s: dict, page: dict | None, year: int | None) -> bool:
     from kometa.harvest import _gcd_name
     if not page or not year or not page.get("start_year"):
         return False
-    return _gcd_name(page["name"]) == _gcd_name(s.get("title")) and abs(page["start_year"] - year) <= 1
+    raw_title = s.get("title") or ""
+    clean_title = re.sub(r"\b(the deluxe edition|deluxe edition|omnibus|(?:\d+(?:th|st|nd|rd)\s+)?anniversary edition|vol(?:\.|ume)?\s*\d+|gn)\b.*$", "", raw_title, flags=re.I).strip(" -:")
+    name_match = _gcd_name(page["name"]) == _gcd_name(raw_title) or (bool(clean_title) and _gcd_name(page["name"]) == _gcd_name(clean_title))
+    return name_match and abs(page["start_year"] - year) <= 1
 
 
 # --- the worker -----------------------------------------------------------------------
