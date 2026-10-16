@@ -374,10 +374,14 @@ def _extra(d: dict) -> dict:
 def series_detail(series_id: int) -> dict:
     """The run's own identity — what the tidy step names folders and files after.
     {title, year, year_end, publisher, issue_count, type, status}. status is Metron's
-    display name — Ongoing / Completed / Cancelled / Hiatus (Ongoing is its default)."""
+    display name — Ongoing / Completed / Cancelled / Hiatus (Ongoing is its default).
+    Since 2026-10-16 also what the record and Related read: desc, genres (names),
+    associated ([{id, name}] — often the run's own annuals), imprint, alt_names. They
+    were in the same answer all along and were thrown away."""
     d = _get(f"series/{int(series_id)}/")
     pub = d.get("publisher")
     st = d.get("series_type")
+    imp = d.get("imprint")
     return {
         "title": re.sub(r"\s*\(\d{4}\)\s*$", "", d.get("name") or ""),
         "year": d.get("year_began"),
@@ -386,5 +390,11 @@ def series_detail(series_id: int) -> dict:
         "issue_count": d.get("issue_count"),
         "type": st.get("name") if isinstance(st, dict) else st,
         "status": d.get("status") if isinstance(d.get("status"), str) else None,
+        "desc": (d.get("desc") or "").strip() or None,
+        "genres": _names(d.get("genres")),
+        "associated": [{"id": a.get("id"), "name": (a.get("series") or a.get("name") or "").strip()}
+                       for a in d.get("associated") or [] if isinstance(a, dict) and a.get("id")],
+        "imprint": imp.get("name") if isinstance(imp, dict) else (imp or None),
+        "alt_names": [n for n in (d.get("alt_names") or []) if isinstance(n, str) and n.strip()],
     }
 

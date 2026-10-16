@@ -1,5 +1,6 @@
 """The local catalogue record (kometa/record.py): filled from Metron first, LOCG
 second, read by the modal, Related and reading-list covers."""
+import json
 import pytest
 
 import kometa.db as db
@@ -215,3 +216,70 @@ def test_locg_stands_in_for_trades_when_metron_is_out(db_path, tmp_path, monkeyp
     import pytest
     with pytest.raises(MetronUnavailable):
         rec.fill_trades(sid, path=db_path, force=True, locg_open=lambda: False, enrich=lambda s, t: t)
+
+
+# --- series facts v2: genres kept, Komga's copy protected (2026-10-16) -------------------
+def _metron_linked(db_path, title="Monstress", mid=4733):
+    sid = db.add_series(title=title, publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET metron_series_id = ? WHERE id = ?", (mid, sid))
+    return sid
+
+
+SERIES_DETAIL = {"publisher": "Image", "year": 2015, "issue_count": 60, "type": "Ongoing Series", "desc": "Maika and the monster.",
+          "genres": ["Fantasy", "Super-Hero"], "associated": [{"id": 13637, "name": "Monstress Annual (2025)"}],
+          "imprint": None, "alt_names": []}
+
+
+def test_a_refill_keeps_the_file_genres_and_they_live_in_series_tags_too(db_path):
+    """fill_series used INSERT OR REPLACE, which deletes the row first: genres_json — the
+    only copy of 190 series' genres from their files' <Genre> lines — came back NULL on refill."""
+    sid = _metron_linked(db_path)
+    rec.fill_series(sid, db_path, detail=lambda mid: dict(SERIES_DETAIL))
+    with db._connect(db_path) as c:
+        c.execute("UPDATE series_record SET genres_json = ? WHERE tracked_series_id = ?", ('["fantasy", "leading ladies"]', sid))
+    rec.fill_series(sid, db_path, force=True, detail=lambda mid: dict(SERIES_DETAIL))
+    assert rec.get_series(sid, db_path)["genres_json"] == '["fantasy", "leading ladies"]'
+    rec.ensure_tables.reset()
+    rec.ensure_tables(db_path)                                            # a restart copies the file genres into series_tags
+    rec.ensure_tables.reset()
+    rec.ensure_tables(db_path)                                            # …once: a second start adds nothing
+    tags = rec.tags_for(sid, db_path)
+    assert [(t["source"], t["key"], t["kind"]) for t in tags] == [
+        ("metron", "fantasy", "genre"), ("metron", "superhero", "genre"),
+        ("comicinfo", "fantasy", "genre"), ("comicinfo", "leading ladies", "theme")]
+
+
+def test_metron_series_facts_keep_desc_associated_and_replace_their_own_genres(db_path):
+    sid = _metron_linked(db_path)
+    row = rec.fill_series(sid, db_path, detail=lambda mid: dict(SERIES_DETAIL))
+    assert row["desc"] == "Maika and the monster." and row["facts_v"] == rec.FACTS_V
+    assert json.loads(row["extra_json"]) == {"associated": [{"id": 13637, "name": "Monstress Annual (2025)"}]}
+    rec.fill_series(sid, db_path, force=True, detail=lambda mid: {**SERIES_DETAIL, "genres": ["Fantasy"]})
+    assert [t["key"] for t in rec.tags_for(sid, db_path) if t["source"] == "metron"] == ["fantasy"]   # whole answer, replaced
+
+
+def test_genre_labels_from_any_source_share_one_key(db_path):
+    assert rec.genre_key("Super-Hero") == rec.genre_key("superhero") == ("superhero", "genre")
+    assert rec.genre_key("Science Fiction") == ("science fiction", "genre")
+    assert rec.genre_key("movies & tv")[1] == "other" and rec.genre_key("Mature")[1] == "other"
+    assert rec.genre_key("leading ladies") == ("leading ladies", "theme")
+    assert rec.genre_key("  ") == ("", "")
+
+
+def test_the_trickle_re_reads_metron_rows_from_the_old_parser_a_few_at_a_time(db_path, monkeypatch):
+    from kometa import metron_client
+    ids = [_metron_linked(db_path, f"Run {i}", 100 + i) for i in range(6)]
+    rec.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        for sid in ids:                                                     # rows written by the old parser
+            c.execute("INSERT INTO series_record (tracked_series_id, source, fetched_at, fill_state) VALUES (?, 'komga', datetime('now'), 'full')", (sid,))
+    asked = []
+    monkeypatch.setattr(metron_client, "series_detail", lambda mid: asked.append(mid) or dict(SERIES_DETAIL))
+    monkeypatch.setattr(rec, "pending_issues", lambda path, limit=0: [])
+    rec.trickle(path=db_path)
+    assert len(asked) == rec.FACTS_REFILL_PER_TICK
+    rec.trickle(path=db_path)
+    assert sorted(asked) == [100 + i for i in range(6)]                     # the rest next tick, none twice
+    rec.trickle(path=db_path)
+    assert len(asked) == 6

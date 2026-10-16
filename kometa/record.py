@@ -30,6 +30,10 @@ STOPGAP_SOURCES = ("comicinfo", "komga")
 CATALOGUE_SOURCES = ("metron", "locg", "gcd", "comicinfo-kometa")
 TRICKLE_LIMIT = 60            # per tick (10 min) — Metron's 3.5 s gap paces it; the harvest floor caps the day
 TRICKLE_MINUTES = 10
+# Series facts version. 2 = series_detail keeps genres, desc, associated, imprint and
+# alt_names (2026-10-16); every Metron-linked row older than this is re-read, a few a tick.
+FACTS_V = 2
+FACTS_REFILL_PER_TICK = 4     # ~600 Metron-linked series ≈ a day at one tick per 10 min
 
 
 _relabelled: dict = {}
@@ -75,8 +79,32 @@ def ensure_tables(path=None):
         scols = [r[1] for r in conn.execute("PRAGMA table_info(series_record)")]
         for col in ("genres_json", "tags_json"):
             if col not in scols:
-                # Komga's harvest — the catalogues don't say these; Komga's ComicInfo read did
+                # the files' own <Genre> lines, read once. (Metron's series records carry
+                # genres too — series_tags, below, holds both since 2026-10-16.)
                 conn.execute(f"ALTER TABLE series_record ADD COLUMN {col} TEXT")
+        for col, typ in (("extra_json", "TEXT"), ("facts_v", "INTEGER")):
+            if col not in scols:
+                conn.execute(f"ALTER TABLE series_record ADD COLUMN {col} {typ}")
+        # Every genre label a series has, per source. 'comicinfo' = the <Genre> line the comic
+        # files carried when they arrived (read once, kept in genres_json); 190 series had
+        # one, and a refill through INSERT OR REPLACE would have erased the only copy (found
+        # 2026-10-16). They live here now, and fill_series upserts.
+        conn.execute("""CREATE TABLE IF NOT EXISTS series_tags (
+            tracked_series_id INTEGER NOT NULL, source TEXT NOT NULL, key TEXT NOT NULL,
+            label TEXT, kind TEXT, at TEXT,
+            PRIMARY KEY (tracked_series_id, source, key))""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_series_tags_key ON series_tags(key)")
+        for sid, gj in conn.execute("""SELECT tracked_series_id, genres_json FROM series_record
+                                       WHERE genres_json IS NOT NULL AND genres_json NOT IN ('', '[]')""").fetchall():
+            try:
+                labels = json.loads(gj)
+            except (TypeError, ValueError):
+                continue
+            for label in labels if isinstance(labels, list) else []:
+                key, kind = genre_key(str(label))
+                if key:
+                    conn.execute("INSERT OR IGNORE INTO series_tags VALUES (?, 'comicinfo', ?, ?, ?, ?)",
+                                 (sid, key, str(label), kind, _now()))
         conn.execute("""CREATE TABLE IF NOT EXISTS trade_record (
             tracked_series_id INTEGER NOT NULL, key TEXT NOT NULL,
             title TEXT, vol INTEGER, vol_range_json TEXT, format TEXT, edition_title TEXT, subtitle TEXT,
@@ -84,6 +112,50 @@ def ensure_tables(path=None):
             metron_series_id INTEGER, metron_issue_id INTEGER, locg_id TEXT,
             source TEXT, fetched_at TEXT,
             PRIMARY KEY (tracked_series_id, key))""")
+
+
+# Labels that describe a format or an age rating, not what the comic is about. Stored
+# (the ComicInfo line carries them) but never a reason two series are alike.
+_NOT_CONTENT = {"movies & tv", "movies and tv", "graphic novels", "graphic novel", "mature", "adult",
+                "teen", "all ages", "kids", "manga"}
+_THEMES = {"leading ladies"}                     # a store's category: a theme, not a genre
+_GENRE_ALIASES = {"super hero": "superhero", "superheroes": "superhero", "sci fi": "science fiction",
+                  "scifi": "science fiction", "humour": "humor", "occult": "supernatural/occult",
+                  "supernatural": "supernatural/occult"}
+
+
+def genre_key(label: str) -> tuple[str, str]:
+    """(key, kind) for a genre label from any source. Metron says "Super-Hero", Komga
+    "superhero": both are ('superhero', 'genre'). kind is genre, theme or other
+    (format/rating). ('', '') for a blank label."""
+    k = re.sub(r"[\s_\-]+", " ", (label or "").strip().lower()).strip()
+    if not k:
+        return "", ""
+    k = _GENRE_ALIASES.get(k, k)
+    return k, ("other" if k in _NOT_CONTENT else "theme" if k in _THEMES else "genre")
+
+
+def set_tags(series_id: int, source: str, labels: list[str], path=None) -> None:
+    """Replace one source's labels for a series — that source's answer, whole."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        conn.execute("DELETE FROM series_tags WHERE tracked_series_id = ? AND source = ?", (series_id, source))
+        for label in labels:
+            key, kind = genre_key(label)
+            if key:
+                conn.execute("INSERT OR IGNORE INTO series_tags VALUES (?, ?, ?, ?, ?, ?)",
+                             (series_id, source, key, label, kind, _now()))
+
+
+def tags_for(series_id: int, path=None) -> list[dict]:
+    """Every label a series carries, Metron's first: [{key, label, kind, source}]."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = conn.execute("""SELECT key, label, kind, source FROM series_tags WHERE tracked_series_id = ?
+            ORDER BY CASE source WHEN 'metron' THEN 0 ELSE 1 END, key""", (series_id,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _now() -> str:
@@ -361,14 +433,28 @@ def fill_series(series_id: int, path=None, force: bool = False, detail=None) -> 
         facts.update(publisher=d.get("publisher") or facts["publisher"], year_began=d.get("year") or facts["year_began"],
                      year_end=d.get("year_end"), series_type=d.get("type") or facts["series_type"],
                      issue_count=d.get("issue_count"), desc=d.get("desc"))
+        extra = {k: d[k] for k in ("associated", "imprint", "alt_names") if d.get(k)}
         source, state = "metron", "full"
+    else:
+        d, extra = None, {}
     with db._connect(path) as conn:
-        conn.execute("""INSERT OR REPLACE INTO series_record (tracked_series_id, desc, publisher, year_began, year_end,
-            series_type, issue_count, metron_series_id, locg_series_id, cv_volume_id, source, fetched_at, fill_state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        # An upsert that names its own columns. INSERT OR REPLACE deleted the row first,
+        # so every column it didn't list (Komga's genres_json among them) came back NULL.
+        conn.execute("""INSERT INTO series_record (tracked_series_id, desc, publisher, year_began, year_end,
+            series_type, issue_count, metron_series_id, locg_series_id, cv_volume_id, source, fetched_at, fill_state,
+            extra_json, facts_v)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tracked_series_id) DO UPDATE SET desc = excluded.desc, publisher = excluded.publisher,
+              year_began = excluded.year_began, year_end = excluded.year_end, series_type = excluded.series_type,
+              issue_count = excluded.issue_count, metron_series_id = excluded.metron_series_id,
+              locg_series_id = excluded.locg_series_id, cv_volume_id = excluded.cv_volume_id, source = excluded.source,
+              fetched_at = excluded.fetched_at, fill_state = excluded.fill_state, extra_json = excluded.extra_json,
+              facts_v = excluded.facts_v""",
                      (series_id, facts["desc"], facts["publisher"], facts["year_began"], facts["year_end"],
                       facts["series_type"], facts["issue_count"], s.get("metron_series_id"), s.get("locg_series_id"),
-                      s.get("cv_volume_id"), source, _now(), state))
+                      s.get("cv_volume_id"), source, _now(), state, json.dumps(extra) if extra else None, FACTS_V))
+    if d is not None:
+        set_tags(series_id, "metron", d.get("genres") or [], path)      # Metron's answer, even when it's none
     return get_series(series_id, path)
 
 
@@ -427,6 +513,14 @@ def trickle(limit: int = TRICKLE_LIMIT, path=None) -> int:
                 WHERE (s.kind IS NULL OR s.kind != 'arc') AND r.tracked_series_id IS NULL ORDER BY s.on_pull_list DESC, s.id LIMIT 5""")]
         for sid in missing:
             fill_series(sid, path)
+        # Metron-linked rows read with an older parser: re-read a few a tick, pulled
+        # runs first. Owner decisions aren't touched — this only re-reads a link that exists.
+        with db._connect(path) as conn:
+            stale = [r[0] for r in conn.execute("""SELECT s.id FROM tracked_series s JOIN series_record r ON r.tracked_series_id = s.id
+                WHERE s.metron_series_id IS NOT NULL AND (s.kind IS NULL OR s.kind != 'arc') AND COALESCE(r.facts_v, 0) < ?
+                ORDER BY s.on_pull_list DESC, s.id LIMIT ?""", (FACTS_V, FACTS_REFILL_PER_TICK))]
+        for sid in stale:
+            fill_series(sid, path, force=True)
     except metron_client.MetronUnavailable:
         pass
     except Exception as e:
