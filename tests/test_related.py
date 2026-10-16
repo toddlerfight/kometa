@@ -275,3 +275,122 @@ def test_role_weights_and_editorial_filtering(db_path):
 
     # Spider-Man shares ONLY editor (Tom Brevoort) and designer (Idis Designer) -> must NOT relate!
     assert "Spider-Man" not in by_title
+
+
+def test_fill_signals_aggregates_credits_across_multiple_issues(db_path, monkeypatch):
+    import kometa.record as record
+    sid = db.add_series(title="Hawkeye", publisher="Marvel Comics", folder_path=None, on_pull_list=False, path=db_path)
+    # Simulate issue_record having two issues with distinct creative teams
+    fake_issues = [
+        {
+            "number": 1.0,
+            "source": "metron",
+            "credits": [
+                {"role": "Writer", "name": "Matt Fraction", "metron_creator_id": 101},
+                {"role": "Artist", "name": "David Aja", "metron_creator_id": 102}
+            ],
+            "arcs": ["My Life as a Weapon"]
+        },
+        {
+            "number": 2.0,
+            "source": "metron",
+            "credits": [
+                {"role": "Writer", "name": "Matt Fraction", "metron_creator_id": 101},
+                {"role": "Artist", "name": "Javier Pulido", "metron_creator_id": 103},
+                {"role": "Colorist", "name": "Matt Hollingsworth", "metron_creator_id": 104}
+            ],
+            "arcs": ["My Life as a Weapon", "The Tape"]
+        }
+    ]
+    monkeypatch.setattr(record, "issues_for_series", lambda s_id, path=None: fake_issues if s_id == sid else [])
+
+    assert rel.fill_signals(sid, db_path) is True
+    sig = rel._signals(db_path)[sid]
+    creators_by_name = {c["name"]: c for c in sig["creators"]}
+
+    # All creators across both issues must be captured
+    assert "Matt Fraction" in creators_by_name and creators_by_name["Matt Fraction"]["role"] == "writer"
+    assert "David Aja" in creators_by_name and creators_by_name["David Aja"]["role"] == "artist"
+    assert "Javier Pulido" in creators_by_name and creators_by_name["Javier Pulido"]["role"] == "artist"
+    assert "Matt Hollingsworth" in creators_by_name and creators_by_name["Matt Hollingsworth"]["role"] == "colorist"
+    assert set(sig["arcs"]) == {"My Life as a Weapon", "The Tape"}
+
+
+def test_publisher_bound_franchise_stem_fallback(db_path):
+    # DC Batman series with 0 creators and 0 arcs (variant/collection)
+    b_orphan = db.add_series(title="Batman - Year One (Deluxe B&W)", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    rel.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json) VALUES (?, '[]', '[]')", (b_orphan,))
+
+    # Another DC Batman series
+    b_other = _series(db_path, "Batman: The Devastator", [("writer", "Frank Tieri")])
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET publisher = 'DC Comics' WHERE id = ?", (b_other,))
+
+    # An Image Batman parody (different publisher) -> must NOT match
+    b_image = _series(db_path, "Batman Parody", [("writer", "Indie Creator")])
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET publisher = 'Image Comics' WHERE id = ?", (b_image,))
+
+    # An unrelated DC series
+    dc_other = _series(db_path, "Flash", [("writer", "Joshua Williamson")])
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET publisher = 'DC Comics' WHERE id = ?", (dc_other,))
+
+    # b_orphan has no creator signals -> fallback to publisher-bound stem
+    recs = rel.related(b_orphan, path=db_path)
+    by_title = {r["title"]: r for r in recs}
+
+    assert "Batman: The Devastator" in by_title
+    assert by_title["Batman: The Devastator"]["score"] == 1.5
+    assert by_title["Batman: The Devastator"]["why"] == ["Franchise: Batman"]
+
+    # Different publisher must not match
+    assert "Batman Parody" not in by_title
+    # Different stem must not match
+    assert "Flash" not in by_title
+
+    # Series that DOES have creator overlap must NOT use stem fallback
+    b_creator = _series(db_path, "Batman: City of Bane", [("writer", "Frank Tieri")])
+    with db._connect(db_path) as c:
+        c.execute("UPDATE tracked_series SET publisher = 'DC Comics' WHERE id = ?", (b_creator,))
+
+    recs_creator = rel.related(b_creator, path=db_path)
+    by_creator = {r["title"]: r for r in recs_creator}
+    assert "Batman: The Devastator" in by_creator
+    # Recommends via Frank Tieri (score = 3.0), NOT stem fallback
+    assert by_creator["Batman: The Devastator"]["score"] == 3.0
+    assert by_creator["Batman: The Devastator"]["why"] == ["Frank Tieri"]
+
+
+def test_fill_signals_filters_guest_creators_below_twenty_percent_presence(db_path, monkeypatch):
+    import kometa.record as record
+    sid = db.add_series(title="The Department of Truth", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+
+    # 10-issue run: James Tynion IV writes all 10 issues, Martin Simmonds draws all 10 issues.
+    # Guest writer Scott Snyder co-writes issue 1 only (1/10 = 10% < 20%).
+    fake_issues = []
+    for num in range(1, 11):
+        credits = [
+            {"role": "Writer", "name": "James Tynion IV", "metron_creator_id": 10},
+            {"role": "Artist", "name": "Martin Simmonds", "metron_creator_id": 20},
+        ]
+        if num == 1:
+            credits.append({"role": "Writer", "name": "Scott Snyder", "metron_creator_id": 30})
+        fake_issues.append({"number": float(num), "credits": credits, "arcs": []})
+
+    monkeypatch.setattr(record, "issues_for_series", lambda s_id, path=None: fake_issues if s_id == sid else [])
+
+    assert rel.fill_signals(sid, db_path) is True
+    sig = rel._signals(db_path)[sid]
+    creators_by_name = {c["name"]: c for c in sig["creators"]}
+
+    # Regular writer and artist (10/10 = 100% presence) must be kept
+    assert "James Tynion IV" in creators_by_name and creators_by_name["James Tynion IV"]["role"] == "writer"
+    assert "Martin Simmonds" in creators_by_name and creators_by_name["Martin Simmonds"]["role"] == "artist"
+
+    # Guest writer (1/10 = 10% presence < 20% threshold) must be stripped
+    assert "Scott Snyder" not in creators_by_name
+
+

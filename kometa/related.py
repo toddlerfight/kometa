@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException
 
 import kometa.db as db
 from kometa.auth import current_reader
-from kometa.naming import norm_key
+from kometa.naming import norm_key, _pub_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,6 +48,15 @@ def _role_weight(role: str | None) -> float:
     if "," in r:
         return max((_ROLE_WEIGHT.get(p.strip(), 0.0) for p in r.split(",")), default=0.0)
     return 0.0
+
+
+def _clean_stem(title: str | None) -> str:
+    """Extract clean franchise stem for publisher-bound fallback matching.
+    Splits on ':', '-', or '(' and requires length >= 4."""
+    if not title:
+        return ""
+    t = re.split(r"[:\-\(]", title)[0].strip()
+    return t if len(t) >= 4 else ""
 
 
 @db.once_per_db
@@ -94,10 +103,25 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
         except Exception as e:
             logger.info(f"Signals: top-up enqueue skipped for {series_id}: {e}")
     if rows:
-        d = rows[0]
-        for c in d.get("credits") or []:
-            if c.get("name"):
-                creators.append({"role": (c.get("role") or "").lower(), "name": c["name"], "id": c.get("metron_creator_id")})
+        total_issues = len(rows)
+        creator_issues: dict[tuple[str, str], set] = defaultdict(set)
+        creator_info: dict[tuple[str, str], dict] = {}
+        for r in rows:
+            iss_num = r.get("number")
+            for c in r.get("credits") or []:
+                name = c.get("name")
+                if not name:
+                    continue
+                role = (c.get("role") or "").lower()
+                key = (norm_key(name), role)
+                creator_issues[key].add(iss_num)
+                if key not in creator_info:
+                    creator_info[key] = {"role": role, "name": name, "id": c.get("metron_creator_id")}
+                elif c.get("metron_creator_id") and not creator_info[key].get("id"):
+                    creator_info[key]["id"] = c.get("metron_creator_id")
+        # Keep creators with >= 20% presence across the run (drops guest creators like Snyder on Dept of Truth)
+        creators = [info for key, info in creator_info.items()
+                    if total_issues <= 1 or (len(creator_issues[key]) / total_issues) >= 0.20]
         arcs = sorted({a for r in rows for a in (r.get("arcs") or []) if a})
     elif issue:
         from kometa import metron_client
@@ -111,7 +135,7 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
         # Nothing to ask yet (the issues or their credits haven't landed): the empty answer
         # is dated so it's looked at again tomorrow, not in a month. 4 Kids Walk Into A Bank
         # got its empty row half an hour before its issues arrived and showed nothing for a day.
-        stamp = "datetime('now')" if asked else f"datetime('now', '-{SIGNAL_TTL_DAYS - EMPTY_RETRY_DAYS} days')"
+        stamp = "datetime('now')" if (asked and creators) else f"datetime('now', '-{SIGNAL_TTL_DAYS - EMPTY_RETRY_DAYS} days')"
         conn.execute("INSERT OR REPLACE INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) "
                      f"VALUES (?, ?, ?, {stamp})", (series_id, json.dumps(creators), json.dumps(arcs)))
     return asked
@@ -276,6 +300,20 @@ def related(series_id: int, limit: int = 12, path=None, signals=None, neighbours
         scores[sid] += w
         why[sid].append("on a reading list together")
     series = _series_with_counts(path)
+    if not scores:
+        my_s = series.get(series_id) or (db.get_series_by_id(series_id, path) if path else None)
+        if my_s:
+            my_pub = _pub_key(my_s.get("publisher") or "")
+            my_stem = _clean_stem(my_s.get("title", "")).lower()
+            if my_pub and my_stem:
+                for sid, s in series.items():
+                    if sid == series_id or s.get("kind") == "arc":
+                        continue
+                    cand_pub = _pub_key(s.get("publisher") or "")
+                    cand_stem = _clean_stem(s.get("title", "")).lower()
+                    if cand_pub == my_pub and cand_stem == my_stem:
+                        scores[sid] = 1.5
+                        why[sid].append(f"Franchise: {_clean_stem(my_s.get('title', ''))}")
     out = []
     for sid, sc in sorted(scores.items(), key=lambda kv: -kv[1])[:limit]:
         s = series.get(sid)
