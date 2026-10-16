@@ -184,7 +184,28 @@ def test_a_truncated_page_is_caught_by_decoding(tmp_path):
             z.writestr(f"p-{i:03d}.jpg", good)
         z.writestr("p-009.jpg", good[:-5])
     assert _truncated_page_problem(str(short)) is None
-    with zipfile.ZipFile(tmp_path / "mid.cbz", "w") as z:                # a cut in the middle isn't sampled: that's the sequence guard's job
+    with zipfile.ZipFile(tmp_path / "mid.cbz", "w") as z:                # Puzzlebox #4: page 007 of 12 was the cut one — every page is judged
         for i in range(20):
             z.writestr(f"p-{i:03d}.jpg", good[: len(good) // 2] if i == 10 else good)
-    assert _truncated_page_problem(str(tmp_path / "mid.cbz")) is None
+    problem = _truncated_page_problem(str(tmp_path / "mid.cbz"))
+    assert problem and "p-010.jpg" in problem
+
+
+def test_a_bad_crc_entry_condemns_the_archive(tmp_path):
+    """Puzzlebox #5 landed as a .cbz with 14 of 18 entries failing their CRC; zipfile
+    raises on read, and 'can't read it' must not mean 'fine'."""
+    from kometa.downloader import _truncated_page_problem
+    good = _jpeg()
+    cbz = tmp_path / "crc.cbz"
+    with zipfile.ZipFile(cbz, "w") as z:
+        for i in range(10):
+            z.writestr(f"p-{i:03d}.jpg", good)
+    raw = bytearray(cbz.read_bytes())
+    # flip bytes inside the third entry's compressed data (stored, so offset = after its local header)
+    with zipfile.ZipFile(cbz) as z:
+        info = z.infolist()[2]
+        start = info.header_offset + 30 + len(info.filename) + len(info.extra) + 40
+    raw[start:start + 8] = b"\x00" * 8
+    cbz.write_bytes(bytes(raw))
+    problem = _truncated_page_problem(str(cbz))
+    assert problem and "p-002.jpg" in problem and "CRC" in problem

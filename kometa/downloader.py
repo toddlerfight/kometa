@@ -820,16 +820,17 @@ def _page_names(path: str, extracted_dir: str | None = None) -> list[str] | None
     return _archive_entry_names(path)
 
 
-_TRUNC_SAMPLE = 3     # pages decoded from each end: a usenet post missing articles loses its tail
 _TRUNC_BLANK_MIN = 0.2  # a cut page's blank band; a page that is merely a few bytes short has none
 
 
 def _truncated_page_problem(path: str, extracted_dir: str | None = None) -> str | None:
-    """Decode the first and last few pages; a page that will not decode to the end is a
-    download that lost articles. SAB said 'Completed' with '1 articles were missing' on
-    Puzzlebox #2/#4/#5 (2026-10-16) and the pages sized fine — only a full decode shows
-    the cut. None when the archive can't be read (RAR without an extract): never reject
-    what wasn't actually measured."""
+    """Decode EVERY page; a page that will not decode to the end is a download that lost
+    data. SAB said 'Completed' on Puzzlebox #2/#4/#5/#7 (2026-10-16) with a clean
+    download log, no par2 — and the pages sized fine. #4's cut page was 007 of 12, so a
+    first-and-last sample missed it; #5 had 14 of 18 entries with bad CRCs, which a
+    read-failure-as-no-verdict rule waved through. So: a CRC failure condemns, and all
+    pages are decoded (~20 JPEGs, a second or two at finalize). None only when the
+    archive itself can't be opened: never reject what wasn't actually measured."""
     try:
         from io import BytesIO
         from PIL import Image, ImageFile
@@ -841,20 +842,21 @@ def _truncated_page_problem(path: str, extracted_dir: str | None = None) -> str 
             for root, _dirs, fnames in os.walk(extracted_dir):
                 files.extend(os.path.join(root, f) for f in fnames if f.lower().endswith(_IMG_EXTS))
             files.sort()
-            pick = files[:_TRUNC_SAMPLE] + files[-_TRUNC_SAMPLE:] if len(files) > 2 * _TRUNC_SAMPLE else files
 
             def _blob(f):
                 with open(f, 'rb') as fh:
                     return fh.read()
-            pages = [(os.path.basename(f), _blob(f)) for f in pick]
+            pages = [(os.path.basename(f), _blob(f)) for f in files]
         else:
             with open(path, 'rb') as fh:
                 if fh.read(2) != b'PK':
                     return None
             with zipfile.ZipFile(path, 'r') as zf:
+                bad = zf.testzip()        # first entry whose stored CRC doesn't match its bytes
+                if bad:
+                    return f"entry {os.path.basename(bad)!r} fails its CRC — the download is damaged"
                 names = sorted(n for n in zf.namelist() if n.lower().endswith(_IMG_EXTS))
-                pick = names[:_TRUNC_SAMPLE] + names[-_TRUNC_SAMPLE:] if len(names) > 2 * _TRUNC_SAMPLE else names
-                pages = [(os.path.basename(n), zf.read(n)) for n in pick]
+                pages = [(os.path.basename(n), zf.read(n)) for n in names]
     except Exception:
         return None
     # The live process decodes LENIENTLY (reader.py sets LOAD_TRUNCATED_IMAGES for
