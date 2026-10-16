@@ -276,3 +276,25 @@ def test_sourcing_endpoints_outcomes(db_path, monkeypatch):
     # Series no longer in candidates because metron_link == 'none'
     res3 = client.get("/api/sourcing/candidates")
     assert len(res3.json()["items"]) == 0
+
+
+def test_the_owners_no_run_answers_are_never_sourced(db_path, monkeypatch):
+    """d78300f dropped the metron_link filter so the 113 historically-stamped
+    LOCG-only series get searched — right, that stamp was a machine's. But an
+    owner's own 'no run' answer (Needs matching → none) writes locg_link='none',
+    and since 2026-10-11 the NEVER stamp on metron_checked_at. Those two marks
+    are a person's decision and the sourcing deck never re-opens them."""
+    monkeypatch.setattr(src, "DB_PATH", db_path)
+    monkeypatch.setattr(db, "DB_PATH", db_path)
+    def locg_only(title, **cols):
+        sid = db.add_series(title=title, publisher="Image Comics", folder_path=None, on_pull_list=False, path=db_path)
+        sets = ", ".join(f"{k} = ?" for k in cols)
+        with db._connect(db_path) as c:
+            c.execute(f"UPDATE tracked_series SET locg_series_id = 4242, metron_series_id = NULL, metron_link = 'none', match_status = 'manual'{', ' + sets if sets else ''} WHERE id = ?",
+                      (*cols.values(), sid))
+        return sid
+    machine = locg_only("Aliens - Book One")                                   # bulk pass stamped it: fair game
+    declined = locg_only("Tintin VS Batman", locg_link="none")                # the owner said no run
+    never = locg_only("Five Years- Omnibus", metron_checked_at="9999-12-31 00:00:00")
+    picked = {r["id"] for r in src.sourcing_candidates_query(path=db_path, limit=10)}
+    assert machine in picked and declined not in picked and never not in picked

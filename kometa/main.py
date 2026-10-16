@@ -1760,6 +1760,8 @@ def sourcing_candidates():
               AND s.metron_series_id IS NULL
               AND s.metron_candidates_json IS NOT NULL
               AND s.metron_candidates_json != '[]'
+              AND (s.locg_link IS NULL OR s.locg_link != 'none')
+              AND (s.metron_checked_at IS NULL OR s.metron_checked_at != '9999-12-31 00:00:00')
             ORDER BY s.title COLLATE NOCASE""")]
     out = []
     for r in rows:

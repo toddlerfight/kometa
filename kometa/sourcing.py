@@ -170,6 +170,8 @@ def sourcing_candidates_query(path=None, limit: int = PER_TICK) -> list[dict]:
               AND s.metron_series_id IS NULL
               AND s.metron_candidates_json IS NULL
               AND (s.kind IS NULL OR s.kind != 'arc')
+              AND (s.locg_link IS NULL OR s.locg_link != 'none')
+              AND (s.metron_checked_at IS NULL OR s.metron_checked_at != '9999-12-31 00:00:00')
             ORDER BY s.id LIMIT ?""", (limit,))]
         for r in rows:
             sid = r["id"]
