@@ -318,9 +318,10 @@ The recommendations work runs with an external agent writing briefs and commits 
 - **Owner decisions are never re-opened**: `match_status` manual + `metron_link`
   none, `locg_link = 'none'`, or `metron_checked_at = '9999-12-31 00:00:00'`.
   Sourcing cards are the owner's to confirm or decline.
-- **Step 3 (community blend) ships as a boost only** (2026-10-17, review in
-  docs/related-eval/phase2-review-2026-10-17.md). Community-only cards (`cards`) stay
-  off until the owner has blind-scored them.
+- **Step 3 (community blend) is live** (2026-10-17, review in
+  docs/related-eval/phase2-review-2026-10-17.md). It shipped as a boost; the owner
+  switched community-only cards (`cards`) on the same morning, knowing about a quarter
+  of them are era picks (Lazarus → Hawkeye). 30 of 832 rows changed.
 - **A candidate engine never writes into the combiner's cached index.** Build your
   own (`related_combined.related_combined(..., opts=...)` / `_index_with`). On
   2026-10-16 a themes engine wrote into `rc.index()`'s index and every engine after it
@@ -341,7 +342,7 @@ docker exec kometa python3 -c "import kometa.db as d; d.set_config({'related_the
 |---|---|---|
 | `related_engine` | `combined` / anything else = the old engine | combined |
 | `related_themes` | `on` / off | on |
-| `related_community` | `boost` / `cards` / off | boost |
+| `related_community` | `boost` / `cards` / off | cards |
 
 Compare settings side by side on a copy of the live database with the harness
 variants `combined-p1`, `combined+themes`, `combined+boost`, `combined+cards`,

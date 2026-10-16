@@ -102,3 +102,13 @@ from the weak pairs and from the anthology acting as many rows' fourth card.
 - Coverage is 10 short of 700. Of the 75 series with no cards (themes + boost), 53
   have no credits, tags, descriptions or reviews at all yet. The Metron refill and
   GCD genres are still landing.
+
+## Later the same morning
+
+The owner switched `related_community` to `cards`. Measured on a copy of the live
+database before the switch: 30 of 832 rows change, 64 reader-only cards appear (16 in
+a top five), and 41 weaker cards drop off the end of rows. In a sample of 20, about
+half were good picks (Descender → Lazarus, Deadly Class → Paper Girls) and about a
+quarter were era picks (Lazarus → Hawkeye, Gideon Falls → DCeased). To undo it, set
+`related_community` back to `boost` and restart.
+
