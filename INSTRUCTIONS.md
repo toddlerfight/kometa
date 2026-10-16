@@ -347,6 +347,18 @@ Recovery if it happens again (WAL must be 0 bytes, else stop and ask): `docker c
 Three copies of everything Kometa needs:
 
 1. **Kometa's own nightly** (03:30, `kometa/backup.py`): the database and a cover mirror into `_kometa-backup/` inside the comics folder on the NAS. Keeps 7 nights.
+**launchd + network volumes = a privacy prompt nobody can click (2026-10-16).** The backup is a
+LaunchAgent; the first time after a reboot that its `bash`/`rsync` touches `/Volumes/🧳` (SMB),
+macOS puts a "allow access to files on a network volume?" dialog on ginbako's console and the
+`openat()` BLOCKS until it's answered — the comics phase sat in one syscall for 8 h with 0 CPU.
+Through launchd even `ls /Volumes/🧳/Comics` says "Operation not permitted"; from an ssh session
+everything works (Remote Login has Full Disk Access), which is why by-hand runs never showed it.
+Fix: on ginbako's screen, System Settings → Privacy & Security → Full Disk Access → add
+`/bin/bash` and `/opt/homebrew/bin/rsync` (and click any waiting dialog). The script now runs
+rsync with `--timeout=900` + one retry, so a repeat fails the phase in 15 min instead of hanging.
+Diagnose a stall: `sample <rsync pid> 1` (stuck in `openat` under `send_directory` = this),
+`ps -o lstart -p $(pgrep UserNotificationCenter)` (started a second after rsync = the dialog).
+
 2. **Voot II** (02:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
    - `db/` — a copy of the live DB made inside the container (`docker exec kometa python … backup()`), integrity-checked on the host, 14 kept
    - `covers/`, `docker/` (all of `~/docker` except the page cache — which now lives on Catbus anyway), `comics/` (mirror of `/Volumes/🧳/Comics`)
