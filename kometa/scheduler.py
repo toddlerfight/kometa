@@ -221,6 +221,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=3))
     except Exception as e:
         logger.warning(f"Issue-id harvest not scheduled: {e}")
+    # Credit sourcing for LOCG-only series (kometa/sourcing.py sourcing_tick):
+    # runs inside the harvest share, stops at first Metron refusal.
+    try:
+        from kometa.sourcing import sourcing_tick
+        scheduler.add_job(_as_harvest(sourcing_tick), IntervalTrigger(minutes=10), id="harvest_sourcing",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=4))
+    except Exception as e:
+        logger.warning(f"Sourcing harvest not scheduled: {e}")
     # Run status (Ongoing / Completed / …) for the series page's badge: a few
     # Metron series pages a tick, harvest share only (kometa/harvest.py status_tick).
     try:

@@ -1558,23 +1558,35 @@ async function renderNeedsMatch() {
   const rows = all.filter(_needsMatch).sort((a, b) =>
     (a.match_status === 'needs_match' ? 0 : 1) - (b.match_status === 'needs_match' ? 0 : 1)
     || a.title.localeCompare(b.title));
-  _updateNeedsBadge(rows.length);
+  let sourcing = [];
+  try { sourcing = (await api.get('/api/sourcing/candidates')).items || []; } catch {}
+  _updateNeedsBadge(rows.length + sourcing.length);
   if (currentView !== 'needs-match') return;
-  if (!rows.length) {
+  if (!rows.length && !sourcing.length) {
     setApp(`<div class="empty-state"><div class="empty-state-title">Everything's matched</div>
       <div style="margin-top:8px;color:var(--tq);font-size:13px">New folders land here until they're matched to a run.</div></div>`);
     return;
   }
   const waiting = rows.filter(s => s.match_status === 'pending').length;
   _nmRows = rows;
+  _sourcingRows = sourcing;
   setApp(`
-    <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
-      ? ` — ${waiting} still in the queue` : ''}.
-      <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Shelf clean-up →</a></div>
-    <input class="browse-search nm-search" id="nm-search" type="text" placeholder="Search titles, publishers, folders"
-      value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
-    <div class="nm-list" id="nm-list">${_nmListHtml()}</div>`);
-  if (_nmQuery) document.getElementById('nm-search')?.focus();
+    ${rows.length ? `
+      <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
+        ? ` — ${waiting} still in the queue` : ''}.
+        <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Shelf clean-up →</a></div>
+      <input class="browse-search nm-search" id="nm-search" type="text" placeholder="Search titles, publishers, folders"
+        value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
+      <div class="nm-list" id="nm-list">${_nmListHtml()}</div>` : ''}
+    ${sourcing.length ? `
+      <div class="singles-group" style="${rows.length ? 'margin-top:32px;' : ''}">
+        <div class="singles-head">
+          <span class="series-card-title">Sourcing credits <span class="settings-opt">${sourcing.length}</span></span>
+          <span class="tidy-why">Matched to League of Comic Geeks, but credits are unreachable. Pick a Metron match to restore recommendations.</span>
+        </div>
+        <div class="nm-list">${sourcing.map((item, i) => _sourcingRowHtml(item, i)).join('')}</div>
+      </div>` : ''}`);
+  if (_nmQuery && rows.length) document.getElementById('nm-search')?.focus();
 }
 
 // Search the in-tray: title, publisher or folder, as you type. Kept across
@@ -1838,6 +1850,111 @@ function _needsRowHtml(s, i) {
         <button class="btn btn-danger btn-sm" onclick="confirmDelete(${s.id})">Remove</button>
       </div>
     </div>`;
+}
+
+function _sourcingRowHtml(s, i) {
+  const go = `navigate('series-detail', {id: ${s.id}})`;
+  const cands = s.candidates || [];
+  const candListHtml = cands.length ? cands.map(c => `
+    <div class="sourcing-cand-card" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-subtle, rgba(255,255,255,0.03));border:1px solid var(--border-subtle, rgba(255,255,255,0.08));border-radius:6px;padding:6px 10px;margin-top:4px">
+      <div class="sourcing-cand-info u-truncate" style="margin-right:12px">
+        <span style="font-weight:600;color:var(--tx)">${esc(c.title)}</span>
+        <span class="u-label" style="margin-left:6px;color:var(--tq)">${esc([c.publisher, c.year, c.issue_count != null ? `${c.issue_count} issues` : null].filter(Boolean).join(' · '))}</span>
+        <span class="nm-status ${c.confidence === 'high' ? 'green' : 'amber'}" style="margin-left:8px;font-size:10px;padding:1px 6px">${c.confidence === 'high' ? 'High' : 'Moderate'} (${c.score} pts)</span>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="_sourcingConfirm(${s.id}, ${c.id})">Confirm</button>
+    </div>
+  `).join('') : '<div class="tidy-why" style="margin-top:4px">No confident Metron match found.</div>';
+
+  return `
+    <div class="nm-row card-cascade" id="src-${s.id}" style="animation-delay:${Math.min(i,14)*STAGGER_MS}ms">
+      <img class="nm-cover" src="/api/series/${s.id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'" onclick="${go}">
+      <div class="nm-main">
+        <div class="nm-title" onclick="${go}" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">${esc(s.title)}</div>
+        <div class="nm-meta u-truncate">${s.publisher ? esc(s.publisher) + ' · ' : ''}${s.year ? esc(s.year) + ' · ' : ''}${s.total_issues} issue${s.total_issues === 1 ? '' : 's'}${s.folder_path ? ' · ' + esc(s.folder_path.replace(/^\/comics\//, '')) : ''}</div>
+        <div style="margin-top:6px">${candListHtml}</div>
+      </div>
+      <div class="nm-actions" style="display:flex;flex-direction:column;gap:6px;align-self:flex-start">
+        <button class="btn btn-ghost btn-sm" onclick="_sourcingDifferentId(${s.id})">Enter different ID</button>
+        <button class="btn btn-ghost btn-sm" onclick="_sourcingDecline(${s.id})">Decline</button>
+      </div>
+    </div>`;
+}
+
+async function _sourcingConfirm(seriesId, metronId) {
+  try {
+    await api.post('/api/sourcing/confirm', { series_id: seriesId, metron_series_id: metronId });
+    closeModal();
+    showToast('Metron series linked — credits and recommendations will populate');
+    const el = document.getElementById(`src-${seriesId}`);
+    if (el) el.remove();
+    _sourcingRows = (_sourcingRows || []).filter(r => r.id !== seriesId);
+    _updateNeedsBadge((_nmRows || []).length + _sourcingRows.length);
+    if (!_sourcingRows.length && !(_nmRows || []).length) renderNeedsMatch();
+  } catch (e) {
+    showToast(`Couldn’t link Metron series: ${e.message || e}`, 'error');
+  }
+}
+
+async function _sourcingDecline(seriesId) {
+  try {
+    await api.post('/api/sourcing/decline', { series_id: seriesId });
+    showToast('Declined credit sourcing');
+    const el = document.getElementById(`src-${seriesId}`);
+    if (el) el.remove();
+    _sourcingRows = (_sourcingRows || []).filter(r => r.id !== seriesId);
+    _updateNeedsBadge((_nmRows || []).length + _sourcingRows.length);
+    if (!_sourcingRows.length && !(_nmRows || []).length) renderNeedsMatch();
+  } catch (e) {
+    showToast(`Couldn’t decline: ${e.message || e}`, 'error');
+  }
+}
+
+function _sourcingDifferentId(seriesId) {
+  const s = (_sourcingRows || []).find(r => r.id === seriesId) || {};
+  showModal(`
+    <div class="modal-header"><h2>Enter Metron series ID</h2></div>
+    <div class="modal-body">
+      <div class="tidy-why" style="margin-bottom:10px">Sourcing credits for <b>${esc(s.title || 'this series')}</b>${s.publisher ? ` (${esc(s.publisher)})` : ''}${s.year ? ` · ${s.year}` : ''}${s.total_issues ? ` · ${s.total_issues} issues` : ''}.</div>
+      <input class="browse-search" id="sourcing-diff-input" type="text" placeholder="Metron Series ID (e.g. 13649) or URL" style="width:100%" onkeydown="if(event.key==='Enter')_sourcingPreviewId(${seriesId})">
+      <div id="sourcing-diff-preview" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="sourcing-diff-btn" onclick="_sourcingPreviewId(${seriesId})">Preview</button>
+    </div>`);
+}
+
+async function _sourcingPreviewId(seriesId) {
+  const input = document.getElementById('sourcing-diff-input');
+  if (!input) return;
+  const raw = input.value.trim();
+  const m = raw.match(/(\d+)/);
+  if (!m) {
+    showToast('Please enter a valid numeric Metron series ID', 'error');
+    return;
+  }
+  const mid = parseInt(m[1], 10);
+  const prevBox = document.getElementById('sourcing-diff-preview');
+  const btn = document.getElementById('sourcing-diff-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Looking up…'; }
+  if (prevBox) prevBox.innerHTML = '<div class="tidy-why">Checking Metron…</div>';
+  try {
+    const data = await api.get(`/api/sourcing/preview/${mid}`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Preview'; }
+    if (!prevBox) return;
+    prevBox.innerHTML = `
+      <div class="sourcing-cand-card" style="background:var(--bg-subtle, rgba(255,255,255,0.03));border:1px solid var(--border-subtle, rgba(255,255,255,0.08));border-radius:6px;padding:10px;margin-top:6px">
+        <div style="font-weight:600;font-size:14px;color:var(--tx)">${esc(data.title)}</div>
+        <div class="u-label" style="color:var(--tq);margin-top:4px">${esc([data.publisher, data.year, data.issue_count != null ? `${data.issue_count} issues` : null].filter(Boolean).join(' · '))}</div>
+        <div style="margin-top:8px">
+          <button class="btn btn-primary btn-sm" onclick="_sourcingConfirm(${seriesId}, ${data.id})">Confirm this match</button>
+        </div>
+      </div>`;
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Preview'; }
+    if (prevBox) prevBox.innerHTML = `<div class="tidy-why" style="color:var(--amb)">Lookup failed: ${esc(e.message || String(e))}</div>`;
+  }
 }
 
 // Removing goes through confirmDelete / doDelete — ONE modal, one meaning —

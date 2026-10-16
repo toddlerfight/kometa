@@ -1738,6 +1738,86 @@ def locg_status():
     return {"paused_until": until, "paused_until_label": pause_label(until) if until else None}
 
 
+class SourcingConfirmRequest(BaseModel):
+    series_id: int
+    metron_series_id: int
+
+
+class SourcingDeclineRequest(BaseModel):
+    series_id: int
+
+
+@app.get("/api/sourcing/candidates")
+def sourcing_candidates():
+    with db._connect(DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT s.id, s.title, s.publisher, s.year_began, s.folder_path, s.locg_series_id, s.metron_candidates_json,
+                   (SELECT COUNT(*) FROM books WHERE tracked_series_id = s.id) AS book_count,
+                   (SELECT COUNT(*) FROM issue_status WHERE tracked_series_id = s.id AND owned = 1) AS owned_count,
+                   (SELECT COUNT(*) FROM issue_status WHERE tracked_series_id = s.id AND owned = 0) AS missing_count
+            FROM tracked_series s
+            WHERE s.locg_series_id IS NOT NULL
+              AND s.metron_series_id IS NULL
+              AND (s.metron_link IS NULL OR s.metron_link != 'none')
+              AND s.metron_candidates_json IS NOT NULL
+              AND s.metron_candidates_json != '[]'
+            ORDER BY s.title COLLATE NOCASE""")]
+    out = []
+    for r in rows:
+        cands = json.loads(r.get("metron_candidates_json") or "[]")
+        if cands:
+            out.append({
+                "id": r["id"],
+                "title": r["title"],
+                "publisher": r["publisher"],
+                "year": r["year_began"],
+                "folder_path": r["folder_path"],
+                "locg_series_id": r["locg_series_id"],
+                "total_issues": max(r["book_count"], r["owned_count"] + r["missing_count"]),
+                "candidates": cands,
+            })
+    return {"items": out}
+
+
+@app.post("/api/sourcing/confirm")
+def sourcing_confirm(req: SourcingConfirmRequest):
+    s = db.get_series_by_id(req.series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    with db._connect(DB_PATH) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = ? WHERE id = ?", (req.metron_series_id, req.series_id))
+    return {"ok": True, "series_id": req.series_id, "metron_series_id": req.metron_series_id}
+
+
+@app.post("/api/sourcing/decline")
+def sourcing_decline(req: SourcingDeclineRequest):
+    s = db.get_series_by_id(req.series_id, DB_PATH)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    db.set_metron_link(req.series_id, "none", DB_PATH)
+    return {"ok": True, "series_id": req.series_id}
+
+
+@app.get("/api/sourcing/preview/{metron_id}")
+def sourcing_preview(metron_id: int):
+    from kometa import metron_client
+    try:
+        d = metron_client.series_detail(metron_id)
+        if not d:
+            raise HTTPException(404, "Metron series not found")
+        pub = d.get("publisher")
+        pub_name = pub.get("name") if isinstance(pub, dict) else (pub or "")
+        return {
+            "id": metron_id,
+            "title": d.get("name") or d.get("title") or "",
+            "publisher": pub_name,
+            "year": d.get("year"),
+            "issue_count": d.get("issue_count") or d.get("count"),
+        }
+    except metron_client.MetronUnavailable as e:
+        raise HTTPException(503, str(e))
+
+
 class PageMaxRequest(BaseModel):
     page_max: int | None = None
 
