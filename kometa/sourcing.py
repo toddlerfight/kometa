@@ -168,7 +168,6 @@ def sourcing_candidates_query(path=None, limit: int = PER_TICK) -> list[dict]:
             FROM tracked_series s
             WHERE s.locg_series_id IS NOT NULL
               AND s.metron_series_id IS NULL
-              AND (s.metron_link IS NULL OR s.metron_link != 'none')
               AND s.metron_candidates_json IS NULL
               AND (s.kind IS NULL OR s.kind != 'arc')
             ORDER BY s.id LIMIT ?""", (limit,))]

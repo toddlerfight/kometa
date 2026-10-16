@@ -1758,7 +1758,6 @@ def sourcing_candidates():
             FROM tracked_series s
             WHERE s.locg_series_id IS NOT NULL
               AND s.metron_series_id IS NULL
-              AND (s.metron_link IS NULL OR s.metron_link != 'none')
               AND s.metron_candidates_json IS NOT NULL
               AND s.metron_candidates_json != '[]'
             ORDER BY s.title COLLATE NOCASE""")]
@@ -1795,6 +1794,8 @@ def sourcing_decline(req: SourcingDeclineRequest):
     if not s:
         raise HTTPException(404, "Series not found")
     db.set_metron_link(req.series_id, "none", DB_PATH)
+    with db._connect(DB_PATH) as conn:
+        conn.execute("UPDATE tracked_series SET metron_candidates_json = '[]' WHERE id = ?", (req.series_id,))
     return {"ok": True, "series_id": req.series_id}
 
 
