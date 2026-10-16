@@ -287,6 +287,7 @@ def issue_landed(series_id: int, number, path=None):
             return
         with _lock:
             _pending.append({"series_id": series_id, "number": number, "title": s["title"], "at": time.time()})
+            _save_pending(path)
             if _timer:
                 _timer.cancel()
             _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
@@ -369,20 +370,65 @@ def _held_back(items: list[dict], now: float, path) -> tuple[list[dict], list[di
             except Exception:
                 n = 0
             active[sid] = n > 0
+    # The cap is per SERIES, not per landing: when a run's oldest held landing ages
+    # out, the whole run goes together. Per landing, Puzzlebox #2 aged out alone at
+    # 07:13 (2026-10-16) and buzzed "1 new" while #3, #4 and #12 stayed held — a
+    # drip of singles, the exact thing the hold exists to prevent.
+    oldest: dict[int, float] = {}
+    for it in items:
+        oldest[it["series_id"]] = min(oldest.get(it["series_id"], now), it.get("at", now))
     held, ready = [], []
     for it in items:
-        if active.get(it["series_id"]) and now - it.get("at", now) < HOLD_MAX_S:
+        sid = it["series_id"]
+        if active.get(sid) and now - oldest[sid] < HOLD_MAX_S:
             held.append(it)
         else:
             ready.append(it)
     return held, ready
 
 
+PENDING_KEY = "push_pending"       # the held landings, on disk: a deploy must not eat them
+
+
+def _save_pending(path) -> None:
+    """Called under _lock. Two deploys on 2026-10-16 each wiped a held Puzzlebox
+    landing (#1, then #3/#4/#12) — the hold is minutes long and deploys are frequent."""
+    try:
+        db.set_config({PENDING_KEY: json.dumps(_pending)}, path)
+    except Exception as e:
+        logger.info(f"Push: couldn't save held landings: {e}")
+
+
+def restore_pending(path=None) -> int:
+    """Startup: reload landings a restart interrupted and give them a flush timer."""
+    global _timer
+    path = path or DB_PATH
+    try:
+        raw = db.get_config(path).get(PENDING_KEY) or "[]"
+        items = [it for it in json.loads(raw) if isinstance(it, dict) and "series_id" in it]
+    except Exception as e:
+        logger.info(f"Push: couldn't restore held landings: {e}")
+        return 0
+    if not items:
+        return 0
+    with _lock:
+        _pending[:0] = items
+        if _timer:
+            _timer.cancel()
+        _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
+        _timer.daemon = True
+        _timer.start()
+    logger.info(f"Push: {len(items)} held landing(s) restored after a restart")
+    return len(items)
+
+
 def flush(path=None, post=None) -> dict | None:
     global _timer
+    path = path or DB_PATH
     with _lock:
         items = list(_pending)
         _pending.clear()
+        _save_pending(path)
         _timer = None
     if not items:
         return None
@@ -390,16 +436,19 @@ def flush(path=None, post=None) -> dict | None:
     # its landings back, so a run that drains over twenty minutes buzzes ONCE ("6 new on
     # the shelf") when the last one lands, like the Activity row that collapses them. Held
     # for HOLD_MAX_S at most: a stuck queue must not hold a notification hostage.
-    path = path or DB_PATH
     now = time.time()
     held, items = _held_back(items, now, path)
     if held:
+        # whatever is held gets a timer, whether or not something else goes out now —
+        # held landings with no timer only ever flushed when the NEXT landing arrived
         with _lock:
             _pending[:0] = held
-            if items is None or not items:
-                _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
-                _timer.daemon = True
-                _timer.start()
+            _save_pending(path)
+            if _timer:
+                _timer.cancel()
+            _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
+            _timer.daemon = True
+            _timer.start()
     if not items:
         return None
     seen, uniq = set(), []

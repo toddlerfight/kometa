@@ -420,3 +420,40 @@ def test_a_series_still_pulling_holds_its_landings_for_one_notification(setup, d
     monkeypatch.setattr(push, "HOLD_MAX_S", 0)
     push.issue_landed(a, 8.0, db_path); push._timer.cancel()
     assert push.flush(db_path, post=post)["sent"] == 1 and sent[-1]["aps"]["alert"]["body"] == "A Puzzlebox #8"
+
+
+def test_a_series_whose_hold_expires_releases_every_landing_together(setup, db_path, monkeypatch):
+    """2026-10-16 07:13: Puzzlebox #2 aged past HOLD_MAX_S alone and buzzed '1 new' while
+    #3, #4 and #12 stayed held. The cap is per series: the oldest ages out, all go."""
+    monkeypatch.setattr(push, "BATCH_S", 999)
+    a = db.add_series(title="A Puzzlebox", publisher="DC", folder_path="/c/p", path=db_path)
+    for n in (2.0, 3.0, 9.0):
+        db.queue_issue(a, n, db_path)                                        # 9 keeps the series active
+    monkeypatch.setattr(push, "_book_id", lambda s, n: 77)
+    _dev(db_path)
+    sent = []
+    post = lambda u, h, body: sent.append(json.loads(body)) or R(200)
+    push.issue_landed(a, 2.0, db_path); push.issue_landed(a, 3.0, db_path); push._timer.cancel()
+    push._pending[0]["at"] -= push.HOLD_MAX_S + 1                            # #2 is old, #3 is fresh
+    res = push.flush(db_path, post=post)
+    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] == "2 new on the shelf"
+    assert push._pending == []
+    if push._timer: push._timer.cancel()
+
+
+def test_held_landings_survive_a_restart(setup, db_path, monkeypatch):
+    """Two deploys in one afternoon each ate a held landing. They live in the config
+    table now and come back with a timer when the process starts."""
+    monkeypatch.setattr(push, "BATCH_S", 999)
+    a = db.add_series(title="A Puzzlebox", publisher="DC", folder_path="/c/p", path=db_path)
+    db.queue_issue(a, 2.0, db_path)
+    push.issue_landed(a, 1.0, db_path); push._timer.cancel()
+    assert push.flush(db_path, post=lambda *a: R(200)) is None               # held: #2 still queued
+    if push._timer: push._timer.cancel()
+    assert push._timer is not None                                           # held landings always keep a timer
+    saved = json.loads(db.get_config(db_path)["push_pending"])
+    assert [(i["series_id"], i["number"]) for i in saved] == [(a, 1.0)]
+    push._pending.clear(); push._timer = None                                # "the container restarted"
+    assert push.restore_pending(db_path) == 1
+    assert [(i["series_id"], i["number"]) for i in push._pending] == [(a, 1.0)] and push._timer is not None
+    push._timer.cancel()

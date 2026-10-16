@@ -147,6 +147,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"Startup catch-up: missed scheduled sync at {missed_slot} UTC — running now")
         threading.Thread(target=_sync_all_job, daemon=True).start()
     _shelf_scan(skip_if_fresh=True)   # whole-shelf index for the reader — skipped if one ran lately
+    from kometa import push as _push
+    _push.restore_pending(DB_PATH)    # landings a deploy interrupted still get their one buzz
     yield
     # Stop cleanly. The scheduler was never shut down: its job threads aren't
     # daemons, so a stop waited for whatever was running (a sync, a placement, a
