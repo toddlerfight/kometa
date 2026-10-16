@@ -442,3 +442,36 @@ def test_fill_signals_metron_series_never_guesses_on_mismatched_numbers(db_path,
     assert issues[0]["metron_issue_id"] is None
 
 
+
+
+def test_missing_creator_ids_are_asked_about_daily_and_the_oldest_row_goes_first(db_path, monkeypatch):
+    """The twenty alphabetically-first LOCG-credited runs (no Metron creator ids, ever)
+    were refilled every half hour and the 150 behind them never came up (Puzzlebox,
+    2026-10-16). Ids are re-asked once a day; within a tier the least recently tried run
+    is first, so nothing can be starved."""
+    ids = {}
+    for title in ("Aliens - Book One", "Avengers", "Puzzlebox"):
+        sid = db.add_series(title=title, publisher="DC", folder_path=None, on_pull_list=False, path=db_path)
+        with db._connect(db_path) as c:
+            c.execute("UPDATE tracked_series SET locg_series_id = 999 WHERE id = ?", (sid,))
+        ids[title] = sid
+    no_id = json.dumps([{"role": "writer", "name": "Mark Verheiden", "id": None}])
+    rel.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        # Aliens and Avengers: filled minutes ago, writers without ids — NOT due again yet
+        for t in ("Aliens - Book One", "Avengers"):
+            c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) VALUES (?, ?, '[]', datetime('now', '-10 minutes'))", (ids[t], no_id))
+        # Puzzlebox: an empty row dated the way fill_signals dates them (retry tomorrow), askable now
+        c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json, fetched_at) VALUES (?, '[]', '[]', datetime('now', '-29 days', '-2 hours'))", (ids["Puzzlebox"],))   # written two hours ago, as fill_signals dates an empty
+    monkeypatch.setattr(rel, "_askable", lambda path: {ids["Puzzlebox"]})
+    filled = []
+    monkeypatch.setattr(rel, "fill_signals", lambda sid, path, detail=None: filled.append(sid) or True)
+    assert rel.trickle_signals(limit=20, path=db_path) == 1 and filled == [ids["Puzzlebox"]]
+    # a day on, the no-id rows are due again — the older of the two first
+    with db._connect(db_path) as c:
+        c.execute("UPDATE series_signals SET fetched_at = datetime('now', '-1 days', '-2 hours') WHERE tracked_series_id = ?", (ids["Avengers"],))
+        c.execute("UPDATE series_signals SET fetched_at = datetime('now', '-1 days', '-1 hours') WHERE tracked_series_id = ?", (ids["Aliens - Book One"],))
+        c.execute("UPDATE series_signals SET fetched_at = datetime('now'), creators_json = ? WHERE tracked_series_id = ?",
+                  (json.dumps([{"role": "writer", "name": "Matthew Rosenberg", "id": 7}]), ids["Puzzlebox"]))   # filled: no longer due
+    filled.clear()
+    assert rel.trickle_signals(limit=1, path=db_path) == 1 and filled == [ids["Avengers"]]

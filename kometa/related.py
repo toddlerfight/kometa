@@ -203,6 +203,15 @@ def _stale(fetched_at: str | None) -> bool:
         return True
 
 
+def _older_than(fetched_at: str | None, days: float) -> bool:
+    if not fetched_at:
+        return True
+    try:
+        return datetime.strptime(fetched_at, "%Y-%m-%d %H:%M:%S") < datetime.utcnow() - timedelta(days=days)
+    except ValueError:
+        return True
+
+
 def _askable(path) -> set[int]:
     """Series with something fill_signals can read: a record row with credits, or an issue
     with a Metron id."""
@@ -223,13 +232,23 @@ def trickle_signals(limit: int = 20, path=None) -> int:
         g = have.get(s["id"])
         if g is None:
             return True
-        # an empty row on a run that now has credits or a Metron issue to ask: ask again now
-        return _stale(g["fetched_at"]) or _needs_ids(g) or (not g["creators"] and s["id"] in askable)
+        # an empty row on a run that now has credits or a Metron issue to ask: ask again now.
+        # Missing creator ids are asked about once a DAY, not every run: LOCG credits never
+        # carry a Metron id, so the twenty alphabetically-first such runs (Aliens…, Avengers,
+        # Batman…) were refilled every half hour and the 150 behind them never came up
+        # (Puzzlebox, 2026-10-16: tracked at 16:35, still unfilled at 18:00).
+        # An askable empty is re-asked at once (its issues just landed). A run that fills
+        # empty every time — an anthology whose creators are all one-issue guests, under
+        # the 20% rule — is re-stamped on each try and so sorts to the back of its tier.
+        return (_stale(g["fetched_at"]) or (_needs_ids(g) and _older_than(g["fetched_at"], EMPTY_RETRY_DAYS))
+                or (not g["creators"] and s["id"] in askable))
     # LOCG-only runs count too: fill_signals reads the record's LOCG credits (or queues the
     # top-up) — before, 99 of them never got a row and showed no Related at all
     todo = [s for s in db.get_all_series(path) if s.get("kind") != "arc"
             and (s.get("metron_series_id") or s.get("locg_series_id")) and due(s)]
-    todo.sort(key=lambda s: (s["id"] in have, s["id"] not in askable))   # new rows first, then empties that can be asked
+    # new rows first, then empties that can be asked — and within a tier the LEAST recently
+    # tried first, so a run that keeps coming up due can't starve the ones behind it
+    todo.sort(key=lambda s: (s["id"] in have, s["id"] not in askable, (have.get(s["id"]) or {}).get("fetched_at") or ""))
     n = 0
     from kometa import metron_client
     for s in todo[:limit]:
