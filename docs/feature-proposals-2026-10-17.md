@@ -1,98 +1,108 @@
 # Feature Proposals and Codebase Quality of Life (2026-10-17)
 
-A prioritized catalog of proposed features, reading enhancements, library curation workflows, and developer quality-of-life improvements for Kometa.
+A verified, vetted catalog of genuinely unimplemented features, reader modes, collection tools, and developer quality-of-life improvements for Kometa.
+
+*(Note: End-of-issue next handoff with arc awareness, two-up double spread auto-centering, and the creator works shelf were audited and confirmed already built and live).*
 
 ---
 
-## 1. Reader & Reading Continuum (Everyday Reading Flow)
+## 1. Reader Enhancements (Unimplemented Reading Modes)
 
-### 1.1 End-of-Issue Next Handoff & Arc Progression
-* **Problem:** When finishing an issue or collected edition in the web reader, the reader hits the end and stops. The reader must close the modal, locate the next issue on the series page, and open it.
+### 1.1 Continuous Vertical Scroll (Webtoon / Long-Strip Mode)
+* **The Gap:** The reader (`kometa/static/reader.js`) only supports horizontal paging (`single` or `double` spread modes). For webcomics, modern digital releases, or reading on phones and portrait tablets, horizontal swiping is clunky compared to smooth vertical scrolling.
+* **Proposal:** 
+  * Add a `vertical` (Webtoon) layout mode alongside `single` and `double`.
+  * Renders pages in a vertical column with minimal vertical gutters.
+  * IntersectionObserver-based page progress tracking that updates the current page counter and scrub bar as you scroll.
+  * Virtualized rendering (DOM recycling) to prevent memory ballooning on 60+ page graphic novels.
+* **Implementation Seam:** `kometa/static/reader.js` (layout handler `_rdRender()`), CSS container in `kometa/static/style.css`.
+* **Effort:** Moderate.
+
+### 1.2 Right-to-Left (Manga / RTL) Reading Mode
+* **The Gap:** `reader.js` currently assumes all books read left-to-right:
+  - Swipe left always advances forward.
+  - In two-up mode, page $N$ is always placed on the left and $N+1$ on the right (`rd-left`, `rd-right`).
+  - For Japanese manga, this displays facing panels in reverse chronological order and breaks panel flow.
 * **Proposal:**
-  * When reaching the last page of a comic, render an end-card overlay: **"Next: Issue #N"** (or next collected volume) with an immediate **"Read Next"** button that seamless-loads the next book into the reader without round-tripping to the library view.
-  * **Story Arc Awareness:** If the issue is part of an active Story Arc (e.g. *Batman #497* in *Knightfall*), the prompt detects the reading order and surfaces: *"Next in Knightfall: Detective Comics #664"*, allowing readers to follow cross-series events without manual catalog navigation.
-* **Implementation Seam:** `kometa/static/reader.js` + an API endpoint `/api/book/{id}/next` querying `issue_status` and `arc_issues` in `kometa/db.py`.
-* **Effort:** Moderate.
-
-### 1.2 Double-Page Spread Detection & Two-Up Alignment
-* **Problem:** In two-up landscape mode, digital comics with splash pages or double-page spreads stored as a single wide image (aspect ratio $\ge 1.15$) break subsequent page alignment, putting left and right facing pages permanently out of sync for the remainder of the issue.
-* **Proposal:** Auto-detect wide image dimensions on decode. When an image has an aspect ratio $\ge 1.15$, display it centered across the viewport as a single spread, resetting the alternating left/right grid for subsequent pages.
-* **Implementation Seam:** `kometa/static/reader.js`.
+  * Add an RTL toggle (`direction: 'ltr' | 'rtl'`) in reader controls.
+  * In two-up mode with RTL enabled, reverse the pair order so page $N$ renders on the right and $N+1$ on the left.
+  * Swipe/arrow navigation reversed (swipe right = next page).
+  * Auto-detection from `ComicInfo.xml` (`<Manga>YesAndRightToLeft</Manga>`) or GCD tags (`Manga`).
+* **Implementation Seam:** `kometa/static/reader.js` (`_rdBuildSpreads()` and key/touch handlers).
 * **Effort:** Low.
 
 ---
 
-## 2. Collector & Library Intelligence
+## 2. Library & Collection Curation
 
-### 2.1 "Fill Gaps" (Interior Missing Issues)
-* **Problem:** Long runs often have small holes (e.g., owning #1–14 and #16–25, but missing #15). Currently, collectors must click into #15 and trigger a search manually, or turn on the pull list for the entire run.
-* **Proposal:** A **"Fill Gaps"** button on the series page that detects *interior* gaps—unowned issues bounded between the lowest and highest owned issue numbers. Clicking the button queues search/acquisition only for those specific missing issues, ignoring early historical backlog or future uncollected tails.
-* **Implementation Seam:** Helper `db.get_interior_gaps(series_id)` in `kometa/db.py` wired to an action button in `kometa/static/app.js`.
+### 2.1 Targeted "Interior Gap Filler" (vs. Full-Run Sweep)
+* **The Gap:** The current `/api/series/{id}/search-missing` endpoint unconditionally queues *every* unowned historical issue in the run (e.g., clicking it on *Batman (1940)* where you own #608–619 queues 600+ back issues all the way to 1940).
+* **Proposal:** 
+  * Introduce an **"Interior Gaps"** mode that identifies missing issues strictly *bounded* between your lowest owned and highest owned issue numbers (e.g. if you own #1–10 and #12–20, it targets only issue #11).
+  * Distinguish on the series page between:
+    - **"Fill Gaps"** (interior holes in active reading runs — 1–3 issues).
+    - **"Sweep All Missing"** (full run sweep).
+* **Implementation Seam:** `kometa/db.py` (`get_interior_gaps(series_id)`) and `kometa/main.py`.
 * **Effort:** Low.
 
-### 2.2 Creator Filmography / Library Explorer Drawer
-* **Problem:** Readers frequently find an author or artist they enjoy (e.g. *Brian K. Vaughan*, *Fiona Staples*, *Jeff Lemire*) and want to see everything by that creator across their collection.
-* **Proposal:** Clicking any creator tag opens a slide-over drawer:
-  1. **In Your Library:** All series and issues featuring that creator, grouped by their role (Writer, Artist, Cover).
-  2. **Top Recommended Works:** Highest-rated unowned series in the catalogue created by them.
-* **Implementation Seam:** Leverage the existing creator indexing from `kometa/related_combined.py` and `series_signals`.
-* **Effort:** Moderate.
-
-### 2.3 Post-Trade Acquisition Cleanup Prompt
-* **Problem:** When an omnibus or trade paperback is added (e.g., *Batman: Hush* covering #608–619), previous loose single issues of those same chapters remain in the folder.
-* **Proposal:** When `kometa.tradefill.refresh_coverage()` marks previously owned single issues as covered by an acquired trade, display an action toast or badge on the series page: *"12 singles now covered by Trade. Move loose files to Trash / Archive?"*
-* **Implementation Seam:** Query `issue_status.owned == 1 AND covered_by IS NOT NULL` in `kometa/tidy.py`.
+### 2.2 Post-Trade Duplicate Archiver (Storage Reclaim)
+* **The Gap:** `refresh_coverage()` correctly identifies when an acquired trade (like *Batman: Hush*) covers single issues (#608–619). However, if you already downloaded loose singles of those chapters earlier, both the trade and the individual `.cbz` files remain on disk indefinitely, wasting gigabytes of storage.
+* **Proposal:** 
+  * A dedicated **"Redundant Singles"** section in Tidy (or a series page action):
+  * Scans for issues where `issue_status.owned == 1 AND covered_by IS NOT NULL`.
+  * Displays: *"12 single issues are 100% covered by trades (1.8 GB reclaimable)"*.
+  * 1-click **"Move Redundant Singles to Trash"** (utilizing Kometa's 7-day safe undo trash).
+* **Implementation Seam:** Query in `kometa/tidy.py`, UI button in `kometa/static/app.js`.
 * **Effort:** Low.
 
 ---
 
-## 3. Recommendation & Discovery
+## 3. Acquisition & Queue Resilience
 
-### 3.1 Home Discovery Rails: Creator Spotlights & Themes
-* **Problem:** The Home view currently features "Because you read...", but lacks broader contextual shelves.
-* **Proposal:** Add dynamic discovery rails on the main dashboard:
-  - **Creator Spotlight:** *"More from Brian K. Vaughan"* or *"Art by Greg Capullo"*.
-  - **Genre / Theme Spotlight:** *"Post-Apocalyptic Highlights"* or *"Leading Ladies in Fantasy"*.
-  - **Taste Twin Badge:** Highlight books with strong community support using an affinity chip (e.g., *"94% reader affinity"* on *Seven to Eternity* for *Monstress*).
-* **Implementation Seam:** Expose pre-grouped rails in `kometa/related.py` and render carousel cards in `kometa/static/app.js`.
+### 3.1 Manual Fulfill Dropzone (Magnet / NZB / File Paste)
+* **The Gap:** When a release exhausts all three automated channels (Usenet, Torrent, GetComics) and lands in `failed` or `not_found`:
+  - The user currently has to leave Kometa, search an external site, download the comic manually, move it via SMB/SSH into `/comics/...`, and run a library scan.
+* **Proposal:** 
+  * On any failed/unresolved item in the Activity queue, provide an action menu:
+    - **"Paste Magnet / URL"**: Sends the magnet directly to qBittorrent under category `kometa`, binding it to the existing queue job.
+    - **"Upload File"**: Drag & drop a `.cbz` directly onto the item row; Kometa verifies the archive and moves it directly into the destination folder.
+* **Implementation Seam:** `kometa/acquisition.py`, endpoint `/api/queue/{id}/fulfill`, UI in `kometa/static/app.js`.
 * **Effort:** Moderate.
 
-### 3.2 Blind Community Card Auditing Tool
-* **Problem:** Standalone community-only recommendation cards (`related_community = cards`) are parked because raw reader co-ratings can measure release-era popularity rather than pure taste affinity.
-* **Proposal:** A lightweight internal audit tool (`/tools/community-audit`) presenting 20 random community-only pairs side-by-side with simple Thumbs Up / Thumbs Down actions.
-  - Enables the owner to score 50 candidate pairs in 2–3 minutes.
-  - If $\ge 85\%$ are approved, `related_community = cards` can be safely enabled permanently.
-* **Implementation Seam:** An admin route using `related_combined.related_combined(..., opts={'community': 'cards'})`.
-* **Effort:** Low (~100 lines of template/JS).
+### 3.2 Persistent Download Strike Override
+* **The Gap:** Commit `5ee4750` introduced `source_strikes` (if a series has 2+ failures on Usenet within 30 days, it automatically routes future back issues to GetComics first). However, there is no UI indicator showing which series currently have active strikes, nor a way to reset them if an indexer repacked the releases.
+* **Proposal:** 
+  * On the series Acquisition tab, show a small badge if strikes are active (*"Usenet deprioritized: 3 recent bad releases"*).
+  * Add a **"Reset Source Strikes"** button to allow retrying Usenet after indexer re-releases.
+* **Implementation Seam:** Expose `source_strikes` in `GET /api/series/{id}`, add `DELETE /api/series/{id}/strikes`.
+* **Effort:** Low.
 
 ---
 
 ## 4. Codebase & Developer Quality of Life
 
-### 4.1 Fast In-Memory Test Suite (5.5m $\to$ 20s)
-* **Problem:** Running the full test suite (`pytest tests/`) takes 5 minutes 46 seconds (1,285 tests) because hundreds of test cases create and teardown physical SQLite DB files on macOS storage.
-* **Proposal:** Configure test fixtures in `tests/conftest.py` to use SQLite shared in-memory databases (`file:memdb_...?mode=memory&cache=shared`) or a RAM-backed temporary directory (`/tmp/kometa_ramfs`).
-* **Expected Benefit:** Dramatically cuts developer and paired-agent iteration loops from minutes to seconds.
-* **Effort:** Moderate.
+### 4.1 Fast In-Memory Test Suite (5.5m $\to$ 25s)
+* **The Problem:** The pytest suite takes 5 minutes 46 seconds for 1,285 tests because tests create and sync physical `.db` files to disk on macOS storage.
+* **Proposal:** 
+  * Update the `db_path` test fixture in `tests/conftest.py` to use SQLite in-memory databases with URI connection sharing (`file:mem_{uuid}?mode=memory&cache=shared`) or a RAM-disk temp directory.
+  * Allows running the entire 1,285-test suite in ~20–30 seconds, dramatically accelerating development and paired-agent iteration.
+* **Effort:** Moderate (fixture refactoring in `tests/conftest.py`).
 
-### 4.2 Path Fencing & Sandboxing Guard
-* **Problem:** Security open-item (`docs/open-items.md:18`) requires ensuring folder operations never escape the library or downloads root.
-* **Proposal:** A centralized path verification function:
-  ```python
-  def assert_within_root(path: str, root: str) -> str:
-      resolved_path = os.path.realpath(path)
-      resolved_root = os.path.realpath(root)
-      if os.path.commonpath([resolved_root, resolved_path]) != resolved_root:
-          raise PermissionError(f"Path traversal attempted: {path} outside {root}")
-      return resolved_path
-  ```
-  Enforce this check across delete, rename, and file-filing routes in `kometa/tidy.py` and `kometa/downloader.py`.
+### 4.2 Centralized Path Traversal Sandbox (`docs/open-items.md:18`)
+* **The Problem:** Listed in `docs/open-items.md` line 18: ensuring no filesystem operation can ever escape `/comics` or `/downloads`.
+* **Proposal:** 
+  * Create a centralized path sanitizer in `kometa/naming.py` or `kometa/security.py`:
+    ```python
+    def assert_within(path: str, allowed_roots: list[str]) -> str:
+        real_p = os.path.realpath(path)
+        if not any(os.path.commonpath([real_p, os.path.realpath(r)]) == os.path.realpath(r) for r in allowed_roots):
+            raise PermissionError(f"Access denied: {path} outside allowed roots")
+        return real_p
+    ```
+  * Call `assert_within` on all file-moving, deletion, trash, and extraction routines (`tidy.py`, `downloader.py`, `filing.py`).
 * **Effort:** Low.
 
-### 4.3 Download Rescue Dashboard
-* **Problem:** Releases that exhaust all three acquisition channels (Usenet, Torrent, GetComics) sit in the queue in a `failed` or `not_found` state.
-* **Proposal:** Add an "Unresolved" tab in Activity showing failed items with one-click quick actions:
-  - **Alternate Title Search:** Try alias or publisher-prefixed variations.
-  - **Manual Dropzone:** One-click paste magnet link or upload NZB/CBZ directly to fulfill that specific queue item.
-* **Implementation Seam:** `kometa/acquisition.py` + `kometa/static/app.js`.
-* **Effort:** Moderate.
+### 4.3 Activity Long-Polling / Differential Merging (`docs/open-items.md:26`)
+* **The Problem:** When downloads are active, `app.js` polls the entire queue every 2 seconds (~6 KB gzipped JSON each time), causing continuous unneeded deserialization.
+* **Proposal:** Support `GET /api/queue?since=<timestamp>` so only items whose status changed are returned, with the frontend updating its in-memory map.
+* **Effort:** Low.
