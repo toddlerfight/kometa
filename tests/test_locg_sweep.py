@@ -13,6 +13,7 @@ def _community(monkeypatch):
     calls = []
     monkeypatch.setattr(locg_client, "fetch_community", lambda lid: calls.append(lid) or {"rating": 4.0})
     monkeypatch.setattr(locg_client, "_page_cache", {})
+    monkeypatch.setattr(locg_client, "_pace", lambda *a, **k: None)
     return calls
 
 

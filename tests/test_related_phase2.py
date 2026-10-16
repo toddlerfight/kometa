@@ -17,6 +17,7 @@ def _fresh_index():
     rc._cache.update(ix=None, path=None, fp=None, at=0.0, opts=None)
     rc._with_cache.clear()
     rc._theme_memo.clear()
+    rc._comm_memo.clear()
     rel._nb_cache.update(value=None, path=None, at=0.0)
     yield
 
@@ -133,3 +134,39 @@ def test_the_switches_come_from_config_and_a_change_rebuilds_the_index(db_path, 
     assert second is not first and second.opts == {"themes": True, "community": "boost"}
     db.set_config({"related_community": "nonsense"}, db_path)
     assert rc.options(db_path)["community"] == "off"
+
+
+def test_community_memo_skips_rebuild_on_unrelated_changes_and_recomputes_when_scores_land(db_path):
+    a = _run(db_path, "Run A", [[("writer", "W")]] * 2)
+    b = _run(db_path, "Run B", [[("writer", "W")]] * 2)
+    flop = _run(db_path, "Run C", [[("writer", "W")]] * 2)
+    _readers(db_path, {f"user:{i}": {a: 9.5, b: 9.0, flop: 3.0} for i in range(10)})
+
+    first = rc._community(db_path)
+    assert first
+    memo_entry = rc._comm_memo.get(db_path)
+    assert memo_entry is not None
+    key1, cached_res = memo_entry
+    assert cached_res == first
+
+    # An unrelated change: new issue in issue_record
+    rec.write_issue(a, 99.0, {"desc": "New issue description", "credits": []},
+                    "metron", "full", {"metron_issue_id": 99999}, db_path)
+
+    # Calling _community again returns the exact same object from memo
+    second = rc._community(db_path)
+    assert second is cached_res
+    assert rc._comm_memo[db_path][0] == key1
+
+    # Now a score lands in cbr_people_scores
+    with db._connect(db_path) as c:
+        c.execute("INSERT OR REPLACE INTO cbr_people_scores (person, series_path, number, score, date, via, at) "
+                  "VALUES ('user:999', '/comic-books/reviews/image-comics/run-1', '1', 10.0, '2026-10-17', 'issue', '2026-10-17 07:00:00')")
+
+    # Calling _community recomputes and gets a new memo key
+    third = rc._community(db_path)
+    assert third
+    key2 = rc._comm_memo[db_path][0]
+    assert key2 != key1
+
+

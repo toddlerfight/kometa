@@ -11,9 +11,9 @@ All metrics measured against the live production database (Python 3.12, SQLite 3
 | Area | Measured Baseline | Target | Root Cause / Verification | Action |
 |---|---|---|---|---|
 | **CBR Score Table Footprint** | **213 MB** (65% of entire DB) | **101.4 MB** | Composite PK autoindex (67 MB) + series index (53 MB) + table (101.4 MB) | Cache first-year in `cbr_people_series`, migrate to `WITHOUT ROWID`, drop series index (saves 112 MB) |
-| **Fingerprint Scan** | **32 – 37 ms** (`COUNT(*), MAX(at)`) | **< 0.05 ms** | Sequential scan of 773k rows in `_fingerprint()`; runs every 20s–5m | Track `MAX(rowid)` or `scores_version` in `cbr_people_state` |
-| **Community Matrix Build** | **310 ms** (195 ms GROUP BY, warm total 0.85s) | **0.0 ms** (warm) | Recalculated on issue record trickles; bulk of time is hub damping | Memoise `_community` in-memory keyed on `(cbr_stamp, linked)` |
-| **Test Suite Execution** | **348 s** (1,294 tests) | **66 s** (Phase 1) $\to$ **~14 s** (Phase 2) | Reader clock leakage (`activity._last_page["at"]` = 279s wait in `yield_to_reader()`) + 8 inline timeout tests (52s) | Added `_reset_reader_activity` in `conftest.py` (drops 279s); mock rescue/limiter sleeps in the 8 tests |
+| **Fingerprint Scan** | **32 – 37 ms** (`COUNT(*), MAX(at)`) | **1.1 ms** (live) | Sequential scan of 773k rows in `_fingerprint()`; runs every 20s–5m | Track `scores_version` in `cbr_people_state` (avoids `MAX(rowid)` replace blind spot) |
+| **Community Matrix Build** | **310 ms** (195 ms GROUP BY, warm total 0.85s) | **0.4 ms** (live memo) | Recalculated on issue record trickles; bulk of time is hub damping | Memoise `_community` in-memory keyed on `(cbr_stamp, linked)` (pinned by test) |
+| **Test Suite Execution** | **348 s** (1,294 tests) | **38.4 s** (1,295 tests) | Reader clock leakage (279s) + live network / pace timeouts (30s) | Fixed via `_reset_reader_activity` fixture + stubbing un-injected pacing / rescue loops |
 | **Cache Storage Bloat** | **33 MB** (13,252 rows) | **~28 MB** | 2,893 dead `metron:<id>` v1 rows (5.2 MB) unread since 2026-10-12 | One-time `DELETE FROM issue_details_cache WHERE locg_issue_id LIKE 'metron:%'` |
 | **Activity Queue Polling** | **1 KB gzipped / 2 s** | **Optimal** | Already fixed on 2026-10-17 (`b0cde04`) via `/api/queue?since=` | Verified complete |
 
@@ -31,16 +31,17 @@ The table `cbr_people_scores` and its indexes account for 65% of the database fi
 #### 1. Why `idx_cbr_people_scores_series` Exists and How to Remove It Safely
 * **Live Usage:** The web app calls `/api/discover/community` and `/api/discover/community/because-ondeck` when rendering recommendation rows (`static/app.js:1215-1216`).
 * **Measured Query:** Finding publication years for 12 candidate series paths in `recommend()` (`cbr_people.py:718`) takes **12.6 ms with the index** and **66.9 ms without**.
-* **Clean Solution:** Store each run's `first_year` directly in `cbr_people_series` (a 2-column table of ~3k rows) during harvest, and read it from there. Once `cbr_people_series` serves the year, drop `idx_cbr_people_scores_series` safely without causing a 67 ms table scan on discover loads.
+* **Clean Solution:** Store each run's `first_year` directly in `cbr_people_series` (a 2-column table of ~3k rows) during harvest, and read it from there. Once `cbr_people_series` serves the year, remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `kometa/cbr_people.py:87` and drop the index.
 
 #### 2. Migrating to `WITHOUT ROWID`
 * **Real Production Copy Measurement:**
   - Standard table + series index: **213 MB**
   - `WITHOUT ROWID` + series index: **157.4 MB** (secondary indexes in `WITHOUT ROWID` store the full composite primary key instead of a 64-bit integer rowid)
-  - `WITHOUT ROWID` without series index: **101.4 MB** (**saves 112 MB**, reducing the table footprint by more than half)
+  - `WITHOUT ROWID` without series index: **101.4 MB** (**saves 112 MB**, reducing table footprint by more than half)
   - Query speed: `GROUP BY person, series_path` accelerates from **189 ms down to 129 ms**.
 * **Migration Procedure ("The How"):**
-  1. Guarded one-time migration step inside `cbr_people.ensure_tables()`:
+  1. Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py:87` so the index is not recreated on the new table.
+  2. Guarded one-time migration step inside `cbr_people.ensure_tables()`:
      ```sql
      -- Check sqlite_master for existing schema
      CREATE TABLE cbr_people_scores_v2 (
@@ -48,61 +49,50 @@ The table `cbr_people_scores` and its indexes account for 65% of the database fi
          score REAL NOT NULL, date TEXT, via TEXT, at TEXT,
          PRIMARY KEY (person, series_path, number)
      ) WITHOUT ROWID;
-     INSERT OR REPLACE INTO cbr_people_scores_v2 SELECT * FROM cbr_people_scores;
+     INSERT INTO cbr_people_scores_v2 (person, series_path, number, score, date, via, at)
+         SELECT person, series_path, number, score, date, via, at FROM cbr_people_scores;
      DROP TABLE cbr_people_scores;
      ALTER TABLE cbr_people_scores_v2 RENAME TO cbr_people_scores;
      ```
      This copy takes ~1.0 s in an atomic transaction.
-  2. Invalidate cache via `cbr_people_state`:
-     Since `WITHOUT ROWID` removes the `rowid` column, `cbr_people.py` bumps a `scores_version` key in `cbr_people_state` once per page or profile commit.
-  3. Reclaim physical disk space:
-     Run `VACUUM` at the next deploy window via `./deploy.sh` (outside nightly backup windows) to shrink the database file.
+  3. Invalidate cache via `scores_version` in `cbr_people_state`:
+     `MAX(rowid)` has a minor blind spot without `AUTOINCREMENT`: an `INSERT OR REPLACE` on the row holding the highest `rowid` reuses that rowid. Bumping `scores_version` once per page or profile commit in `cbr_people.py` is 100% reliable and works seamlessly with `WITHOUT ROWID`.
+  4. Physical disk reclamation:
+     `deploy.sh` does not run `VACUUM`. Run `sqlite3 /data/kometa.db "VACUUM;"` manually outside the nightly backup window to shrink the production database from **328 MB $\to$ ~211 MB** (328 - 112 MB for scores - 5 MB for dead cache).
 
 ---
 
-### Area B: Test Suite Runtime (348s $\to$ 66s $\to$ ~14s)
+### Area B: Test Suite Runtime (348s $\to$ 38.4s)
 
-#### 1. The Reader Clock Fixture (348s $\to$ 66s)
-* **Root Cause:** `activity._last_page["at"]` is module state. Reader tests set it, and subsequent tests invoking `yield_to_reader()` wait in 5-second sleep loops until the 90s `READING_WINDOW_S` expires (279s wasted across 3 tests).
-* **Fix Applied:** Autouse fixture in `tests/conftest.py`:
-  ```python
-  @pytest.fixture(autouse=True)
-  def _reset_reader_activity():
-      from kometa import activity
-      activity._last_page["at"] = 0.0
-      activity._book_pages.clear()
-      yield
-      activity._last_page["at"] = 0.0
-      activity._book_pages.clear()
-  ```
-  All 1,294 tests pass cleanly in **66 seconds**.
+The test suite runtime was reduced from **5m 48s** to **38.4s** (all 1,295 tests passing, zero external network traffic):
 
-#### 2. The Next 8 Slow Tests (52s)
-The remaining 1,286 tests run in just 14 seconds. The top 8 slow tests account for 52 seconds:
-- `test_webtoon_parks_with_a_clear_error_and_cleans_the_staging` (15.5 s): Triggered by `_rescue_later` executing synchronously under `FINALIZE_INLINE=True`, attempting GetComics search across real network timeouts.
-- `test_three_failures_in_a_row_is_the_wall_and_the_pages_are_not_blamed` (10.1 s): Unmocked `fi` fallback in `sweep_tick` call 2 calling real `locg_client.fill_issue_details` across a 10s timeout.
-- `test_owned_on_disk...` (6.0 s), `test_extra_runs_merge...` (5.7 s), `test_builds_issue_list_from_locg_anon` (4.7 s), `test_a_broken_page_is_skipped...` (4.0 s), `test_a_locg_trade_landing...` (3.8 s), `test_flaresolverr_clears...` (2.3 s): Real limiter spacing and backoff sleeps not routed through injectable mock sleeps.
+1. **Reader Clock Leakage (Cut 279s):**
+   * Added `_reset_reader_activity` in `tests/conftest.py` to reset `activity._last_page["at"] = 0.0` and clear `_book_pages` before/after each test.
+2. **Third-Party Network Call in Webtoon Guard (Cut 15.4s):**
+   * `test_webtoon_parks...` in `tests/test_acquisition.py` was opening real HTTPS connections to `getcomics.org:443` through `_rescue_later` executing inline. Stubbed `_gc_rescue` in that test.
+3. **Pacing Sleep in LOCG Sweep (Cut 9.3s):**
+   * `test_three_failures_in_a_row...` in `tests/test_locg_sweep.py` sat in `locg_client._pace` (3s `PACE_GAP_S` delays). Monkeypatched `_pace` in `_community` fixture.
+4. **Unstubbed DNS Lookup:**
+   * `test_issue_art_still_wins_over_trades` in `tests/test_series_thumbnail.py` attempted DNS lookups for host `"x"`. Stubbed `images.serve` in `wired` fixture.
 
 ---
 
 ### Area C: Recommendation Index & Community Memoisation
 
-* **Baseline:** `_community()` takes 310 ms (195 ms `GROUP BY`).
-* **Fix Applied:** In-memory dictionary `_comm_memo` in `kometa/related_combined.py` keyed on `(cbr_stamp, linked)`.
-* Redundant rebuilds triggered by issue trickles or title changes return in **0.0 ms**.
-* `_fingerprint()` queries `MAX(rowid)` (or `scores_version` from `cbr_people_state`), dropping check latency from 37 ms to **< 0.05 ms**.
+* **Measured Live Baseline:** Repeat `_community` calls answer in **0.4 ms**; `_fingerprint()` dropped from 32 ms to **1.1 ms**.
+* **Pinned Behavior:** Pinned by `test_community_memo_skips_rebuild_on_unrelated_changes_and_recomputes_when_scores_land` in `tests/test_related_phase2.py`:
+  - `_community` skips recomputation when only `issue_record` changes.
+  - `_community` recomputes when a new score lands in `cbr_people_scores`.
 
 ---
 
 ### Area D: `issue_details_cache` Dead Key Pruning
 
-* **Table Structure:** Key column is `locg_issue_id` (not `key`).
-* **Dead Weight:** 2,893 legacy `metron:<id>` v1 entries (5.2 MB) from pre-October 2026.
 * **Targeted Prune:**
   ```sql
-  -- Verify count first:
+  -- Verify count first (expected: 2,893):
   SELECT COUNT(*) FROM issue_details_cache WHERE locg_issue_id LIKE 'metron:%';
-  -- Delete legacy keys:
+  -- Delete legacy v1 keys:
   DELETE FROM issue_details_cache WHERE locg_issue_id LIKE 'metron:%';
   ```
   Preserves active `metron2:` entries necessary for upstream Metron outage fallback.
@@ -165,24 +155,27 @@ EOF
 
 ### Step 3: Pytest Duration Profiling
 ```bash
-.venv/bin/python -m pytest tests/ --durations=15
+.venv/bin/python -m pytest tests/ --durations=10
 ```
 
 ---
 
 ## 4. Execution Roadmap
 
-### Phase 1: Completed / In Progress
+### Phase 1: Completed & Verified Live
 - [x] Add `_reset_reader_activity` autouse fixture to `tests/conftest.py` (cuts test suite from 348s to 66s).
-- [x] Add in-memory `_comm_memo` and `MAX(rowid)` / state check to `kometa/related_combined.py`.
+- [x] Add in-memory `_comm_memo` and `MAX(rowid)` / state check to `kometa/related_combined.py` (live: 0.4 ms memo, 1.1 ms fingerprint).
+- [x] Eliminate slow pacing and live third-party network fetches in test suite (suite runtime down to 38.4s).
+- [x] Pin community memoisation invalidation behavior in `tests/test_related_phase2.py`.
 - [ ] Run one-time delete of legacy `metron:%` rows in `issue_details_cache` on production.
 
 ### Phase 2: First-Year Cache & Index Deprecation
 - [ ] Add `first_year` column to `cbr_people_series` and populate it at harvest.
 - [ ] Update `recommend()` in `kometa/cbr_people.py` to read `first_year` from `cbr_people_series`.
+- [ ] Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py:87`.
 - [ ] Drop `idx_cbr_people_scores_series` (reclaims 53 MB without query regression).
 
 ### Phase 3: `WITHOUT ROWID` Migration & Space Reclamation
 - [ ] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).
-- [ ] Implement one-time atomic table migration to `WITHOUT ROWID` in `cbr_people.ensure_tables()`.
-- [ ] Run `VACUUM` on production during deploy window to shrink database from 328 MB $\to$ ~190 MB.
+- [ ] Implement one-time atomic table migration to `WITHOUT ROWID` with explicit column list in `cbr_people.ensure_tables()`.
+- [ ] Run `sqlite3 /data/kometa.db "VACUUM;"` on production outside nightly backup window (shrinks DB from 328 MB $\to$ ~211 MB).

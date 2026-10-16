@@ -13,6 +13,8 @@ TPB = "https://s3.amazonaws.com/comicgeeks/comics/covers/medium-2050784.jpg"
 def wired(db_path, series, monkeypatch):
     monkeypatch.setattr(th, "DB_PATH", db_path)
     served = []
+    from kometa import images
+    monkeypatch.setattr(images, "serve", lambda *a, **k: None)
     monkeypatch.setattr(th, "_cached_image_response", lambda url, *a, **k: served.append(url) or url)
     return db_path, series, served
 

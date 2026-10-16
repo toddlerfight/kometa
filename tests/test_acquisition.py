@@ -795,7 +795,9 @@ class TestFinalizeWebtoonGuard:
         q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
         return q, storage, dest
 
-    def test_webtoon_parks_with_a_clear_error_and_cleans_the_staging(self, wired, tmp_path):
+    def test_webtoon_parks_with_a_clear_error_and_cleans_the_staging(self, wired, tmp_path, monkeypatch):
+        import kometa.acquisition as acq
+        monkeypatch.setattr(acq, "_gc_rescue", lambda *a, **k: False)
         q, storage, dest = self._run(wired, tmp_path, (800, 1280))
         assert q["state"] == "failed"
         assert "webtoon" in q["error"]
