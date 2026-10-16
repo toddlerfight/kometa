@@ -47,7 +47,13 @@ def baseline_engine(series_id: int, path: str) -> list[dict]:
     return related.related(series_id, limit=12, path=path)
 
 
-ENGINES = {"baseline": baseline_engine}
+def combined_engine(series_id: int, path: str) -> list[dict]:
+    """The phase-1 combiner (kometa/related_combined.py)."""
+    from kometa import related_combined
+    return related_combined.related_combined(series_id, limit=12, path=path)
+
+
+ENGINES = {"baseline": baseline_engine, "combined": combined_engine}
 
 
 def _engine(name: str):
@@ -107,7 +113,7 @@ def weak_creator_only(seed: int, card: dict, strength) -> bool:
     """A card earned only by a shared inker, colorist or letterer: its only reasons
     are credits, and the strongest credit the two series share is weak. (No shared
     credit at all means the reason wasn't a credit — that isn't this gate's call.)"""
-    s = strength(seed, card["series_id"])
+    s = card["credit_strength"] if "credit_strength" in card else strength(seed, card["series_id"])
     if not 0 < s < WEAK_ROLE_WEIGHT:
         return False
     ch = card.get("channels")

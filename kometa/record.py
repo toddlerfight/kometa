@@ -163,12 +163,30 @@ def genre_key(label: str) -> tuple[str, str]:
 def effective_tags(series_id: int, path=None) -> list[dict]:
     """The labels that describe a series, with a trust weight — what Related scores
     and what <Genre> is written from. Once Metron has answered, its coarse genres are
-    the series' genres: the files' coarse labels are dropped, not merged. (Metron only
-    says what a run IS, never what it isn't, so "keep the file labels Metron didn't
-    mention" would keep Saga's 'superhero' and 'horror' — the partner's trap.) Themes
-    stay: GCD's at GCD_TRUST, the files' at FILE_THEME_TRUST. With no Metron answer,
-    GCD's and the files' genres stand in at those weights. 'other' never appears."""
-    rows = tags_for(series_id, path)
+    the series' genres: the other sources' coarse labels are dropped, not merged.
+    (Metron only says what a run IS, never what it isn't, so "keep the file labels
+    Metron didn't mention" would keep Saga's 'superhero' and 'horror' — the
+    partner's trap.) Themes stay: GCD's at GCD_TRUST, the files' at FILE_THEME_TRUST.
+    With no Metron answer, GCD's and the files' genres stand in at those weights.
+    'other' never appears."""
+    return _effective(tags_for(series_id, path))
+
+
+def effective_tags_all(path=None) -> dict[int, list[dict]]:
+    """effective_tags for every series in one read — for Related's index."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    by: dict[int, list[dict]] = {}
+    with db._connect(path) as conn:
+        for r in conn.execute("""SELECT tracked_series_id, key, label, kind, source FROM series_tags
+                ORDER BY tracked_series_id, CASE source WHEN 'metron' THEN 0 WHEN 'gcd' THEN 1 ELSE 2 END, key"""):
+            by.setdefault(r["tracked_series_id"], []).append(
+                {"key": r["key"], "label": r["label"], "kind": r["kind"], "source": r["source"]})
+    return {sid: _effective(rows) for sid, rows in by.items()}
+
+
+def _effective(rows: list[dict]) -> list[dict]:
+    """The merge rule itself, over one series' rows (Metron first, then GCD, then files)."""
     has_metron = any(r["source"] == "metron" for r in rows)
     out, seen = [], set()
     for r in rows:

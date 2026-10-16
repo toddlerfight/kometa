@@ -855,6 +855,18 @@ def _safe_fill(series_id: int):
 
 
 # --- API --------------------------------------------------------------------------
+def _row(series_id: int) -> list[dict]:
+    """The series page's Related row: today's engine, or the phase-1 combiner once the
+    owner has seen the evaluation and set config related_engine = 'combined'."""
+    if db.get_config(DB_PATH).get("related_engine") == "combined":
+        from kometa import related_combined
+        try:
+            return related_combined.related_combined(series_id, path=DB_PATH)
+        except Exception as e:                      # never a blank page over a scoring bug
+            logger.warning(f"Related: combined engine failed for {series_id}, using the old one: {e}")
+    return related(series_id)
+
+
 @router.get("/api/series/{series_id}/related")
 def api_related(series_id: int):
     s = db.get_series_by_id(series_id, DB_PATH)
@@ -883,7 +895,7 @@ def api_related(series_id: int):
         creators, c_pending = creator_rows(series_id, path=DB_PATH)
     except Exception as e:
         logger.info(f"Related: creator rows skipped: {e}")
-    return {"related": related(series_id), "outward": out, "creators": creators,
+    return {"related": _row(series_id), "outward": out, "creators": creators,
             "pending": pending or out_pending or c_pending}
 
 
