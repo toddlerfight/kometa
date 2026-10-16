@@ -137,6 +137,13 @@ class SABnzbdClient:
         if slot:
             status = (slot.get("status") or "").lower()
             if status == "completed":
+                gap = incomplete_reason(slot)
+                if gap:
+                    # SAB calls a job 'Completed' with "1 articles were missing" in its own
+                    # stage log and no repair stage — the RAR unpacks to truncated pages
+                    # (Puzzlebox #2/#4/#5, 2026-10-16). That's a failed download, and failed
+                    # is what sends it down the rescue path instead of onto the shelf.
+                    return {"status": "failed", "error": gap}
                 return {"status": "completed", "storage": slot.get("storage", "")}
             if status == "failed":
                 return {"status": "failed", "error": slot.get("fail_message") or "SABnzbd reported failed"}
@@ -162,3 +169,23 @@ def find_comics_in_dir(directory: str) -> list[str]:
             if os.path.splitext(f)[1].lower() in PIPELINE_EXTS
         )
     return out
+
+
+def incomplete_reason(slot: dict) -> str | None:
+    """Why a 'Completed' history slot is really a corpse: the Download stage reported
+    missing articles and no Repair stage says it repaired or verified. None = whole."""
+    import re as _re
+    missing = None
+    repaired = False
+    for st in slot.get("stage_log") or []:
+        name = (st.get("name") or "").lower()
+        text = " ".join(str(a) for a in (st.get("actions") or []))
+        if name == "download":
+            m = _re.search(r"(\d+) articles? (?:were|was) missing", text)
+            if m:
+                missing = int(m.group(1))
+        elif name == "repair" and _re.search(r"repaired|verified|quick check", text, _re.I):
+            repaired = True
+    if missing and not repaired:
+        return f"incomplete: {missing} article{'s' if missing != 1 else ''} missing and no repair"
+    return None

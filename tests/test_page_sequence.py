@@ -147,3 +147,44 @@ def test_a_cover_named_apart_from_the_numbered_pages_counts_as_the_opening():
     assert _page_sequence_problem(names) is None
     truly_cut = [f"Where Monsters Dwell 004-{n:03d}.jpg" for n in range(3, 24)]
     assert "pages start at 003" in _page_sequence_problem(truly_cut)
+
+
+def test_a_fragment_of_a_few_pages_is_incomplete():
+    """Puzzlebox #2 landed as three truncated pages named 002-004: too few to judge by the
+    old rule, so it passed. A single issue is never that short."""
+    assert "only 3 pages" in _page_sequence_problem(pages("x (2021-) 002-", [2, 3, 4]))
+    assert _page_sequence_problem(pages("x-", range(0, 20))) is None
+
+
+def _jpeg(w=200, h=300):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (120, 30, 200)).save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def test_a_truncated_page_is_caught_by_decoding(tmp_path):
+    from kometa.downloader import _truncated_page_problem
+    good = _jpeg()
+    cbz = tmp_path / "issue.cbz"
+    with zipfile.ZipFile(cbz, "w") as z:
+        for i in range(10):
+            z.writestr(f"p-{i:03d}.jpg", good)
+    assert _truncated_page_problem(str(cbz)) is None
+    bad = tmp_path / "bad.cbz"
+    with zipfile.ZipFile(bad, "w") as z:
+        for i in range(9):
+            z.writestr(f"p-{i:03d}.jpg", good)
+        z.writestr("p-009.jpg", good[: len(good) // 2])                  # the tail lost its articles
+    problem = _truncated_page_problem(str(bad))
+    assert problem and "p-009.jpg" in problem
+    short = tmp_path / "short.cbz"                                        # five bytes short still has every pixel (The Dirt Beneath the Devil #3)
+    with zipfile.ZipFile(short, "w") as z:
+        for i in range(9):
+            z.writestr(f"p-{i:03d}.jpg", good)
+        z.writestr("p-009.jpg", good[:-5])
+    assert _truncated_page_problem(str(short)) is None
+    with zipfile.ZipFile(tmp_path / "mid.cbz", "w") as z:                # a cut in the middle isn't sampled: that's the sequence guard's job
+        for i in range(20):
+            z.writestr(f"p-{i:03d}.jpg", good[: len(good) // 2] if i == 10 else good)
+    assert _truncated_page_problem(str(tmp_path / "mid.cbz")) is None

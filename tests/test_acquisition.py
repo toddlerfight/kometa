@@ -20,7 +20,7 @@ import kometa.acquisition as acq
 ZIP_MAGIC = b"PK\x03\x04"
 
 
-def _real_cbz_bytes(pages=3):
+def _real_cbz_bytes(pages=6):      # 3 pages reads as a fragment since 2026-10-16 (Puzzlebox #2); a comic has more
     """A genuinely readable CBZ. Bare ZIP_MAGIC used to be enough here, but
     finalize now OPENS what it placed before calling it an acquisition — a file
     that claims to be a zip and cannot be read is exactly what that gate exists
@@ -827,7 +827,7 @@ class TestFinalizeConvertsCbr:
         (storage / "Saga 001.cbr").write_bytes(b"Rar!\x1a\x07\x01\x00 stub")
         extracted = tmp_path / "rar-extract"
         extracted.mkdir()
-        for i in range(3):
+        for i in range(6):   # a comic has more than a fragment's worth of pages (2026-10-16 rule)
             (extracted / f"p{i:03d}.jpg").write_bytes(b"\xff\xd8\xff fakejpeg")
         monkeypatch.setattr(downloader, "_extract_rar_once", lambda p: str(extracted))
         dest = tmp_path / "lib" / "Saga"
@@ -846,7 +846,7 @@ class TestFinalizeConvertsCbr:
         assert not (dest / "Saga #001.cbr").exists()
         assert q["filename"].endswith("Saga #001.cbz")
         with zipfile.ZipFile(dest / "Saga #001.cbz") as zf:
-            assert sorted(zf.namelist()) == ["p000.jpg", "p001.jpg", "p002.jpg"]
+            assert sorted(zf.namelist()) == [f"p{i:03d}.jpg" for i in range(6)]
 
 
 class TestTradePackDelivered:

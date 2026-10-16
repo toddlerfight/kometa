@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
 BATCH_S = 60                        # quiet this long after the last landing, then send
+HOLD_MAX_S = 30 * 60                # a series mid-pull holds its landings this long at most
+ACTIVE_STATES = ("queued", "searching", "downloading", "processing")
 MAX_BATCH_IDS = 20                  # book ids a batch carries (APNs payloads cap at 4 KB)
 JWT_TTL_S = 40 * 60                 # Apple wants it 20–60 min old at most; refresh at 40
 HOSTS = {"sandbox": "https://api.sandbox.push.apple.com", "production": "https://api.push.apple.com"}
@@ -284,7 +286,7 @@ def issue_landed(series_id: int, number, path=None):
         if not s:
             return
         with _lock:
-            _pending.append({"series_id": series_id, "number": number, "title": s["title"]})
+            _pending.append({"series_id": series_id, "number": number, "title": s["title"], "at": time.time()})
             if _timer:
                 _timer.cancel()
             _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
@@ -355,12 +357,49 @@ def fcm_message(token: str, payload: dict) -> dict:
                                     "notification": {"channel_id": FCM_CHANNEL, "sound": "default", "tag": tag}}}}
 
 
+def _held_back(items: list[dict], now: float, path) -> tuple[list[dict], list[dict]]:
+    """Split landings into (held, ready): held = the series is still pulling and the
+    oldest held landing is younger than HOLD_MAX_S."""
+    active: dict[int, bool] = {}
+    with db._connect(path) as conn:
+        for sid in {it["series_id"] for it in items}:
+            try:
+                n = conn.execute(f"SELECT COUNT(*) FROM download_queue WHERE tracked_series_id = ? AND state IN "
+                                 f"({','.join('?' * len(ACTIVE_STATES))})", (sid, *ACTIVE_STATES)).fetchone()[0]
+            except Exception:
+                n = 0
+            active[sid] = n > 0
+    held, ready = [], []
+    for it in items:
+        if active.get(it["series_id"]) and now - it.get("at", now) < HOLD_MAX_S:
+            held.append(it)
+        else:
+            ready.append(it)
+    return held, ready
+
+
 def flush(path=None, post=None) -> dict | None:
     global _timer
     with _lock:
         items = list(_pending)
         _pending.clear()
         _timer = None
+    if not items:
+        return None
+    # A series still pulling — more of its issues queued, searching or downloading — keeps
+    # its landings back, so a run that drains over twenty minutes buzzes ONCE ("6 new on
+    # the shelf") when the last one lands, like the Activity row that collapses them. Held
+    # for HOLD_MAX_S at most: a stuck queue must not hold a notification hostage.
+    path = path or DB_PATH
+    now = time.time()
+    held, items = _held_back(items, now, path)
+    if held:
+        with _lock:
+            _pending[:0] = held
+            if items is None or not items:
+                _timer = threading.Timer(BATCH_S, flush, kwargs={"path": path})
+                _timer.daemon = True
+                _timer.start()
     if not items:
         return None
     seen, uniq = set(), []

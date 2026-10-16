@@ -765,6 +765,7 @@ def _count_images_in_dir(d: str) -> int:
 # of the run, so a single skipped number (an ad pulled, a stray rename) passes.
 _PAGE_TRAIL_RE = re.compile(r'(\d+(?:[-_ .]+\d+)*)$')
 _PAGE_GROUP_MIN = 8
+_PAGE_MIN_SINGLE = 4     # fewer images than this is not a comic, it is a fragment (Puzzlebox #2: three truncated pages, 2026-10-16)
 _PAGE_GROUP_SHARE = 0.6
 _PAGE_GAP_MIN = 3
 _PAGE_GAP_SHARE = 0.10
@@ -790,6 +791,8 @@ def _page_sequence_problem(names) -> str | None:
         pages.add(nums[-1])
         if len(nums) >= 2 and nums[-1] == nums[-2] + 1:
             pages.add(nums[-2])            # a spread: '012-013'
+    if 0 < total < _PAGE_MIN_SINGLE:
+        return f"only {total} page{'s' if total != 1 else ''} — a single issue is never that short"
     if not groups:
         return None
     idx = max(groups.values(), key=len)
@@ -815,6 +818,99 @@ def _page_names(path: str, extracted_dir: str | None = None) -> list[str] | None
         return [f for _r, _d, files in os.walk(extracted_dir) for f in files]
     from kometa.naming import _archive_entry_names
     return _archive_entry_names(path)
+
+
+_TRUNC_SAMPLE = 3     # pages decoded from each end: a usenet post missing articles loses its tail
+_TRUNC_BLANK_MIN = 0.2  # a cut page's blank band; a page that is merely a few bytes short has none
+
+
+def _truncated_page_problem(path: str, extracted_dir: str | None = None) -> str | None:
+    """Decode the first and last few pages; a page that will not decode to the end is a
+    download that lost articles. SAB said 'Completed' with '1 articles were missing' on
+    Puzzlebox #2/#4/#5 (2026-10-16) and the pages sized fine — only a full decode shows
+    the cut. None when the archive can't be read (RAR without an extract): never reject
+    what wasn't actually measured."""
+    try:
+        from io import BytesIO
+        from PIL import Image, ImageFile
+    except ImportError:
+        return None
+    try:
+        if extracted_dir:
+            files = []
+            for root, _dirs, fnames in os.walk(extracted_dir):
+                files.extend(os.path.join(root, f) for f in fnames if f.lower().endswith(_IMG_EXTS))
+            files.sort()
+            pick = files[:_TRUNC_SAMPLE] + files[-_TRUNC_SAMPLE:] if len(files) > 2 * _TRUNC_SAMPLE else files
+
+            def _blob(f):
+                with open(f, 'rb') as fh:
+                    return fh.read()
+            pages = [(os.path.basename(f), _blob(f)) for f in pick]
+        else:
+            with open(path, 'rb') as fh:
+                if fh.read(2) != b'PK':
+                    return None
+            with zipfile.ZipFile(path, 'r') as zf:
+                names = sorted(n for n in zf.namelist() if n.lower().endswith(_IMG_EXTS))
+                pick = names[:_TRUNC_SAMPLE] + names[-_TRUNC_SAMPLE:] if len(names) > 2 * _TRUNC_SAMPLE else names
+                pages = [(os.path.basename(n), zf.read(n)) for n in pick]
+    except Exception:
+        return None
+    # The live process decodes LENIENTLY (reader.py sets LOAD_TRUNCATED_IMAGES for
+    # every thread, and Pillow's Parser obeys it too), so a cut page never raises
+    # here — it decodes with a flat blank band where the lost articles were. Set the
+    # same flag (only ever ON, never flipped back: flipping it off raced the reader's
+    # threads once) so this behaves identically in tests and in the container, then
+    # judge the page the way the cover path does: no end-of-image marker AND a
+    # measurably blank bottom. A JPEG short by five bytes keeps its pixels and passes.
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    for name, data in pages:
+        if not _tail_marker_missing(data):
+            continue
+        try:
+            im = Image.open(BytesIO(data))
+        except Exception:
+            continue                      # not an image we can identify: no verdict, same rule as the dims guard
+        try:
+            with im:
+                im.load()
+                blank = _blank_bottom_fraction(im)
+        except Exception as e:            # a real image header whose data runs out: the download lost its tail
+            return f"page {name!r} does not decode ({str(e)[:60]})"
+        if blank > _TRUNC_BLANK_MIN:
+            return f"page {name!r} is cut short ({int(blank * 100)}% of it never arrived)"
+    return None
+
+
+def _tail_marker_missing(data: bytes) -> bool:
+    """True when an image's bytes stop before its end marker: JPEG EOI (FF D9) or
+    PNG IEND. Only JPEG and PNG are judged; anything else gets no verdict."""
+    if data[:2] == b"\xff\xd8":
+        return b"\xff\xd9" not in data[-2048:]
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return b"IEND" not in data[-64:]
+    return False
+
+
+def _blank_bottom_fraction(im) -> float:
+    """How much of the image, from the bottom up, is one flat value — the grey a
+    truncated JPEG decode leaves, the black a truncated PNG leaves. Same sampling
+    as reader._grey_bottom_fraction, but any uniform value counts, not just 128."""
+    g = im.convert("L")
+    w, h = g.size
+    if not w or not h:
+        return 0.0
+    px = g.load()
+    xs = range(0, w, max(1, w // 32))
+    rows = 0
+    for y in range(h - 1, -1, -1):
+        v = px[xs[0], y]
+        if all(abs(px[x, y] - v) <= 2 for x in xs):
+            rows += 1
+        else:
+            break
+    return rows / h
 
 
 def _count_archive_images(path: str) -> int | None:
@@ -998,7 +1094,7 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     pseries = _series_from_page_names(names)
     if _series_disagrees(series_title, pseries):
         raise WrongIssueError(f"the pages are named {pseries!r}, expected {series_title!r}")
-    problem = _page_sequence_problem(names) if names else None
+    problem = (_page_sequence_problem(names) if names else None) or _truncated_page_problem(path, extracted_dir)
     if problem:
         raise IncompleteIssueError(f"#{format_issue_number(issue_number)} is incomplete: {problem}")
     pages = _count_images_in_dir(extracted_dir) if extracted_dir else _count_archive_images(path)

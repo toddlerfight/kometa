@@ -388,3 +388,35 @@ def test_a_missing_service_account_skips_fcm_devices_and_vice_versa(setup, db_pa
     os.remove(os.path.join(d, "service-account.json"))
     assert push.send({"aps": {}}, db_path, post=lambda *a: 1 / 0)["error"] == "not configured"
     assert push.push_status()["platforms"] == {"apns": False, "fcm": False}
+
+
+def test_a_series_still_pulling_holds_its_landings_for_one_notification(setup, db_path, monkeypatch):
+    """Tracking an existing run queued six issues; each landing used to buzz on its own.
+    Now the series holds its landings while more of it is queued, and buzzes once."""
+    monkeypatch.setattr(push, "BATCH_S", 999)
+    a = db.add_series(title="A Puzzlebox", publisher="DC", folder_path="/c/p", path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET on_pull_list = 1 WHERE id = ?", (a,))
+    for n in (1.0, 2.0, 3.0):
+        db.queue_issue(a, n, db_path)
+    monkeypatch.setattr(push, "_book_id", lambda s, n: 77)
+    _dev(db_path)
+    sent = []
+    post = lambda u, h, body: sent.append(json.loads(body)) or R(200)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE download_queue SET state = 'done' WHERE tracked_series_id = ? AND issue_number = 1", (a,))
+    push.issue_landed(a, 1.0, db_path); push._timer.cancel()
+    assert push.flush(db_path, post=post) is None and sent == []           # #2 and #3 still queued: held
+    assert len(push._pending) == 1
+    if push._timer: push._timer.cancel()
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE download_queue SET state = 'done' WHERE tracked_series_id = ?", (a,))
+    push.issue_landed(a, 2.0, db_path); push.issue_landed(a, 3.0, db_path); push._timer.cancel()
+    res = push.flush(db_path, post=post)
+    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] == "3 new on the shelf"
+    assert sent[-1]["aps"]["alert"]["body"] == "A Puzzlebox #1, A Puzzlebox #2, A Puzzlebox #3"
+    # a stuck queue cannot hold a landing hostage past HOLD_MAX_S
+    db.queue_issue(a, 9.0, db_path)
+    monkeypatch.setattr(push, "HOLD_MAX_S", 0)
+    push.issue_landed(a, 8.0, db_path); push._timer.cancel()
+    assert push.flush(db_path, post=post)["sent"] == 1 and sent[-1]["aps"]["alert"]["body"] == "A Puzzlebox #8"
