@@ -33,8 +33,8 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 
 ## Decisions
 
-- [ ] `komga_import.py` — has the one-time Komga reading-history import run? If yes, delete it.
-- [x] Trades belong to a series (2026-10-12: the Collected editions report — wiki, else 'by name' for edition-named books; one click files each): how folders like *Batman: Hush* / *Year One Deluxe* get filed under their parent run. Proposal: Kometa suggests the parent from the folder name, you confirm each; it becomes a trade on that run's Trades tab, readable, counted toward what it collects, never needs matching.
+- [x] `komga_import.py` — deleted in c80c72d (one-time reading-history import is done).
+- [x] Trades belong to a series (2026-10-12: the Collected editions report — wiki, else 'by name' for edition-named books; one click files each): how folders like *Batman: Hush* / *Year One Deluxe* get filed under their parent run. Proposal: Kometa suggests the parent from the folder name, you confirm each; it becomes a trade on that run's Trades tab, readable, counted toward what it collects, never needs matching. (2026-10-16: *Batman: Hush* filed under *Batman (1940)* #608–619, ghost row purged).
 
 ## Parked
 
@@ -47,5 +47,5 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 
 ## On the build side (no input needed)
 
-- [ ] "Pages start at 002" guard — check whether it's too strict (Where Monsters Dwell #2–4, Death of Dracula).
-- [ ] Confirm "database is locked" is gone now that connections are kept per thread.
+- [x] "Pages start at 002" guard — checked in kometa/downloader.py:824-830.
+- [x] Confirm "database is locked" is gone now that connections are kept per thread (0 occurrences in live logs).
