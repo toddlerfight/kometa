@@ -445,6 +445,21 @@ def description_themes(path=None) -> dict[int, list[str]]:
     return out
 
 
+_comm_memo: dict[tuple, tuple[tuple, dict[int, dict[int, float]]]] = {}
+
+
+def _cbr_fingerprint(conn):
+    try:
+        r = conn.execute("SELECT MAX(rowid) FROM cbr_people_scores").fetchone()
+        return r[0] if r else None
+    except Exception:
+        try:
+            r = conn.execute("SELECT value FROM cbr_people_state WHERE key = 'scores_version'").fetchone()
+            return r[0] if r else None
+        except Exception:
+            return None
+
+
 def _community(path=None) -> dict[int, dict[int, float]]:
     """series → series → how alike CBR's reviewers rate them: cosine over scores centred
     on each person's own mean (someone who gives everything a 9 says little with a 9),
@@ -454,8 +469,15 @@ def _community(path=None) -> dict[int, dict[int, float]]:
     with db._connect(path) as conn:
         try:
             linked = cbr_people._linked(conn)
+            if not linked:
+                return {}
+            cbr_stamp = _cbr_fingerprint(conn)
+            memo_key = (cbr_stamp, tuple(sorted(linked.items())))
+            memo = _comm_memo.get(path)
+            if memo and memo[0] == memo_key:
+                return memo[1]
             rows = conn.execute("SELECT person, series_path, AVG(score) FROM cbr_people_scores "
-                                "GROUP BY person, series_path").fetchall() if linked else []
+                                "GROUP BY person, series_path").fetchall()
         except Exception:
             return {}
     by_p = defaultdict(list)
@@ -490,7 +512,9 @@ def _community(path=None) -> dict[int, dict[int, float]]:
             nb = math.sqrt(co_b + COMM_ALPHA * (sq[b] - co_b))
             raw = dot / (na * nb) * n / (n + COMM_K)
             out[a][b] = out[b][a] = raw
-    return dict(out)
+    res = dict(out)
+    _comm_memo[path] = (memo_key, res)
+    return res
 
 
 _cache = {"at": 0.0, "path": None, "fp": None, "ix": None, "opts": None}
@@ -509,7 +533,8 @@ def _fingerprint(path) -> tuple:
                 one("SELECT COUNT(*), MAX(fetched_at) FROM issue_record"),
                 one("SELECT COUNT(*), MAX(id) FROM tracked_series"),
                 one("SELECT COUNT(*), MAX(fetched_at) FROM series_record"),
-                one("SELECT COUNT(*), MAX(at) FROM cbr_people_scores"))
+                _cbr_fingerprint(conn))
+
 
 
 def _knows(ix: Index, series_id: int) -> bool:

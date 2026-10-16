@@ -67,3 +67,16 @@ def _health_in_memory(monkeypatch):
     health.reset()
     yield
     health.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_reader_activity():
+    """Reader tests set activity._last_page['at']; if not reset, later tests
+    calling yield_to_reader() sleep out the 90 s READING_WINDOW_S."""
+    from kometa import activity
+    activity._last_page["at"] = 0.0
+    activity._book_pages.clear()
+    yield
+    activity._last_page["at"] = 0.0
+    activity._book_pages.clear()
+
