@@ -303,6 +303,27 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
   test) before committing. One slice per commit.
 - Architecture/module map lives in `CONTEXT.md`. Keep it current.
 
+## Working with a second agent (2026-10-16)
+
+The recommendations work runs with an external agent writing briefs and commits on
+`main`; Claude Code reviews and deploys. Both work in this same working tree.
+
+- **Commit and stop.** Only the reviewer deploys, after review. `deploy.sh` ships the
+  whole working tree, so a deploy also ships anything else committed or uncommitted
+  in it — check `git status` and `git log origin/main..` before every deploy.
+- **Never edit an existing test to make a change pass.** If one fails, stop and
+  report it; it is enforcing a contract (9b07090 rerouted the CBR fallback test and
+  hid a regression that would have unlinked 142 series).
+- **External sources go through their module's limiter**, probes included
+  (`cbr.limiter`, the Metron client's budget, the GetComics gate). No raw
+  `requests.get` against a third-party site.
+- **Reports say where numbers come from**: a dry run, or the live DB.
+- **Owner decisions are never re-opened**: `match_status` manual + `metron_link`
+  none, `locg_link = 'none'`, or `metron_checked_at = '9999-12-31 00:00:00'`.
+  Sourcing cards are the owner's to confirm or decline.
+- **Step 3 (community blend) is not started** until the coverage audit is done and
+  its four defects are answered.
+
 ## New features: research → mock-up → build
 
 For anything with real UI or product decisions (not bug fixes), in this order:
