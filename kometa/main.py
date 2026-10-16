@@ -2129,8 +2129,25 @@ def queue_summary(since: str = ""):
     return {"failed": got.get("failed", 0), "not_found": got.get("not_found", 0), "done": got.get("done", 0)}
 
 
+# Rows whose screen changes with no write to their row: download progress and the
+# search line live in memory, and an issue waiting on a trade shows the trade's fate.
+# A ?since= answer always carries these.
+_QUEUE_LIVE = frozenset(("queued", "searching", "found", "downloading", "pending_usenet", "pending_torrent",
+                         "processing", "proposed", "suggested", "via_trade"))
+
+
 @app.get("/api/queue")
-def get_queue():
+def get_queue(since: str | None = None):
+    """The whole queue, newest first. With ?since= (Activity polls every 2 s while
+    something's moving): {at, rows, states} — `rows` is what changed at or after
+    `since` plus every live row, `states` is [id, state] for every row so the page can
+    drop deleted ones and catch a state that changed without its time moving (a trade
+    covering a stuck single). Pass `at` back as the next `since`; since= alone is
+    the whole queue in that shape."""
+    at = None
+    if since is not None:
+        with db._connect(DB_PATH) as conn:
+            at = conn.execute("SELECT datetime('now')").fetchone()[0]     # before the read: nothing slips between
     items = db.get_queue(DB_PATH)
     # an issue waiting on a trade says what became of the trade: seven rows said
     # 'Getting it in …' for trades that had failed hours before
@@ -2157,7 +2174,10 @@ def get_queue():
             ss = get_search_status(item["id"])
             if ss:
                 item["search_status"] = ss
-    return items
+    if since is None:
+        return items
+    return {"at": at, "states": [[i["id"], i["state"]] for i in items],
+            "rows": [i for i in items if i["state"] in _QUEUE_LIVE or (i.get("updated_at") or "") >= since]}
 
 
 @app.delete("/api/queue/{queue_id}", status_code=204)

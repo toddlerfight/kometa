@@ -23,7 +23,7 @@ Security (LAN + tailnet; Funnel is off — checked):
 - [ ] Pre-commit hook: catch tokens inside URLs (`user:token@host`) — how the Gitea token got in.
 
 Efficiency leftovers:
-- [ ] Activity fetches the whole queue every 2 s while something's active (~6 KB gzipped) — a `?since=` merge would do; skipped as not worth the risk yet.
+- [x] Activity fetches the whole queue every 2 s while something's active — 2026-10-17: it asks `/api/queue?since=` for what changed and merges; the whole queue on entry and once a minute.
 
 Personal details (low, current tree): machine/drive names (ginbako, Voot II, emoji shares), ports, Brisbane in docs/scripts — genericise if wanted. YondeB has the tailnet/LAN address and Apple Team ID hard-coded (fine while private).
 
@@ -43,7 +43,7 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 - [ ] YondeB fixes and checks — `~/code/yondeb/LATER.md`.
 - [ ] Tidy the older loose files in `/downloads` (Transmetropolitan, Die, Avengers Vol 5; the `.mkv`s aren't Kometa's).
 - [ ] Off-site backup — declined for now (Voot II only).
-- [ ] Komga — leave running; repoint or retire later.
+- [x] Komga — removed entirely 2026-10-16 (c80c72d): code, schema, config, container.
 
 ## On the build side (no input needed)
 

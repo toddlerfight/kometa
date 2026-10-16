@@ -4026,12 +4026,37 @@ function _fmtBytes(n) {
 let _activitySig = null;
 let _activityRemoving = false;   // true while a row/card is animating out
 
+// The queue as this page knows it, kept by merging /api/queue?since= answers: a poll
+// used to fetch every row, history and all, every 2 s while anything moved. The
+// answer carries what changed, every live row, and [id, state] for the lot.
+let _actRows = null;             // id → row; null = next poll fetches the whole queue
+let _actCursor = '';
+let _actFullAt = 0;
+async function _fetchQueue() {
+  // the whole queue on entry and once a minute: whatever a merge could miss, it can't keep
+  const full = !_actRows || Date.now() - _actFullAt > 60000;
+  const r = await api.get(`/api/queue?since=${encodeURIComponent(full ? '' : _actCursor)}`);
+  const states = new Map(r.states);
+  if (full) { _actRows = new Map(); _actFullAt = Date.now(); }
+  r.rows.forEach(q => _actRows.set(q.id, q));
+  for (const id of [..._actRows.keys()]) if (!states.has(id)) _actRows.delete(id);
+  // a row whose state moved without its time (a trade covering a stuck single), or one
+  // this page has never seen: start over rather than show it wrong
+  if (!full && (r.states.some(([id, st]) => !_actRows.has(id) || _actRows.get(id).state !== st))) {
+    _actRows = null;
+    return _fetchQueue();
+  }
+  _actCursor = r.at;
+  return [..._actRows.values()].sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || b.id - a.id);
+}
+
 // States that live in the "In Progress" section; everything else is history.
 const ACT_ACTIVE_STATES = ['queued','searching','found','downloading','pending_usenet','pending_torrent','processing','proposed','suggested'];
 
 async function renderActivity() {
   clearTimeout(_activityPollTimer);
   _activitySig = null;          // force a full rebuild when entering the view
+  _actRows = null;              // and fetch the whole queue
   _actVisitMark = _actSeen();   // what had been seen BEFORE this visit
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Activity';
@@ -4061,7 +4086,7 @@ async function _refreshActivity() {
   // (a full rebuild here is the flash we're trying to kill). The remover re-polls
   // when it's finished collapsing.
   if (_activityRemoving) return;
-  const [all, jobs] = await Promise.all([api.get('/api/queue'), api.get('/api/listget/jobs').catch(() => [])]);
+  const [all, jobs] = await Promise.all([_fetchQueue(), api.get('/api/listget/jobs').catch(() => [])]);
   _paintListJobs(jobs);
   _ackActivity(all);   // you're looking at it — acknowledge + clear the badge
   // A done row you've already seen on an EARLIER visit is history: it shows
