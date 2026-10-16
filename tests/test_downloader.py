@@ -744,3 +744,50 @@ def test_a_pixeldrain_page_link_unwraps_to_its_file(monkeypatch):
     from kometa import downloader as dl
     monkeypatch.setattr(dl, "_final_hop", lambda u, hops=6: "https://pixeldrain.com/u/Zq9kL")
     assert dl._unwrap_hosted("https://getcomics.org/dls/abc") == "https://pixeldrain.com/api/file/Zq9kL?download"
+
+
+def test_a_crawling_download_is_resumed_on_a_fresh_connection(tmp_path, monkeypatch):
+    """Puzzlebox #5's rescue, 2026-10-16: one comicfiles.ru stream at 26 KB/s for
+    twenty minutes while a fresh connection to the same host ran at 2.8 MB/s. A
+    stream that stays under SLOW_RATE_BPS for a whole window is dropped and
+    picked up where it stopped, on a new socket."""
+    import requests
+    import kometa.downloader as dl
+    body = bytes(range(200))
+    clock = [0.0]
+    monkeypatch.setattr(dl, "_clock", lambda: clock[0])
+    monkeypatch.setattr(dl.time, "sleep", lambda s: None)
+    class Crawl:
+        url = "https://host/file.cbz"
+        def iter_content(self, chunk_size):
+            yield body[:30]
+            clock[0] += dl.SLOW_WINDOW_S / 2
+            yield body[30:60]
+            clock[0] += dl.SLOW_WINDOW_S / 2 + 1          # 60 bytes in 61 s: crawling
+            yield body[60:70]
+            raise AssertionError("the crawl should have been abandoned before this chunk")
+    asked = []
+    class Fresh:
+        status_code = 206
+        def iter_content(self, chunk_size): yield body[70:]
+        def close(self): pass
+    monkeypatch.setattr(dl.requests, "get", lambda url, **k: (asked.append(k["headers"]["Range"]), Fresh())[1])
+    dest = tmp_path / "Puzzlebox 005.cbz"
+    dl._stream_to(Crawl(), str(dest), len(body))
+    assert dest.read_bytes() == body and asked == ["bytes=70-"]
+
+
+def test_a_fast_download_is_never_second_guessed(tmp_path, monkeypatch):
+    import kometa.downloader as dl
+    body = b"x" * (dl.SLOW_RATE_BPS * 2)
+    clock = [0.0]
+    monkeypatch.setattr(dl, "_clock", lambda: clock[0])
+    class Quick:
+        url = "https://host/file.cbz"
+        def iter_content(self, chunk_size):
+            for i in range(0, len(body), 65536):
+                clock[0] += 61 / (len(body) // 65536 + 1)     # 400 KB in ~61 s is well over the floor
+                yield body[i:i + 65536]
+    dest = tmp_path / "ok.cbz"
+    dl._stream_to(Quick(), str(dest), len(body))
+    assert dest.read_bytes() == body

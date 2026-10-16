@@ -44,6 +44,17 @@ def _patch_comic_info(xml_bytes: bytes, added_covers: int) -> bytes:
 
 
 RESUMES = 4
+SLOW_RATE_BPS = 200 * 1024   # a stream averaging under this over a window is crawling...
+SLOW_WINDOW_S = 60           # ...and after this long of it we drop the connection and resume
+_clock = time.monotonic      # seam for tests
+
+
+class _SlowStream(Exception):
+    """The connection is alive but barely moving: Puzzlebox #5's rescue sat on
+    one comicfiles.ru stream at 26 KB/s for twenty minutes (2026-10-16) while a
+    fresh connection to the same host pulled #12 at 2.8 MB/s. A read timeout
+    never fires on a trickle; this does, and the Range resume takes it from
+    there on a new socket."""
 
 
 class IncompleteDownloadError(RuntimeError):
@@ -95,17 +106,28 @@ def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
         with open(staging_path, "wb") as f:
             while True:
                 try:
+                    win_t, win_b = _clock(), 0
                     for chunk in resp.iter_content(chunk_size=65536):
                         f.write(chunk)
                         done += len(chunk)
+                        win_b += len(chunk)
                         if progress_fn:
                             progress_fn(done, total)
+                        now = _clock()
+                        if now - win_t >= SLOW_WINDOW_S:
+                            rate = win_b / (now - win_t)
+                            if rate < SLOW_RATE_BPS and not (total and done >= total):
+                                raise _SlowStream(f"{int(rate) // 1024} KB/s")
+                            win_t, win_b = now, 0
                     break
-                except (requests.exceptions.ChunkedEncodingError, requests.ConnectionError, requests.Timeout) as e:
+                except (requests.exceptions.ChunkedEncodingError, requests.ConnectionError, requests.Timeout, _SlowStream) as e:
                     if not url or tries >= RESUMES:
                         raise
                     tries += 1
-                    logger.warning(f"Download cut off at {done // 1048576} MB ({e.__class__.__name__}) — resuming ({tries}/{RESUMES})")
+                    if isinstance(e, _SlowStream):
+                        logger.warning(f"Download crawling at {e} with {done // 1048576} MB down — resuming on a fresh connection ({tries}/{RESUMES})")
+                    else:
+                        logger.warning(f"Download cut off at {done // 1048576} MB ({e.__class__.__name__}) — resuming ({tries}/{RESUMES})")
                     if resp is not r:
                         resp.close()
                     time.sleep(3 * tries)

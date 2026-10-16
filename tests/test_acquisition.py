@@ -1423,3 +1423,42 @@ def test_a_torrent_stuck_fetching_metadata_is_given_up_on_whatever_the_tracker_c
     q = next(x for x in db.get_queue(db_path) if x["id"] == qid)
     assert (q["state"], q["error"]) == ("failed", "Torrent: no metadata after 2 h")
     assert dropped == ["abc"] and asked_gc == [qid]
+
+
+def test_a_rescue_runs_off_the_finalize_thread(db_path, monkeypatch):
+    """Puzzlebox #6–#14 sat in 'processing' for half an hour behind #5's crawling
+    GetComics rescue (2026-10-16): the rescue ran ON the finalize worker. Now the
+    worker hands it to the rescue thread and returns; the row stays 'processing'
+    so no poller picks it up twice."""
+    import threading
+    import kometa.acquisition as acq
+    monkeypatch.setattr(acq, "FINALIZE_INLINE", False)
+    monkeypatch.setattr(acq, "_rescue_pool", None)
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 5.0, db_path)
+    qid = next(q["id"] for q in db.get_queue(db_path))
+    item = {"id": qid, "tracked_series_id": sid, "title": "Saga", "issue_number": 5.0, "kind": "issue"}
+    gate, asked = threading.Event(), []
+    monkeypatch.setattr(acq, "_try_torrent", lambda item, q: False)
+    monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: (gate.wait(5), asked.append(q), True)[2])
+    acq._rescue_later(item, qid, "Usenet", "#5 is incomplete", "usenet")   # returns at once
+    assert asked == []
+    assert next(q for q in db.get_queue(db_path) if q["id"] == qid)["state"] == "processing"
+    gate.set()
+    acq._rescue_pool.submit(lambda: None).result(5)
+    assert asked == [qid]
+
+
+def test_a_rescue_with_no_takers_fails_the_row(db_path, monkeypatch):
+    import kometa.acquisition as acq
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    sid = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    db.queue_issue(sid, 5.0, db_path)
+    qid = next(q["id"] for q in db.get_queue(db_path))
+    item = {"id": qid, "tracked_series_id": sid, "title": "Saga", "issue_number": 5.0, "kind": "issue"}
+    monkeypatch.setattr(acq, "_try_torrent", lambda item, q: False)
+    monkeypatch.setattr(acq, "_gc_rescue", lambda item, q: False)
+    acq._rescue_later(item, qid, "Usenet", "#5 is incomplete: bad CRC", "usenet")   # inline in tests
+    row = next(q for q in db.get_queue(db_path) if q["id"] == qid)
+    assert row["state"] == "failed" and "bad CRC" in row["error"]

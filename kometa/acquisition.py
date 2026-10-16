@@ -935,13 +935,8 @@ def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
         return
     db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
     db.add_failed_channel(qid, "usenet", path=DB_PATH)
-    if _try_torrent(item, qid):
-        logger.info(f"Usenet job {nzo_id} ({err}); fell back to torrent for qid {qid}")
-        return
-    if _gc_rescue(item, qid):
-        logger.info(f"Usenet job {nzo_id} ({err}); GetComics rescue landed qid {qid}")
-        return
-    db.update_queue_state(qid, "failed", error=f"Usenet: {err}", path=DB_PATH)
+    logger.info(f"Usenet job {nzo_id} ({err}); trying the next source for qid {qid}")
+    _rescue_later(item, qid, "Usenet", err, "usenet")
 
 
 def try_getcomics_now(qid: int, background: bool = True) -> dict:
@@ -1026,6 +1021,41 @@ def _hand_off(qid: int, label: str, fn, *args) -> None:
         from concurrent.futures import ThreadPoolExecutor
         _finalize_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="finalize")
     _finalize_pool.submit(run)
+
+
+# A rescue is a DOWNLOAD — torrent submit, or a whole GetComics fetch — and it used
+# to run on whichever thread found the corpse: the finalize worker (which then
+# couldn't verify the seven clean usenet files queued behind it — Puzzlebox #6–#14
+# sat in 'processing' for half an hour behind #5's 26 KB/s rescue, 2026-10-16) or
+# the SAB poller (which then couldn't poll). One rescue thread, and the finders go
+# straight back to finding.
+_rescue_pool = None
+
+
+def _rescue_later(item, qid: int, label: str, err: str, channel: str) -> None:
+    """Bench the channel's replacement run off-thread: torrent (usenet corpses only),
+    then GetComics, else failed. The row sits in 'processing' meanwhile — the
+    pollers don't return that state, so nothing hands it off twice. Inline mode
+    (tests) runs it right here, same as before."""
+    def run():
+        try:
+            if channel == "usenet" and _try_torrent(item, qid):
+                return
+            if _gc_rescue(item, qid):
+                return
+            db.update_queue_state(qid, "failed", error=f"{label}: {err}", path=DB_PATH)
+        except Exception as e:
+            logger.warning(f"{label}: qid {qid} rescue raised: {e}", exc_info=True)
+            db.update_queue_state(qid, "failed", error=f"{label}: rescue failed — {e}", path=DB_PATH)
+    if FINALIZE_INLINE:
+        run()
+        return
+    global _rescue_pool
+    db.update_queue_state(qid, "processing", path=DB_PATH)
+    if _rescue_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _rescue_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rescue")
+    _rescue_pool.submit(run)
 
 
 def _poll_usenet_jobs():
@@ -1271,11 +1301,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             channel = "torrent" if keep_source else "usenet"
             db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
             db.add_failed_channel(qid, channel, path=DB_PATH)
-            if channel == "usenet" and _try_torrent(item, qid):
-                return
-            if _gc_rescue(item, qid):
-                return
-            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
+            _rescue_later(item, qid, label, str(e), channel)
             return
         except WrongIssueError as e:
             # Clean up the rejected download so it can't be re-scanned or hand-shelved
@@ -1293,11 +1319,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             channel = "torrent" if keep_source else "usenet"
             db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
             db.add_failed_channel(qid, channel, path=DB_PATH)
-            if channel == "usenet" and _try_torrent(item, qid):
-                return
-            if _gc_rescue(item, qid):
-                return
-            db.update_queue_state(qid, "failed", error=f"{label}: {e}", path=DB_PATH)
+            _rescue_later(item, qid, label, str(e), channel)
             return
 
         # Rename to Kometa format
