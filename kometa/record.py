@@ -98,6 +98,9 @@ def ensure_tables(path=None):
         # as 'comicinfo', and treated the same everywhere. Komga is gone; so is its label.
         conn.execute("UPDATE series_record SET source = 'comicinfo' WHERE source = 'komga'")
         conn.execute("UPDATE issue_record SET source = 'comicinfo' WHERE source = 'komga'")
+        # Re-derived from genres_json on every start, so a change to the vocabulary
+        # re-keys them; genres_json stays the files' own record.
+        conn.execute("DELETE FROM series_tags WHERE source = 'comicinfo'")
         for sid, gj in conn.execute("""SELECT tracked_series_id, genres_json FROM series_record
                                        WHERE genres_json IS NOT NULL AND genres_json NOT IN ('', '[]')""").fetchall():
             try:
@@ -105,8 +108,7 @@ def ensure_tables(path=None):
             except (TypeError, ValueError):
                 continue
             for label in labels if isinstance(labels, list) else []:
-                key, kind = genre_key(str(label))
-                if key:
+                for key, kind in genre_keys(str(label)):
                     conn.execute("INSERT OR IGNORE INTO series_tags VALUES (?, 'comicinfo', ?, ?, ?, ?)",
                                  (sid, key, str(label), kind, _now()))
         conn.execute("""CREATE TABLE IF NOT EXISTS trade_record (
@@ -118,25 +120,69 @@ def ensure_tables(path=None):
             PRIMARY KEY (tracked_series_id, key))""")
 
 
-# Labels that describe a format or an age rating, not what the comic is about. Stored
-# (the ComicInfo line carries them) but never a reason two series are alike.
-_NOT_CONTENT = {"movies & tv", "movies and tv", "graphic novels", "graphic novel", "mature", "adult",
-                "teen", "all ages", "kids", "manga"}
-_THEMES = {"leading ladies"}                     # a store's category: a theme, not a genre
-_GENRE_ALIASES = {"super hero": "superhero", "superheroes": "superhero", "sci fi": "science fiction",
-                  "scifi": "science fiction", "humour": "humor", "occult": "supernatural/occult",
-                  "supernatural": "supernatural/occult"}
+# The genre vocabulary (agreed with the design partner, 2026-10-16, from all 47 labels
+# the files carried). Keys are lowercase; '/' compounds split ("action/adventure" is
+# action AND adventure). 'other' = a format, rating or medium: stored, never a reason
+# two series are alike, never written to <Genre>. 'theme' = finer than Metron's coarse
+# genres, so it survives beside them. Anything else is a coarse 'genre'.
+_NOT_CONTENT = {"movies & tv", "movies and tv", "graphic novels", "graphic novel", "mature", "gore", "anthology",
+                "risque", "young adult", "art books", "manga", "fiction", "literature", "adult", "teen",
+                "all ages", "kids"}
+_THEMES = {"supernatural", "occult", "leading ladies", "suspense", "post-apocalyptic", "zombies", "mythology",
+           "thriller", "slice of life", "martial arts", "conspiracy", "political", "dystopia", "urban fantasy",
+           "school life", "music", "animals", "japan"}
+_GENRE_ALIASES = {"super hero": "superhero", "super-hero": "superhero", "superheroes": "superhero",
+                  "post apocalyptic": "post-apocalyptic", "postapocalyptic": "post-apocalyptic",
+                  "nonfiction": "non-fiction", "non fiction": "non-fiction", "sci-fi": "science fiction",
+                  "sci fi": "science fiction", "scifi": "science fiction", "humour": "humor"}
+FILE_THEME_TRUST = 0.6                           # a file's theme label, beside a catalogue's genres
+
+
+def genre_keys(label: str) -> list[tuple[str, str]]:
+    """[(key, kind)] for one label from any source: Metron's "Super-Hero" and the
+    files' "superhero" are both ('superhero', 'genre'); "action/adventure" is two."""
+    out = []
+    for part in (label or "").split("/"):
+        k = re.sub(r"[\s_]+", " ", part.strip().lower()).strip()
+        if not k:
+            continue
+        k = _GENRE_ALIASES.get(k, k)
+        kind = "other" if k in _NOT_CONTENT else "theme" if k in _THEMES else "genre"
+        if (k, kind) not in out:
+            out.append((k, kind))
+    return out
 
 
 def genre_key(label: str) -> tuple[str, str]:
-    """(key, kind) for a genre label from any source. Metron says "Super-Hero", Komga
-    "superhero": both are ('superhero', 'genre'). kind is genre, theme or other
-    (format/rating). ('', '') for a blank label."""
-    k = re.sub(r"[\s_\-]+", " ", (label or "").strip().lower()).strip()
-    if not k:
-        return "", ""
-    k = _GENRE_ALIASES.get(k, k)
-    return k, ("other" if k in _NOT_CONTENT else "theme" if k in _THEMES else "genre")
+    """The first (key, kind) of a label; ('', '') for a blank one."""
+    keys = genre_keys(label)
+    return keys[0] if keys else ("", "")
+
+
+def effective_tags(series_id: int, path=None) -> list[dict]:
+    """The labels that describe a series, with a trust weight — what Related scores
+    and what <Genre> is written from. Once Metron has answered, its coarse genres are
+    the series' genres: the files' coarse labels are dropped, not merged. (Metron only
+    says what a run IS, never what it isn't, so "keep the file labels Metron didn't
+    mention" would keep Saga's 'superhero' and 'horror' — the partner's trap.) The
+    files' themes stay at FILE_THEME_TRUST. 'other' never appears."""
+    rows = tags_for(series_id, path)
+    has_metron = any(r["source"] == "metron" for r in rows)
+    out, seen = [], set()
+    for r in rows:
+        if r["kind"] == "other" or r["key"] in seen:
+            continue
+        if r["source"] == "metron":
+            w = 1.0
+        elif r["kind"] == "theme":
+            w = FILE_THEME_TRUST
+        elif not has_metron:
+            w = FILE_THEME_TRUST                 # no catalogue answer yet: the files' genres stand in
+        else:
+            continue                             # a coarse file genre, superseded by Metron's
+        seen.add(r["key"])
+        out.append({**r, "weight": w})
+    return out
 
 
 def set_tags(series_id: int, source: str, labels: list[str], path=None) -> None:
@@ -146,8 +192,7 @@ def set_tags(series_id: int, source: str, labels: list[str], path=None) -> None:
     with db._connect(path) as conn:
         conn.execute("DELETE FROM series_tags WHERE tracked_series_id = ? AND source = ?", (series_id, source))
         for label in labels:
-            key, kind = genre_key(label)
-            if key:
+            for key, kind in genre_keys(label):
                 conn.execute("INSERT OR IGNORE INTO series_tags VALUES (?, ?, ?, ?, ?, ?)",
                              (series_id, source, key, label, kind, _now()))
 

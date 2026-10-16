@@ -283,3 +283,47 @@ def test_the_trickle_re_reads_metron_rows_from_the_old_parser_a_few_at_a_time(db
     assert sorted(asked) == [100 + i for i in range(6)]                     # the rest next tick, none twice
     rec.trickle(path=db_path)
     assert len(asked) == 6
+
+
+def test_compound_labels_split_and_the_vocabulary_partitions(db_path):
+    assert rec.genre_keys("action/adventure") == [("action", "genre"), ("adventure", "genre")]
+    assert rec.genre_keys("supernatural/occult") == [("supernatural", "theme"), ("occult", "theme")]
+    assert rec.genre_keys("post apocalyptic") == rec.genre_keys("post-apocalyptic") == [("post-apocalyptic", "theme")]
+    assert rec.genre_keys("nonfiction") == rec.genre_keys("non-fiction") == [("non-fiction", "genre")]
+    for fmt in ("movies & tv", "graphic novels", "gore", "anthology", "risque", "young adult", "art books", "manga"):
+        assert rec.genre_keys(fmt)[0][1] == "other", fmt
+
+
+def test_metron_genres_replace_the_files_coarse_genres_but_not_their_themes(db_path):
+    """The partner's trap: Metron lists what Saga IS (Fantasy, Science Fiction), never
+    what it isn't. 'Keep the file labels Metron didn't mention' would keep 'superhero'
+    and 'horror'. Once Metron answers, the files' coarse genres go; their themes stay."""
+    saga = _metron_linked(db_path, "Saga", 1)
+    monstress = _metron_linked(db_path, "Monstress", 2)
+    waiting = _metron_linked(db_path, "Not Yet Read", 3)
+    rec.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        for sid, g in ((saga, '["fantasy", "horror", "mature", "science fiction", "superhero"]'),
+                       (monstress, '["fantasy", "leading ladies"]'),
+                       (waiting, '["horror", "supernatural/occult"]')):
+            c.execute("INSERT INTO series_record (tracked_series_id, genres_json, source) VALUES (?, ?, 'comicinfo')", (sid, g))
+    rec.ensure_tables.reset()
+    rec.ensure_tables(db_path)
+    rec.set_tags(saga, "metron", ["Fantasy", "Science Fiction"], db_path)
+    rec.set_tags(monstress, "metron", ["Fantasy"], db_path)
+    eff = lambda sid: {(t["key"], t["weight"]) for t in rec.effective_tags(sid, db_path)}
+    assert eff(saga) == {("fantasy", 1.0), ("science fiction", 1.0)}                 # no superhero, no horror, no mature
+    assert eff(monstress) == {("fantasy", 1.0), ("leading ladies", rec.FILE_THEME_TRUST)}
+    assert eff(waiting) == {("horror", rec.FILE_THEME_TRUST), ("supernatural", rec.FILE_THEME_TRUST),
+                            ("occult", rec.FILE_THEME_TRUST)}                        # no Metron yet: the files stand in
+
+
+def test_the_file_genres_are_re_keyed_on_every_start(db_path):
+    sid = _metron_linked(db_path)
+    rec.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_record (tracked_series_id, genres_json, source) VALUES (?, '[\"action/adventure\"]', 'comicinfo')", (sid,))
+        c.execute("INSERT INTO series_tags VALUES (?, 'comicinfo', 'action/adventure', 'action/adventure', 'genre', '')", (sid,))   # an old key
+    rec.ensure_tables.reset()
+    rec.ensure_tables(db_path)
+    assert sorted(t["key"] for t in rec.tags_for(sid, db_path)) == ["action", "adventure"]
