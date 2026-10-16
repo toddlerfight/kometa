@@ -1450,7 +1450,6 @@ function showCatalogueModal(r) {
         <div style="margin:8px 0"><span class="chip" style="color:var(--tq);border-color:var(--tq)">Not on the shelf</span>
           ${r.total ? `<span class="chip chip-neutral">${r.total} issues</span>` : ''}${r.rank ? `<span class="chip chip-neutral">#${r.rank} this month</span>` : ''}</div>
         ${why.length ? `<div class="issue-modal-meta">${why.map(esc).join(' · ')}</div>` : ''}
-        <div class="issue-modal-meta" style="margin-top:10px;color:var(--td)">Track adds it to the Library with the pull list off: issues and covers from the catalogue, nothing downloaded until you ask.</div>
       </div>
     </div>
     <div class="modal-footer">
@@ -5207,8 +5206,20 @@ async function disconnectIntegration(integ, btn) {
 
 // --- Modal ---
 
+// The fade-out a closeModal() started: a window opened during it (close one card,
+// open the next) was hidden by it 200 ms later — "Find in catalogue" opened the Add
+// search and it vanished (2026-10-16). Opening cancels it and does its resets.
+let _modalCloseTimer = null;
+
 function showModal(html) {
   const modal = document.getElementById('modal');
+  if (_modalCloseTimer) {
+    clearTimeout(_modalCloseTimer);
+    _modalCloseTimer = null;
+    modal.classList.remove('modal-wide');
+    modal.style.height = '';
+    modal.style.transition = '';
+  }
   modal.innerHTML = html;
   modal._openedAt = performance.now();
   modal.classList.remove('hidden');
@@ -5225,7 +5236,8 @@ function closeModal() {
   clearTimeout(_issueModalPollTimer);
   document.getElementById('variant-lightbox')?.classList.add('hidden');  // ensure lightbox closes with the modal
   backdrop.classList.add('closing');          // plays scrim-out + modal-out
-  setTimeout(() => {
+  _modalCloseTimer = setTimeout(() => {
+    _modalCloseTimer = null;
     modal.classList.add('hidden');
     modal.classList.remove('modal-wide');
     // A close mid-height-tween never gets its transitionend — clear the pinned
