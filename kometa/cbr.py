@@ -123,12 +123,19 @@ def candidate_urls(s: dict, year: int | None) -> list[str]:
     pub, slug = publisher_slug(s.get("publisher")), series_slug(s.get("title"))
     if not pub or not slug or not year:
         return []
-    base_url = f"{BASE}{pub}/{slug}-({year})"
-    title = (s.get("title") or "").strip()
-    title = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", title).strip().strip("-").strip()
+    # Two page shapes, both live: '<slug>-(<year>)' and a bare '<slug>' — 142 of the 281
+    # links on 2026-10-16 came through the bare one, so it is never dropped. A leading
+    # 'The' is stripped by series_slug, but CBR keeps it for some runs (The Department of
+    # Truth, The Power Fantasy): those titles also get the 'the-' pair, after the stripped
+    # pair's dated URL so the common shape still costs one request.
+    urls = [f"{BASE}{pub}/{slug}-({year})"]
+    title = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", (s.get("title") or "").strip()).strip().strip("-").strip()
     if re.match(r"^the\s+", title, re.IGNORECASE):
-        return [base_url, f"{BASE}{pub}/the-{slug}-({year})"]
-    return [base_url]
+        urls.append(f"{BASE}{pub}/the-{slug}-({year})")
+        urls += [f"{BASE}{pub}/{slug}", f"{BASE}{pub}/the-{slug}"]
+    else:
+        urls.append(f"{BASE}{pub}/{slug}")
+    return urls
 
 
 # --- the series page ----------------------------------------------------------------

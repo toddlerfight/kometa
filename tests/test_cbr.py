@@ -101,19 +101,16 @@ def test_matches_handles_subtitled_runs_and_verifies_year():
     assert cbr.matches(s, page, None) is False
 
 
-def test_candidate_urls_yields_the_variant_only_for_the_titles():
+def test_candidate_urls_keep_the_bare_slug_and_add_the_the_variant():
+    """Half the live links (142 of 281, 2026-10-16) are bare-slug pages with no year:
+    that candidate is never dropped. 'The' titles also get the 'the-' pair."""
+    B = "https://comicbookroundup.com/comic-books/reviews/image-comics/"
     s_the = {"title": "The Department of Truth", "publisher": "Image Comics"}
-    urls = cbr.candidate_urls(s_the, 2020)
-    assert urls == [
-        "https://comicbookroundup.com/comic-books/reviews/image-comics/department-of-truth-(2020)",
-        "https://comicbookroundup.com/comic-books/reviews/image-comics/the-department-of-truth-(2020)",
+    assert cbr.candidate_urls(s_the, 2020) == [
+        B + "department-of-truth-(2020)", B + "the-department-of-truth-(2020)",
+        B + "department-of-truth", B + "the-department-of-truth",
     ]
-
-    s_no_the = {"title": "Department of Truth", "publisher": "Image Comics"}
-    assert cbr.candidate_urls(s_no_the, 2020) == [
-        "https://comicbookroundup.com/comic-books/reviews/image-comics/department-of-truth-(2020)"
-    ]
-
+    assert cbr.candidate_urls({"title": "Saga", "publisher": "Image Comics"}, 2012) == [B + "saga-(2012)", B + "saga"]
     assert cbr.candidate_urls(s_the, None) == []
     assert cbr.candidate_urls({"title": "The Flash", "publisher": None}, 2023) == []
 
