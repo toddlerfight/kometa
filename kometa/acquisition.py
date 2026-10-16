@@ -515,6 +515,83 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
     return True, None
 
 
+# --- source memory per series ---------------------------------------------------------
+# Puzzlebox (2026-10-16): one uploader's 2021 usenet posts were rotten — fragments,
+# cut pages, bad CRCs — and all 14 issues tried them first, failing one at a time
+# before GetComics rescued each. A series whose usenet downloads have failed at least
+# twice, and at least a third of the time, in 30 days sends its next issues to
+# GetComics first; usenet and torrent stay behind it as the fallback. Clean downloads
+# count too (a mixed uploader shouldn't flip the series back on one good file), and
+# everything expires after 30 days, because uploaders change.
+STRIKE_LIMIT = 2
+STRIKE_SHARE = 1 / 3
+STRIKE_TTL_DAYS = 30
+
+
+@db.once_per_db
+def ensure_strike_table(path=None):
+    with db._connect(path or DB_PATH) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS source_strikes (
+            tracked_series_id INTEGER NOT NULL, channel TEXT NOT NULL, strikes INTEGER NOT NULL DEFAULT 0,
+            oks INTEGER NOT NULL DEFAULT 0, first_at TEXT, last_at TEXT, last_reason TEXT,
+            PRIMARY KEY (tracked_series_id, channel))""")
+
+
+def _tally(series_id, channel: str, failed: bool, reason: str, path) -> tuple[int, int]:
+    """Count one delivery, good or bad, inside the window. Returns (strikes, oks)."""
+    path = path or DB_PATH
+    ensure_strike_table(path)
+    with db._connect(path) as conn:
+        row = conn.execute("""SELECT strikes, oks, first_at >= datetime('now', ?) FROM source_strikes
+                              WHERE tracked_series_id = ? AND channel = ?""",
+                           (f"-{STRIKE_TTL_DAYS} days", series_id, channel)).fetchone()
+        live = bool(row and row[2])                                # an expired window starts over
+        strikes, oks = (row[0], row[1]) if live else (0, 0)
+        strikes, oks = strikes + (1 if failed else 0), oks + (0 if failed else 1)
+        conn.execute("""INSERT INTO source_strikes VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?)
+                        ON CONFLICT(tracked_series_id, channel) DO UPDATE SET strikes = excluded.strikes,
+                          oks = excluded.oks, last_at = excluded.last_at,
+                          first_at = CASE WHEN ? THEN source_strikes.first_at ELSE excluded.first_at END,
+                          last_reason = CASE WHEN ? THEN excluded.last_reason ELSE source_strikes.last_reason END""",
+                     (series_id, channel, strikes, oks, (reason or "")[:200], live, failed))
+    return strikes, oks
+
+
+def _distrusts(strikes: int, oks: int) -> bool:
+    return strikes >= STRIKE_LIMIT and strikes >= STRIKE_SHARE * (strikes + oks)
+
+
+def note_strike(series_id, channel: str, reason: str, path=None) -> int:
+    """One failed delivery from `channel` for this series. Returns the strikes in force."""
+    if not series_id:
+        return 0
+    strikes, oks = _tally(series_id, channel, True, reason, path)
+    if _distrusts(strikes, oks) and not _distrusts(strikes - 1, oks):
+        s = db.get_series_by_id(series_id, path or DB_PATH) or {}
+        logger.info(f"{channel.title()}: {s.get('title', series_id)!r} failed {strikes} of {strikes + oks} in "
+                    f"{STRIKE_TTL_DAYS} days — its next issues go to GetComics first")
+    return strikes
+
+
+def note_delivered(series_id, channel: str, path=None) -> None:
+    """A clean delivery from `channel`: it counts toward trusting it again."""
+    if series_id:
+        _tally(series_id, channel, False, "", path)
+
+
+def distrusted(series_id, channel: str, path=None) -> bool:
+    """Has `channel` failed this series often enough, lately, to try GetComics first?"""
+    if not series_id:
+        return False
+    path = path or DB_PATH
+    ensure_strike_table(path)
+    with db._connect(path) as conn:
+        row = conn.execute("""SELECT strikes, oks FROM source_strikes WHERE tracked_series_id = ? AND channel = ?
+                              AND first_at >= datetime('now', ?)""",
+                           (series_id, channel, f"-{STRIKE_TTL_DAYS} days")).fetchone()
+    return bool(row) and _distrusts(row[0], row[1])
+
+
 def _acquire_issue(item, qid, gc, downloaded_urls):
     """Search and place a single issue. Order depends on age: a RECENT issue
     tries GetComics first (its edge is same-week posting, before usenet/torrent
@@ -535,7 +612,9 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     # word. 'Die' pulled 250 usenet hits and bought German audiobooks; on
     # GetComics the post is titled by the comic, so 'Die #4' there IS Die #4.
     from kometa.usenet_client import is_generic_name
-    if _is_old_issue(store_date) and not is_generic_name(item["title"]):
+    # ...and except a series whose usenet downloads keep failing: GetComics first.
+    if (_is_old_issue(store_date) and not is_generic_name(item["title"])
+            and not distrusted(item.get("tracked_series_id"), "usenet")):
         if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
             return
         handled, gc_error = _try_getcomics(item, qid, gc, downloaded_urls, store_date)
@@ -935,6 +1014,7 @@ def _usenet_cascade(item, qid, nzo_id, err: str) -> None:
         return
     db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
     db.add_failed_channel(qid, "usenet", path=DB_PATH)
+    note_strike(item.get("tracked_series_id"), "usenet", err)
     logger.info(f"Usenet job {nzo_id} ({err}); trying the next source for qid {qid}")
     _rescue_later(item, qid, "Usenet", err, "usenet")
 
@@ -1301,6 +1381,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             channel = "torrent" if keep_source else "usenet"
             db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
             db.add_failed_channel(qid, channel, path=DB_PATH)
+            note_strike(item.get("tracked_series_id"), channel, str(e))
             _rescue_later(item, qid, label, str(e), channel)
             return
         except WrongIssueError as e:
@@ -1319,6 +1400,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             channel = "torrent" if keep_source else "usenet"
             db.add_failed_source(qid, item.get("source_url"), path=DB_PATH)
             db.add_failed_channel(qid, channel, path=DB_PATH)
+            note_strike(item.get("tracked_series_id"), channel, str(e))
             _rescue_later(item, qid, label, str(e), channel)
             return
 
@@ -1390,6 +1472,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         src = item.get("source_url")
         if src:
             db.add_failed_source(qid, src, path=DB_PATH)
+        note_strike(item.get("tracked_series_id"), "torrent" if keep_source else "usenet", "no readable pages")
         db.update_queue_state(
             qid, "failed",
             error=f"{label}: delivered file has no readable pages",
@@ -1402,6 +1485,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         set_folder_path=dest_dir if not item.get("folder_path") else None,
         path=DB_PATH,
     )
+    note_delivered(item["tracked_series_id"], "torrent" if keep_source else "usenet")   # it delivered: counts toward trust
     force_readable_tree(dest_dir)
     _resync_after_placement(item["tracked_series_id"], dest_path)
 
@@ -1523,6 +1607,7 @@ def _torrent_dead(item, qid, infohash, why: str) -> None:
             q.delete_torrent(infohash, delete_files=True)
     except Exception as e:
         logger.info(f"Torrent {infohash}: couldn't drop it from qBittorrent: {e}")
+    note_strike(item.get("tracked_series_id"), "torrent", why)
     if item.get("kind") in (None, "issue") and (item.get("issue_number") or 0) >= 0:
         logger.info(f"Torrent {infohash} ({why}); trying GetComics for qid {qid}")
         _rescue_later(item, qid, "Torrent", why, "torrent")      # off the poller's thread
