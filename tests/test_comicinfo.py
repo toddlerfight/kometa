@@ -81,3 +81,30 @@ def test_a_trade_gets_its_own_comicinfo(db_path, monkeypatch):
 def test_a_numbered_trade_carries_its_volume_not_a_number():
     f = ci.trade_fields({"title": "Saga", "publisher": "Image Comics"}, {"title": "Saga Vol. 2", "vol": 2, "format": "tpb"})
     assert f["Volume"] == "2" and "Number" not in f and f["Format"] == "TPB"
+
+
+def test_the_genre_line_is_the_merged_genres_only_when_switched_on(db_path):
+    """Step 2c: off, <Genre> stays the files' own old line, so no tagged file is
+    re-queued for it; on, it's the merged genres — Metron's for Saga, not the files'
+    'superhero' — and a series the old line never covered gets one."""
+    import kometa.db as db
+    import kometa.record as rec
+    saga = db.add_series(title="Saga", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    fresh = db.add_series(title="Ghost Pepper", publisher="Image", folder_path=None, on_pull_list=False, path=db_path)
+    for sid in (saga, fresh):
+        db.upsert_issue_status(sid, 1.0, "2020-01-01", 1, path=db_path)
+        rec.write_issue(sid, 1.0, {"credits": [{"role": "Writer", "name": "Someone"}]}, "metron", "full",
+                        {"metron_issue_id": sid * 10}, db_path)
+    rec.ensure_tables(db_path)
+    with db._connect(db_path) as c:
+        c.execute("INSERT INTO series_record (tracked_series_id, genres_json, source) VALUES (?, ?, 'comicinfo')",
+                  (saga, '["fantasy", "superhero", "mature", "post apocalyptic"]'))
+    rec.ensure_tables.reset()
+    rec.ensure_tables(db_path)
+    rec.set_tags(saga, "metron", ["Science Fiction"], db_path)
+    rec.set_tags(fresh, "metron", ["Horror"], db_path)
+    genre = lambda sid: ET.fromstring(ci.for_issue(sid, 1.0, db_path)).findtext("Genre") or ""
+    assert genre(saga) == "fantasy, superhero, mature, post apocalyptic" and genre(fresh) == ""     # off: as today
+    db.set_config({"comicinfo_genres": "merged"}, db_path)
+    assert genre(saga) == "Science Fiction, Post-Apocalyptic"                 # Metron's genre, the files' theme; no superhero, no mature
+    assert genre(fresh) == "Horror"

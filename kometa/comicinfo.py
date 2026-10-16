@@ -165,7 +165,28 @@ def for_issue(series_id: int, number: float, path=None, page_count: int | None =
     if not series or not row or row.get("fill_state") == "miss":
         return None
     row = dict(row, number=float(number))
-    return build(series, row, page_count, record.get_series(series_id, path))
+    srec = record.get_series(series_id, path)
+    if merged_genres_on(path):
+        srec = dict(srec or {}, genres=genre_line(series_id, path))
+    return build(series, row, page_count, srec)
+
+
+def merged_genres_on(path=None) -> bool:
+    """Recommendations step 2c, behind config comicinfo_genres = 'merged'. Off, <Genre>
+    is the files' own old line (genres_json) and nothing gets re-queued for it. On, it
+    is the merged genres — and every tagged file whose line changes goes back through
+    retag's recheck (requeue_changed), paced at its tick budget. That's most of the
+    library, so the owner decides when (2026-10-16)."""
+    return db.get_config(path or DB_PATH).get("comicinfo_genres") == "merged"
+
+
+def genre_line(series_id: int, path=None) -> list[str]:
+    """<Genre> from record.effective_tags: Metron's genres first, then GCD's and the
+    files' themes; formats and ratings never. 'post-apocalyptic' → 'Post-Apocalyptic'."""
+    from kometa import record
+    def title(key: str) -> str:
+        return " ".join("-".join(p[:1].upper() + p[1:] for p in w.split("-")) for w in key.split())
+    return [title(t["key"]) for t in record.effective_tags(series_id, path or DB_PATH)]
 
 
 # --- collected editions --------------------------------------------------------------
