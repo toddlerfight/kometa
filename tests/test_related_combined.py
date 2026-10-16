@@ -123,3 +123,38 @@ def test_a_series_in_many_rows_is_scaled_down(db_path):
     runs = [_run(db_path, f"Run {i}", [[("writer", f"Writer {i}"), ("writer", f"Partner {i % 4}")]] * 2) for i in range(8)]
     ix = rc.index(db_path)
     assert ix.damp.get(hub, 1.0) < 1.0 and all(ix.damp.get(r, 1.0) == 1.0 for r in runs)
+
+
+def test_review_fixes_one_card_per_family_team_names_the_cast_and_a_strong_genre_says_so(db_path):
+    bkv = ("writer", "Brian K. Vaughan")
+    saga = _run(db_path, "Saga", [[bkv]] * 3)
+    em = _run(db_path, "Ex Machina", [[bkv]] * 3)
+    special = _run(db_path, "Ex Machina Special", [[bkv]], mtype="One-Shot")
+    pg = _run(db_path, "Paper Girls", [[bkv]] * 3)
+    for sid in (saga, pg):
+        rec.set_tags(sid, "metron", ["Science Fiction"], db_path)
+    row = rc.related_combined(saga, path=db_path)
+    titles = [c["title"] for c in row]
+    assert "Ex Machina" in titles and "Ex Machina Special" not in titles     # one card per family
+    assert next(c for c in row if c["title"] == "Paper Girls")["why"] == ["Writer: Brian K. Vaughan", "Genre: science fiction"]
+
+    ff = _run(db_path, "Fantastic Four", [[("writer", "Writer A")]] * 3, publisher="Marvel Comics")
+    ff2 = _run(db_path, "FF", [[("writer", "Writer B")]] * 3, publisher="Marvel Comics")
+    for sid in (ff, ff2):
+        with db._connect(db_path) as c:
+            for n in (1.0, 2.0, 3.0):
+                c.execute("UPDATE issue_record SET extra_json = ? WHERE tracked_series_id = ? AND number = ?",
+                          (json.dumps({"teams": ["Fantastic Four"], "characters": ["Human Torch", "Thing"]}), sid, n))
+    rc._cache.update(ix=None)
+    card = next(c for c in rc.related_combined(ff, path=db_path) if c["series_id"] == ff2)
+    assert card["why"][0] == "Team: Fantastic Four"
+
+
+def test_a_long_run_you_own_none_of_keeps_its_two_year_creators(db_path):
+    """Batman (1940): 693 catalogue issues, none owned. 20% meant 139 issues; Doug
+    Moench's 103 fell out. Over 50 issues with nothing owned, 25 is enough."""
+    moench, finger = ("writer", "Doug Moench"), ("writer", "Bill Finger")
+    long_run = _run(db_path, "Batman (1940)", [[finger]] * 150 + [[moench]] * 30, owned=set(), publisher="DC Comics")
+    knightfall = _run(db_path, "Knightfall", [[moench]] * 2, publisher="DC Comics")
+    row = {c["series_id"]: c for c in rc.related_combined(long_run, path=db_path)}
+    assert row[knightfall]["why"][0] == "Writer: Doug Moench"

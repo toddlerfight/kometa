@@ -39,6 +39,7 @@ FRANCHISE_FLAT = 1.5
 CARD_MIN = {"cast": 0.6, "genre": 0.6}       # these channels need this much before they can make a card
 STRONG_CREDIT = 2.0                 # writer 3, plot/artist/penciller 2; an inker (1) can't make a card alone
 PRESENCE = 0.20                     # a creator on this share of the issues considered
+LONG_RUN, LONG_RUN_FLOOR = 50, 25   # a run you own none of, over 50 issues: 25 issues (two years) is a defining creator
 CAST_PRESENCE = 0.25                # a character/team/universe on this share of a run's issues
 CAST_TOP_CHARACTERS, CAST_TOP_TEAMS = 5, 2
 STOP_SHARE = 0.15                   # a feature on more of a channel's series than this says nothing
@@ -52,7 +53,10 @@ DEFAULT_UNIVERSES = {"earth 616", "earth-616", "prime earth", "earth 0", "earth-
 THEME_MULT = 1.5                    # a theme says more than a coarse genre
 REASON_SHARE = 0.25                 # a channel's reason shows if it gave this share of the card's score
 DIVERSITY_TOP, DIVERSITY_TOP_MAX, DIVERSITY_ALL_MAX = 6, 3, 5
+ROW = 12                            # the row's length
+HUB_TOP = 5                         # hubness is counted over the top 5 rows people see first — what the harness gate measures
 HUB_DAMP = 0.5                      # score / (1 + 0.5 · log2(rows it's in / the median)) above the median
+HUB_GATE, HUB_PASSES = 0.03, 6      # re-damp until no series is in more than 3% of top-5 rows
 INDEX_TTL_S = 300
 
 _ROLE_LABEL = {"writer": "Writer", "story": "Writer", "script": "Writer", "plot": "Writer", "artist": "Artist",
@@ -131,6 +135,10 @@ def _owned_credits(path) -> dict[int, dict[str, tuple[float, str, str]]]:
         mine = [c for c, o in rows if o]
         use = mine or [c for c, _ in rows]
         total = len(use)
+        # Over Batman (1940)'s 693 catalogue issues (you own none) 20% means 139: Doug
+        # Moench's 103 and Grant Morrison's 28 fell out, a colorist's 189 stayed. A run
+        # you own none of keeps anyone on 25+ issues.
+        floor = (LONG_RUN_FLOOR if not mine and total > LONG_RUN else max(1, math.ceil(total * PRESENCE)))
         seen: Counter = Counter()
         info = {}
         for credits in use:
@@ -141,7 +149,7 @@ def _owned_credits(path) -> dict[int, dict[str, tuple[float, str, str]]]:
         feats = {}
         for (k, role), n in seen.items():
             w = related._role_weight(role)
-            if w <= 0 or (total > 1 and n / total < PRESENCE):
+            if w <= 0 or (total > 1 and n < floor):
                 continue
             if k not in feats or w > feats[k][0]:
                 feats[k] = (w, _label(role), info[(k, role)])
@@ -261,17 +269,28 @@ def build_index(path=None) -> Index:
             ix.franchise[s["id"]] = f"{pub}|{stem}"
     ix.lists = related._list_neighbours(path)
     ix.finish()
-    # Hub damping, measured not assumed: how many rows each series would land in.
-    # An anthology with fifty creators (The Joker 80th Anniversary) or the lead of
-    # thirty runs (Batman (2011)) was in 30–36 rows on 2026-10-16; the harness gate is 3%.
-    indeg: Counter = Counter()
-    for sid in ix.series:
-        for c in _score(ix, sid):
-            indeg[c["series_id"]] += 1
-    if indeg:
+    # Hub damping, measured not assumed: how many top-5 rows each series lands in. An
+    # anthology with fifty creators or the lead of thirty runs was in 30–36 rows on
+    # 2026-10-16 against a 3% gate. Damping one Batman title promoted the next (56
+    # Batman runs feed every Batman row), so it's re-counted with the damping applied
+    # until no series is above the gate or HUB_PASSES runs out.
+    rows = {sid: _score(ix, sid) for sid in ix.series}
+    limit = max(1, int(HUB_GATE * len(ix.series)))
+    for _ in range(HUB_PASSES):
+        indeg: Counter = Counter()
+        for cands in rows.values():
+            top = sorted(cands, key=lambda c: (-c["score"] * ix.damp.get(c["series_id"], 1.0), c["title"] or ""))
+            for c in _diversify(_one_per_family(ix, top), ROW)[:HUB_TOP]:      # the row exactly as served
+                indeg[c["series_id"]] += 1
+        if not indeg or indeg.most_common(1)[0][1] <= limit:
+            break
         vals = sorted(indeg.values())
         med = max(1, vals[len(vals) // 2])
-        ix.damp = {sid: 1.0 / (1.0 + HUB_DAMP * math.log2(n / med)) for sid, n in indeg.items() if n > med}
+        for sid, n in indeg.items():
+            # only what's over the gate: damping everything above the median pushed Paper
+            # Girls (in ~10 rows, a good match, not a hub) out of Saga's top three
+            if n > limit:
+                ix.damp[sid] = ix.damp.get(sid, 1.0) / (1.0 + HUB_DAMP * math.log2(n / med))
     return ix
 
 
@@ -352,15 +371,19 @@ def _channel_raw(ix: Index, ch: str, seed: int) -> dict[int, tuple[float, str, f
                 part = 3.0 * f
             else:                                       # universe, cast: idf · shared presence
                 part = idf.get(k, 1.0) * shared
-            a = acc.setdefault(sid, {"sum": 0.0, "best": None, "best_part": -1.0, "strength": 0.0})
+            a = acc.setdefault(sid, {"sum": 0.0, "best": None, "best_rank": -1.0, "top_part": 0.0, "strength": 0.0})
             a["sum"] += part
             a["strength"] = max(a["strength"], shared)
-            if part > a["best_part"]:
-                a["best"], a["best_part"] = k, part
+            a["top_part"] = max(a["top_part"], part)
+            # the reason: a shared team names it over one of its members ("Team: Fantastic
+            # Four", not "Stars Human Torch" — round 3); the score is untouched by this
+            rank = part * (1.25 if k.startswith("t:") else 1.0)
+            if rank > a["best_rank"]:
+                a["best"], a["best_rank"] = k, rank
     if ch == "cast":
         # the strongest shared lead counts whole, the rest a quarter: Batman, Gordon
         # and Alfred are one reason, not three
-        return {sid: (a["best_part"] + 0.25 * (a["sum"] - a["best_part"]), a["best"], a["strength"])
+        return {sid: (a["top_part"] + 0.25 * (a["sum"] - a["top_part"]), a["best"], a["strength"])
                 for sid, a in acc.items()}
     return {sid: (a["sum"], a["best"], a["strength"]) for sid, a in acc.items()}
 
@@ -424,7 +447,12 @@ def _score(ix: Index, series_id: int) -> list[dict]:
             continue
         score = sum(chans.values())
         order = sorted(chans, key=lambda ch: -chans[ch])
-        why = [reasons[sid][ch] for ch in order if chans[ch] >= REASON_SHARE * score][:3] or [reasons[sid][order[0]]]
+        # a channel says its piece when it gave a quarter of the score — or, for genre and
+        # cast, when it's strong enough to have made the card alone (Saga → Paper Girls:
+        # "Writer: Brian K. Vaughan, Genre: science fiction")
+        why = [reasons[sid][ch] for ch in order
+               if chans[ch] >= REASON_SHARE * score or chans[ch] >= CARD_MIN.get(ch, float("inf"))][:3] \
+            or [reasons[sid][order[0]]]
         out.append({"series_id": sid, "title": s["title"], "publisher": s.get("publisher"), "score": score,
                     "why": why, "owned": s.get("owned") or 0,
                     "total": (s.get("owned") or 0) + (s.get("missing") or 0),
@@ -443,7 +471,22 @@ def related_combined(series_id: int, limit: int = 12, path=None, explain: bool =
     for c in ranked:
         c["score"] = round(c["score"] * ix.damp.get(c["series_id"], 1.0), 2)
     ranked.sort(key=lambda c: (-c["score"], c["title"] or ""))
-    return _diversify(ranked, limit)
+    return _diversify(_one_per_family(ix, ranked), limit)
+
+
+def _one_per_family(ix: Index, ranked: list[dict]) -> list[dict]:
+    """The best card per family: Ex Machina, not Ex Machina and its Special; Head Lopper,
+    not Head Lopper and the same title shelved twice."""
+    from kometa.family import _base
+    out, taken = [], set()
+    for c in ranked:
+        sid = c["series_id"]
+        keys = {("s", m) for m in ix.family.get(sid, set()) | {sid}} | {("t", norm_key(_base(c["title"] or "")))}
+        if keys & taken:
+            continue
+        taken |= keys
+        out.append(c)
+    return out
 
 
 def _diversify(ranked: list[dict], limit: int) -> list[dict]:
