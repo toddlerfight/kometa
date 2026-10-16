@@ -1422,20 +1422,38 @@ def add_series(req: AddSeriesRequest):
             except Exception as e:
                 logger.info(f"Add {title!r}: Metron title match skipped: {e}")
         sync_one_guarded(added, _sync_one)
-        if req.on_pull_list:
-            issues = db.get_issues_for_series(new_id, DB_PATH)
-            today_str = str(date.today())
-            # Batch the queue insert — per-issue queue_issue is one fresh
-            # connection + fsync EACH, which the NAS disk does not appreciate.
-            pairs = [(new_id, issue["number"]) for issue in issues
-                     if not issue["owned"] and not issue.get("ignored")
-                     and (not issue["store_date"] or issue["store_date"] <= today_str)]
-            if pairs:
-                db.queue_issues_bulk(pairs, DB_PATH)
+        if req.on_pull_list and _auto_pull(new_id, db.get_issues_for_series(new_id, DB_PATH)):
             _process_queue()
 
     threading.Thread(target=_bg_sync, daemon=True).start()
     return added
+
+
+PULL_AUTO_CAP = 33          # the owner's number ("33 just cause", 2026-10-16)
+
+
+def _auto_pull(series_id: int, issues: list[dict], today: str | None = None, path=None) -> int:
+    """A run tracked from a card goes on the pull list and its released, missing issues are
+    queued — unless there are more than PULL_AUTO_CAP of them. Then the pull list is switched
+    OFF instead and nothing is queued: Track is one tap on a Trending card, and one tap must
+    never start a 500-file grab of Batman (1940). The series page shows the toggle off; turn
+    it on there and the whole run comes, or take issues one at a time with ↓.
+    Returns how many were queued."""
+    path = path or DB_PATH
+    today = today or str(date.today())
+    # Batch the queue insert — per-issue queue_issue is one fresh connection + fsync EACH,
+    # which the NAS disk does not appreciate.
+    pairs = [(series_id, issue["number"]) for issue in issues
+             if not issue["owned"] and not issue.get("ignored")
+             and (not issue["store_date"] or issue["store_date"] <= today)]
+    if len(pairs) > PULL_AUTO_CAP:
+        db.set_pull_list(series_id, False, path)
+        logger.info(f"Track: {len(pairs)} missing issues is over the auto-pull cap of {PULL_AUTO_CAP} — "
+                    f"pull list left off for series {series_id}")
+        return 0
+    if pairs:
+        db.queue_issues_bulk(pairs, path)
+    return len(pairs)
 
 
 @app.delete("/api/series/{series_id}")
