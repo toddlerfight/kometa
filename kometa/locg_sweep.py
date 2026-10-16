@@ -100,10 +100,24 @@ BAD_PAGE_TTL_S = 24 * 3600
 _bad: dict[str, float] = {}
 
 
-def _skip_page(lid, e, out) -> None:
+WALL_STRIKES = 3                      # this many page failures in a row with no success = the wall, not the pages
+
+
+def _skip_page(lid, e, out) -> bool:
+    """Mark one failed page. Returns True when the tick should stop: three failures in a
+    row and nothing fetched between them is LOCG refusing everything (2026-10-16: FlareSolverr
+    timing out on every page) — those pages are unmarked again, they did nothing wrong."""
     _bad[str(lid)] = time.time() + BAD_PAGE_TTL_S
     out["skipped"] += 1
+    out.setdefault("_streak", []).append(str(lid))
+    if len(out["_streak"]) >= WALL_STRIKES:
+        for l_ in out["_streak"]:
+            _bad.pop(l_, None)
+        out["skipped"] -= len(out["_streak"])
+        out["stopped"] = f"refused: {len(out['_streak'])} pages in a row — the wall ({e})"
+        return True
     logger.info(f"LOCG sweep: skipped page {lid} for a day: {e}")
+    return False
 
 
 def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None, fill_issue=None,
@@ -143,11 +157,12 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
                 got = fv(sid, n, issue)
             except locg_client.LocgPaused as e:
                 out["stopped"] = f"refused: {e}"; break
-            except Exception as e:                       # this page, not the wall
-                _skip_page(lid, e, out); continue
+            except Exception as e:                       # this page, not the wall (unless it keeps happening)
+                if _skip_page(lid, e, out): break
+                continue
             if not is_open() or got is None:        # the client paused itself, or nothing could be asked
                 out["stopped"] = "refused"; break
-            out["variants"] += 1
+            out["variants"] += 1; out["_streak"] = []
         # details too, when LOCG is the only catalogue for this issue and the record is thin
         if not issue.get("metron_issue_id") and out["requests"] < budget:
             row = record.get_issue(sid, n, path)
@@ -162,9 +177,11 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
                 except locg_client.LocgPaused as e:
                     out["stopped"] = f"refused: {e}"; break
                 except Exception as e:
-                    _skip_page(lid, e, out); continue
+                    if _skip_page(lid, e, out): break
+                    continue
                 if not is_open():
                     out["stopped"] = "refused"; break
+                out["_streak"] = []
                 if r is None:
                     # LOCG answered but had nothing: say so on the row, or this
                     # issue heads the queue and stalls the sweep every tick
@@ -183,10 +200,12 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
             except locg_client.LocgPaused as e:
                 out["stopped"] = f"refused: {e}"; break
             except Exception as e:
-                _skip_page(lid, e, out); continue
+                if _skip_page(lid, e, out): break
+                continue
             if not is_open():
                 out["stopped"] = "refused"; break
-            out["community"] += 1
+            out["community"] += 1; out["_streak"] = []
+    out.pop("_streak", None)
     _count(out["requests"])
     logger.info(f"LOCG sweep: {out['requests']} requests, {out['variants']} variant lists, {out['details']} details, "
                 f"{out['community']} community"

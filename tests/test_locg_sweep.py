@@ -146,3 +146,26 @@ def test_a_broken_page_is_skipped_for_a_day_and_the_tick_moves_on(db_path):
     calls.clear()
     out = sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=paused, sleep=lambda s: None, syncing=lambda: False)
     assert calls == [("p", 1.0)] and out["stopped"].startswith("refused")
+
+
+def test_three_failures_in_a_row_is_the_wall_and_the_pages_are_not_blamed(db_path):
+    import requests
+    sw._bad.clear()
+    a = _series(db_path, "A", pull=True)
+    for n in (1.0, 2.0, 3.0, 4.0):
+        db.upsert_issue_status(a, n, "2026-01-01", 1, locg_issue_id=str(10 + int(n)), path=db_path)
+    calls = []
+    def fv(sid, n, issue):
+        calls.append(n); raise requests.HTTPError("HTTP 500 (FlareSolverr timed out)")
+    out = sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=fv, sleep=lambda s: None, syncing=lambda: False)
+    assert calls == [1.0, 2.0, 3.0] and out["stopped"].startswith("refused: 3 pages in a row") and out["skipped"] == 0
+    assert sw._bad == {}                                                  # nothing held back for a day
+    # one failure then successes: that one page IS skipped, the tick carries on
+    calls.clear()
+    def fv2(sid, n, issue):
+        calls.append(n)
+        if n == 1.0:
+            raise requests.HTTPError("HTTP 500")
+        return []
+    out = sw.sweep_tick(path=db_path, is_open=lambda: True, fill_variants=fv2, sleep=lambda s: None, syncing=lambda: False)
+    assert out["stopped"] is None and out["skipped"] == 1 and set(sw._bad) == {"11"}
