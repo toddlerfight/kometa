@@ -353,8 +353,7 @@ def test_cbr_links_conservatively_and_scores_beside_locg(db_path, web):
     db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
     db.upsert_issue_status(sid, 3.0, None, 1, metron_issue_id=3, path=db_path)          # not on the page
     rec.set_community(sid, 1.0, {"rating": 4.5}, db_path)
-    routes[cbr.BASE + "image-comics/saga-(2012)"] = (404, "")
-    routes[cbr.BASE + "image-comics/saga"] = (200, _cbr_page())
+    routes[cbr.BASE + "image-comics/saga-(2012)"] = (200, _cbr_page())
     assert cbr.tick(path=db_path) == 1
     c = rec.get_issue(sid, 1.0, db_path)["community"]
     assert c["rating"] == 4.5

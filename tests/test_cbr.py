@@ -99,3 +99,45 @@ def test_matches_handles_subtitled_runs_and_verifies_year():
     # Missing year on page or input must remain False (unsure)
     assert cbr.matches(s, {"name": "Mister Miracle", "start_year": None}, 2017) is False
     assert cbr.matches(s, page, None) is False
+
+
+def test_candidate_urls_yields_the_variant_only_for_the_titles():
+    s_the = {"title": "The Department of Truth", "publisher": "Image Comics"}
+    urls = cbr.candidate_urls(s_the, 2020)
+    assert urls == [
+        "https://comicbookroundup.com/comic-books/reviews/image-comics/department-of-truth-(2020)",
+        "https://comicbookroundup.com/comic-books/reviews/image-comics/the-department-of-truth-(2020)",
+    ]
+
+    s_no_the = {"title": "Department of Truth", "publisher": "Image Comics"}
+    assert cbr.candidate_urls(s_no_the, 2020) == [
+        "https://comicbookroundup.com/comic-books/reviews/image-comics/department-of-truth-(2020)"
+    ]
+
+    assert cbr.candidate_urls(s_the, None) == []
+    assert cbr.candidate_urls({"title": "The Flash", "publisher": None}, 2023) == []
+
+
+def test_ensure_tables_the_reprobe_resets_none_series_once(db_path):
+    cbr.ensure_tables.reset()
+    cbr.ensure_tables(db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("DELETE FROM config WHERE key = 'cbr_the_reprobe'")
+    db._config_cache.pop(db_path, None)
+
+    sid1 = db.add_series(title="The Department of Truth", publisher="Image Comics", folder_path=None, on_pull_list=False, path=db_path)
+    sid2 = db.add_series(title="Batman", publisher="DC Comics", folder_path=None, on_pull_list=False, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("INSERT INTO cbr_series (tracked_series_id, state, at) VALUES (?, 'none', '2026-10-15 12:00:00')", (sid1,))
+        conn.execute("INSERT INTO cbr_series (tracked_series_id, state, at) VALUES (?, 'none', '2026-10-15 12:00:00')", (sid2,))
+
+    cbr.ensure_tables.reset()
+    cbr.ensure_tables(db_path)
+
+    with db._connect(db_path) as conn:
+        r1 = conn.execute("SELECT at FROM cbr_series WHERE tracked_series_id = ?", (sid1,)).fetchone()
+        r2 = conn.execute("SELECT at FROM cbr_series WHERE tracked_series_id = ?", (sid2,)).fetchone()
+        assert r1[0] == "1970-01-01 00:00:00"
+        assert r2[0] == "2026-10-15 12:00:00"
+        assert db.get_config(db_path).get("cbr_the_reprobe") == "1"
+

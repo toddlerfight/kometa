@@ -50,6 +50,13 @@ def ensure_tables(path=None):
         conn.execute("""CREATE TABLE IF NOT EXISTS cbr_series (
             tracked_series_id INTEGER PRIMARY KEY, state TEXT, url TEXT, name TEXT, start_year INTEGER,
             critic REAL, critic_reviews INTEGER, user_score REAL, user_reviews INTEGER, issues INTEGER, at TEXT)""")
+        cfg = db.get_config(path or DB_PATH)
+        if not cfg.get("cbr_the_reprobe"):
+            conn.execute("""UPDATE cbr_series SET at = '1970-01-01 00:00:00'
+                            WHERE state = 'none' AND tracked_series_id IN (
+                                SELECT id FROM tracked_series WHERE title LIKE 'The %'
+                            )""")
+            db.set_config({"cbr_the_reprobe": "1"}, path or DB_PATH)
 
 
 def _now() -> str:
@@ -116,7 +123,12 @@ def candidate_urls(s: dict, year: int | None) -> list[str]:
     pub, slug = publisher_slug(s.get("publisher")), series_slug(s.get("title"))
     if not pub or not slug or not year:
         return []
-    return [f"{BASE}{pub}/{slug}-({year})", f"{BASE}{pub}/{slug}"]
+    base_url = f"{BASE}{pub}/{slug}-({year})"
+    title = (s.get("title") or "").strip()
+    title = re.sub(r"^\s*(?:-\s*|\d{1,2}\s*-\s+)", "", title).strip().strip("-").strip()
+    if re.match(r"^the\s+", title, re.IGNORECASE):
+        return [base_url, f"{BASE}{pub}/the-{slug}-({year})"]
+    return [base_url]
 
 
 # --- the series page ----------------------------------------------------------------

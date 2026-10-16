@@ -17,7 +17,6 @@ Security (LAN + tailnet; Funnel is off — checked):
 - [ ] Test-connection buttons only use stored keys with the stored address (today a request can name another server and get the key).
 - [ ] Fence every folder path and the comics root inside the library; fix the purge depth bug (a folder directly under the root loses its 7-day Undo).
 - [ ] Variant cover URLs: only known cover hosts, served as images only, `nosniff`.
-- [ ] ~12 inline click handlers built from titles: escape properly (`esc(JSON.stringify(...))`).
 - [ ] Scrub `apikey=` / `api_key=` / tokens out of errors, the queue and logs; Prowlarr key as a header.
 - [ ] URL importer: https only, no private addresses, size cap; caps on uploads and zip entries.
 - [ ] Container: non-root user, code mounted read-only, drop capabilities.
@@ -50,5 +49,4 @@ Personal details (low, current tree): machine/drive names (ginbako, Voot II, emo
 ## On the build side (no input needed)
 
 - [ ] "Pages start at 002" guard — check whether it's too strict (Where Monsters Dwell #2–4, Death of Dracula).
-- [ ] Download errors in words ("download cut off"), not a Python exception.
 - [ ] Confirm "database is locked" is gone now that connections are kept per thread.
