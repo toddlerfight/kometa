@@ -632,6 +632,50 @@ def next_book(list_id: int, after: int, path=None) -> int | None:
 
 
 # --- covers for the gaps -------------------------------------------------------------
+def _title_key(title: str) -> str:
+    """A catalogue title, the way a list names it: Metron files 1992's as 'The Infinity
+    War', the list says 'Infinity War'."""
+    return norm_key(re.sub(r"^the\s+", "", _YEAR.sub("", title or "").strip(), flags=re.I))
+
+
+def _entry_year(item: dict, series: str) -> int | None:
+    """The run's start year, when the list says: a CBL's Volume is the year the run
+    began ('Master of Kung Fu', Volume 2015), else a year field, else '(2015)' in the title."""
+    tail = _YEAR.search(series or "")
+    for v in (item.get("volume"), item.get("year"), tail.group(0) if tail else None):
+        m = re.search(r"\b(?:19|20)\d{2}\b", str(v or ""))
+        if m:
+            return int(m.group(0))
+    return None
+
+
+def metron_cover(series: str, number, year: int | None, search, issues, asked: dict) -> str:
+    """The cover of this issue of this run, or '' — never another run's, never another
+    issue's. The search's first row stood in when no title matched, and the run's first
+    cover stood in when the number wasn't there: Infinity War #1–6 all wore Infinity
+    Countdown: Adam Warlock #1, a one-shot. A year picks between runs of one title,
+    one either side (Master of Kung Fu 1974/2015/2017); without one, the first runs
+    (three at most) that have the number. `asked` keeps answers for one pass."""
+    q = _YEAR.sub("", series or "").strip()
+    if ("q", q) not in asked:
+        asked[("q", q)] = search(q) or []
+    key = _title_key(series)
+    runs = [r for r in asked[("q", q)] if _title_key(r.get("title")) == key]
+    if year:
+        # a run whose year disagrees is out; one with no year on record can't be judged,
+        # so it comes after the ones that agree
+        runs = sorted((r for r in runs if not r.get("year") or abs(int(r["year"]) - year) <= 1),
+                      key=lambda r: abs(int(r["year"]) - year) if r.get("year") else 2)
+    n = _num(number)
+    for r in runs[:3]:
+        if ("i", r["id"]) not in asked:
+            asked[("i", r["id"])] = issues(r["id"]) or []
+        for i in asked[("i", r["id"])]:
+            if i.get("image") and (n is None or i.get("number") == n):
+                return i["image"]
+    return ""
+
+
 def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_issues=None, limit_metron: int = 40) -> dict:
     """Give every not-on-shelf entry (and every trade owned as its run) a catalogue cover, once. ComicVine first —
     a CBL names the issue id, so it's one batched lookup for the whole list —
@@ -675,21 +719,14 @@ def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_iss
         from kometa import metron_client
         search = metron_search or (metron_client.search_series if metron_client.configured() else None)
         issues = metron_issues or metron_client.series_issues
+        asked: dict = {}                       # six Infinity War entries are one search, not six
         for e in rest:
             if not search:
                 break
             try:
-                rows = search(_YEAR.sub("", e["series"]))
-                hit = next((r for r in rows if norm_key(r["title"]) == norm_key(_YEAR.sub("", e["series"]))), None) or (rows[0] if rows else None)
-                img = None
-                if hit:
-                    n = _num(e["number"])
-                    for i in issues(hit["id"]):
-                        if i.get("image") and (n is None or i["number"] == n or img is None):
-                            img = i["image"]
-                            if n is None or i["number"] == n:
-                                break
-                found[e["item_id"]] = img or ""
+                it = items[e["item_id"]]
+                found[e["item_id"]] = metron_cover(e["series"], e["number"], _entry_year(it, e["series"]),
+                                                   search, issues, asked)
             except Exception as ex:
                 logger.info(f"Reading list cover: Metron skipped {e['series']!r}: {ex}")
                 break
