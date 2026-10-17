@@ -306,6 +306,19 @@ def _issue_thumbnail(series_id: int, number: float, request: Request = None):
         if resp:
             return _tag(resp, "catalogue")
 
+    # Comic Vine's cover, where the catalogue has none (harvest.cv_covers_tick asks for these
+    # first): Buffy the Vampire Slayer #2–#10, 1998, sat as blank frames — no Metron art, and
+    # LOCG's issue pages walled (2026-10-18).
+    try:
+        from kometa import record
+        cvo = ((record.get_issue(series_id, number, DB_PATH) or {}).get("extra") or {}).get("cv_original")
+    except Exception:
+        cvo = None
+    if cvo:
+        resp = images.serve(images.cv_key(series_id, number), cvo, "comicvine", path=DB_PATH) or _image_or_none(cvo)
+        if resp:
+            return _tag(resp, "catalogue")
+
     # Artless issues often have variant art on LOCG before the main cover is
     # posted (upcoming issues). covers[0] is the main, so it gets first shot;
     # otherwise the first variant with real art wins. Cached by URL.

@@ -66,3 +66,16 @@ def test_a_name_two_people_share_is_left_alone(db_path, monkeypatch):
             c.execute("INSERT INTO series_signals (tracked_series_id, creators_json, arcs_json) VALUES (?, ?, '[]')",
                       (sid, json.dumps([{"role": "writer", "name": "John Smith", "id": cid}])))
     assert rel.backfill_signal_ids(db_path) == 0
+
+
+def test_the_card_hears_when_its_names_were_just_sent_to_metron(db_path, monkeypatch):
+    from kometa import metron_client
+    sent = []
+    monkeypatch.setattr(metron_client, "configured", lambda: True)
+    monkeypatch.setattr(rel, "_resolve_in_background", lambda names, path: sent.extend(names))
+    rel._ids_by_name.update(at=0)
+    credits = [{"role": "Writer", "name": "Jhonen Vasquez", "metron_creator_id": None}]
+    out, asking = rel.with_creator_ids_asking(credits, db_path, ask=True)
+    assert asking and sent == ["Jhonen Vasquez"] and out[0]["metron_creator_id"] is None
+    _, asking = rel.with_creator_ids_asking(credits, db_path, ask=False)          # a reader never asks
+    assert not asking

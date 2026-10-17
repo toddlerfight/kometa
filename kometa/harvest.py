@@ -187,8 +187,11 @@ CV_BATCH = 100
 
 
 def cv_cover_candidates(path=None, limit: int = CV_BATCH) -> list[dict]:
-    """Owned issues whose record carries a ComicVine id (from Metron) and that
-    ComicVine hasn't been asked about yet. Pull list first, then the rest."""
+    """Issues whose record carries a ComicVine id (from Metron) and that ComicVine hasn't
+    been asked about yet: the ones you own (for the archive), and ones with no catalogue
+    art at all — those first, they're blank frames on screen (Buffy the Vampire Slayer,
+    1998: Metron has no art for #1–#10 and LOCG's pages are walled, 2026-10-18).
+    Then the pull list, then the rest."""
     path = path or DB_PATH
     from kometa import record
     record.ensure_tables(path)
@@ -197,9 +200,10 @@ def cv_cover_candidates(path=None, limit: int = CV_BATCH) -> list[dict]:
             SELECT r.tracked_series_id AS sid, r.number, r.cv_issue_id, r.extra_json
             FROM issue_record r JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
             JOIN tracked_series s ON s.id = r.tracked_series_id
-            WHERE i.owned = 1 AND r.cv_issue_id IS NOT NULL AND r.cv_issue_id != '' AND r.extra_json IS NOT NULL
+            WHERE (i.owned = 1 OR COALESCE(i.metron_image, '') NOT LIKE 'http%')
+              AND r.cv_issue_id IS NOT NULL AND r.cv_issue_id != '' AND r.extra_json IS NOT NULL
               AND (s.kind IS NULL OR s.kind != 'arc')
-            ORDER BY s.on_pull_list DESC, r.tracked_series_id, r.number""").fetchall()
+            ORDER BY (i.owned = 0) DESC, s.on_pull_list DESC, r.tracked_series_id, r.number""").fetchall()
     out = []
     for r in rows:
         extra = json.loads(r["extra_json"] or "{}")

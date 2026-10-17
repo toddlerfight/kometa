@@ -498,6 +498,11 @@ def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: 
                          (json.dumps(fs), series_id, number))
     if out["source"]:
         logger.info(f"Credits for {series_id}#{number:g} from {out['source']}: {len(out['credits'])}")
+        try:                                      # GCD and Comic Vine carry no Metron ids: ask now, not when a card opens
+            from kometa.related import with_creator_ids
+            with_creator_ids(out["credits"], path, ask=True)
+        except Exception as e:
+            logger.info(f"Credits for {series_id}#{number:g}: name lookups not started: {e}")
     return out
 
 

@@ -128,3 +128,18 @@ def test_a_long_credit_list_shows_writers_and_artists_first(app):
     box.get_by_role("button", name="+ 11 more credits").click()
     expect(box.get_by_text("Letters 10")).to_be_visible()
     expect(box.locator(".credit-more")).to_have_count(0)
+
+
+def test_the_series_page_repaints_when_the_shelf_moves(app, app_server):
+    sid = _alpha(app)
+    expect(app.locator('.issue-tile[data-num="3"] .issue-tile-img.missing')).to_have_count(1)
+    app.evaluate("_liveTick()")                                          # the stamp, as it stands
+    with sqlite3.connect(app_server["db_path"]) as c:                     # #3 lands, behind the page's back
+        c.execute("UPDATE issue_status SET owned = 1 WHERE tracked_series_id = ? AND number = 3", (sid,))
+    try:
+        app.evaluate("_liveTick()")                                      # it moved: a quiet repaint
+        expect(app.locator('.issue-tile[data-num="3"] .issue-tile-img.missing')).to_have_count(0)
+        expect(app.locator('.issue-tile[data-num="3"] .od-menu')).to_have_count(1)   # owned now: the ⋯
+    finally:
+        with sqlite3.connect(app_server["db_path"]) as c:
+            c.execute("UPDATE issue_status SET owned = 0 WHERE tracked_series_id = ? AND number = 3", (sid,))

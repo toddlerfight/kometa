@@ -2312,7 +2312,7 @@ function _issueTileHtml(s, issue) {
       // genuinely zero art anywhere 404s and the img removes itself, same blank as before.
       const thumbSrc = issue.variant_cover
         || _metronArt(issue)
-        || `/api/series/${s.id}/issues/${issue.number}/thumbnail`;
+        || `/api/series/${s.id}/issues/${issue.number}/thumbnail?c=3`;   // c: Comic Vine covers for artless issues (2026-10-18)
       inner = `<div class="issue-tile-img ${st}">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy"
           onerror="this.remove()">${dateBadge}
@@ -5482,6 +5482,20 @@ function _creditsOpen(btn, all) {
   });
 }
 
+// The card's names were just sent to Metron for their ids: look again a few times, and
+// redraw once a name has become a link — not only the next time the card opens.
+function _creditIdsLater(seriesId, number, had, tries = 3) {
+  const linked = cs => cs.filter(c => c.metron_creator_id).length;
+  setTimeout(async () => {
+    if (_issueVariantSeriesId !== seriesId || _issueVariantNumber !== number
+        || document.getElementById('modal')?.classList.contains('hidden')) return;
+    let d;
+    try { d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`); } catch { return; }
+    if (linked(d.credits || []) > linked(had)) _renderIssueDetails(d.desc, d.credits || [], d.community);
+    else if (tries > 1) _creditIdsLater(seriesId, number, had, tries - 1);
+  }, 4000);
+}
+
 function _renderIssueDetails(desc, credits, community) {
   const el = document.getElementById('issue-modal-details');
   if (!el) return;
@@ -5576,7 +5590,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
       : (_metronArt(issue)
           // same server-side fallback chain the grid tiles use — never show the
           // no-cover void when LOCG has variant art for an artless upcoming issue
-          || `/api/series/${seriesId}/issues/${issue.number}/thumbnail`);
+          || `/api/series/${seriesId}/issues/${issue.number}/thumbnail?c=3`);
 
   const chipMap = {
     owned:   `<span class="chip chip-complete">Owned</span>`,
@@ -5703,6 +5717,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
     try {
       const d = await api.get(`/api/series/${seriesId}/issues/${number}/locg-details`);
       _renderIssueDetails(d.desc, d.credits || [], d.community);
+      if (d.ids_pending) _creditIdsLater(seriesId, number, d.credits || []);
     } catch { _renderIssueDetails('', []); }
   } else if (st === 'owned') {
     // no catalogue id: the file's own tags may still know (read local first; a 404 when it's off)
@@ -6028,6 +6043,37 @@ function _parseHash() {
   if (params.id) params.id = parseInt(params.id, 10) || params.id;
   return { view: view || 'library', params };
 }
+
+// --- live pages -----------------------------------------------------------------
+// The shelf's pages repaint themselves when something behind them moves — a search
+// queued, a download landing, a book finished on another device. Buffy's page sat still
+// after its pull list went on until a reload (the owner, 2026-10-18; On Deck, Library and
+// the pull list the same). A cheap stamp every LIVE_MS; a repaint only when it moves,
+// quietly (the reader's back-to-the-page path: same scroll, no 'Loading'), never under a
+// window or while you're typing.
+const LIVE_MS = 10000;
+const _LIVE = {
+  'series-detail': () => renderSeriesDetail(currentParams.id),
+  ondeck: () => renderOnDeck(),
+  library: () => _loadBrowsePage(),
+  'pull-list': () => _renderPullListContent(),
+};
+let _live = { key: null, stamp: null };
+async function _liveTick() {
+  const key = _LIVE[currentView] ? `${currentView}:${currentParams?.id ?? ''}` : null;
+  if (!key || document.hidden) { _live = { key: null, stamp: null }; return; }
+  if (!document.getElementById('modal')?.classList.contains('hidden')) return;
+  if (document.activeElement?.matches('input, textarea, select')) return;
+  let stamp;
+  try { stamp = (await api.get('/api/changes')).stamp; } catch { return; }
+  const moved = _live.key === key && _live.stamp !== null && stamp !== _live.stamp;
+  _live = { key, stamp };
+  if (!moved) return;
+  const gen = _vt.gen;
+  _vt.quiet = { gen, y: _appScrollTop() };
+  try { await _LIVE[currentView](); } catch {} finally { if (_vt.quiet?.gen === gen) _vt.quiet = null; }
+}
+setInterval(_liveTick, LIVE_MS);
 
 // --- pull-to-refresh (touch only) ---
 // Re-fetches the current view's DATA without resetting filters/search state.

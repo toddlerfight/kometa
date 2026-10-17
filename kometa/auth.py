@@ -366,7 +366,7 @@ def forget_enabled() -> None:
 # new route is locked until someone decides it isn't.
 _R = r"[^/]+"
 READER_GET = [re.compile(p) for p in (
-    r"/api/version", r"/api/auth/me", r"/api/me/.*",
+    r"/api/version", r"/api/auth/me", r"/api/me/.*", r"/api/changes",
     r"/api/series", rf"/api/series/{_R}",
     rf"/api/series/{_R}/(status|thumbnail|related|top-rated|trades|arcs)",
     rf"/api/series/{_R}/issues/{_R}/(book|thumbnail|variants|locg-details)",

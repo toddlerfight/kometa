@@ -2287,6 +2287,20 @@ def set_folder(series_id: int, req: FolderRequest):
 _QUEUE_PRIVATE = ("source_url", "failed_sources", "failed_channels", "sab_nzo_id", "torrent_hash")
 
 
+@app.get("/api/changes")
+def changes():
+    """A stamp that moves when what the shelf pages show moves: a search queued or a
+    download landing (the queue), a file arriving (books), an issue becoming owned, a
+    place kept on another device. The pages poll it and repaint only when it moves —
+    Buffy's page sat still after its pull list went on (the owner, 2026-10-18)."""
+    with db._connect(DB_PATH) as conn:
+        q = conn.execute("SELECT COUNT(*), MAX(updated_at) FROM download_queue").fetchone()
+        b = conn.execute("SELECT COUNT(*), MAX(id) FROM books").fetchone()
+        o = conn.execute("SELECT SUM(owned) FROM issue_status").fetchone()
+        p = conn.execute("SELECT COUNT(*), MAX(updated_at) FROM read_progress").fetchone()
+    return {"stamp": "|".join(str(x) for x in (*q, *b, *o, *p))}
+
+
 @app.get("/api/queue/summary")
 def queue_summary(since: str = ""):
     """The activity badge's three numbers — failed, not found, done since you
@@ -2510,11 +2524,13 @@ def get_issue_locg_details(series_id: int, number: float):
     # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
     # the stored snapshot, never a fetch on open
     row = record.get_issue(series_id, number, DB_PATH) or {}
-    from kometa.related import with_creator_ids
+    from kometa.related import with_creator_ids_asking
+    credits, asking = with_creator_ids_asking(d.get("credits", []), DB_PATH, ask=is_admin())
     with db._connect(DB_PATH) as conn:                   # the shelf index's book, if any: no folder listing here
         b = conn.execute("SELECT id FROM books WHERE tracked_series_id = ? AND number = ? ORDER BY mtime DESC LIMIT 1",
                          (series_id, number)).fetchone()
-    return {"desc": d.get("desc", ""), "credits": with_creator_ids(d.get("credits", []), DB_PATH, ask=is_admin()),
+    return {"desc": d.get("desc", ""), "credits": credits,
+            "ids_pending": asking,                       # names just sent to Metron: look again shortly
             "source": d.get("source"), "record": d.get("record"),
             "store_date": d.get("store_date") or issue.get("store_date"),
             "community": row.get("community") or None,

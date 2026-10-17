@@ -831,8 +831,15 @@ def _resolve_in_background(names: list[str], path):
 def with_creator_ids(credits: list[dict], path=None, ask: bool = True) -> list[dict]:
     """The credits, each without a metron_creator_id given its person's. Names nobody has asked
     about go to Metron in the background when `ask` (never for a reader account)."""
+    return with_creator_ids_asking(credits, path, ask)[0]
+
+
+def with_creator_ids_asking(credits: list[dict], path=None, ask: bool = True) -> tuple[list[dict], bool]:
+    """with_creator_ids, and whether it just sent names to Metron — the card looks again in a
+    moment instead of showing them unlinked until it's reopened (SQUEE!'s Jhonen Vasquez,
+    2026-10-18: looked up as the card opened, linked only the second time)."""
     if not credits or all(cr.get("metron_creator_id") for cr in credits):
-        return credits
+        return credits, False
     path = path or DB_PATH
     known = creator_ids_by_name(path)
     out, unknown = [], []
@@ -841,6 +848,7 @@ def with_creator_ids(credits: list[dict], path=None, ask: bool = True) -> list[d
         out.append(dict(cr, metron_creator_id=cid) if cid and not cr.get("metron_creator_id") else cr)
         if not cid and cr.get("name"):
             unknown.append(cr["name"])
+    sent = False
     if ask and unknown:
         unknown = list(dict.fromkeys(unknown))
         asked = _asked_recently([_name_key(n) for n in unknown], path)
@@ -849,7 +857,8 @@ def with_creator_ids(credits: list[dict], path=None, ask: bool = True) -> list[d
             from kometa import metron_client
             if metron_client.configured():
                 _resolve_in_background(fresh, path)
-    return out
+                sent = True
+    return out, sent
 
 
 def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[dict]:
