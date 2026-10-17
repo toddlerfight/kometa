@@ -2290,7 +2290,7 @@ function _issueTileHtml(s, issue) {
 
 // [title, label] for the sort button: ↓ # → ↑ # → ★ (when there's a ★ to give)
 function _sortBtnState() {
-  if (_ratedHere(_detailSeries)) return ['Top rated', '★'];
+  if (_ratedHere(_detailSeries)) return ['Top rated', ico('star')];
   return detailSortDesc ? ['Newest first', '↓ #'] : ['Oldest first', '↑ #'];
 }
 
@@ -2304,7 +2304,7 @@ function cycleIssueSort(id) {
 
 function flipIssueSort(id) {
   const btn = document.querySelector('.sort-toggle');
-  if (btn) [btn.title, btn.textContent] = _sortBtnState();
+  if (btn) [btn.title, btn.innerHTML] = _sortBtnState();
   const grid = document.querySelector('.issue-grid');
   if (grid && _detailSeries) {
     const tiles = buildIssueTiles(_detailSeries);
@@ -6036,7 +6036,7 @@ function _wantBtnHtml(target, cls = '') {
 function _wantPaint(btn, id) {
   btn.dataset.id = id || '';
   btn.classList.toggle('on', !!id);
-  btn.textContent = id ? '✓ Want to read' : 'Want to read';
+  btn.innerHTML = id ? ico('check') + ' Want to read' : 'Want to read';
   btn.title = id ? 'On your Want to read — tap to take it off' : 'Add to Want to read on On Deck';
 }
 

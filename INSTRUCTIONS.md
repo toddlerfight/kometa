@@ -575,7 +575,8 @@ The 2026-10-11 security review, closed out. Code: kometa/main.py `_RequestGuard`
   (`PATCH /api/config {"allowed_hosts": "comics.example.org"}`), picked up within 30 s.
 - **Changes from pages:** a POST/PUT/PATCH/DELETE that carries an Origin (or Referer) must name the address
   it was sent to (Host or X-Forwarded-Host, port and all). No Origin = YondeB, curl, OPDS apps: fine.
-- **Folders:** a series folder is at least Publisher/Series inside the comics root, never `_trash` or hidden;
+- **Folders** (folder changes and Add series, typed or worked out): a series folder is at least Publisher/Series
+  inside the comics root, never `_trash` or hidden;
   the comics root can't be `/`, a system folder, or hold /data or the code.
 - **Covers:** catalogue-cover fetches only go to `images.COVER_HOSTS` (built from the hosts the library's covers
   actually came from) and only ever serve image bytes. A blank cover from a new source: look for

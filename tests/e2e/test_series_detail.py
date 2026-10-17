@@ -143,7 +143,8 @@ def test_top_rated_sort_cycles_on_an_owned_rated_run(app):
     sort.click()
     expect(sort).to_have_text("↑ #")
     sort.click()
-    expect(sort).to_have_text("★")
+    expect(sort.locator(".ico-star")).to_have_count(1)                # the star, drawn (reader.js ico)
+    expect(sort).to_have_attribute("title", "Top rated")
     first = app.locator(".issue-tile").first
     expect(first).to_have_attribute("data-num", "1")
     expect(first.locator(".issue-tile-num .comm-v")).to_be_visible()

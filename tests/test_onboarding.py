@@ -51,10 +51,13 @@ def test_explicit_folder_path_is_respected(tmp_path, monkeypatch):
     root.mkdir()
     _wire(monkeypatch, tmp_path, root)
 
+    # a folder of your choosing, inside the library (owner OK 2026-10-17: one outside it is
+    # refused — tests/test_path_fence.py)
+    custom = str(root / "Image" / "Somewhere Else")
     added = main.add_series(AddSeriesRequest(title="Whatever", publisher_name="Image",
-                                             folder_path="/custom/path", on_pull_list=False))
+                                             folder_path=custom, on_pull_list=False))
 
-    assert added["folder_path"] == "/custom/path"
+    assert added["folder_path"] == custom
 
 
 def test_locg_add_persists_series_id(tmp_path, monkeypatch):

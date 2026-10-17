@@ -1516,12 +1516,10 @@ def add_series(req: AddSeriesRequest):
             logger.info(f"Add {title!r}: Metron publisher lookup skipped: {e}")
     if not folder_path:
         folder_path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
-        try:
-            check_series_folder(folder_path, _comics_root())
-        except OutsideLibrary as e:
-            raise HTTPException(422, str(e))
-    # A folder the request names isn't fenced here yet: test_explicit_folder_path_is_respected
-    # pins '/custom/path' being stored, and that waits on the owner's OK to change.
+    try:
+        check_series_folder(folder_path, _comics_root())
+    except OutsideLibrary as e:
+        raise HTTPException(422, str(e))
 
     # Materialize the folder NOW, at add time — don't wait for the first download to
     # create it. A tracked series with no folder on disk is invisible to _sweep_missing

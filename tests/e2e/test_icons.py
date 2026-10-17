@@ -6,8 +6,7 @@ import sqlite3
 from playwright.sync_api import expect
 
 GLYPHS = "✕✓♥♡★◆◇→←⛶●✗▸"
-# the two still typed, pinned by test_series_detail / test_want_to_read_flow until the owner says
-PINNED = (".sort-toggle", ".want-btn")
+PINNED: tuple = ()                    # the sort button's star and Want to read's tick were drawn last (2026-10-17)
 
 STRAY = """(pinned) => {
   const out = [];

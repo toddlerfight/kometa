@@ -75,3 +75,19 @@ def test_the_endpoints_refuse_paths_outside(c, lib, tmp_path):
     # a new folder outside the library: only while there's no library yet
     assert client.post("/api/fs/mkdir", json={"path": str(tmp_path), "name": "x", "scope": "fs"}).status_code == 403
     assert not (tmp_path / "x").exists()
+
+
+def test_add_series_refuses_a_typed_folder_outside(tmp_path, lib, monkeypatch):
+    from fastapi import HTTPException
+    from kometa.main import AddSeriesRequest
+    dbp = str(tmp_path / "a.db")
+    db.init_db(dbp)
+    monkeypatch.setattr(main, "DB_PATH", dbp)
+    monkeypatch.setattr(main, "_comics_root", lambda: str(lib))
+    monkeypatch.setattr(main, "_sync_one", lambda s: None)
+    monkeypatch.setattr(main, "_process_queue", lambda: None)
+    for bad in ("/custom/path", str(lib), str(lib / "Image")):
+        with pytest.raises(HTTPException) as e:
+            main.add_series(AddSeriesRequest(title="Whatever", publisher_name="Image", folder_path=bad, on_pull_list=False))
+        assert e.value.status_code == 422
+    assert db.get_all_series(dbp) == []
