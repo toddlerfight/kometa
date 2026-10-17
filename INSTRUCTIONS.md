@@ -90,7 +90,15 @@ the acquisition module's `DB_PATH` + source accessors (`acq._sabnzbd`,
 Deploys do not require per-change approval while the NAS is the active test
 environment (rule changed 2026-06-10). The non-negotiable safety net: **every
 deploy is preceded by a commit pushed to the canonical remote**, so there is
-always a point-in-time to roll back to. Remotes (set 2026-06-18):
+always a point-in-time to roll back to.
+
+**Chain it with `&&`, never `;`:** `git commit … && git push … && ./deploy.sh`. `deploy.sh`
+ships the working tree, committed or not — on 2026-10-17 the pre-commit hook refused a
+commit, the `;` ran the deploy anyway, and uncommitted code was live for minutes.
+**A restart kills anything running inside the container** (`docker exec … python3 -`
+dry runs included): don't deploy while one is going, or run it from a copy that resumes.
+
+Remotes (set 2026-06-18):
 - `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **PUBLIC**, canonical) — `git push origin main` is the pre-deploy rollback point.
   **This repo is public. Never commit hosts, ports, usernames, keys, or IDs** — they
   go in `.env` (gitignored). Placeholders like `$KOMETA_HOST` / `$NAS_HOST` in these
