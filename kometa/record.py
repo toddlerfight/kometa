@@ -710,7 +710,9 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
         return existing
     if issue.get("locg_issue_id"):
         from kometa import locg_client
-        is_open = (locg_open if locg_open is not None else (lambda: not locg_client.locg_paused()))()
+        from kometa import locg_sweep
+        is_open = (locg_open if locg_open is not None
+                   else (lambda: not locg_client.locg_paused() and not locg_sweep.pages_resting()))()
         if not is_open:
             from kometa import topup
             topup.enqueue("issue_details", f"{series_id}:{number:g}", path)
@@ -719,7 +721,9 @@ def fill_issue(series_id: int, number: float, path=None, force: bool = False, is
             found = (locg or (lambda i, p: issue_meta._locg(i, p, False)))(issue, path)
         except Exception as e:
             logger.info(f"Record: LOCG details for issue {issue.get('locg_issue_id')} skipped: {e}")
+            locg_sweep.page_failed()                           # three in a row: issue pages rest (locg_sweep)
             return None
+        locg_sweep.page_answered()
         if found is None:
             return None
         return write_issue(series_id, number, found, "locg", "partial", issue, path)

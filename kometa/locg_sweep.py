@@ -224,6 +224,35 @@ REST_MAX_S = 12 * 3600
 _rest = {"until": 0.0, "strikes": 0}
 
 
+# The record trickle asks issue pages too (issues Metron hasn't got) and never rested: 635
+# failures in a day, 25 s each — four and a half hours of waiting that held up the Metron
+# fills behind them (2026-10-18). Its failures now count toward the same wall, and while the
+# sweep rests, nobody asks an issue page.
+_page_fails = {"n": 0}
+
+
+def pages_resting(clock=time.time) -> bool:
+    """True while LOCG's issue pages are resting after the wall — nobody asks one."""
+    return clock() < _rest["until"]
+
+
+def page_failed(clock=time.time) -> None:
+    """An issue page failed outside the sweep. Three in a row is the wall: the sweep's rest."""
+    _page_fails["n"] += 1
+    if _page_fails["n"] < 3:
+        return
+    _page_fails["n"] = 0
+    _rest["strikes"] += 1
+    rest = min(REST_MAX_S, REST_FIRST_S * 2 ** (_rest["strikes"] - 1))
+    _rest["until"] = clock() + rest
+    logger.info(f"LOCG issue pages: three failures in a row (record trickle) — resting {rest // 3600} h")
+
+
+def page_answered() -> None:
+    _page_fails["n"] = 0
+    _rest["strikes"] = 0
+
+
 def scheduled_tick(clock=time.time, tick=None) -> dict:
     now = clock()
     if now < _rest["until"]:
