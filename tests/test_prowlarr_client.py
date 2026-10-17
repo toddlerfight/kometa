@@ -30,3 +30,25 @@ def test_pack_drop_not_comics_drops_games_and_movies_but_keeps_large_packs():
         "Buffy the Vampire Slayer (001-063) (Digital) Complete",
         "100 Bullets Complete Collection (Digital)",
     ]
+
+
+def test_tv_show_releases_are_dropped_for_buffy():
+    from kometa.prowlarr_client import drop_not_comics
+    from kometa.usenet_client import _nzb_score, _pack_score
+
+    tv_candidates = [
+        "Buffy the Vampire Slayer S01E10 720p HDTV",
+        "Buffy the Vampire Slayer 1x10 Nightmares",
+        "Buffy the Vampire Slayer The Complete Series DVDRip",
+        "Buffy the Vampire Slayer Complete Seasons 1-7 (1080p)",
+        "Buffy the Vampire Slayer - Season 1 (1997) [MKV]",
+    ]
+
+    # drop_not_comics drops every TV show variant
+    rs = [{"title": t, "size": 1_000_000_000, "categories": []} for t in tv_candidates]
+    assert drop_not_comics(rs, single_issue=False) == []
+
+    # _nzb_score and _pack_score disqualify all TV releases immediately (score 0)
+    for t in tv_candidates:
+        assert _nzb_score(t, "Buffy the Vampire Slayer", 10.0) == 0
+        assert _pack_score(t, "Buffy the Vampire Slayer", 1_000_000_000) == 0

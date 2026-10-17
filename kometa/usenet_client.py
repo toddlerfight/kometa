@@ -65,10 +65,12 @@ def year_mismatch(title: str, series_year, store_date: str | None = None) -> boo
 # number (the Absolute Superman #21 Infinite Edition grab). Never what we want.
 _MEDIA_NOISE_RE = re.compile(
     r'\b(?:'
-    r's\d{1,2}e\d{1,2}'                                   # TV episode  S02E05
-    r'|\d{3,4}p'                                          # video res   720p/1080p/2160p
-    r'|blu-?ray|web-?dl|webrip|hdtv|dvd-?rip|bd-?rip|hd-?rip'
-    r'|x26[45]|hevc|xvid|remux'                           # video codecs
+    r's\d{1,2}e\d{1,2}|\d{1,2}x\d{2}'                     # TV episode  S02E05, 1x05
+    r'|\d{3,4}p|4k'                                       # video res   720p/1080p/2160p/4k
+    r'|blu-?ray|web-?dl|webrip|hdtv|dvd-?rip|bd-?rip|hd-?rip|dvd\d?' # video sources
+    r'|x26[45]|h26[45]|hevc|xvid|remux'                   # video codecs
+    r'|mkv|avi|mp4|wmv'                                   # video formats
+    r'|complete\s+series|tv\s+series|complete\s+seasons?|seasons?\s*\d+' # TV box sets
     r'|flac|mp3|aac|ac3|dts|ddp?5|\d{3}kbps'             # audio codecs
     r'|epub|mobi|azw3?'                                   # ebooks
     r'|digital[ ._-]?mobile'                              # vertical webtoon rips
