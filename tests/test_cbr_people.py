@@ -394,8 +394,12 @@ def test_legacy_scores_table_and_series_index_migrates_cleanly(tmp_path):
             date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number))""")
         conn.execute("CREATE INDEX idx_cbr_people_scores_series ON cbr_people_scores(series_path)")
         conn.execute("INSERT INTO cbr_people_scores VALUES ('user:1', '/comic-books/reviews/image/alpha-(2020)', '1', 9.0, '2020-01-01', 'issue', '2026-10-17')")
+        # Non-slug series: no year in URL, multiple score dates
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('user:1', '/comic-books/reviews/image/beta-ongoing', '2', 8.0, '2019-06-15', 'issue', '2026-10-17')")
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('user:2', '/comic-books/reviews/image/beta-ongoing', '1', 8.5, '2018-03-10', 'issue', '2026-10-17')")
         conn.execute("CREATE TABLE cbr_people_series (series_path TEXT PRIMARY KEY, name TEXT)")
         conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/image/alpha-(2020)', 'Alpha')")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/image/beta-ongoing', 'Beta Ongoing')")
 
     # Migration happens inside ensure_tables
     cp.ensure_tables(legacy_path)
@@ -403,13 +407,45 @@ def test_legacy_scores_table_and_series_index_migrates_cleanly(tmp_path):
     with db._connect(legacy_path) as conn:
         schema = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores'").fetchone()[0]
         assert "WITHOUT ROWID" in schema.upper()
-        # Row preserved
-        rows = conn.execute("SELECT person, series_path, score FROM cbr_people_scores").fetchall()
-        assert [tuple(r) for r in rows] == [('user:1', '/comic-books/reviews/image/alpha-(2020)', 9.0)]
+        # Rows preserved
+        rows = conn.execute("SELECT person, series_path, score FROM cbr_people_scores ORDER BY person, series_path").fetchall()
+        assert [tuple(r) for r in rows] == [
+            ('user:1', '/comic-books/reviews/image/alpha-(2020)', 9.0),
+            ('user:1', '/comic-books/reviews/image/beta-ongoing', 8.0),
+            ('user:2', '/comic-books/reviews/image/beta-ongoing', 8.5),
+        ]
         # Index dropped
         idx = conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_cbr_people_scores_series'").fetchone()
         assert idx is None
-        # first_year column added and backfilled
-        series_row = conn.execute("SELECT name, first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/alpha-(2020)'").fetchone()
-        assert tuple(series_row) == ('Alpha', 2020)
+        # first_year column added: slug year for alpha, MIN(score year) for beta-ongoing
+        series_alpha = conn.execute("SELECT name, first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/alpha-(2020)'").fetchone()
+        assert tuple(series_alpha) == ('Alpha', 2020)
+        series_beta = conn.execute("SELECT name, first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/beta-ongoing'").fetchone()
+        assert tuple(series_beta) == ('Beta Ongoing', 2018)
+
+
+def test_migration_recovers_from_leftover_v2_table(tmp_path):
+    crash_path = str(tmp_path / "crash.db")
+    with db._connect(crash_path) as conn:
+        conn.execute("""CREATE TABLE cbr_people_scores (
+            person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+            date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number))""")
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:c1', '/comic-books/reviews/marvel/x-men', '1', 8.0, '2024-01-01', 'issue', '2026-10-17')")
+        # Leftover v2 table from aborted/crashed previous run
+        conn.execute("""CREATE TABLE cbr_people_scores_v2 (
+            person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+            date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)) WITHOUT ROWID""")
+
+    # Should safely drop the leftover v2 and migrate successfully without 'table already exists' error
+    cp.ensure_tables(crash_path)
+
+    with db._connect(crash_path) as conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores'").fetchone()[0]
+        assert "WITHOUT ROWID" in schema.upper()
+        row = conn.execute("SELECT person, series_path, score FROM cbr_people_scores").fetchone()
+        assert tuple(row) == ('critic:c1', '/comic-books/reviews/marvel/x-men', 8.0)
+        # v2 table does not exist
+        v2 = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cbr_people_scores_v2'").fetchone()
+        assert v2 is None
+
 

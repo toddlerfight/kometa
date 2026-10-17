@@ -97,6 +97,7 @@ def ensure_tables(path=None):
                 date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)) WITHOUT ROWID""")
         elif "WITHOUT ROWID" not in r[0].upper():
             conn.execute("DROP INDEX IF EXISTS idx_cbr_people_scores_series")
+            conn.execute("DROP TABLE IF EXISTS cbr_people_scores_v2")
             conn.execute("""CREATE TABLE cbr_people_scores_v2 (
                 person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
                 date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)
@@ -121,6 +122,17 @@ def ensure_tables(path=None):
                 _, y = _path_key(sp)
                 if y:
                     conn.execute("UPDATE cbr_people_series SET first_year = ? WHERE series_path = ?", (y, sp))
+            conn.execute("""INSERT INTO cbr_people_series (series_path, first_year)
+                SELECT series_path, CAST(MIN(substr(date, 1, 4)) AS INTEGER)
+                FROM cbr_people_scores
+                WHERE date LIKE '____-__-__'
+                GROUP BY series_path
+                ON CONFLICT(series_path) DO UPDATE SET
+                    first_year = CASE
+                        WHEN first_year IS NULL THEN excluded.first_year
+                        WHEN excluded.first_year IS NOT NULL AND excluded.first_year < first_year THEN excluded.first_year
+                        ELSE first_year
+                    END""")
 
         conn.execute("CREATE TABLE IF NOT EXISTS cbr_people_state (key TEXT PRIMARY KEY, value TEXT)")
         if _get_state(conn, "scores_version") is None:
@@ -343,6 +355,9 @@ def _upsert_person(conn, person: str, name: str | None, outlet: str | None = Non
 
 
 def _put_score(conn, person: str, sp: str, num: str, score: float, date: str | None, via: str):
+    # Any future callers or writers to cbr_people_scores must bump scores_version
+    # via _bump_scores_version(conn) before committing, or the community memo in
+    # related_combined stays stale until a restart.
     conn.execute("""INSERT OR REPLACE INTO cbr_people_scores (person, series_path, number, score, date, via, at)
         VALUES (?, ?, ?, ?, ?, ?, ?)""", (person, sp, str(num), score, date, via, _stamp()))
 

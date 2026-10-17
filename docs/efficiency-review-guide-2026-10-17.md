@@ -42,19 +42,23 @@ The table `cbr_people_scores` and its indexes account for 65% of the database fi
 * **Migration Procedure ("The How"):**
   1. Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py:87` so the index is not recreated on the new table.
   2. Guarded one-time migration step inside `cbr_people.ensure_tables()`:
-     ```sql
-     -- Check sqlite_master for existing schema
-     CREATE TABLE cbr_people_scores_v2 (
-         person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL,
-         score REAL NOT NULL, date TEXT, via TEXT, at TEXT,
-         PRIMARY KEY (person, series_path, number)
-     ) WITHOUT ROWID;
-     INSERT INTO cbr_people_scores_v2 (person, series_path, number, score, date, via, at)
-         SELECT person, series_path, number, score, date, via, at FROM cbr_people_scores;
-     DROP TABLE cbr_people_scores;
-     ALTER TABLE cbr_people_scores_v2 RENAME TO cbr_people_scores;
-     ```
-     This copy takes ~1.0 s in an atomic transaction.
+     - Drops any leftover `cbr_people_scores_v2` table first to prevent startup crashes if a previous restart interrupted an in-progress copy.
+     - Runs the atomic table migration:
+       ```sql
+       -- Check sqlite_master for existing schema
+       DROP TABLE IF EXISTS cbr_people_scores_v2;
+       CREATE TABLE cbr_people_scores_v2 (
+           person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL,
+           score REAL NOT NULL, date TEXT, via TEXT, at TEXT,
+           PRIMARY KEY (person, series_path, number)
+       ) WITHOUT ROWID;
+       INSERT INTO cbr_people_scores_v2 (person, series_path, number, score, date, via, at)
+           SELECT person, series_path, number, score, date, via, at FROM cbr_people_scores;
+       DROP TABLE cbr_people_scores;
+       ALTER TABLE cbr_people_scores_v2 RENAME TO cbr_people_scores;
+       ```
+     - For `first_year` backfill in `cbr_people_series`: in addition to reading slug years, backfills the 12,608 runs without slug years via `SELECT series_path, CAST(MIN(substr(date, 1, 4)) AS INTEGER) FROM cbr_people_scores WHERE date LIKE '____-__-__' GROUP BY series_path ON CONFLICT(series_path) DO UPDATE ...` (~0.2s pass on the live database).
+     This copy takes ~1.5 s on a live copy of all 773,927 rows.
   3. Invalidate cache via `scores_version` in `cbr_people_state`:
      `MAX(rowid)` has a minor blind spot without `AUTOINCREMENT`: an `INSERT OR REPLACE` on the row holding the highest `rowid` reuses that rowid. Bumping `scores_version` once per page or profile commit in `cbr_people.py` is 100% reliable and works seamlessly with `WITHOUT ROWID`.
   4. Physical disk reclamation:
@@ -62,7 +66,7 @@ The table `cbr_people_scores` and its indexes account for 65% of the database fi
      ```bash
      docker exec kometa python3 -c "import sqlite3; c = sqlite3.connect('/data/kometa.db', timeout=60); c.execute('VACUUM'); c.close()"
      ```
-     This shrinks the production database from **328 MB $\to$ ~211 MB** (328 - 112 MB for scores - 5 MB for dead cache).
+     Measured on a live copy inside the container, this shrinks the database from **313 MB $\to$ 176 MB** (137 MB reduction, well beyond the initial 211 MB estimate). Note: `VACUUM` took 0.4s on `/tmp`, but expect longer on the production shared mount.
 
 
 ---
@@ -184,6 +188,6 @@ EOF
 - [x] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).
 - [x] Implement one-time atomic table migration to `WITHOUT ROWID` with explicit column list in `cbr_people.ensure_tables()`.
 - [x] Add automated test covering migration, data preservation, `WITHOUT ROWID` enforcement, and version tracking in `tests/test_cbr_people.py`.
-- [ ] Run `VACUUM` via Python on production outside nightly backup window (shrinks DB from 328 MB $\to$ ~211 MB):
+- [ ] Run `VACUUM` via Python on production outside nightly backup window (shrinks DB from 313 MB $\to$ 176 MB):
   `docker exec kometa python3 -c "import sqlite3; c = sqlite3.connect('/data/kometa.db', timeout=60); c.execute('VACUUM'); c.close()"`
 
