@@ -295,7 +295,9 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
   (or in chat: `PATCH /api/config {"fandom_cf_clearance", "fandom_user_agent": <Safari's exact UA>}` then
   `POST /api/test/fandom`). A pass lives **30 minutes**; the lane runs at 1/s while one is live, and a 403 forgets it.
 - **LOCG** (updated 2026-10-18): reached only through FlareSolverr (`kometa/locg_client.py`, b53c302). Lists and
-  search work; issue pages (`/comic/{id}/…`) have failed FlareSolverr's challenge since 2026-10-17 — no unattended
+  search work, and so do its **cover images** — they're on S3, not behind the wall:
+  `s3.amazonaws.com/comicgeeks/comics/covers/large-{locg_issue_id}.jpg` (403 = LOCG has none). Never fetch an
+  issue page for a cover. Issue pages (`/comic/{id}/…`) have failed FlareSolverr's challenge since 2026-10-17 — no unattended
   route is known (`docs/credits-sourcing-alternatives-2026-10-17.md`). The credits ladder and Comic Vine covers fill
   what issue pages gave. Its token fields still exist; don't bring passes up — the owner had that narrative removed.
 - **Image downloads** run one lane per host (`kometa/images.py LANES`): own gap, daily cap, an hour's rest on
