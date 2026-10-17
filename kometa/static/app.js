@@ -3964,20 +3964,8 @@ async function _acctDo(what, id, tokenId, btn) {
   } catch (e) { _acctMsg(e.message === '409' ? 'That would leave no admin' : 'That didn’t work', true); }
 }
 
-// Library harvest (kometa/harvest.py): every background fill added up — the
-// record, LOCG's sweep, the image store, today's Metron allowance. Numbers only.
-let _harvestTimer = null;
-function _startHarvestPoll() {
-  clearInterval(_harvestTimer);
-  _renderHarvest();
-  _harvestTimer = setInterval(() => {
-    if (currentView !== 'activity' || !document.getElementById('harvest-progress')) return clearInterval(_harvestTimer);
-    if (!document.hidden) _renderHarvest();
-  }, 60000);
-}
-
 // Background sources that need nothing from you: named once so you know they exist,
-// 'resting' when one has backed off. Their numbers live on Activity (the harvest board).
+// 'resting' when one has backed off. (Their numbers board left Activity, 2026-10-17.)
 // The Harvesters section's one line: who runs quietly, and who is resting after a
 // refusal. Their trouble, when there is any, is written out beneath it (and can be
 // dismissed when it isn't yours to fix).
@@ -3993,64 +3981,10 @@ async function _attnDismiss(card, level, btn) {
   _updateSettingsBadge();
 }
 // Every block on Activity wears the same header as a Settings card: bold caps
-// title, an italic tag, a rule beneath. The queue sections and the harvest board alike.
+// title, an italic tag, a rule beneath.
 function _actHeader(title, tag = '') {
   return `<div class="settings-card-header"><span>${esc(title)}${tag ? ` <span class="settings-opt">${esc(tag)}</span>` : ''}</span></div>`;
 }
-function _harvestCardHtml() {
-  return `<div class="act-section settings-card act-harvest" data-sec="harvest">${_actHeader('Library harvest', 'background')}<div id="harvest-progress"></div></div>`;
-}
-
-async function _renderHarvest() {
-  const el = document.getElementById('harvest-progress');
-  if (!el) return;
-  let h;
-  try { h = await api.get('/api/harvest/progress'); } catch { return; }
-  const n = v => (v == null ? '—' : Number(v).toLocaleString());
-  const o = h.owned_issues || {};
-  const pct = o.owned ? ` · ${Math.round(100 * (o.catalogue || 0) / o.owned)}%` : '';
-  const l = h.locg || {};
-  const locg = l.locg_paused_until ? esc(l.locg_paused_until === 'switched off' ? 'switched off' : `paused until ${l.locg_paused_until}`)
-    : l.locg_pass_live ? `${n(l.locg_sweep_pending)} to go` : 'no pass';
-  const m = h.metron || {};
-  const metron = m.remaining == null ? '—' : `${n(m.remaining)} left${m.harvest_paused ? ' · harvest resting' : ''}`;
-  const g = h.gcd;
-  const gcd = g ? `${n(g.linked)} linked · ${n(g.ambiguous)} waiting for you · ${n(g.filled)} issues` : '—';
-  const today = b => (b ? ` · ${n(b.used)}/${n(b.cap)} today${b.paused ? ' · resting' : ''}` : '');
-  const off = s => s && s.enabled === false;
-  const p = h.prh;
-  const prh = !p ? '—' : off(p) ? 'switched off' : `${n(p.found)} covers · ${n(p.none)} not there${today(p.budget)}`;
-  const ol = h.openlibrary;
-  const olib = !ol ? '—' : off(ol) ? 'switched off'
-    : `${n(ol.rated)} rated · ${n(ol.covers)} covers · ${n(ol.none)} not there${today(ol.budget)}`;
-  const c = h.cbr;
-  const cbr = !c ? '—' : off(c) ? 'switched off' : `${n(c.linked)} runs · ${n(c.issues)} issues · ${n(c.none)} not found${today(c.budget)}`;
-  const f = h.fandom;
-  const fandom = !f ? '—' : off(f) ? 'switched off'
-    : `${n(f.galleries)} galleries · ${n(f.missing)} pages missing · ${n(f.covers)} covers listed${f.download ? ` · ${n(f.downloaded)} downloaded` : ''}${today(f.budget)}`;
-  const hc = h.hardcover;
-  const hardcover = !hc ? '—' : off(hc) ? 'switched off' : !hc.configured ? 'no token'
-    : `${n(hc.rated)} rated · ${n(hc.none)} not there${today(hc.budget)}`;
-  const row = (label, value) => `<div class="settings-stat"><span>${label}</span><b>${value}</b></div>`;
-  el.innerHTML = [
-    row('Owned issues', n(o.owned)),
-    row('Catalogue data', n(o.catalogue) + pct),
-    row('Stand-in data', n(o.stopgap)),
-    row('No catalogue match', n(o.no_catalogue_id)),
-    row('Variant lists', n(o.variant_lists)),
-    row('Community ratings', n(o.community)),
-    row('Covers to fetch or upgrade', n(h.images_pending)),
-    row('LOCG sweep', locg),
-    row('Metron today', metron),
-    row('GCD', gcd),
-    row('PRH print covers', prh),
-    row('Open Library', olib),
-    row('ComicBookRoundup', cbr),
-    row('Fandom wikis', fandom),
-    row('Hardcover', hardcover),
-  ].join('');
-}
-
 // Settings badge: anything in Settings waiting on you (main.settings_attention) —
 // a red count on the nav, and the card's own dot goes red with the reason on hover.
 let _attentionTimer = null;
@@ -4163,21 +4097,26 @@ async function renderActivity() {
   _actVisitMark = _actSeen();   // what had been seen BEFORE this visit
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Activity';
+  // one action (a sweep also starts the queue, so Start Queue went); the view is the Library's
+  // chips, In progress / History; Clear history sits at the end of History (2026-10-17)
   document.getElementById('topbar-actions').innerHTML = `
-    <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>
-    <button class="btn btn-ghost btn-sm" onclick="forceQueueStart(this)">Start Queue</button>
-    <button class="btn btn-ghost btn-sm" id="act-history-btn" onclick="_toggleActHistory()">History</button>
-    <button class="btn btn-ghost btn-sm" onclick="clearHistory(this)">Clear History</button>
-  `;
+    <button class="btn btn-ghost btn-sm" onclick="triggerSweep(this)">Sweep Missing</button>`;
+  document.getElementById('topbar-sub').innerHTML = `<nav class="chip-strip" aria-label="Activity view">
+    <button class="browse-filter-tab u-label${_actShowHistory ? '' : ' active'}" id="act-view-now" onclick="_setActHistory(false)">In progress</button>
+    <button class="browse-filter-tab u-label${_actShowHistory ? ' active' : ''}" id="act-history-btn" onclick="_setActHistory(true)">History</button></nav>
+    <div id="act-jobs"></div>`;
   setApp('<div class="state-msg">Loading...</div>');
   await _refreshActivity();
 }
 
 let _actShowHistory = false;
 let _actVisitMark = '';       // the seen mark at the moment this visit began
-function _toggleActHistory() {
-  _actShowHistory = !_actShowHistory;
+function _setActHistory(on) {
+  if (_actShowHistory === on) return;
+  _actShowHistory = on;
   _activitySig = null;
+  document.getElementById('act-view-now')?.classList.toggle('active', !on);
+  document.getElementById('act-history-btn')?.classList.toggle('active', on);
   _refreshActivity();
 }
 
@@ -4199,7 +4138,7 @@ async function _refreshActivity() {
   const queue = _actShowHistory ? all : all.filter(q => q.state !== 'done' || (q.updated_at || '') > _actVisitMark);
   const hidden = all.length - queue.length;
   const hb = document.getElementById('act-history-btn');
-  if (hb) { hb.textContent = _actShowHistory ? 'Hide history' : `History${hidden ? ' (' + hidden + ')' : ''}`; hb.classList.toggle('btn-primary', _actShowHistory); hb.classList.toggle('btn-ghost', !_actShowHistory); }
+  if (hb) hb.textContent = `History${hidden ? ' (' + hidden + ')' : ''}`;
   // Only the progress %/bytes change between polls; the items + their states usually
   // don't. When they DO change, we reconcile row-by-row IN PLACE — never a full
   // innerHTML rebuild (that recreated every <img> and replayed the cover-in
@@ -4235,6 +4174,7 @@ async function _refreshActivity() {
   // Within the post-retry window, keep polling while anything's still queued so
   // we don't freeze on the stale `queued` card and miss the real outcome.
   const pumping = Date.now() < _activityPumpUntil && queue.some(q => q.state === 'queued');
+  _paintActClear();
   if (hasActive || pumping || jobs.length) _activityPollTimer = setTimeout(_refreshActivity, 2000);
 }
 
@@ -4242,7 +4182,7 @@ async function _refreshActivity() {
 // the pack hunt can run for minutes before a single issue is queued, and a
 // click with nothing to show for it reads as a click that did nothing.
 function _paintListJobs(jobs) {
-  const sub = document.getElementById('topbar-sub');
+  const sub = document.getElementById('act-jobs');        // its own slot: the view chips share the line
   if (!sub) return;
   if (!jobs.length) { sub.innerHTML = ''; return; }
   sub.innerHTML = jobs.map(j => {
@@ -4595,8 +4535,7 @@ function _buildActivityHtml(queue) {
       <div class="act-section settings-card" data-sec="empty">
         ${_actHeader('Downloads')}
         <div class="act-empty-line">${_actShowHistory ? 'Nothing in the queue' : 'Nothing active'}</div>
-      </div>${_harvestCardHtml()}</div>`);
-    _startHarvestPoll();
+      </div></div>`);
     return;
   }
 
@@ -4613,9 +4552,8 @@ function _buildActivityHtml(queue) {
       ${completed.map(_actRowHtml).join('')}
     </div>`;
   }
-  html += _harvestCardHtml() + '</div>';
+  html += '</div>';
   setApp(html);
-  _startHarvestPoll();
 }
 
 // Crossfade a text swap instead of hard-cutting it. No-op when nothing changed.
@@ -4728,8 +4666,7 @@ async function _reconcileActivity(queue) {
           ? `<div class="act-section settings-card act-fade-in" data-sec="progress">${_actHeader('Downloads')}</div>`
           : `<div class="act-section settings-card act-fade-in" data-sec="completed">${_actHeader(_actShowHistory ? 'History' : 'Completed')}</div>`;
         secEl = t.content.firstElementChild;
-        const board = wrap.querySelector('.act-section[data-sec="harvest"]');
-        sec === 'progress' ? wrap.prepend(secEl) : board ? wrap.insertBefore(secEl, board) : wrap.append(secEl);
+        sec === 'progress' ? wrap.prepend(secEl) : wrap.append(secEl);
       }
       const hdr = secEl.querySelector('.settings-card-header');
       let anchor = null;   // the last row we placed; the next one goes right after it
@@ -4777,18 +4714,6 @@ async function triggerSweep(btn) {
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Sweep Missing'; renderActivity(); }, 1500);
 }
 
-async function forceQueueStart(btn) {
-  btn.disabled = true; btn.textContent = 'Starting…';
-  try {
-    await api.post('/api/queue/process', {});
-  } catch (e) {
-    btn.disabled = false; btn.textContent = 'Start Queue';
-    showToast('Queue start failed'); console.error(e); return;
-  }
-  btn.textContent = 'Started ✓';
-  setTimeout(() => { btn.disabled = false; btn.textContent = 'Start Queue'; _refreshActivity(); }, 1000);
-}
-
 // Fade + collapse an element out, THEN remove it from the DOM — no instant yank,
 // no full-list rebuild (rebuilding is what flashed every cover). Returns a promise
 // that resolves once the node is gone. Under reduced-motion we skip the show and bail.
@@ -4810,12 +4735,30 @@ function _animateRowOut(el) {
   });
 }
 
+// The end of the History view: Clear history, when there's history to clear.
+function _paintActClear() {
+  const wrap = document.querySelector('#app .act-wrap');
+  const has = _actShowHistory && wrap && wrap.querySelector('.act-section[data-sec="completed"] .act-row');
+  let el = document.getElementById('act-clear');
+  if (!has) { el?.remove(); return; }
+  if (!el) {
+    wrap.insertAdjacentHTML('beforeend', `<div class="act-clear" id="act-clear">
+      <button class="btn btn-ghost btn-sm" onclick="clearHistory(this)">Clear history</button></div>`);
+  } else if (el !== wrap.lastElementChild) wrap.append(el);
+}
+
 async function clearHistory(btn) {
+  // tap twice (no browser confirm dialogs in this app): the first tap arms it for 3 s
+  if (btn.dataset.armed !== '1') {
+    btn.dataset.armed = '1'; btn.textContent = 'Clear history — sure?';
+    setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'Clear history'; } }, 3000);
+    return;
+  }
   btn.disabled = true; btn.textContent = 'Clearing…';
   try {
     await api.post('/api/queue/clear-history', {});
   } catch (e) {
-    btn.disabled = false; btn.textContent = 'Clear History';
+    btn.disabled = false; btn.dataset.armed = ''; btn.textContent = 'Clear history';
     showToast('Clear failed'); console.error(e); return;
   }
   // Fade the completed rows out in place — don't rebuild the whole list (the in-progress
@@ -4831,7 +4774,7 @@ async function clearHistory(btn) {
   });
   _activitySig = null;
   _activityRemoving = false;
-  btn.disabled = false; btn.textContent = 'Clear History';
+  document.getElementById('act-clear')?.remove();
   _refreshActivity();
 }
 

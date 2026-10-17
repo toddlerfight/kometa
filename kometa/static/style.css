@@ -1369,8 +1369,6 @@ select.settings-input {
 #harvesters-errors .settings-attn-note { margin: 12px 0 0; }
 #harvesters-errors .settings-attn-note:last-child { margin-bottom: 4px; }
 /* the harvest board: a queue section like the others; its rows are label-left, number-right */
-.act-harvest .settings-stat { margin-top: 0; padding: 8px 0; border-bottom: 1px solid var(--bd); }
-.act-harvest .settings-stat:last-child { border-bottom: 0; }
 .act-wrap > .act-empty { padding: 48px 0 16px; }
 /* a jump from the list lands the card's heading below the top bar, not under it */
 .settings-section, .settings-card { scroll-margin-top: 88px; }
@@ -2371,8 +2369,13 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-more { display: none; margin: var(--sp-lg, 20px) auto 0; }
 /* On Deck's row bar (app.js _paintOdBar; not .od-bar, which is a card's reading-progress line):
    the Library's filter chips (.browse-filter-tab), in one strip that scrolls sideways */
-.od-rowbar { display: flex; gap: var(--sp-xs); overflow-x: auto; scrollbar-width: none; min-width: 0; }
-.od-rowbar::-webkit-scrollbar { display: none; }
+.od-rowbar, .chip-strip { display: flex; gap: var(--sp-xs); overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.od-rowbar::-webkit-scrollbar, .chip-strip::-webkit-scrollbar { display: none; }
+.chip-strip .browse-filter-tab { flex: none; white-space: nowrap; }
+#act-jobs { display: contents; }
+#act-jobs:empty { display: none; }
+/* Activity: Clear history ends the History view (app.js _paintActClear) */
+.act-clear { display: flex; justify-content: flex-end; margin-top: var(--sp-md); }
 .od-rowbar .od-stop { flex: none; white-space: nowrap; }
 @media (max-width: 760px) {
   #app:not(.od-all) .od-extra { display: none; }
