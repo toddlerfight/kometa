@@ -154,3 +154,29 @@ def test_a_run_on_metron_takes_metrons_comic_vine_id(db_path, monkeypatch, cv):
     out = record.fill_credits(sid, 1.0, db_path, rungs=(("comicvine", record._ask_comicvine),))
     assert out["source"] == "comicvine"
     assert not [c for c in cv.calls if c[0] == "search"]                        # no search: Metron said
+
+
+def test_a_run_with_only_cover_dates_still_has_a_year(db_path):
+    sid = db.add_series(title="Uncanny X-Men Annual", publisher="Marvel Comics", folder_path=None,
+                        on_pull_list=False, path=db_path)
+    db.upsert_issue_status(sid, 4.0, None, True, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE issue_status SET cover_date = '1980-11' WHERE tracked_series_id = ?", (sid,))
+    assert cvname.series_year(db.get_series_by_id(sid, db_path), db_path) == 1980
+
+
+def test_spacing_and_a_binding_word_dont_make_another_book():
+    vid, _ = cvname.pick_volume({"title": "Gen 13 - The Maxx", "publisher": "Image Comics"}, 1995,
+                                [{"name": "Gen13/The Maxx", "year": 1995, "publisher": "Image", "cv_volume_id": 7}])
+    assert vid == 7
+    vid, _ = cvname.pick_volume({"title": "Dark Entries HC", "publisher": "DC Comics"}, 2009,
+                                [{"name": "Dark Entries", "year": 2009, "publisher": "DC Comics", "cv_volume_id": 8}])
+    assert vid == 8
+    # the looser passes still want the year and the publisher
+    assert cvname.pick_volume({"title": "Dark Entries HC", "publisher": "DC Comics"}, 2015,
+                              [{"name": "Dark Entries", "year": 2009, "publisher": "DC Comics", "cv_volume_id": 8}])[0] is None
+    # and a whole-name match wins over a looser one
+    vid, _ = cvname.pick_volume({"title": "Gen13", "publisher": "WildStorm"}, 1995,
+                                [{"name": "Gen 13", "year": 1995, "publisher": "WildStorm", "cv_volume_id": 1},
+                                 {"name": "Gen13", "year": 1995, "publisher": "WildStorm", "cv_volume_id": 2}])
+    assert vid == 2

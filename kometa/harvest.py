@@ -290,10 +290,25 @@ def _gcd_queries(title: str) -> list[str]:
     """What to search GCD for: the folder title without its '(2011)' and leading
     'The' (GCD's name search is a contains match, so 'Adventures of Tintin' finds
     'The Adventures of Tintin'), with a folder's '- ' put back to ': ' first —
-    'Dune- House Atreides' is 'Dune: House Atreides' everywhere but a filesystem."""
+    'Dune- House Atreides' is 'Dune: House Atreides' everywhere but a filesystem.
+    Last, the name without an edition's dressing ('Dark Entries HC' → 'Dark Entries')."""
+    from kometa.cvname import _EDITION_TAIL
     base = re.sub(r"^\s*the\s+", "", _YEAR_RE.sub("", title or ""), flags=re.I).strip(" -")
     colon = re.sub(r"\s*-\s+", ": ", base)
-    return [q for q in dict.fromkeys([colon, base]) if q]
+    m = _EDITION_TAIL.search(base)
+    bare = base[:m.start()].strip(" -") if m and m.start() > 0 else ""
+    return [q for q in dict.fromkeys([colon, base, bare]) if q]
+
+
+def _cover_year(series_id: int, path) -> int | None:
+    """The run's first year by its issues' dates — on-sale, else cover (kometa/gapfill.py,
+    which counts a file's own Year tag). Stronger than a file name's year, which a pack
+    stamps on everything."""
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT MIN(store_date) d, MIN(cover_date) c FROM issue_status WHERE tracked_series_id = ? "
+                         "AND (store_date IS NULL OR store_date < '9000')", (series_id,)).fetchone()
+    d = (r["d"] or r["c"]) if r else None
+    return int(d[:4]) if d else None
 
 
 def _year_hint(s: dict) -> int | None:
@@ -341,7 +356,7 @@ def gcd_tiebreak(s: dict, cands: list[dict], path, client) -> int | None:
         if named:
             pool = named
     if len(pool) > 1:
-        year = _file_year(s["id"], path)
+        year = _year_hint(s) or _cover_year(s["id"], path) or _file_year(s["id"], path)
         if year:
             fits = [c for c in pool if _year_fits(c, year)]
             if fits:
@@ -366,8 +381,16 @@ def gcd_match(s: dict, hi: float | None, results: list[dict]) -> tuple[str, int 
     with them; none such but a same-name run exists (another language, too
     short, another year) → 'ambiguous' with those, for a person to judge.
     Nothing of that name → 'none'. Never a guess."""
-    want, year = _gcd_name(s.get("title")), _year_hint(s)
+    from kometa.cvname import name_keys
+    want, year = _gcd_name(s.get("title")), _year_hint(s) or s.get("_cover_year")
     named = [c for c in results if c.get("gcd_id") and _gcd_name(c.get("name")) == want]
+    if not named:
+        # blind to spacing, then without an edition's dressing ('Gen 13' / 'Gen13', 'Dark Entries HC')
+        ours = name_keys(s.get("title"))
+        for i in (1, 2):
+            named = [c for c in results if c.get("gcd_id") and name_keys(c.get("name"))[i] == ours[i]]
+            if named:
+                break
     need = int(hi) if hi is not None and hi == int(hi) and 1 <= hi <= 1500 else None
     plausible = [c for c in named if c.get("language") == "en" and _year_fits(c, year)
                  and (need is None or (c.get("issues") or 0) >= need)]
@@ -444,6 +467,7 @@ def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int
         except GCDUnavailable as e:
             logger.info(f"GCD linking stopped this tick: {e}")
             break
+        s["_cover_year"] = _cover_year(s["id"], path)
         outcome, gid, cands = gcd_match(s, s.get("_owned_hi"), results)
         if outcome == "ambiguous" and len(cands) > 1:
             try:

@@ -438,3 +438,13 @@ def test_gcd_genres_sit_between_metron_and_the_files(db_path):
     rec.set_tags(sid, "metron", ["Fantasy", "Science Fiction"], db_path)    # Metron answers: its coarse genres rule
     assert eff() == {("fantasy", "metron", 1.0), ("science fiction", "metron", 1.0),
                      ("suspense", "gcd", rec.GCD_TRUST), ("zombies", "comicinfo", rec.FILE_THEME_TRUST)}
+
+
+def test_spacing_and_binding_dont_hide_the_run_and_cover_dates_give_the_year():
+    s = {"title": "Gen 13 - The Maxx", "folder_path": None}
+    assert harvest.gcd_match(s, 1.0, [_cand(5, "Gen13/The Maxx", issues=1, began=1995)]) == ("linked", 5, [])
+    # 'Dark Entries HC': the book is 'Dark Entries'; the year from its issues' cover dates picks the run
+    s = {"title": "Dark Entries HC", "folder_path": None, "_cover_year": 2009}
+    results = [_cand(6, "Dark Entries", issues=1, began=2009), _cand(7, "Dark Entries", issues=1, began=2019)]
+    assert harvest.gcd_match(s, 1.0, results) == ("linked", 6, [])
+    assert "Dark Entries" in harvest._gcd_queries("Dark Entries HC")

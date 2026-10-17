@@ -134,25 +134,52 @@ def same_publisher(ours: str | None, theirs: str | None) -> bool:
 
 
 def series_year(series: dict, path=None) -> int | None:
-    """The run's first year: its own, the one in its title, else its earliest dated issue."""
+    """The run's first year: its own, the one in its title, else its earliest dated issue —
+    by on-sale date, else by cover date (kometa/gapfill.py: a file's own Year tag counts).
+    Without the cover dates, 71 of 76 unmatched runs had no year at all (2026-10-18)."""
     if series.get("year_began"):
         return int(series["year_began"])
     if split_year(series.get("title"))[1]:
         return split_year(series["title"])[1]
     with db._connect(path or db.DB_PATH) as conn:
-        r = conn.execute("SELECT MIN(store_date) d FROM issue_status WHERE tracked_series_id = ? "
-                         "AND store_date IS NOT NULL AND store_date < '9000'", (series["id"],)).fetchone()
-    return int(r["d"][:4]) if r and r["d"] else None
+        r = conn.execute("SELECT MIN(store_date) d, MIN(cover_date) c FROM issue_status WHERE tracked_series_id = ? "
+                         "AND (store_date IS NULL OR store_date < '9000')", (series["id"],)).fetchone()
+    d = (r["d"] or r["c"]) if r else None
+    return int(d[:4]) if d else None
+
+
+# the binding, which the catalogues' names don't carry: 'Dark Entries HC' is the book
+# 'Dark Entries'. Only the binding — a Deluxe, Absolute or Anniversary edition, a
+# Director's Cut or a Volume 2 is another book with its own date and cover, and stays
+# in the name. Looked at only when the whole name finds nothing.
+_EDITION_TAIL = re.compile(
+    r"\s*(?:[-–—:,]\s*)?(?:\[\d{4}\]|\(\d{4}\)|\b(?:hc|tpb|gn|ogn|hardcover|softcover|paperback)\b).*$", re.I)
+
+
+def name_keys(title: str | None) -> tuple[str, str, str]:
+    """(the name, the name with no spaces, the name without its binding and spaces):
+    'Gen 13' is 'Gen13'; 'Dark Entries HC' is 'Dark Entries'."""
+    base = split_year(title)[0]
+    k = norm_title(base)
+    m = _EDITION_TAIL.search(base)
+    bare = norm_title(base[:m.start()]) if m and m.start() > 0 else k
+    return k, k.replace(" ", ""), bare.replace(" ", "")
 
 
 def pick_volume(series: dict, year: int | None, volumes: list[dict], highest: float | None = None) -> tuple[int | None, str]:
     """(volume id, why) — the one volume whose name, year and publisher all agree, or None.
     Two that agree: the exact year, else the only one with enough issues for our `highest`."""
-    name = norm_title(split_year(series.get("title"))[0])
-    fits = [v for v in volumes
-            if norm_title(v.get("name")) == name
-            and same_publisher(series.get("publisher"), v.get("publisher"))
-            and (year is None or (v.get("year") is not None and abs(int(v["year"]) - year) <= 1))]
+    ours = name_keys(series.get("title"))
+    agree = [v for v in volumes
+             if same_publisher(series.get("publisher"), v.get("publisher"))
+             and (year is None or (v.get("year") is not None and abs(int(v["year"]) - year) <= 1))]
+    # the whole name first; then blind to spacing; then without an edition's dressing —
+    # each looser pass only when the stricter one found nothing
+    fits = []
+    for i in range(3):
+        fits = [v for v in agree if name_keys(v.get("name"))[i] == ours[i]]
+        if fits:
+            break
     if len(fits) == 1:
         return int(fits[0]["cv_volume_id"]), f"{fits[0].get('name')} ({fits[0].get('year')}, {fits[0].get('publisher')})"
     if not fits:
@@ -217,16 +244,33 @@ def _highest_number(series_id: int, path) -> float | None:
     return r["n"] if r and r["n"] else None
 
 
-def _match_volume(cv, series: dict, path) -> int | None:
-    vid = _metron_volume(series)
-    why = "Metron's Comic Vine id for the run" if vid else None
-    if not vid:
-        year = series_year(series, path)
-        query = re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", split_year(series["title"])[0])).strip()
+def find_volume(cv, series: dict, path, metron: bool = True) -> tuple[int | None, str | None]:
+    """(volume id, why) for the run — Metron's id for it, else a name search; nothing written.
+    None, None: Comic Vine's hour is spent, nothing was asked."""
+    vid = _metron_volume(series) if metron else None
+    if vid:
+        return vid, "Metron's Comic Vine id for the run"
+    year = series_year(series, path)
+    base = split_year(series["title"])[0]
+    queries = [base]
+    m = _EDITION_TAIL.search(base)
+    if m and m.start() > 0:
+        queries.append(base[:m.start()])          # 'Dark Entries HC' → 'Dark Entries'
+    why = None
+    for q in queries:
         if not spend():
-            return None
-        volumes = cv.search_volumes(query, limit=20)
+            return None, why
+        volumes = cv.search_volumes(re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", q)).strip(), limit=20)
         vid, why = pick_volume(series, year, volumes, _highest_number(series["id"], path))
+        if vid or not why.startswith("no volume"):
+            break
+    return vid, why
+
+
+def _match_volume(cv, series: dict, path) -> int | None:
+    vid, why = find_volume(cv, series, path)
+    if vid is None and why is None:
+        return None
     with db._connect(path) as conn:
         conn.execute("INSERT INTO cv_volume_match (tracked_series_id, cv_volume_id, why, at) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(tracked_series_id) DO UPDATE SET cv_volume_id = excluded.cv_volume_id, "

@@ -1868,6 +1868,31 @@ def set_series_locg(series_id: int, req: MatchRequest):
     return db.get_series_by_id(series_id, DB_PATH)
 
 
+class UnpinnedApply(BaseModel):
+    series_ids: list[int]
+
+
+@app.post("/api/unpinned")
+def unpinned_start():
+    """Ask Comic Vine and GCD again for the runs no catalogue pinned down; proposals only
+    (kometa/unpinned.py). Minutes: GET /api/unpinned for progress and the proposals."""
+    from kometa import unpinned
+    return unpinned.start()
+
+
+@app.get("/api/unpinned")
+def unpinned_state():
+    from kometa import unpinned
+    return unpinned.state()
+
+
+@app.post("/api/unpinned/apply")
+def unpinned_apply(req: UnpinnedApply):
+    """Link the proposals the owner approved."""
+    from kometa import unpinned
+    return unpinned.apply(req.series_ids)
+
+
 @app.post("/api/series/{series_id}/match")
 def match_series_now(series_id: int):
     """'Match now' — one LOCG lookup for this series, right away."""
