@@ -674,16 +674,33 @@ def creator_sections(items: list[dict]) -> list[dict]:
     return [{"role": k, "label": labels[k], "items": v} for k, v in buckets.items() if v]
 
 
-# --- a credit without a Metron id gets the one its name has elsewhere on the shelf -------------
-# 2026-10-17: w0rldtr33 #23 (not out yet) has LOCG's credits — LOCG people ids, no Metron ids —
-# so James Tynion IV and the rest weren't clickable on its sheet, though #20 of the same run
-# credits all four with theirs. A name two ids answer to is left alone: a guess opens the wrong person.
+# --- every credit gets its person's Metron id, so every name opens their page ------------------
+# 2026-10-17: w0rldtr33 #23 (not out yet) carried LOCG's credits — LOCG people ids, no Metron
+# ids — so its names weren't clickable, though #20 credits the same four people with theirs.
+# A missing id comes from the shelf's credits by name first; a name the shelf doesn't know is
+# asked of Metron once, in the background, and the answer kept (a miss too, for a month).
+# A name two people answer to is left alone: a guess opens the wrong person's page.
 _IDS_TTL_S = 600
+CREATOR_MISS_DAYS = 30
 _ids_by_name: dict = {"at": 0.0, "path": None, "map": {}}
+_asking: set = set()
+_ask_lock = threading.Lock()
+
+
+def _name_key(name: str) -> str:
+    import unicodedata
+    plain = "".join(ch for ch in unicodedata.normalize("NFKD", name or "") if not unicodedata.combining(ch))
+    return norm_key(plain)
+
+
+def _ensure_creator_ids(path):
+    with db._connect(path) as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS creator_ids (
+            name_key TEXT PRIMARY KEY, creator_id INTEGER, asked_at TEXT DEFAULT (datetime('now')))""")
 
 
 def creator_ids_by_name(path=None) -> dict[str, int]:
-    """norm name → Metron creator id, from every shelf series' credits (series_signals)."""
+    """name key → Metron creator id: the shelf's credits (series_signals), then names asked of Metron."""
     path = path or DB_PATH
     c = _ids_by_name
     if c["path"] == path and time.time() - c["at"] < _IDS_TTL_S:
@@ -692,18 +709,91 @@ def creator_ids_by_name(path=None) -> dict[str, int]:
     for sig in _signals(path).values():
         for cr in sig.get("creators") or []:
             if cr.get("id") and cr.get("name"):
-                seen.setdefault(norm_key(cr["name"]), set()).add(int(cr["id"]))
-    c.update(at=time.time(), path=path, map={k: next(iter(v)) for k, v in seen.items() if len(v) == 1})
-    return c["map"]
+                seen.setdefault(_name_key(cr["name"]), set()).add(int(cr["id"]))
+    known = {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
+    _ensure_creator_ids(path)
+    with db._connect(path) as conn:
+        for k, cid in conn.execute("SELECT name_key, creator_id FROM creator_ids WHERE creator_id IS NOT NULL"):
+            if k not in seen:
+                known[k] = cid
+    c.update(at=time.time(), path=path, map=known)
+    return known
 
 
-def with_creator_ids(credits: list[dict], path=None) -> list[dict]:
-    """The credits, each without a metron_creator_id given the one its name has on the shelf."""
+def _asked_recently(keys: list[str], path) -> set[str]:
+    with db._connect(path) as conn:
+        qs = ",".join("?" * len(keys))
+        return {r[0] for r in conn.execute(
+            f"SELECT name_key FROM creator_ids WHERE name_key IN ({qs}) AND asked_at > datetime('now', ?)",
+            (*keys, f"-{CREATOR_MISS_DAYS} days"))}
+
+
+def resolve_creator_names(names: list[str], path=None, search=None) -> int:
+    """Ask Metron for each name's creator id, one call each on the shared throttle; keep what it
+    says. Exactly one person by that name (accents and case aside) is an answer; none or several
+    is a miss. Stops when Metron rests (nothing kept for the rest: asked again later)."""
+    from kometa import metron_client
+    path = path or DB_PATH
+    search = search or (lambda q: metron_client._get("creator/", name=q).get("results") or [])
+    _ensure_creator_ids(path)
+    found = 0
+    for name in names:
+        key = _name_key(name)
+        try:
+            rows = search(name)
+        except metron_client.MetronUnavailable as e:
+            logger.info(f"Creator lookups paused: {e}")
+            break
+        except Exception as e:
+            logger.info(f"Creator lookup for {name!r} skipped: {e}")
+            continue
+        same = {int(r["id"]) for r in rows if r.get("id") and _name_key(r.get("name") or "") == key}
+        cid = next(iter(same)) if len(same) == 1 else None
+        with db._connect(path) as conn:
+            conn.execute("INSERT OR REPLACE INTO creator_ids (name_key, creator_id, asked_at) VALUES (?, ?, datetime('now'))", (key, cid))
+        found += cid is not None
+    _ids_by_name["at"] = 0.0                       # the next look sees them
+    return found
+
+
+def _resolve_in_background(names: list[str], path):
+    with _ask_lock:
+        todo = [n for n in names if _name_key(n) not in _asking]
+        _asking.update(_name_key(n) for n in todo)
+    if not todo:
+        return
+
+    def run():
+        try:
+            resolve_creator_names(todo, path)
+        finally:
+            with _ask_lock:
+                _asking.difference_update(_name_key(n) for n in todo)
+    threading.Thread(target=run, name="creator-ids", daemon=True).start()
+
+
+def with_creator_ids(credits: list[dict], path=None, ask: bool = True) -> list[dict]:
+    """The credits, each without a metron_creator_id given its person's. Names nobody has asked
+    about go to Metron in the background when `ask` (never for a reader account)."""
     if not credits or all(cr.get("metron_creator_id") for cr in credits):
         return credits
+    path = path or DB_PATH
     known = creator_ids_by_name(path)
-    return [cr if cr.get("metron_creator_id") or not known.get(norm_key(cr.get("name") or ""))
-            else dict(cr, metron_creator_id=known[norm_key(cr["name"])]) for cr in credits]
+    out, unknown = [], []
+    for cr in credits:
+        cid = cr.get("metron_creator_id") or known.get(_name_key(cr.get("name") or ""))
+        out.append(dict(cr, metron_creator_id=cid) if cid and not cr.get("metron_creator_id") else cr)
+        if not cid and cr.get("name"):
+            unknown.append(cr["name"])
+    if ask and unknown:
+        unknown = list(dict.fromkeys(unknown))
+        asked = _asked_recently([_name_key(n) for n in unknown], path)
+        fresh = [n for n in unknown if _name_key(n) not in asked]
+        if fresh:
+            from kometa import metron_client
+            if metron_client.configured():
+                _resolve_in_background(fresh, path)
+    return out
 
 
 def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[dict]:
