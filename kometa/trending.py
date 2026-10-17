@@ -249,6 +249,125 @@ def _locg_fallback(data: dict, path, search=None) -> int:
     return n
 
 
+# --- collected editions: that volume's own cover, or not shown -------------------------
+# 2026-10-17: Absolute Batman Vol 1, 2 and 3 all wore the run's cover, and Dungeon
+# Crawler Carl Vol 1 and 2 both wore LOCG's series art — three books that looked
+# like one. A volume's cover comes from the shelf's trades list, Metron's TPB/HC
+# sibling series, or LOCG's edition list; the run's own cover is never used.
+_HC_RE = re.compile(r"\bHC\b|hardcover", re.I)
+
+
+def _edition_format(name: str) -> str:
+    return "HC" if _HC_RE.search(name or "") else "Omnibus" if re.search(r"omnibus", name or "", re.I) else "TPB"
+
+
+def _pick_edition(eds: list[dict], e: dict) -> dict | None:
+    """That volume with a cover, in the chart's format if the catalogue has it."""
+    same = [t for t in eds if t.get("vol") == e["vol"] and t.get("cover")]
+    want = _edition_format(e.get("title") or "")
+    return next((t for t in same if t.get("format") == want), None) or (same[0] if same else None)
+
+
+def _shelf_editions(entries: list[dict], path) -> dict:
+    sids = {e["series_id"] for e in entries if e.get("owned") and e.get("series_id") and e.get("vol") is not None}
+    return {sid: (db.get_trades(sid, path) or {}).get("trades") or [] for sid in sids}
+
+
+def _vol_cover(e: dict, shelf: dict) -> str:
+    hit = _pick_edition(shelf.get(e.get("series_id")) or [], e) if e.get("owned") else None
+    return (hit or {}).get("cover") or e.get("vol_cover") or ""
+
+
+def _metron_edition(results: list[dict], e: dict) -> dict | None:
+    """Metron files a run's collected editions as sibling series ('Absolute Batman
+    TPB (2025)') whose issue #3 is Vol 3. The run itself answers the same query
+    with its single issue #3 — same name, no format on the end — and is skipped."""
+    from kometa.record import _base_name
+    eds = []
+    for x in results:
+        name = re.sub(r"\s*\(\d{4}\)\s*$", "", (x.get("series") or {}).get("name") or "")
+        if _key(name) == _key(e["series"]) or _key(_base_name(name)) != _key(e["series"]):
+            continue
+        eds.append({"vol": e["vol"], "format": _edition_format(name), "cover": x.get("image")})
+    return _pick_edition(eds, e)
+
+
+def _locg_editions(locg_series_id) -> list[dict]:
+    from kometa import locg_client
+    if locg_client.locg_paused():
+        raise RuntimeError("LOCG paused")
+    return locg_client.select_editions(locg_client.get_trades_anon(locg_series_id))
+
+
+def _wants_vol_cover(e: dict, shelf: dict) -> bool:
+    return e.get("vol") is not None and not e.get("vol_tried") and not _vol_cover(e, shelf)
+
+
+def fill_collected_covers(data: dict, path, lookup=None, locg_trades=None) -> int:
+    """Each charted volume without a cover of its own: Metron's collected sibling,
+    then (a run only LOCG knows) LOCG's edition list. A source that didn't answer
+    is asked again next time. Returns how many covers were found; saves."""
+    from kometa import metron_client
+    lookup = lookup or (lambda series, vol: metron_client._get("issue/", series_name=series, number=str(vol)))
+    locg_trades = locg_trades or _locg_editions
+    entries = data.get("graphic_novels", [])
+    shelf = _shelf_editions(entries, path)
+    n = 0
+    for e in [x for x in entries if _wants_vol_cover(x, shelf)]:
+        if not e.get("vol_metron"):
+            try:
+                r = lookup(e["series"], e["vol"])
+            except metron_client.MetronUnavailable as ex:
+                logger.info(f"Trending volume covers paused: {ex}")
+                break
+            except Exception as ex:
+                logger.info(f"Trending volume cover skipped {e['title']!r}: {ex}")
+                continue
+            e["vol_metron"] = True
+            hit = _metron_edition(r.get("results") or [], e)
+            if hit:
+                e["vol_cover"], e["vol_tried"] = hit["cover"], True
+                n += 1
+                continue
+        if e.get("owned"):
+            e["vol_tried"] = True                     # the shelf's own trades list catches up on its own
+            continue
+        if not (e.get("metron_series_id") or e.get("locg_tried")):
+            continue                                  # the run hasn't been looked up everywhere yet
+        if e.get("locg_series_id"):
+            try:
+                hit = _pick_edition(locg_trades(e["locg_series_id"]), e)
+            except Exception as ex:
+                logger.info(f"Trending volume cover via LOCG paused at {e['title']!r}: {ex}")
+                continue
+            if hit:
+                e["vol_cover"] = hit["cover"]
+                n += 1
+        e["vol_tried"] = True
+    _save(data, path)
+    return n
+
+
+def shown(data: dict, path) -> dict:
+    """What the rows show: every card has a cover, a volume charted twice (Vol 3 and
+    Vol 3 HC) is one card at its better rank, and no cover appears twice."""
+    shelf = _shelf_editions(data.get("graphic_novels", []), path)
+    out = {}
+    for key in ("comics", "graphic_novels"):
+        rows, covers, vols = [], set(), set()
+        for e in data.get(key, []):
+            vol = (_key(e["series"]), e["vol"]) if e.get("vol") is not None else None
+            cover = _vol_cover(e, shelf) if vol else e.get("cover")
+            if not cover or cover in covers or vol in vols:
+                continue
+            covers.add(cover)
+            if vol:
+                vols.add(vol)
+            rows.append(dict(e, cover=cover))
+        out[key] = rows
+    return out
+
+
 def _enrich_in_background(data: dict, path):
     if _enriching["on"]:
         return
@@ -257,6 +376,7 @@ def _enrich_in_background(data: dict, path):
     def run():
         try:
             enrich_catalogue(data, path)
+            fill_collected_covers(data, path)
         except Exception as e:
             logger.warning(f"Trending enrich failed: {e}", exc_info=True)
         finally:
@@ -284,10 +404,12 @@ def trending(path=None, refresh: bool = False) -> dict:
     # misses from before the LOCG fallback (or a LOCG that was paused): one more look, quietly
     retry = any(e.get("catalogue_miss") and not e.get("owned") and not e.get("locg_tried")
                 for key in ("comics", "graphic_novels") for e in data.get(key, []))
-    if needs or retry:
+    shelf = _shelf_editions(data.get("graphic_novels", []), path)
+    vols = any(_wants_vol_cover(e, shelf) for e in data.get("graphic_novels", []))
+    if needs or retry or vols:
         _enrich_in_background(data, path)
-    data["pending"] = needs
-    return {k: v for k, v in data.items() if not k.startswith("_")}
+    data["pending"] = needs or vols
+    return {**{k: v for k, v in data.items() if not k.startswith("_")}, **shown(data, path)}
 
 
 @router.get("/api/trending")
