@@ -306,9 +306,20 @@ def _issue_thumbnail(series_id: int, number: float, request: Request = None):
         if resp:
             return _tag(resp, "catalogue")
 
-    # Comic Vine's cover, where the catalogue has none (harvest.cv_covers_tick asks for these
-    # first): Buffy the Vampire Slayer #2–#10, 1998, sat as blank frames — no Metron art, and
-    # LOCG's issue pages walled (2026-10-18).
+    # LOCG's cover, straight from its S3 bucket by the issue's LOCG id — the image was never
+    # behind LOCG's wall, only its web page is. The old fallback (gone) asked that page for the
+    # variant list first and gave up at the wall: Buffy the Vampire Slayer #2–#10 (1998) sat as
+    # blank frames with large-<id>.jpg answering 200 the whole time (docs/locg-covers-s3-solution-2026-10-18.md).
+    locg_iid = issue.get("locg_issue_id") if issue else None
+    if locg_iid:
+        from kometa.locg_client import S3_LARGE
+        s3 = S3_LARGE.format(locg_iid)
+        resp = images.serve(images.issue_key(series_id, number), s3, "locg", path=DB_PATH) or _image_or_none(s3)
+        if resp:
+            return _tag(resp, "catalogue")
+
+    # Comic Vine's cover, where neither catalogue has one (harvest.cv_covers_tick asks for
+    # these first).
     try:
         from kometa import record
         cvo = ((record.get_issue(series_id, number, DB_PATH) or {}).get("extra") or {}).get("cv_original")
@@ -318,25 +329,6 @@ def _issue_thumbnail(series_id: int, number: float, request: Request = None):
         resp = images.serve(images.cv_key(series_id, number), cvo, "comicvine", path=DB_PATH) or _image_or_none(cvo)
         if resp:
             return _tag(resp, "catalogue")
-
-    # Artless issues often have variant art on LOCG before the main cover is
-    # posted (upcoming issues). covers[0] is the main, so it gets first shot;
-    # otherwise the first variant with real art wins. Cached by URL.
-    locg_iid = issue.get("locg_issue_id") if issue else None
-    if locg_iid:
-        try:
-            from kometa.locg_client import fetch_variants
-            data = fetch_variants(locg_iid)
-            for c in data.get("covers", [])[:6]:
-                resp = _image_or_none(c.get("thumb"))
-                if resp:
-                    return _tag(resp, "catalogue")
-        except Exception as e:
-            # Transient failure (LOCG hiccup, CF challenge, timeout) is NOT a
-            # verdict on whether art exists — return a plain uncached 404 so the
-            # next render gets a fresh attempt.
-            logger.warning(f"thumbnail fallback failed for series {series_id} #{number}: {e}")
-            return Response(status_code=404)
 
     # Clean determination: every source genuinely has no art right now. Remember
     # that so the next render doesn't pay for the same expedition; new art gets

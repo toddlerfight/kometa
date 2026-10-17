@@ -76,11 +76,13 @@ def _issues_due(series: dict, stamp_key: str = "locg_fetched_at", path=None) -> 
 LOCG_WITH_METRON_DAYS = 7   # Metron has the list; LOCG only adds far-ahead solicits
 
 
-def _locg_issues_due(series: dict, have_metron: bool = False) -> bool:
+def _locg_issues_due(series: dict, have_metron: bool = False, artless: bool = False) -> bool:
     if have_metron:
-        # Metron covers the issue list. LOCG's one extra — solicitations months
-        # ahead — only matters for series you're pulling, and weekly is plenty.
-        if not series.get("on_pull_list"):
+        # Metron covers the issue list. LOCG's extras — solicitations months ahead, and the
+        # cover and LOCG id of an issue Metron has no art for — matter for series you're
+        # pulling, and for any run with artless issues (Buffy the Vampire Slayer, 1998: Metron
+        # has no art for #1–#10; LOCG's list carries the S3 covers, 2026-10-18). Weekly.
+        if not series.get("on_pull_list") and not artless:
             return False
         from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(days=LOCG_WITH_METRON_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
@@ -161,7 +163,8 @@ def sync_one(series: dict, force: bool = False):
                 except metron_client.MetronUnavailable as e:
                     logger.info(f"Metron unavailable for {series['title']!r}: {e}")
             have_metron = bool(series.get("metron_fetched_at")) or bool(issue_map)
-        fetch_issues = bool(locg_id) and (force or _locg_issues_due(series, have_metron))
+        artless = any(not (v or {}).get("image") for v in issue_map.values())
+        fetch_issues = bool(locg_id) and (force or _locg_issues_due(series, have_metron, artless))
         if fetch_issues:
             fetched_any = False
             for li in get_issues_anon(locg_id):
