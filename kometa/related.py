@@ -748,6 +748,19 @@ def resolve_creator_names(names: list[str], path=None, search=None) -> int:
             logger.info(f"Creator lookup for {name!r} skipped: {e}")
             continue
         same = {int(r["id"]) for r in rows if r.get("id") and _name_key(r.get("name") or "") == key}
+        surname = (name or "").split()[-1] if (name or "").split() else ""
+        if not same and len(surname) >= 3 and surname != name:
+            # Metron's name filter is a substring match: 'S. L. Gallant' misses 'S.L. Gallant'.
+            # The surname finds them; the full name, dots and spaces aside, picks the one.
+            try:
+                rows = search(surname)
+            except metron_client.MetronUnavailable as e:
+                logger.info(f"Creator lookups paused: {e}")
+                break
+            except Exception:
+                rows = []
+            squash = lambda k: k.replace(" ", "")
+            same = {int(r["id"]) for r in rows if r.get("id") and squash(_name_key(r.get("name") or "")) == squash(key)}
         cid = next(iter(same)) if len(same) == 1 else None
         with db._connect(path) as conn:
             conn.execute("INSERT OR REPLACE INTO creator_ids (name_key, creator_id, asked_at) VALUES (?, ?, datetime('now'))", (key, cid))

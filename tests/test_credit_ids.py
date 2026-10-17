@@ -72,3 +72,15 @@ def test_the_trade_window_gets_the_same(db_path, monkeypatch):
     import kometa.trade_community as tc
     monkeypatch.setattr(tc, "for_trade", lambda lid: None)
     assert main.get_trade_details("123")["credits"][0]["metron_creator_id"] == 99
+
+
+def test_initials_spaced_differently_still_find_the_person(db_path):
+    asked = []
+
+    def search(q):
+        asked.append(q)
+        return {"Gallant": [{"id": 4410, "name": "S.L. Gallant"}, {"id": 7, "name": "Mark Gallant"}]}.get(q, [])
+    assert rel.resolve_creator_names(["S. L. Gallant"], db_path, search) == 1
+    assert asked == ["S. L. Gallant", "Gallant"]
+    rel._ids_by_name.update(at=0.0, path=None, map={})
+    assert rel.with_creator_ids([{"name": "S. L. Gallant"}], db_path, ask=False)[0]["metron_creator_id"] == 4410
