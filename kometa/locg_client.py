@@ -36,16 +36,21 @@ class FlareSolverrResponse:
 
 
 def _clean_json_text(text: str) -> str:
-    """FlareSolverr sometimes wraps JSON responses in HTML body/pre tags."""
+    """FlareSolverr hands JSON back as the page Chrome renders it: the JSON as TEXT inside
+    <pre>, so every '<' in it arrives as '&lt;'. Taken out without unescaping, LOCG's list
+    HTML ('&lt;li class="issue"&gt;') parsed to no rows at all — every series list and trade
+    list read through FlareSolverr came back empty, silently (2026-10-17: Hellblazer, 140
+    dated issues on the wire, 0 parsed). Unescaped, it's the JSON LOCG sent."""
+    import html
     t = (text or "").strip()
     if t.startswith("<") and ("{" in t or "[" in t):
         m = re.search(r"<pre[^>]*>(.*?)</pre>", t, re.DOTALL | re.IGNORECASE)
         if m:
-            t = m.group(1).strip()
+            t = html.unescape(m.group(1).strip())
         else:
             m = re.search(r"<body[^>]*>(.*?)</body>", t, re.DOTALL | re.IGNORECASE)
             if m:
-                t = m.group(1).strip()
+                t = html.unescape(m.group(1).strip())
     return t
 
 
