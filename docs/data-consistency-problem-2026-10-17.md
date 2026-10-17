@@ -109,6 +109,21 @@ there. The credits page inside most comics (usually page 2 or the last page) lis
 team. Reading it (on-device text recognition, or a vision model) would fill credits for owned
 issues no catalogue covers. This is the only route for the 202 no-catalogue issues.
 
+## Case: an upcoming collected edition (100 Bullets: The US of Anger TP)
+
+LOCG's page for the trade (out 15 June 2027) carries the solicitation text, format, 200 pages,
+$19.99, the ISBN, what it collects (#1–8), credits with roles, characters, and each chapter's
+title and page count against the issue it reprints. Kometa holds the title, format and cover,
+which come from LOCG's *list*. Everything else is on LOCG's *issue page*, which FlareSolverr can no
+longer pass. The owner's own Chrome loads it fine. Metron doesn't list the edition yet. Looked up
+by ISBN on 2026-10-17, Open Library didn't have it (not out yet) and Google Books' keyless quota
+was exhausted (it needs a free API key: 1,000 queries a day).
+
+So for new and upcoming books, LOCG's issue pages are the richest source and the hardest to
+reach. Every working LOCG scraper in 2026 drives a real browser, because Cloudflare ties its
+clearance to the browser that solved it (`docs/research/comic-data-sources.md` §1.5). For a
+released trade, the ISBN opens book catalogues that have no wall at all.
+
 ## Approaches to weigh
 
 1. **Merge per field.** Keep each field's source and age, fill the gaps from the next source on the
@@ -121,10 +136,14 @@ issues no catalogue covers. This is the only route for the 202 no-catalogue issu
    a one-off bulk fill.
 4. **The file as a source for owned issues.** Page counts at once; credits-page reading as an
    experiment on the no-catalogue shelf first.
-5. **Give back to Metron.** It's community-edited. A list of what Kometa had to find elsewhere
+5. **LOCG pages through a real browser.** A Chrome on the server, driven at a gentle pace, in
+   place of FlareSolverr for issue pages. First a spike: does it pass the check FlareSolverr fails?
+6. **ISBN for collected editions.** Once an edition has an ISBN, Google Books (free key), Open
+   Library, Hardcover and the publisher's listing fill description, pages, price and date.
+7. **Give back to Metron.** It's community-edited. A list of what Kometa had to find elsewhere
    could go upstream, so the gaps close for every Metron user. That's the one approach that
    shrinks the problem at its source.
-6. **Leave the gaps quiet.** Whatever stays missing shows as nothing: no placeholder, no "unknown"
+8. **Leave the gaps quiet.** Whatever stays missing shows as nothing: no placeholder, no "unknown"
    label. That's how the issue sheet and the "no cover, no suggestion" rule already behave.
 
 ## Open questions
