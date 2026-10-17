@@ -1136,15 +1136,35 @@ function _paintOdBar() {
     if (label && !stops.some(s => s.label === label)) stops.push({ label, row });
   }
   const sub = document.getElementById('topbar-sub');
-  const same = stops.length === _odStops.length && stops.every((s, i) => s.label === _odStops[i].label) && sub.querySelector('.od-rowbar');
   _odStops = stops;
-  if (!same) sub.innerHTML = stops.length < 2 ? '' : `<nav class="od-rowbar" aria-label="Jump to a row">${stops.map((s, i) =>
-    `<button class="issue-tab od-stop" onclick="_odJump(${i})">${esc(s.label)}</button>`).join('')}</nav>`;
+  if (stops.length < 2) { sub.innerHTML = ''; return; }
+  let bar = sub.querySelector('.od-rowbar');
+  if (!bar) {
+    sub.innerHTML = '<nav class="od-rowbar" aria-label="Jump to a row"></nav>';
+    bar = sub.firstChild;
+  }
+  // in place, keyed by name: a row landing late adds its stop without replacing the
+  // others (a redraw mid-tap lost the tap, 2026-10-17), and a stop jumps by name, so
+  // one slotting in before it can't send it to the wrong row
+  const have = new Map([...bar.children].map(b => [b.dataset.label, b]));
+  stops.forEach((st, i) => {
+    let b = have.get(st.label);
+    if (!b) {
+      b = document.createElement('button');
+      b.className = 'issue-tab od-stop';
+      b.dataset.label = st.label;
+      b.textContent = st.label;
+      b.addEventListener('click', () => _odJump(st.label));
+    }
+    have.delete(st.label);
+    if (bar.children[i] !== b) bar.insertBefore(b, bar.children[i] || null);
+  });
+  have.forEach(b => b.remove());
   _odMark();
 }
 
-function _odJump(i) {
-  const s = _odStops[i];
+function _odJump(label) {
+  const s = _odStops.find(x => x.label === label);
   if (!s) return;
   const app = document.getElementById('app');
   if (!s.row.offsetParent) {                    // behind More on a phone: open it up first
