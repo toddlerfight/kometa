@@ -394,7 +394,10 @@ def gcd_fill(path=None, limit: int = GCD_PER_TICK, dry: bool = False, fetch=None
         stories = [s for s in raw.get("story_set") or [] if (s.get("type") or "").lower() != "cover"]
         desc = "\n\n".join(s["synopsis"].strip() for s in stories if (s.get("synopsis") or "").strip()) or None
         cover = cover_month(raw.get("key_date")) or from_publication(raw.get("publication_date"))
-        clear = _suspect_gcd_date(r) and r["store_date"] != sd
+        # only a date that IS GCD's cover key: a record also copies the issue's own date
+        # (Hellboy #3, 4 February 2004 from the release list) and that one stays
+        clear = (_suspect_gcd_date(r) and r["store_date"] != sd
+                 and r["store_date"] == gcd_client._date(raw.get("key_date")))
         if dry:
             out["store_date"] += bool(sd and (not r["status_date"] or clear))
             out["desc"] += bool(desc and not (r["desc"] or "").strip())

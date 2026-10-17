@@ -109,6 +109,21 @@ def test_a_gcd_date_that_was_its_cover_key_moves_to_the_cover(db_path):
     assert gf.gcd_wanted(db_path) == []                                   # settled
 
 
+def test_a_gcd_record_date_that_came_from_the_issue_itself_stays(db_path):
+    a = _issue(db_path, source="gcd", store_date="2004-02-04", status_date="2004-02-04", extra={"gcd_id": 7001},
+               title="Hellboy")
+    raw = {"on_sale_date": "", "key_date": "", "publication_date": "", "story_set": []}
+    assert gf.gcd_fill(db_path, fetch=lambda g: raw)["date_cleared"] == 0
+    assert _status(db_path, a)["store_date"] == "2004-02-04"
+    # GCD's cover key cleared from the record, the issue's own (different) date untouched
+    b = _issue(db_path, n=7.0, source="gcd", store_date="2007-11-01", status_date="2007-10-02",
+               extra={"gcd_id": 7002}, title="Hellboy 2")
+    raw = {"on_sale_date": "", "key_date": "2007-11-00", "publication_date": "November 2007", "story_set": []}
+    assert gf.gcd_fill(db_path, fetch=lambda g: raw)["date_cleared"] == 1
+    assert record.get_issue(b, 7.0, db_path)["store_date"] is None
+    assert _status(db_path, b, 7.0)["store_date"] == "2007-10-02"
+
+
 def test_a_catalogue_refresh_with_nothing_keeps_what_the_gap_fill_found(db_path):
     a = _issue(db_path)
     gf.cv_fill(db_path, calls=1, client=FakeCV([{"id": 5001, "store_date": "1985-05-14", "description": "<p>Rogue joins.</p>"}]))
