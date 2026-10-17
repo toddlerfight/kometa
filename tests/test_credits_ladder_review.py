@@ -96,3 +96,44 @@ def test_the_switch_is_set_through_the_config_endpoint(tmp_path, monkeypatch):
     assert main.update_config(main.ConfigRequest(credits_ladder="off"))["credits_ladder"] is False
     with pytest.raises(HTTPException):
         main.update_config(main.ConfigRequest(credits_ladder="yes"))
+
+
+# Metron's own lists with neither a writer nor an artist (The Maxx #11–#35: inker and cover)
+MAXX_THIN = [{"role": "Inker", "name": "Sam Kieth", "metron_creator_id": 11},
+             {"role": "Cover", "name": "Sam Kieth", "metron_creator_id": 11}]
+
+
+def test_a_metron_list_with_no_writer_or_artist_is_picked_and_replaced(db_path):
+    sid = _row(db_path, MAXX_THIN, n=11.0)
+    assert (sid, 11.0) in _wanted(db_path)
+    out = record.fill_credits(sid, 11.0, db_path, rungs=(("gcd", lambda r: TEAM), ("comicvine", lambda r: 1 / 0)))
+    assert out["source"] == "gcd"
+    row = record.get_issue(sid, 11.0, db_path)
+    assert row["credits"] == TEAM and record.credits_source(row) == "gcd"
+    assert (sid, 11.0) not in _wanted(db_path)                          # done: Comic Vine can't beat GCD's team
+
+
+def test_a_metron_list_with_the_team_is_never_picked(db_path):
+    sid = _row(db_path, TEAM, n=1.0)
+    alt = _row(db_path, [{"role": "Script", "name": "Jhonen Vasquez", "metron_creator_id": None},
+                         {"role": "Cover", "name": "Jhonen Vasquez", "metron_creator_id": None}], n=2.0)
+    wanted = _wanted(db_path)
+    assert (sid, 1.0) not in wanted and (alt, 2.0) not in wanted        # 'Script' is a writer too
+
+
+def test_a_thin_metron_list_isnt_swapped_for_a_thin_one_from_below(db_path):
+    sid = _row(db_path, MAXX_THIN, n=12.0)
+    out = record.fill_credits(sid, 12.0, db_path, rungs=(("gcd", lambda r: COVER), ("comicvine", lambda r: [])))
+    assert out["source"] is None and out["asked"] == ["gcd", "comicvine"]
+    row = record.get_issue(sid, 12.0, db_path)
+    assert row["credits"] == MAXX_THIN and record.credits_source(row) == "metron"
+    assert (sid, 12.0) not in _wanted(db_path)                          # both asked this week: rests
+
+
+def test_metrons_next_sync_doesnt_put_the_thin_list_back(db_path):
+    sid = _row(db_path, MAXX_THIN, n=13.0)
+    record.fill_credits(sid, 13.0, db_path, rungs=(("gcd", lambda r: []), ("comicvine", lambda r: TEAM)))
+    record.write_issue(sid, 13.0, {"desc": "x", "credits": MAXX_THIN}, "metron", "full", {}, db_path)
+    row = record.get_issue(sid, 13.0, db_path)
+    assert row["credits"] == TEAM and record.credits_source(row) == "comicvine"
+    assert (sid, 13.0) not in _wanted(db_path)

@@ -532,9 +532,9 @@ def credits_tick(path=None, limit: int = CREDITS_PER_TICK) -> int:
 
 
 def credits_wanted(path=None, limit: int = 50) -> list[dict]:
-    """Rows the ladder could still improve: no credits, credits from below GCD, or GCD's with
-    no writer or artist — with a GCD or Comic Vine id to ask by, and a rung that could do
-    better not asked this week. Pull-list series and owned issues first."""
+    """Rows the ladder could still improve: no credits, credits from below GCD, or a list with
+    no writer or artist from anyone, Metron included — with a GCD or Comic Vine id to ask by,
+    and a rung that could do better not asked this week. Pull-list series and owned issues first."""
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -543,7 +543,10 @@ def credits_wanted(path=None, limit: int = 50) -> list[dict]:
             JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
             WHERE (s.kind IS NULL OR s.kind != 'arc') AND (i.ignored IS NULL OR i.ignored = 0)
               AND (r.credits_json IS NULL OR r.credits_json = '[]' OR r.source IN ('locg', 'comicinfo')
-                   OR r.field_sources_json LIKE '%"credits": {"source": "gcd"%')
+                   -- no writer and no artist, whoever gave it (Metron's The Maxx #11-#35: inker and
+                   -- cover only). A rough cut; _has_team below decides.
+                   OR (r.credits_json NOT LIKE '%"role": "writer"%' AND r.credits_json NOT LIKE '%"role": "artist"%'
+                       AND r.credits_json NOT LIKE '%"role": "penciller"%'))
               AND (r.extra_json LIKE '%"gcd_id": %' OR r.extra_json LIKE '%"cv_id": %' OR r.cv_issue_id IS NOT NULL
                    OR r.credits_json IS NULL OR r.credits_json = '[]')     -- none at all: Comic Vine by name
             ORDER BY s.on_pull_list DESC, i.owned DESC, i.store_date DESC""")]
