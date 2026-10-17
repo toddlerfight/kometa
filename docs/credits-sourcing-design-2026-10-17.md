@@ -137,6 +137,12 @@ profile, one page at a time) load LOCG issue pages that FlareSolverr can't?
 - Watch: LOCG's terms; any change in the challenge LOCG shows after the run.
 - If it passes, it becomes rung 4, and the only way to have credits on release day.
 
+**Result, run 1 (2026-10-17, headless):** 0 of 20. Every page answered at once (under 0.3 s) with
+LOCG's own "Restricted" page, HTTP 403. That's no Cloudflare challenge: LOCG turns headless browsers
+away before any check. The setup was Playwright, the installed Chrome in headless mode, a fresh
+profile, and 10 s between pages. Still open: a headed Chrome, a real window in the server's logged-in
+desktop session. That's what the owner's own Chrome is, and it loads these pages.
+
 ## 7. The 237 owned files with no catalogue (separate follow-up)
 
 They have no catalogue id, so no credit source can be asked about them. Two routes, each its own
