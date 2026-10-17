@@ -71,6 +71,9 @@ def _card(conn, b, progress=None, **extra) -> dict:
 
 
 def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
+    """Books you're IN: a place past page 1, not finished, not hidden, touched in the last
+    CONTINUE_DAYS. Page 1 is opening a book, not reading it — the web never saves it, but the
+    apps did, and nine glances sat on Continue reading (the owner, 2026-10-18). Per reader."""
     reader_id = reader_id or current_reader()
     path = path or DB_PATH
     now = now or datetime.now(timezone.utc)
@@ -79,7 +82,7 @@ def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
         rows = conn.execute("""
             SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.page, p.updated_at, t.title AS tracked_title, s.title AS shelf_title FROM read_progress p JOIN books b ON b.id = p.book_id
             LEFT JOIN tracked_series t ON t.id = b.tracked_series_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
-            WHERE p.reader_id = ? AND p.completed = 0 AND p.dismissed = 0 AND p.updated_at >= ? AND b.missing_at IS NULL
+            WHERE p.reader_id = ? AND p.completed = 0 AND p.page > 1 AND p.dismissed = 0 AND p.updated_at >= ? AND b.missing_at IS NULL
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
         return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
 

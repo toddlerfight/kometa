@@ -2081,7 +2081,7 @@ def prune_shelf(scanned_at, path=DB_PATH) -> int:
 _SHELF_STATS_SQL = """
     SELECT b.shelf_series_id AS sid,
            SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
-           SUM(CASE WHEN p.completed = 0 THEN 1 ELSE 0 END) AS in_progress,
+           SUM(CASE WHEN p.completed = 0 AND p.page > 1 THEN 1 ELSE 0 END) AS in_progress,   -- page 1 is opening, not reading
            MAX(p.updated_at) AS last_read
     FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
     GROUP BY b.shelf_series_id
@@ -2126,7 +2126,7 @@ def reading_by_tracked_series(reader_id, path=DB_PATH) -> dict[int, dict]:
                 for r in conn.execute("""
             SELECT b.tracked_series_id AS tid,
                    SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
-                   SUM(CASE WHEN p.completed = 0 THEN 1 ELSE 0 END) AS in_progress,
+                   SUM(CASE WHEN p.completed = 0 AND p.page > 1 THEN 1 ELSE 0 END) AS in_progress,   -- page 1 is opening, not reading
                    MAX(p.updated_at) AS last_read
             FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
             WHERE b.tracked_series_id IS NOT NULL

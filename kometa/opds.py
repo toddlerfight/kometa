@@ -343,7 +343,8 @@ def keep_reading_feed(path=None) -> str:
         books = [dict(r) for r in conn.execute("""
             SELECT b.id, b.path, b.number, b.page_count, b.added_at, b.shelf_series_id, b.tracked_series_id, s.title AS series_title
             FROM read_progress p JOIN books b ON b.id = p.book_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
-            WHERE p.reader_id = ? AND p.completed = 0 ORDER BY p.updated_at DESC LIMIT 50""", (current_reader(),))]
+            WHERE p.reader_id = ? AND p.completed = 0 AND p.page > 1 AND p.dismissed = 0   -- On Deck's rule: past page 1, not hidden
+            ORDER BY p.updated_at DESC LIMIT 50""", (current_reader(),))]
     return _feed(ACQ, "urn:kometa:opds:keep-reading", "Keep reading", [], _entries(books, path), "/opds/keep-reading")
 
 
