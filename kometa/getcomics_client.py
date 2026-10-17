@@ -205,6 +205,16 @@ def _drop_volume_tag(post_raw: str, series_year=None) -> str:
     return _VOL_SINGLE_RE.sub('', post_raw, count=1)
 
 
+def _post_year_conflicts(post_raw: str, issue_year: int | None) -> bool:
+    """The post names a year and none of them is within a year of the issue's: another run of
+    the same name. 'Buffy The Vampire Slayer #4 (2019)' is BOOM!'s; Dark Horse's #4 is 1998 —
+    and it was taken for it, with #2–#10 after it (2026-10-17)."""
+    if not issue_year:
+        return False
+    years = [int(y) for y in re.findall(r'\((\d{4})\)', post_raw or "")]
+    return bool(years) and not any(abs(y - issue_year) <= 1 for y in years)
+
+
 def _series_matches(title_norm: str, post_norm: str) -> bool:
     """True if post_norm is plausibly about title_norm (not a spinoff or format edition)."""
     title_norm = _core_title(title_norm)
@@ -541,7 +551,8 @@ class GetComicsClient:
             if status_fn:
                 status_fn(f"GetComics: “{query}”")
             post_url = self._search_page(query, name, issue_number,
-                                         series_year=series_year, packs=packs)
+                                         series_year=series_year, packs=packs,
+                                         issue_year=int(year) if year and year.isdigit() and year < "9000" else None)
             if post_url:
                 # The singles tiers take a range post too ('Infinity Gauntlet #1 – 6'
                 # reads as covering #1). Hand over the issue so a CHUNKED range post
@@ -700,7 +711,7 @@ class GetComicsClient:
         return None
 
     def _search_page(self, query: str, title: str, issue_number: float,
-                     series_year=None, packs: list | None = None) -> str | None:
+                     series_year=None, packs: list | None = None, issue_year: int | None = None) -> str | None:
         articles, more = self._search_articles(query, "search")
         if articles is None:
             return None
@@ -716,7 +727,8 @@ class GetComicsClient:
                 a = h1.find("a") if h1 else None
                 if a:
                     text = _drop_volume_tag(a.get_text(strip=True), series_year)
-                    if _series_matches(title_norm, _normalize(text)) and _post_covers_issue(text, issue_number) is True:
+                    if (_series_matches(title_norm, _normalize(text)) and _post_covers_issue(text, issue_number) is True
+                            and not _post_year_conflicts(text, issue_year)):
                         return True
             return False
 
@@ -751,6 +763,9 @@ class GetComicsClient:
             href = a.get("href", "")
             if _series_matches(title_norm, _normalize(text)):
                 if _post_covers_issue(text, issue_number) is True:
+                    if _post_year_conflicts(text, issue_year):
+                        logger.info(f"GetComics: skipped {text!r} — this issue came out in {issue_year}")
+                        continue
                     logger.info(f"GetComics: matched post {text!r}")
                     return href
 
@@ -769,6 +784,9 @@ class GetComicsClient:
                 coverage = _post_covers_issue(text, issue_number)
                 if coverage is False:
                     logger.info(f"GetComics: fallback skipped {text!r} (wrong issue)")
+                    continue
+                if _post_year_conflicts(text, issue_year):
+                    logger.info(f"GetComics: fallback skipped {text!r} — this issue came out in {issue_year}")
                     continue
                 logger.info(f"GetComics: fallback post {text!r}")
                 return href

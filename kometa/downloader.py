@@ -983,6 +983,13 @@ def _count_archive_images(path: str) -> int | None:
 # Medians, not means: one odd spread/credits page must not swing the verdict.
 _WEBTOON_MAX_MEDIAN_WIDTH = 1000
 _WEBTOON_MIN_MEDIAN_RATIO = 1.5
+# ...and only for issues out since mobile editions existed. A 1998 scan is ~974px wide at a
+# print page's 1.55 — both prongs fire — so Buffy the Vampire Slayer #1–3 (Dark Horse, 1998)
+# were thrown out as 'webtoon rips' and the cascade went on to BOOM!'s 2019 run (2026-10-17).
+_WEBTOON_SINCE_YEAR = 2015
+# A file whose own ComicInfo dates it this many years from the issue's release is another run:
+# BOOM!'s 2019 Buffy #2–#10 said 2019 inside, against a 1998 issue, and nothing asked.
+_COMICINFO_YEAR_SLACK = 2
 _DIM_SAMPLE_PAGES = 9
 _DIM_MIN_PAGES = 3   # fewer measurable pages than this = not enough signal to condemn
 
@@ -1039,6 +1046,20 @@ def _sample_page_dims(path: str, extracted_dir: str | None = None) -> list[tuple
         return []
 
 
+def _year_of(iso: str | None) -> int | None:
+    """'1998-09-23' → 1998; the catalogue's 'unscheduled' 9999 and nothing → None."""
+    try:
+        y = int((iso or "")[:4])
+    except ValueError:
+        return None
+    return y if 1900 < y < 9000 else None
+
+
+def _comicinfo_year(cxml: str | None) -> int | None:
+    m = re.search(r"<Year>\s*(\d{4})\s*</Year>", cxml or "")
+    return int(m.group(1)) if m else None
+
+
 def _webtoon_verdict(dims: list[tuple[int, int]]) -> str | None:
     """The human-readable reason this measures as a webtoon, or None if it
     passes. Both prongs must fire — see the constants above for why."""
@@ -1082,7 +1103,7 @@ def _extract_rar_once(path: str) -> str | None:
 
 def _verify_single_issue(path: str, issue_number: float, source_name: str | None = None,
                          extracted_dir: str | None = None, page_max: int | None = None,
-                         series_title: str | None = None) -> None:
+                         series_title: str | None = None, released: str | None = None) -> None:
     """Reject anything that isn't this single issue — raises WrongIssueError. Three
     guards: the source filename's issue number, the ComicInfo number, and a page
     count (a collection or vertical/webtoon edition dwarfs a single issue). Shared
@@ -1090,7 +1111,9 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     extracted_dir: pre-extracted contents of path (RAR one-shot extract) — the
     ComicInfo and page-count guards read it instead of re-opening the archive.
     page_max: per-series ceiling override for oversized formats (Head Lopper's
-    quarterly is a legit 72-page single issue); None = the global default."""
+    quarterly is a legit 72-page single issue); None = the global default.
+    released: the issue's store date ('1998-09-23') — the ComicInfo year must agree with it,
+    and the webtoon guard only judges issues from _WEBTOON_SINCE_YEAR on."""
     name = source_name or os.path.basename(path)
     # Season guard. Three seasons of Batman: The Adventures Continue are three
     # separate runs wearing the same base title and the same issue numbers 1..8,
@@ -1124,6 +1147,12 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     if _series_disagrees(series_title, cseries):
         raise WrongIssueError(
             f"ComicInfo says this is {cseries!r}, expected {series_title!r}")
+    # Same name, same number, another run: the year inside says so.
+    ryear = _year_of(released)
+    cyear = _comicinfo_year(cxml)
+    if ryear and cyear and abs(cyear - ryear) > _COMICINFO_YEAR_SLACK:
+        raise WrongIssueError(f"ComicInfo dates this {cyear}; #{format_issue_number(issue_number)} "
+                              f"of {series_title or 'this run'} came out in {ryear} — another run")
     names = _page_names(path, extracted_dir)
     # The pages' own name for the comic. 'Silver Soldiers 01 (2017)-038.webp'
     # ×53 landed as Die #1: no ComicInfo, the number matched, the title that
@@ -1143,7 +1172,7 @@ def _verify_single_issue(path: str, issue_number: float, source_name: str | None
     # Fourth guard: page DIMENSIONS. The Absolute Superman #21 webtoon chapter
     # was 44 pages — sailed under the count ceiling wearing the right number, so
     # the only tell left is the pages themselves: phone-width and tall.
-    verdict = _webtoon_verdict(_sample_page_dims(path, extracted_dir))
+    verdict = None if ryear and ryear < _WEBTOON_SINCE_YEAR else _webtoon_verdict(_sample_page_dims(path, extracted_dir))
     if verdict:
         raise WrongIssueError(f"{verdict} — not print issue #{int(issue_number)}")
 
@@ -1449,7 +1478,7 @@ def download_issue(
             # The wrapper skipped the single-issue checks; the member doesn't.
             try:
                 _verify_single_issue(target, issue_number, os.path.basename(target),
-                                     page_max=page_max, series_title=title)
+                                     page_max=page_max, series_title=title, released=store_date)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(target)
                 raise
@@ -1461,7 +1490,7 @@ def download_issue(
             # reject the same bad content. Clean up the staging file on rejection.
             try:
                 _verify_single_issue(staging_path, issue_number, filename, extracted_dir=rar_dir,
-                                     page_max=page_max, series_title=title)
+                                     page_max=page_max, series_title=title, released=store_date)
             except (WrongIssueError, IncompleteIssueError):
                 os.remove(staging_path)
                 raise

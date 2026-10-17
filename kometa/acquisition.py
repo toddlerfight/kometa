@@ -1365,7 +1365,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         try:
             _verify_single_issue(target, issue_number, os.path.basename(target),
                                  extracted_dir=rar_dir, page_max=item.get("page_max"),
-                                 series_title=title)
+                                 series_title=title, released=_issue_store_date(item))
         except IncompleteIssueError as e:
             # Right comic, holes in it. Unlike a wrong issue there's nothing to
             # learn about the ROW — only about this release — so burn the release,
