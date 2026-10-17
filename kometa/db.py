@@ -1182,16 +1182,28 @@ def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
 
 # --- Download queue ---
 
+# A row that can be searched again: one that failed or found nothing — and one marked done
+# whose issue ISN'T on the shelf (the file was wrong and went to the trash, or was removed),
+# once it's ten minutes old so a download that only just landed isn't fetched twice. Buffy
+# the Vampire Slayer #1–#8 (2026-10-18): BOOM!'s 2019 files trashed, rows still 'done', and
+# neither the sweep nor a Download press could ever ask for them again.
+_REQUEUEABLE = """(state IN ('failed', 'not_found')
+    OR (state = 'done' AND COALESCE(kind, 'issue') = 'issue' AND updated_at < datetime('now', '-10 minutes')
+        AND EXISTS (SELECT 1 FROM issue_status i WHERE i.tracked_series_id = download_queue.tracked_series_id
+                    AND i.number = download_queue.issue_number AND i.owned = 0)))"""
+
+
 def queue_issue(tracked_series_id, issue_number, path=DB_PATH):
-    """Add to queue; re-queues failed/not_found items but skips in-progress/done."""
+    """Add to queue; re-queues failed/not_found items — and a done one whose issue isn't on
+    the shelf (_REQUEUEABLE) — but skips in-progress ones and real dones."""
     with _connect(path) as conn:
-        conn.execute("""
+        conn.execute(f"""
             INSERT INTO download_queue (tracked_series_id, issue_number, state)
             VALUES (?, ?, 'queued')
             ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
-                state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
-                error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
-                retry_after = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE retry_after END,
+                error      = CASE WHEN {_REQUEUEABLE} THEN NULL ELSE error END,
+                retry_after = CASE WHEN {_REQUEUEABLE} THEN NULL ELSE retry_after END,
+                state      = CASE WHEN {_REQUEUEABLE} THEN 'queued' ELSE state END,
                 updated_at = datetime('now')
         """, (tracked_series_id, issue_number))
 
@@ -1202,12 +1214,12 @@ def queue_issues_bulk(pairs, path=DB_PATH):
     disk. Fulfilling an arc enqueues a whole reading order, so batch it."""
     with _connect(path) as conn:
         for sid, num in pairs:
-            conn.execute("""
+            conn.execute(f"""
                 INSERT INTO download_queue (tracked_series_id, issue_number, state)
                 VALUES (?, ?, 'queued')
                 ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
-                    state      = CASE WHEN state IN ('failed', 'not_found') THEN 'queued' ELSE state END,
-                    error      = CASE WHEN state IN ('failed', 'not_found') THEN NULL ELSE error END,
+                    state      = CASE WHEN {_REQUEUEABLE} THEN 'queued' ELSE state END,
+                    error      = CASE WHEN {_REQUEUEABLE} THEN NULL ELSE error END,
                     updated_at = datetime('now')
             """, (sid, num))
     return len(pairs)
