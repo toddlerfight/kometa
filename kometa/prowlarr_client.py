@@ -11,6 +11,7 @@ corpse.
 import datetime
 import logging
 import re
+import time
 import requests
 
 from kometa.naming import _season_from_title
@@ -51,6 +52,12 @@ def _is_stale(result: dict, store_date: str | None) -> bool:
     return posted < sd - datetime.timedelta(days=_STALE_GRACE_DAYS)
 
 
+COMICS_TAG = "comics"            # the Prowlarr tag the owner put on the comic indexers (2026-10-18)
+COMICS_CATEGORY = 7030          # Books/Comics
+_COMIC_IDX_TTL_S = 1800
+_comic_idx: dict = {}           # base_url → (fetched_at, {protocol: [indexer ids]} or None)
+
+
 class ProwlarrClient:
     def __init__(self, base_url: str, apikey: str):
         self.base_url = base_url.rstrip("/")
@@ -78,15 +85,51 @@ class ProwlarrClient:
         except Exception as e:
             return False, str(e)
 
+    def comic_indexers(self) -> dict | None:
+        """{protocol: [indexer ids]} of the enabled indexers tagged 'comics', or None when
+        there's no such tag (then every indexer is asked, as before). Looked up every half hour.
+        Before the tag, a Buffy search also went to YTS, showRSS and SubsPlease — sites that
+        only hold films and TV — and the TV show's releases came back with the comics."""
+        now = time.time()
+        hit = _comic_idx.get(self.base_url)
+        if hit and now - hit[0] < _COMIC_IDX_TTL_S:
+            return hit[1]
+        try:
+            tags = self.session.get(f"{self.base_url}/api/v1/tag", timeout=15).json()
+            tag = next((t["id"] for t in tags if (t.get("label") or "").lower() == COMICS_TAG), None)
+            found = None
+            if tag is not None:
+                found = {}
+                for ix in self.session.get(f"{self.base_url}/api/v1/indexer", timeout=15).json():
+                    if ix.get("enable") and tag in (ix.get("tags") or []):
+                        found.setdefault(ix.get("protocol"), []).append(ix["id"])
+                found = found or None
+        except Exception as e:
+            logger.info(f"Prowlarr: comic indexers not looked up ({e}) — asking them all")
+            return hit[1] if hit else None
+        _comic_idx[self.base_url] = (now, found)
+        return found
+
     def search(self, query: str, protocol: str | None = None, limit: int = 100, categories=None) -> list[dict]:
         """Aggregate search. Returns normalized dicts:
         {title, protocol, magnet, url, seeders, grabs, size, age, indexer}.
-        protocol filter: 'torrent' | 'usenet' | None (both)."""
+        protocol filter: 'torrent' | 'usenet' | None (both).
+        With the 'comics' tag in Prowlarr: only those indexers (of that protocol), in Books/Comics."""
+        params = {"query": query, "type": "search", "limit": limit}
+        comic = self.comic_indexers()
+        ids = [i for p, l in (comic or {}).items() if not protocol or p == protocol for i in l]
+        if comic is not None and not ids:
+            logger.info(f"Prowlarr: no {protocol} indexer is tagged '{COMICS_TAG}' — not searched")
+            return []
+        if ids:
+            params["indexerIds"] = ids
+            params["categories"] = list(categories) if categories else [COMICS_CATEGORY]
+        elif categories:
+            params["categories"] = list(categories)
         try:
             r = self.session.get(
                 f"{self.base_url}/api/v1/search",
-                params={"query": query, "type": "search", "limit": limit,
-                        **({"categories": list(categories)} if categories else {})},
+                params=params,
                 timeout=30,
             )
             r.raise_for_status()

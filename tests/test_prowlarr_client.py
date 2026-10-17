@@ -93,3 +93,60 @@ def test_pack_cascade_does_not_settle_for_a_single(monkeypatch):
                      "size": 40_000_000, "seeders": 9, "categories": [], "magnet": "magnet:?xt=12"}]
 
     assert search_torrent_pack(FakeProwlarr(), "Buffy the Vampire Slayer", series_year=1998) is None
+
+
+class _Resp:
+    def __init__(self, data):
+        self.data = data
+
+    def json(self):
+        return self.data
+
+    def raise_for_status(self):
+        pass
+
+
+class _Session:
+    """Prowlarr with the owner's 2026-10-18 setup: tag 'comics' (2) on Knaben (torrent) and
+    NZBGeek (usenet); YTS untagged; 1337x tagged but switched off."""
+    def __init__(self, tags=({"id": 1, "label": "flaresolverr"}, {"id": 2, "label": "comics"})):
+        self.tags, self.calls = list(tags), []
+        self.headers = {}
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url.rsplit("/api/v1/", 1)[1], params))
+        if url.endswith("/tag"):
+            return _Resp(self.tags)
+        if url.endswith("/indexer"):
+            return _Resp([{"id": 11, "protocol": "torrent", "enable": True, "tags": [2]},
+                          {"id": 18, "protocol": "usenet", "enable": True, "tags": [2]},
+                          {"id": 6, "protocol": "torrent", "enable": False, "tags": [1, 2]},
+                          {"id": 3, "protocol": "torrent", "enable": True, "tags": []}])
+        return _Resp([])
+
+
+def _client(monkeypatch, session):
+    import kometa.prowlarr_client as pc
+    monkeypatch.setattr(pc, "_comic_idx", {})
+    c = pc.ProwlarrClient("http://prowlarr:9696", "k")
+    c.session = session
+    return c
+
+
+def test_searches_go_only_to_the_comic_indexers_of_that_protocol(monkeypatch):
+    s = _Session()
+    c = _client(monkeypatch, s)
+    c.search("Buffy the Vampire Slayer 001", protocol="torrent")
+    c.search("Buffy the Vampire Slayer 001", protocol="usenet")
+    searches = [p for u, p in s.calls if u == "search"]
+    assert searches[0]["indexerIds"] == [11] and searches[0]["categories"] == [7030]   # not YTS, not the switched-off 1337x
+    assert searches[1]["indexerIds"] == [18]
+    assert sum(u == "tag" for u, _ in s.calls) == 1                                   # looked up once, not per search
+
+
+def test_without_the_comics_tag_every_indexer_is_asked_as_before(monkeypatch):
+    s = _Session(tags=[{"id": 1, "label": "flaresolverr"}])
+    c = _client(monkeypatch, s)
+    c.search("Saga 054", protocol="torrent")
+    p = [p for u, p in s.calls if u == "search"][0]
+    assert "indexerIds" not in p and "categories" not in p
