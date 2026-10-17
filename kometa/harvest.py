@@ -382,15 +382,15 @@ def gcd_match(s: dict, hi: float | None, results: list[dict]) -> tuple[str, int 
 def gcd_link_candidates(path=None, limit: int = GCD_LINK_PER_TICK) -> list[dict]:
     """Owned runs Metron has no series for and GCD hasn't been asked about.
     Most owned issues first. A run you've said has no run at all (the 'none'
-    button) isn't asked."""
+    button) is asked too: 'no run' is about Metron and LOCG — GCD indexes the
+    graphic novels and small press they don't, and gets its one cautious look
+    (the owner, 2026-10-17: 113 such runs had never been asked)."""
     path = path or DB_PATH
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute("""
             SELECT s.id, MAX(i.number) AS hi FROM tracked_series s JOIN issue_status i ON i.tracked_series_id = s.id
             WHERE s.metron_series_id IS NULL AND s.gcd_link IS NULL AND (s.kind IS NULL OR s.kind != 'arc')
               AND i.owned = 1 AND COALESCE(s.match_status, '') != 'pending'   -- the Metron matcher goes first
-              AND NOT (COALESCE(s.match_status, '') = 'manual' AND COALESCE(s.metron_link, '') = 'none'
-                       AND COALESCE(s.locg_link, '') = 'none' AND s.locg_series_id IS NULL)
             GROUP BY s.id ORDER BY COUNT(*) DESC, s.id LIMIT ?""", (limit,))]
     out = []
     for r in rows:

@@ -506,7 +506,8 @@ def credits_ladder_on(path=None) -> bool:
     return db.get_config(path or DB_PATH).get("credits_ladder") == "on"
 
 
-CREDITS_PER_TICK = 6
+CREDITS_PER_TICK = 20          # its own job, every CREDITS_MINUTES; Comic Vine's share caps the calls (cvname.spend)
+CREDITS_MINUTES = 10
 
 
 def credits_tick(path=None, limit: int = CREDITS_PER_TICK) -> int:
@@ -822,10 +823,6 @@ def trickle(limit: int = TRICKLE_LIMIT, path=None) -> int:
             continue
         if row is not None and row.get("fill_state") != "miss":
             done += 1
-    try:
-        credits_tick(path)                                     # off until the owner's OK (credits_ladder)
-    except Exception as e:
-        logger.info(f"Credits ladder tick skipped: {e}")
     try:
         with db._connect(path) as conn:
             missing = [r[0] for r in conn.execute("""SELECT s.id FROM tracked_series s LEFT JOIN series_record r ON r.tracked_series_id = s.id

@@ -178,6 +178,16 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=2))
     except Exception as e:
         logger.warning(f"Record trickle not scheduled: {e}")
+    # The credits ladder (record.credits_tick) on its own clock: at the end of the record
+    # trickle it waited out up to 60 Metron fills, and the trickle's own overruns — every
+    # half hour at best, six issues a go (2026-10-17).
+    try:
+        from kometa.record import credits_tick, CREDITS_MINUTES
+        scheduler.add_job(_as_harvest(credits_tick), IntervalTrigger(minutes=CREDITS_MINUTES), id="credits_ladder",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=3))
+    except Exception as e:
+        logger.warning(f"Credits ladder not scheduled: {e}")
     try:
         from kometa.record import trades_trickle
         scheduler.add_job(_as_harvest(trades_trickle), IntervalTrigger(minutes=10), id="trades_trickle",
