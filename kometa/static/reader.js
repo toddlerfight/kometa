@@ -3,6 +3,25 @@
 // U+22EF, so each browser drew it in its own fallback font at its own height (Safari: 2 px
 // low in a 26 px circle, 2026-10-17). Three circles sit where the geometry says.
 const DOTS = '<svg class="dots" viewBox="0 0 34 8" aria-hidden="true"><circle cx="4" cy="4" r="4"/><circle cx="17" cy="4" r="4"/><circle cx="30" cy="4" r="4"/></svg>';
+
+// The other symbols Victor Mono's Google Fonts slices don't carry — ✕ ✓ ♥ ♡ ★ ◆ ◇ → ← ⛶ ● —
+// were borrowed from whatever font the device had: a size and a baseline off, like ⋯ was.
+// Drawn instead, one set for the whole app. Filled shapes pass open=true for their outline twin.
+const _ICON_PATHS = {
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  heart: '<path d="M12 20.5s-7.6-4.6-9.4-9.4C1.4 7.9 3.4 4 7.2 4c2.1 0 3.6 1.1 4.8 2.9C13.2 5.1 14.7 4 16.8 4c3.8 0 5.8 3.9 4.6 7.1-1.8 4.8-9.4 9.4-9.4 9.4z"/>',
+  star: '<path d="m12 2.8 2.85 5.95 6.55.85-4.8 4.55 1.2 6.5L12 17.5l-5.8 3.15 1.2-6.5-4.8-4.55 6.55-.85z"/>',
+  diamond: '<path d="M12 2.5 21.5 12 12 21.5 2.5 12z"/>',
+  right: '<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  left: '<path d="M20 12H5m6-6-6 6 6 6"/>',
+  full: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
+  dot: '<circle cx="12" cy="12" r="6"/>',
+};
+function ico(name, open = false) {
+  return `<svg class="ico ico-${name}${open ? ' ico-open' : ''}" viewBox="0 0 24 24" aria-hidden="true">${_ICON_PATHS[name]}</svg>`;
+}
+
 // The web half of docs/reader-spec.md. A route of its own (#read?book=42), so
 // Back, reload and a bookmarked URL all land you on the page you were on.
 //
@@ -130,13 +149,13 @@ function _rdRender() {
           </div>
         </div>
         <div class="rd-top-r">
-          <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">⛶</button>
+          <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">${ico('full')}</button>
           <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
           <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">${DOTS}</button>
           <div class="rd-menu hidden" id="rd-menu">
-            <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
+            <button onclick="_rdToggleShift()">${_rd.shift ? ico('check') + ' ' : ''}Shift pairing by one</button>
             <button onclick="_rdMarkRead()">Mark as read</button>
-            <button onclick="_rdToggleFav()">${_rd.book.favourite ? '♥ Favourited' : '♡ Favourite'}</button>
+            <button onclick="_rdToggleFav()">${_rd.book.favourite ? ico('heart') + ' Favourited' : ico('heart', true) + ' Favourite'}</button>
             ${(_rd.book.series_id || _rd.book.shelf_id) ? `<button onclick="_rdGoSeries()">Go to series</button>` : ''}
           </div>
         </div>
@@ -197,7 +216,7 @@ function _rdRenderEnd() {
   const b = _rd.book;
   el.innerHTML = `
     <div class="rd-end">
-      <div class="rd-end-done card-cascade">✓ FINISHED</div>
+      <div class="rd-end-done card-cascade">${ico('check')} FINISHED</div>
       <div class="rd-end-title card-cascade" style="animation-delay:${STAGGER_MS}ms">${esc(_rdTitle())}</div>
       <div class="rd-end-marks card-cascade" style="animation-delay:${2 * STAGGER_MS}ms">${_markRowHtml(b)}</div>
       <div class="rd-end-next" id="rd-end-next"></div>
@@ -627,7 +646,7 @@ function _rdFullscreen() {
 function _rdFullscreenHint(standalone) {
   if (standalone) { showToast('You’re already full screen — this is the home-screen app'); return; }
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  showToast(ios ? 'Safari won’t go full screen for a page. Share → Add to Home Screen, and open Kometa from there: no browser chrome at all.'
+  showToast(ios ? 'Safari won’t go full screen for a page. Share, then Add to Home Screen, and open Kometa from there: no browser chrome at all.'
                 : 'This browser won’t go full screen here.', 'error');
 }
 
@@ -682,7 +701,7 @@ async function openIssueReader(seriesId, number) {
 // tile's ⋯ can open the same modal the On Deck cards use.
 function _bookTile(b, seriesTitle, extra = {}, ctx = {}) {
   const p = b.progress;
-  const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
+  const mark = p?.completed ? `<div class="shelf-tile-done" aria-label="Read">${ico('check')}</div>`
     : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
   const go = `navigate('read', ${JSON.stringify({ book: b.id, ...extra }).replace(/"/g, "'")})`;
   const actions = JSON.stringify({ book_id: b.id, series: seriesTitle, label: b.label, number: b.number ?? null,
@@ -975,7 +994,7 @@ async function _loadShelfFiles(s, all) {
   if (!books.length) return;
   const tiles = books.map(b => {
     const p = b.progress;
-    const mark = p?.completed ? '<div class="shelf-tile-done" aria-label="Read">✓</div>'
+    const mark = p?.completed ? `<div class="shelf-tile-done" aria-label="Read">${ico('check')}</div>`
       : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
     const go = `navigate('read', {book: ${b.id}})`;
     return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(b.label)}"
@@ -1273,8 +1292,8 @@ async function _rlGet(listId, itemId, btn) {
     const r = await api.post(`/api/readlists/${listId}/items/${itemId}/get`, {});
     if (r.result === 'queued') {
       showToast(`${r.series_title}: ${r.queued} queued${r.created ? ', now tracked' : ''}${r.upcoming ? `, ${r.upcoming} not out yet` : ''}`);
-      if (btn) { btn.textContent = '✓'; btn.classList.add('on'); }
-    } else if (r.result === 'owned') { if (btn) btn.textContent = '✓'; }
+      if (btn) { btn.innerHTML = ico('check'); btn.classList.add('on'); }
+    } else if (r.result === 'owned') { if (btn) btn.innerHTML = ico('check'); }
     else { showToast(r.detail || 'No catalogue knows that run', 'error'); if (btn) { btn.textContent = '?'; btn.classList.add('off'); } }
   } catch (e) { if (btn) { btn.disabled = false; btn.innerHTML = DOTS; } showToast('Couldn’t get that', 'error'); }
 }
@@ -1339,7 +1358,7 @@ function _rdRecButton() {
   const b = document.createElement('button');
   b.id = 'rd-rec'; b.className = 'btn btn-primary';
   b.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999';
-  b.textContent = '● REC — save';
+  b.innerHTML = ico('dot') + ' REC — save';
   b.onclick = async e => {
     e.stopPropagation();
     const did = parseInt(prompt('How many swipes did you do?') || '', 10) || null;

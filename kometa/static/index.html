@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=316">
+  <link rel="stylesheet" href="/style.css?v=317">
 </head>
 <body>
   <div id="nav-bar" aria-hidden="true"><div id="nav-bar-fill"></div></div>
@@ -60,7 +60,7 @@
   </div>
 
   <div id="variant-lightbox" class="hidden" onclick="_lbClose()">
-    <button class="vlb-close" onclick="_lbClose(event)">✕</button>
+    <button class="vlb-close" onclick="_lbClose(event)" aria-label="Close"><svg class="ico ico-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
     <button class="vlb-nav vlb-prev" onclick="_lbStep(event,-1)">‹</button>
     <button class="vlb-nav vlb-next" onclick="_lbStep(event,1)">›</button>
     <div class="vlb-stage" onclick="event.stopPropagation()">
@@ -68,14 +68,14 @@
       <div><div class="vlb-name" id="vlb-name"></div><div class="vlb-count" id="vlb-count"></div></div>
       <div class="vlb-actions">
         <button class="vlb-btn" id="vlb-include" onclick="_lbToggleInclude()">Include</button>
-        <button class="vlb-btn vlb-star" id="vlb-star" onclick="_lbSetCover()">★ Set as cover</button>
+        <button class="vlb-btn vlb-star" id="vlb-star" onclick="_lbSetCover()"><svg class="ico ico-star" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.85 5.95 6.55.85-4.8 4.55 1.2 6.5L12 17.5l-5.8 3.15 1.2-6.5-4.8-4.55 6.55-.85z"/></svg> Set as cover</button>
       </div>
     </div>
   </div>
   <div id="toast" class="toast-hidden"></div>
   <div id="ptr">↓</div>
 
-  <script src="/reader.js?v=74"></script>
-  <script src="/app.js?v=388"></script>
+  <script src="/reader.js?v=75"></script>
+  <script src="/app.js?v=389"></script>
 </body>
 </html>

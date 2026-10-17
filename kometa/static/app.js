@@ -616,8 +616,8 @@ const BROWSE_TOGGLES = [
   { key: 'pulling',  label: 'Pull list' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'missing',  label: 'Missing' },
-  { key: 'favourites', label: '♥ Favourites' },
-  { key: 'rated',      label: '★ Rated' },      // anything you've starred, its own rating or its issues'
+  { key: 'favourites', label: ico('heart') + ' Favourites' },
+  { key: 'rated',      label: ico('star') + ' Rated' },      // anything you've starred, its own rating or its issues'
   { key: 'runs',       label: 'Runs' },         // hide the one-shots and single-issue series
   { key: 'specials',   label: 'Specials' },     // unfold annuals / one-shots from under their runs
   { key: 'stacks',     label: 'Stacks' },       // franchises as one card (Aliens · 45 series); off = flat
@@ -836,20 +836,21 @@ function _renderBrowseResults(quiet = false) {
   const dateOf = s => toggles.pulling ? (_thisWeek(s.calendar_date) ? s.calendar_date : s.next_upcoming) : s.calendar_date;
   browseState._dateOf = dateOf;
   const latest = (list, f) => list.reduce((m, x) => { const v = f(x); return v && (!m || v > m) ? v : m; }, null);
-  const soonest = list => list.reduce((m, x) => x.calendar_date && (!m || x.calendar_date < m) ? x.calendar_date : m, null);
   const val = {
     alpha: s => _sortTitle(s.title),
-    date:  s => s.kind === 'stack' ? soonest(s.members) : dateOf(s),
+    date:  s => s.kind === 'stack' ? _stackDate(s, dateOf) : dateOf(s),
     read:  s => s.kind === 'stack' ? latest(s.members, m => m.last_read) : s.last_read,
     added: s => s.kind === 'stack' ? latest(s.members, m => m.newest_file_at) : s.newest_file_at,
   }[sortKey] || (() => null);
   const dir = (sortDir[sortKey] ?? 'asc') === 'asc' ? 1 : -1;
+  // same date (or none): by title, so 'Namwolf sits with the Ns and not before 100 Bullets
+  const byTitle = (a, b) => _sortTitle(a.title).localeCompare(_sortTitle(b.title), 'en', { sensitivity: 'base', numeric: true });
   items = items.slice().sort((a, b) => {
     const va = val(a), vb = val(b);
-    if (va == null && vb == null) return 0;
+    if (va == null && vb == null) return byTitle(a, b);
     if (va == null) return 1;                               // nothing to sort on sinks, whatever the direction
     if (vb == null) return -1;
-    return dir * String(va).localeCompare(String(vb));
+    return dir * String(va).localeCompare(String(vb)) || byTitle(a, b);
   });
 
   const peopleRow = ppl && ppl.people.length ? `<div class="people-row">${ppl.people.map(p => `
@@ -908,7 +909,7 @@ function _renderBrowseResults(quiet = false) {
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="${esc(thumbSrc)}" alt="${esc(s.title)}"
             loading="lazy" onerror="${thumbFall}">
-          ${nextRelease}${s.favourite ? '<div class="series-card-fav" title="Favourite">♥</div>' : ''}
+          ${nextRelease}${s.favourite ? `<div class="series-card-fav" title="Favourite">${ico('heart')}</div>` : ''}
         </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:${color}"></div>
@@ -940,11 +941,16 @@ function _isSingle(s) {
 // The title as it sorts and files: no leading 'The', no leading year or
 // bracket, no leading dash — so 'The Walking Dead' sits under W.
 function _sortTitle(t) {
-  return (t || '').replace(/^\s*[-–—]+\s*/, '').replace(/^\s*[\[(](?:19|20)\d{2}[\])]\s*/, '').replace(/^(the|a|an)\s+/i, '').trim();
+  return (t || '').replace(/^[\s'"‘’“”.…¡¿*]+/, '').replace(/^\s*[-–—]+\s*/, '').replace(/^\s*[\[(](?:19|20)\d{2}[\])]\s*/, '').replace(/^(the|a|an)\s+/i, '').trim();
 }
 function _letterOf(t) {
   const c = _sortTitle(t).charAt(0).toUpperCase();
   return /[A-Z]/.test(c) ? c : '#';
+}
+
+// A stack's date: its soonest member's, by the same rule a single card's date follows.
+function _stackDate(g, dateOf) {
+  return g.members.map(dateOf || browseState._dateOf || (m => m.calendar_date)).filter(Boolean).sort()[0] || null;
 }
 
 // A franchise as one card: the first three members' covers, fanned.
@@ -957,7 +963,7 @@ function _stackCardHtml(g, i) {
         data-stack="${esc(g.key)}" onclick="${go.replace(/"/g, '&quot;')}" onkeydown="if(event.key==='Enter'||event.key===' ')${go.replace(/"/g, '&quot;')}">
         <div class="series-card-img-wrap stack-fan">
           ${covers.map((u, k) => `<img class="series-card-cover stack-cover stack-cover-${k}" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`).reverse().join('')}
-          <div class="stack-badge">${g.count}</div>
+          <div class="stack-badge">${g.count}</div>${(d => d ? `<div class="series-card-next-release">${_fmtReleaseDate(d)}</div>` : '')(_stackDate(g))}
         </div>
         <div class="series-card-bar-track"><div class="series-card-bar-fill" style="width:100%;background:var(--su3)"></div></div>
         <div class="series-card-footer">
@@ -1018,12 +1024,12 @@ async function renderOnDeck() {
   const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
   const read = c => `navigate('read', {book: ${c.book_id}})`;
   const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
-  const bookCard = (c, tag, dismissable) => `
+  const bookCard = (c, tag, dismissable, tagHtml) => `
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
-        ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
+        ${tagHtml || tag ? `<span class="od-tag">${tagHtml || esc(tag)}</span>` : ''}
         <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">${DOTS}</button>
-        ${dismissable ? `<button class="od-x" title="Mark as read" aria-label="Mark as read" onclick="event.stopPropagation(); _odMarkRead(${c.book_id}, ${c.progress ? c.progress.page : 1})">✕</button>` : ''}
+        ${dismissable ? `<button class="od-x" title="Mark as read" aria-label="Mark as read" onclick="event.stopPropagation(); _odMarkRead(${c.book_id}, ${c.progress ? c.progress.page : 1})">${ico('x')}</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
@@ -1037,9 +1043,9 @@ async function renderOnDeck() {
     </div>`;
   const favCard = c => c.kind === 'series' ? `
     <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)}" onclick="navigate('series-detail', {id: ${c.series_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail', {id: ${c.series_id}})">
-      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">♥</span></div>
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">${ico('heart')}</span></div>
       <div class="issue-tile-num">${esc(c.series)}</div>
-    </div>` : bookCard(c, '♥');
+    </div>` : bookCard(c, null, false, ico('heart'));
   // reading-list card: the books from where you are on, gaps as gaps — a gap
   // opens the list, which is where you deal with what's missing
   const listCard = (c, l) => c.kind === 'gap' ? `
@@ -1682,7 +1688,7 @@ async function renderNeedsMatch() {
     ${rows.length ? `
       <div class="nm-intro">${rows.length} folder${rows.length === 1 ? '' : 's'} not yet matched to a run${waiting
         ? ` — ${waiting} still in the queue` : ''}.
-        <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Shelf clean-up →</a></div>
+        <a class="btn-link" style="margin-left:10px" onclick="navigate('singles')">Shelf clean-up ${ico('right')}</a></div>
       <input class="browse-search nm-search" id="nm-search" type="text" placeholder="Search titles, publishers, folders"
         value="${esc(_nmQuery)}" oninput="_nmFilter(this.value)" autocomplete="off" spellcheck="false">
       <div class="nm-list" id="nm-list">${_nmListHtml()}</div>` : ''}
@@ -2089,7 +2095,7 @@ async function _tidyPlan(id, btn) {
       <div class="u-label" style="color:var(--tq)">${esc(p.run_title)}${p.year ? ` · ${p.year}` : ''} · ${c.rename_folder ? 'folder renamed, ' : ''}${c.rename_file} renamed, ${c.convert} converted to CBZ, ${c.leave} left alone</div>
       ${nothing ? '<div class="state-msg" style="padding:14px 0">Already tidy. Nothing to do.</div>' : ''}
       ${p.ops.filter(o => o.kind === 'rename_folder').map(o => row(o.from.split('/').slice(-2).join('/'), o.to.split('/').slice(-2).join('/'), 'folder')).join('')}
-      ${p.ops.filter(o => o.kind !== 'rename_folder').map(o => row(o.from, o.to, o.kind === 'convert' ? 'cbr→cbz' : 'rename')).join('')}
+      ${p.ops.filter(o => o.kind !== 'rename_folder').map(o => row(o.from, o.to, o.kind === 'convert' ? `cbr${ico('right')}cbz` : 'rename')).join('')}
       ${p.leave.length ? `<div class="u-label" style="color:var(--tq);margin-top:14px">Left alone</div>` : ''}
       ${p.leave.map(l => `<div class="tidy-row tidy-leave"><span class="tidy-tag u-label">keep</span>
         <div class="tidy-paths"><div class="u-truncate">${esc(l.file)}</div><div class="tidy-why">${esc(l.reason)}</div></div></div>`).join('')}
@@ -2182,12 +2188,12 @@ function showArcIssueModal(readingOrder) {
   const owned = !!i.owned;
   const covered = !owned && s.collected;
   const statusChip = owned ? '<span class="chip chip-complete">Owned</span>'
-    : covered ? '<span class="chip chip-collected">◆ Covered by a trade</span>'
+    : covered ? `<span class="chip chip-collected">${ico('diamond')} Covered by a trade</span>`
     : '<span class="chip chip-missing">Missing</span>';
   const num = `#${esc(String(i.number ?? '?'))}`;
   const detailText = `This issue lives in its own run — <b>${esc(i.source_title || '')}</b>. Open it there for full
        details, variants${owned ? ' and to read it' : ' and to get it'}.`;
-  const footerAction = `<button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} →</button>`;
+  const footerAction = `<button class="btn btn-primary" onclick="closeModal();openArcIssue(${s.id}, ${readingOrder})">Open in ${esc(i.source_title || 'its run')} ${ico('right')}</button>`;
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
@@ -2376,7 +2382,7 @@ function renderArcDetail(s) {
   // "Have it" = own the single OR covered by a collected edition (slice 5 makes
   // covered per-issue; for now s.collected is a whole-arc signal).
   const have = ai.filter(i => i.owned || s.collected).length;
-  const collChip = s.collected ? `<span class="chip chip-collected" title="${esc(s.collection?.name || '')}">◆ collected</span>` : '';
+  const collChip = s.collected ? `<span class="chip chip-collected" title="${esc(s.collection?.name || '')}">${ico('diamond')} collected</span>` : '';
   const chips = (total
     ? `<span class="chip ${have >= total ? 'chip-complete' : 'chip-missing'}">${have} / ${total} have</span>`
     : '') + collChip;
@@ -2388,7 +2394,7 @@ function renderArcDetail(s) {
     const num = `#${esc(String(i.number ?? '?'))}`;
     const cross = i.source_title && i.source_title !== primary;
     const xt = cross ? `<span class="issue-tile-xt u-truncate">${esc(_arcShortTitle(i.source_title, primary))}</span>` : '';
-    const covBadge = covered ? '<div class="issue-tile-cov">◆</div>' : '';
+    const covBadge = covered ? `<div class="issue-tile-cov">${ico('diamond')}</div>` : '';
     const cover = i.image_url
       ? `<img src="${esc(i.image_url)}" alt="${num}" loading="lazy" onerror="this.remove()">`
       : '';
@@ -2411,7 +2417,7 @@ function renderArcDetail(s) {
   const collBanner = (s.collected && s.collection) ? `
     <div class="arc-collected-note" tabindex="0" role="button" onclick="navigate('series-detail',{id:${s.collection.series_id}})"
       onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${s.collection.series_id}})">
-      ◆ Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. Read it from the collected edition.
+      ${ico('diamond')} Owned as a collected edition — <strong>${esc(s.collection.name)}</strong>. Read it from the collected edition.
     </div>` : '';
   const body = total
     ? `<div class="issue-grid">${tiles}</div>`
@@ -2424,13 +2430,13 @@ function renderArcDetail(s) {
     <button class="btn btn-ghost btn-sm" onclick="refreshArcOwnership(${s.id}, this)">Refresh ownership</button>
   `;
   document.getElementById('topbar-sub').innerHTML =
-    `<span class="series-meta-text u-truncate">◆ storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>`;
+    `<span class="series-meta-text u-truncate">${ico('diamond')} storyline · issues live in their own runs${primary ? ` · originates in ${esc(primary)}` : ''}</span>`;
 
   setApp(`
     <div class="issue-tabs-row">${originId ? `<div class="issue-tab active" tabindex="0" role="button"
         onclick="detailTab='arcs';navigate('series-detail',{id:${originId}})"
         onkeydown="if(event.key==='Enter'||event.key===' '){detailTab='arcs';navigate('series-detail',{id:${originId}})}">
-        ← Back to ${esc(originTitle)} Arcs</div>` : ''}</div>
+        ${ico('left')} Back to ${esc(originTitle)} Arcs</div>` : ''}</div>
     ${collBanner}
     ${body}
   `);
@@ -2567,7 +2573,7 @@ async function renderSeriesDetail(id) {
     // the run is still going (kometa/runstatus.py — Metron's word checked against our dates)
     s.upcoming ? `<span class="chip chip-upcoming">${s.upcoming} upcoming</span>`
       : s.run_status ? `<span class="chip chip-upcoming" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : '',
-    s.from_list_id ? `<a class="chip chip-collected" title="Tracked by a reading list's Get — pull list off, only what the list asked for" onclick="navigate('readlist', {id: ${s.from_list_id}})">◆ from a reading list</a>` : '',
+    s.from_list_id ? `<a class="chip chip-collected" title="Tracked by a reading list's Get — pull list off, only what the list asked for" onclick="navigate('readlist', {id: ${s.from_list_id}})">${ico('diamond')} from a reading list</a>` : '',
     s.family_parent ? `<a class="chip chip-neutral" title="A special of this run" onclick="navigate('series-detail', {id: ${s.family_parent.id}})">part of ${esc(s.family_parent.title)}</a>` : '',
   ].filter(Boolean).join('');
 
@@ -2682,7 +2688,7 @@ async function renderSeriesDetail(id) {
           (s.locg_series_id || s.metron_series_id) && total === 0 && !s.last_synced && !s.has_trades
             ? Array.from({ length: 12 }, () => `<div class="issue-tile skeleton" aria-hidden="true"><div class="issue-tile-img"></div><div class="issue-tile-num"></div></div>`).join('')
             : `<div class="state-msg" style="grid-column:1/-1">${
-          total === 0 && s.has_trades ? 'No single issues — collected in Trades →'
+          total === 0 && s.has_trades ? `No single issues — collected in Trades ${ico('right')}`
           : (s.locg_series_id || s.metron_series_id) && total === 0 ? 'No issues found for this series.'
           : 'Nothing here.'}</div>`)}</div>`}
   `);
@@ -2777,7 +2783,7 @@ function _arcRowHtml(a, i) {
     : '';
   // Incomplete/undiscovered arcs get the amber 'missing' outline, like a missing trade.
   const stateCls = complete ? '' : ' missing';
-  const badge = `<div class="series-card-next-release">${tracked ? '◆' : '◇'} ARC</div>`;
+  const badge = `<div class="series-card-next-release">${ico('diamond', !tracked)} ARC</div>`;
   const label = tracked && total ? `${esc(a.name)} · ${owned}/${total}` : esc(a.name);
   const click = tracked
     ? `onclick="navigate('series-detail',{id:${a.id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${a.id}})"`
@@ -2862,7 +2868,7 @@ function _tradeTileHtml(t) {
     ? `<button class="issue-tile-search" title="Download this trade" aria-label="Download trade ${esc(tag)}" data-dl="trade:${t.locg_id}"
          onclick="event.stopPropagation(); tradeDownload('${esc(t.locg_id)}', this)">↓</button>`
     : '';
-  const ownedBadge = t.owned ? `<div class="trade-owned-check" title="On disk">✓</div>` : '';
+  const ownedBadge = t.owned ? `<div class="trade-owned-check" title="On disk">${ico('check')}</div>` : '';
   // Unowned → amber 'missing' outline, exactly like a missing issue.
   const stateCls = t.owned ? '' : ' missing';
   return `<div class="issue-tile trade-tile${t.owned ? ' owned' : ''}" title="${esc(t.title)}"${click}>
@@ -2941,7 +2947,7 @@ async function tradeDownload(locgId, btn) {
     if (r.reason === 'no_folder') {
       _tradeBtnReset(btn, isArrow); showToast('Set a folder for this series first'); return;
     }
-    if (btn) { if (isArrow) { btn.textContent = '✓'; btn.classList.add('found'); } else btn.textContent = '✓ Queued'; }
+    if (btn) { if (isArrow) { btn.innerHTML = ico('check'); btn.classList.add('found'); } else btn.innerHTML = ico('check') + ' Queued'; }
     showToast(`${label} queued — track it in Activity`);
   } catch (e) {
     _tradeBtnReset(btn, isArrow);
@@ -3154,8 +3160,8 @@ function _renderWizardResults(results, q) {
             <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : esc(r.cover || r.image || '')}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
             <div class="wizard-result-text">
-              <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ' <span class="locg-badge">◆ STORYLINE</span>' : r.kind === 'arc' ? ' <span class="locg-badge">◆ ARC</span>' : _isCollectedResult(r) ? ' <span class="locg-badge collected-badge">◆ COLLECTED</span>' : r.needs_resolve ? ' <span class="locg-badge">◆ ONE-SHOT</span>' : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ' · one-shot → its series' : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
+              <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ` <span class="locg-badge">${ico('diamond')} STORYLINE</span>` : r.kind === 'arc' ? ` <span class="locg-badge">${ico('diamond')} ARC</span>` : _isCollectedResult(r) ? ` <span class="locg-badge collected-badge">${ico('diamond')} COLLECTED</span>` : r.needs_resolve ? ` <span class="locg-badge">${ico('diamond')} ONE-SHOT</span>` : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ` · one-shot ${ico('right')} its series` : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
@@ -3253,7 +3259,7 @@ async function _wizardResolveComic(idx) {
   } catch (e) {
     if (m) m.innerHTML = `<div class="modal-title">Couldn’t resolve</div>
       <div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--amb)">“${esc(r.series || '')}” isn’t linked to a series on LOCG, so it can’t be tracked as one.</div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="showAddWizard()">← Back</button></div>`;
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button></div>`;
   }
 }
 
@@ -3273,7 +3279,7 @@ function wizardPickSeries(idx) {
   // grabs the collected edition into its main series. So no folder field, and the
   // pull-list line means 'find the collected edition', not 'download every issue'.
   const folderBlock = isArc ? `
-    <div class="wizard-arc-note">◆ Story arc — Kometa tracks the reading order across every participating title. It owns no folder; the collected edition lands in its main series' Trades.</div>`
+    <div class="wizard-arc-note">${ico('diamond')} Story arc — Kometa tracks the reading order across every participating title. It owns no folder; the collected edition lands in its main series' Trades.</div>`
     : `
     <div class="step-label u-label" style="margin-top:16px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--tq)">Folder path <span style="color:var(--tq);font-weight:400;text-transform:none">(auto-detected — edit if needed)</span></div>
     ${folderField('wizard', '', 'library', () => {}, { whisper: false, reopen: (picked) => {
@@ -3286,7 +3292,7 @@ function wizardPickSeries(idx) {
     <div class="wizard-series-preview">
       <img class="wizard-result-thumb" src="${esc(r.cover || r.image || '')}" alt="" loading="lazy" onerror="this.style.opacity=0">
       <div class="wizard-result-text">
-        <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${isArc ? ' <span class="locg-badge">◆ ARC</span>' : ''}</div>
+        <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${isArc ? ` <span class="locg-badge">${ico('diamond')} ARC</span>` : ''}</div>
         <div class="wizard-result-meta">${isArc ? 'Story arc' : esc(r.publisher?.name || '')}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}</div>
       </div>
     </div>
@@ -3297,7 +3303,7 @@ function wizardPickSeries(idx) {
       <span style="font-size:10px;color:var(--tq)">— ${isArc ? "find &amp; grab this storyline's collected edition" : 'queue download of all missing issues now'}</span>
     </label>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="showAddWizard()">← Back</button>
+      <button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button>
       <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">${isArc ? 'Track Arc' : 'Track Series'}</button>
     </div>
   `;
@@ -3315,7 +3321,7 @@ async function _previewFolder(r) {
     input.placeholder = res.path;
     if (!input.value) { input.value = res.path; _ffDirty('wizard'); }   // pre-fill, still editable
     if (hint) {
-      hint.textContent = res.exists ? '✓ Existing folder — owned issues will be detected' : 'New folder — will be created on first download';
+      hint.innerHTML = res.exists ? ico('check') + ' Existing folder — owned issues will be detected' : 'New folder — will be created on first download';
       hint.style.color = res.exists ? 'var(--pri)' : 'var(--tq)';
     }
   } catch (e) {
@@ -3343,14 +3349,14 @@ function wizardPickStoryline(idx) {
     <div class="modal-title">Follow Storyline</div>
     <div class="wizard-series-preview">
       <div class="wizard-result-text">
-        <div class="wizard-result-title u-truncate">${esc(r.series || '')} <span class="locg-badge">◆ STORYLINE</span></div>
+        <div class="wizard-result-title u-truncate">${esc(r.series || '')} <span class="locg-badge">${ico('diamond')} STORYLINE</span></div>
         <div class="wizard-result-meta">${esc(r.origin_publisher || '')}${r.origin_publisher ? ' · ' : ''}originates in ${run}</div>
       </div>
     </div>
     <div class="wizard-arc-note">Following adds <b>${run}</b> as a tracked series — its Issues, Trades and Arcs tabs. <b>Nothing downloads;</b> this is tracking only. The storyline then lives under that series' Arcs tab.</div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="showAddWizard()">← Back</button>
-      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Follow → add ${esc(r.origin_title || 'series')}</button>
+      <button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button>
+      <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Follow ${ico('right')} add ${esc(r.origin_title || 'series')}</button>
     </div>
   `;
 }
@@ -3375,7 +3381,7 @@ async function wizardConfirm() {
       navigate('series-detail', { id: added.id });
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = `Follow → add ${_wizardState.originTitle || 'series'}`;  // restore the real label, not a stub
+      btn.innerHTML = `Follow ${ico('right')} add ${esc(_wizardState.originTitle || 'series')}`;  // restore the real label, not a stub
       showToast('Follow failed — try again');
       console.error(e);
     }
@@ -3589,7 +3595,7 @@ function _trackTileDownload(seriesId, number, title) {
     _updateActivityBadge();   // terminal state — badge reflects it immediately
     const label = `${title ? title + ' ' : ''}#${fmtNum(number)}`;
     if (st === 'done') {
-      showToast(`${label} downloaded ✓`);
+      showToast(`${label} downloaded`);
       // Guard the cache mutation with onView: _detailSeries lingers after you
       // leave a series, and matching on issue NUMBER alone would flip the
       // last-viewed series' #N owned when a pull-list download of another
@@ -3601,7 +3607,7 @@ function _trackTileDownload(seriesId, number, title) {
       // Pull-list rows aren't .issue-tile — their ↓ button was left frozen at
       // the last percent forever on success (the failure branch below resets
       // it; this is the success-side twin). Flip it to a done check.
-      else if (btn) { btn.textContent = '✓'; btn.title = 'Downloaded'; btn.disabled = true; }
+      else if (btn) { btn.innerHTML = ico('check'); btn.title = 'Downloaded'; btn.disabled = true; }
     } else if (st === 'failed' || st === 'not_found') {
       const why = qs.error ? ` — ${qs.error}` : '';
       showToast(`${label}: ${st === 'failed' ? 'failed' : 'not found'}${why}`, 'error');
@@ -3678,7 +3684,7 @@ async function doDelete(id) {
 
 function _pullStatus(e) {
   const lt = _localToday(), ut = _usToday();
-  if (e.owned) return `<span class="pull-status pull-status-owned">✓</span>`;
+  if (e.owned) return `<span class="pull-status pull-status-owned">${ico('check')}</span>`;
   if (e.ignored) return `<span class="pull-status pull-status-ignored">Ignored</span>`;
   if (e.store_date > lt) return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
   if (e.store_date >= ut) return `<span class="pull-status pull-status-today">Today</span>`;
@@ -4324,12 +4330,12 @@ function _actActionsHtml(q) {
     // user the wheel: kick a search right now, or yank it from the queue.
     btns = `
             <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">✕</button>`;
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">${ico('x')}</button>`;
   } else if (!ACT_ACTIVE_STATES.includes(q.state)) {
     const retry = q.state !== 'done' ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
     btns = `
             ${retry}
-            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">✕</button>`;
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from history" aria-label="Remove from history">${ico('x')}</button>`;
   }
   // You know it's on GetComics and usenet/torrent are sulking: jump the cascade.
   const single = q.kind !== 'trade' && q.issue_number != null && q.issue_number !== -1;
@@ -4710,7 +4716,7 @@ async function triggerSweep(btn) {
     btn.disabled = false; btn.textContent = 'Sweep Missing';
     showToast('Sweep failed'); console.error(e); return;
   }
-  btn.textContent = 'Queued ✓';
+  btn.innerHTML = 'Queued ' + ico('check');
   setTimeout(() => { btn.disabled = false; btn.textContent = 'Sweep Missing'; renderActivity(); }, 1500);
 }
 
@@ -4889,7 +4895,7 @@ async function renderSettings() {
           ${_settingsSectionHead('Metron', 'primary catalogue', 't-metron', cfg.metron_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
-              ${_settingsField('f-metron-token', 'API Token', '', { set: cfg.metron_configured, ph: 'metron.cloud → account → API tokens', test: { cardId: 'metron', configured: cfg.metron_configured } })}
+              ${_settingsField('f-metron-token', 'API Token', '', { set: cfg.metron_configured, ph: 'metron.cloud › account › API tokens', test: { cardId: 'metron', configured: cfg.metron_configured } })}
             </div>
           </div></div>
         </div>
@@ -4920,7 +4926,7 @@ async function renderSettings() {
           ${_settingsSectionHead('Hardcover', 'book ratings', 't-hardcover', cfg.hardcover_enabled)}
           <div class="settings-section-body"><div class="settings-section-inner">
             <div class="settings-card">
-              ${_settingsField('f-hardcover-token', 'API Token', '', { set: cfg.hardcover_configured, ph: 'hardcover.app → settings → API', test: { cardId: 'hardcover', configured: cfg.hardcover_configured } })}
+              ${_settingsField('f-hardcover-token', 'API Token', '', { set: cfg.hardcover_configured, ph: 'hardcover.app › settings › API', test: { cardId: 'hardcover', configured: cfg.hardcover_configured } })}
               ${_requestsToday(cfg, 'hardcover')}
             </div>
           </div></div>
@@ -5232,7 +5238,7 @@ function _updateRootStatus(ok) {
   const el = document.getElementById('root-status');
   if (!el) return;
   // No news is good news — only surface the path when it's a problem.
-  el.textContent = ok ? '' : '✗ path missing or read-only';
+  el.innerHTML = ok ? '' : ico('x') + ' path missing or read-only';
   el.className = ok ? 'settings-help' : 'settings-help bad';
 }
 
@@ -5552,7 +5558,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
         <div class="issue-modal-panel" id="impanel-variants">
           <div id="variant-area" class="variant-loading">Loading covers…</div>
           <div id="variant-footer" class="variant-footer" style="display:none">
-            <div class="variant-hint" id="variant-hint">Click a cover to view it large — include or ★ it from there.</div>
+            <div class="variant-hint" id="variant-hint">Click a cover to view it large — include or ${ico('star')} it from there.</div>
             <button class="btn btn-primary btn-sm" id="variant-apply-btn" disabled
               onclick="_imApplyVariants(${seriesId}, ${number}, ${st === 'owned' ? 'true' : 'false'})">Apply</button>
           </div>
@@ -5679,7 +5685,7 @@ function _imUpdateHint() {
   const hint = document.getElementById('variant-hint');
   if (!hint) return;
   const n = _issueVariantSelected.size;
-  if (n === 0) { hint.innerHTML = 'Click a cover to view it large — include or ★ it from there.'; return; }
+  if (n === 0) { hint.innerHTML = `Click a cover to view it large — include or ${ico('star')} it from there.`; return; }
   const primary = _issueVariantCovers.find(c => c.id === _issueVariantPrimary);
   const pName = primary ? `<strong>${esc(primary.name)}</strong>` : '—';
   hint.innerHTML = `${n} variant${n > 1 ? 's' : ''} · Cover: ${pName}`;
@@ -5723,7 +5729,7 @@ function _lbControls() {            // button state only — no image re-animati
   const inc = document.getElementById('vlb-include');
   const on = _issueVariantSelected.has(c.id);
   inc.classList.toggle('on', on);
-  inc.textContent = on ? '✓ Included' : 'Include';
+  inc.innerHTML = on ? ico('check') + ' Included' : 'Include';
   document.getElementById('vlb-star').classList.toggle('on', _issueVariantPrimary === c.id);
 }
 
@@ -5837,7 +5843,7 @@ function _updateIssueDlBtn(seriesId, number, qs) {
     return;
   }
   if (state === 'done') {
-    btn.disabled = true; btn.textContent = 'Done ✓';
+    btn.disabled = true; btn.innerHTML = 'Done ' + ico('check');
     btn.style.cssText += ';background:var(--pri);border-color:var(--pri)';
     return;
   }
@@ -6020,7 +6026,7 @@ boot();
 function _favBtn(s) {
   const r = s.rating || s.rating_derived;
   return `<button class="btn btn-sm btn-ghost fav-btn${s.favourite ? ' on' : ''}" id="fav-btn-${s.id}" title="${s.favourite ? 'Favourite — tap to remove' : 'Favourite'}"
-    onclick="_toggleSeriesFav(${s.id}, this)">${s.favourite ? '♥' : '♡'}${r ? ` <span class="fav-rating">★ ${r}</span>` : ''}</button>`;
+    onclick="_toggleSeriesFav(${s.id}, this)">${ico('heart', !s.favourite)}${r ? ` <span class="fav-rating">${ico('star')} ${r}</span>` : ''}</button>`;
 }
 
 // --- Want to read (kometa/wantread.py) -------------------------------------------
@@ -6055,20 +6061,20 @@ async function _wantToggle(btn) {
 
 async function _toggleSeriesFav(id, btn) {
   const on = !btn.classList.contains('on');
-  btn.classList.toggle('on', on); btn.firstChild.textContent = on ? '♥' : '♡';
+  btn.classList.toggle('on', on); btn.querySelector('.ico-heart').outerHTML = ico('heart', !on);
   try { await api.put(`/api/series/${id}/mark`, { favourite: on }); if (_detailSeries?.id === id) _detailSeries.favourite = on; }
-  catch { btn.classList.toggle('on', !on); btn.firstChild.textContent = on ? '♡' : '♥'; showToast('Couldn’t save that', 'error'); }
+  catch { btn.classList.toggle('on', !on); btn.querySelector('.ico-heart').outerHTML = ico('heart', on); showToast('Couldn’t save that', 'error'); }
 }
 
 function _markRowHtml(bk) {
   // Rating on the left, favourite (a heart) on the right, nothing in between —
   // six stars in a row read as one control. Tapping the lit star again clears.
   const dots = [1, 2, 3, 4, 5].map(n => `<button class="rating-dot${bk.rating >= n ? ' on' : ''}" data-n="${n}" title="${n} of 5" aria-label="Rate ${n}"
-      onclick="_setBookMark(${bk.id}, ${bk.rating === n ? '{clear_rating: true}' : `{rating: ${n}}`}, this.closest('.mark-row'))">★</button>`).join('');
+      onclick="_setBookMark(${bk.id}, ${bk.rating === n ? '{clear_rating: true}' : `{rating: ${n}}`}, this.closest('.mark-row'))">${ico('star')}</button>`).join('');
   return `<div class="mark-row" id="mark-row-${bk.id}">
     <span class="rating-dots">${dots}</span>
     <button class="mark-heart${bk.favourite ? ' on' : ''}" title="${bk.favourite ? 'Favourited — tap to remove' : 'Favourite'}" aria-label="Favourite" aria-pressed="${!!bk.favourite}"
-      onclick="_setBookMark(${bk.id}, {favourite: !this.classList.contains('on')}, this.closest('.mark-row'))">${bk.favourite ? '♥' : '♡'}</button>
+      onclick="_setBookMark(${bk.id}, {favourite: !this.classList.contains('on')}, this.closest('.mark-row'))">${ico('heart', !bk.favourite)}</button>
   </div>`;
 }
 
