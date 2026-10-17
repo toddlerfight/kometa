@@ -134,32 +134,35 @@ def test_pack_finalize_rescan_closes_dead_rows(monkeypatch, db_path, tmp_path):
     assert q_rows[2.0] == ("done", "On the shelf")
 
 
-def test_range_enclosed_scoring():
-    """Single issue searches should score releases that encloses them in a range (001-030)."""
-    from kometa.usenet_client import _nzb_score
+def test_strict_series_title_matching():
+    """Extra content words after the series name indicate a different series and must score 0."""
+    from kometa.usenet_client import _nzb_score, _pack_score
 
-    title = "Buffy the Vampire Slayer Classic (001-030) (Digital)"
     series = "Buffy the Vampire Slayer"
 
-    # Issues 1, 11, 20, 30 are inside 001-030
-    assert _nzb_score(title, series, 1.0) >= 15
-    assert _nzb_score(title, series, 11.0) >= 15
-    assert _nzb_score(title, series, 20.0) >= 15
-    assert _nzb_score(title, series, 30.0) >= 15
+    # Spinoff / distinct series with extra content words after series name: rejected
+    assert _nzb_score("Buffy the Vampire Slayer Classic (001-030) (Digital)", series, 1.0) == 0
+    assert _nzb_score("Buffy the Vampire Slayer Classic #001", series, 1.0) == 0
+    assert _nzb_score("The Walking Dead Deluxe #1", "The Walking Dead", 1.0) == 0
+    assert _nzb_score("Invincible Iron Man #1", "Invincible", 1.0) == 0
+    assert _nzb_score("Batman Eternal #1", "Batman", 1.0) == 0
 
-    # Issue 31 or 40 are NOT inside 001-030
-    assert _nzb_score(title, series, 31.0) < 15
-    assert _nzb_score(title, series, 40.0) < 15
+    # Legitimate releases with issue number, year, or Vol after series name: accepted
+    assert _nzb_score("Buffy the Vampire Slayer #010 (1999) (Digital)", series, 10.0) == 15
+    assert _nzb_score("Buffy the Vampire Slayer 010 (1999) (Digital) (Zone-Empire)", series, 10.0) == 15
+    assert _nzb_score("Buffy the Vampire Slayer (1998) #010", series, 10.0) == 15
+    assert _nzb_score("Buffy the Vampire Slayer Vol 2 005", series, 5.0) == 15
 
-    # Year range (1998-2003) is NOT treated as an issue range
-    year_title = "Buffy the Vampire Slayer (1998-2003) Digital"
-    assert _nzb_score(year_title, series, 11.0) < 15
+    # Pack scoring rejects spinoff packs like Classic
+    assert _pack_score("Buffy the Vampire Slayer Classic (001-030)", series, 500_000_000) == 0
+    # Pack scoring accepts legitimate complete run / range packs
+    assert _pack_score("Buffy the Vampire Slayer (001-063) (Digital)", series, 500_000_000) > 10
+    assert _pack_score("Buffy the Vampire Slayer Complete Collection", series, 500_000_000) > 10
 
 
-def test_multi_issue_harvest_in_single_finalize(monkeypatch, db_path, tmp_path):
-    """When a single issue row (#1) downloads a multi-issue release (001-030),
-
-    finalize places all valid enclosed comics and closes their queue rows."""
+def test_single_issue_finalize_only_places_target_issue(monkeypatch, db_path, tmp_path):
+    """A single issue download (#1) places ONLY the targeted issue (#1) and does
+    not blindly place unrelated sibling files."""
     dest = tmp_path / "Buffy"
     dest.mkdir()
     s = db.add_series("Buffy", "Dark Horse", 1998, str(dest), on_pull_list=True, path=db_path)
@@ -171,7 +174,7 @@ def test_multi_issue_harvest_in_single_finalize(monkeypatch, db_path, tmp_path):
         q1 = conn.execute("SELECT id FROM download_queue WHERE tracked_series_id=? AND issue_number=1.0", (s,)).fetchone()[0]
         conn.execute("UPDATE download_queue SET state='failed', error='incomplete: articles missing' WHERE tracked_series_id=? AND issue_number=2.0", (s,))
 
-    # Staging download containing files for #1 and #2
+    # Staging download containing files for #1 and an extra file
     stage = tmp_path / "stage_single_multi"
     stage.mkdir()
     _make_dummy_cbz(stage / "Buffy the Vampire Slayer #001.cbz")
@@ -187,6 +190,6 @@ def test_multi_issue_harvest_in_single_finalize(monkeypatch, db_path, tmp_path):
 
     assert q_rows[1.0][0] == "done"
     assert owned.get(1.0) == 1
-    # Issue #2 was harvested as a bonus from the multi-issue download!
-    assert owned.get(2.0) == 1
-    assert q_rows[2.0] == ("done", "On the shelf")
+    # Issue #2 was NOT placed by single issue #1 finalize
+    assert not owned.get(2.0)
+    assert q_rows[2.0][0] == "failed"

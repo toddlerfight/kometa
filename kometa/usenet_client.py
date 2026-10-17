@@ -95,28 +95,16 @@ def _looks_non_comic(title: str) -> bool:
     return bool(_MEDIA_NOISE_RE.search(title or "") or _CJK_RE.search(title or ""))
 
 
-_RANGE_PATTERN_RE = re.compile(r'(?:#\s*|\b)0*(\d{1,4})\s*[-–]\s*#?0*(\d{1,4})\b')
-
-
 def _issue_num_present(t: str, s: str, num_int, raw_title: str | None = None) -> bool:
     """True only when the issue number sits in a comic-issue position: right
     after the series name (norm strips '#', so '#4' reads as 'series 4'), or as
-    a zero-padded 3-digit issue token ('004'/'000'), or within an issue range
-    enclosure like '001-030' or '#01-18'."""
+    a zero-padded 3-digit issue token ('004'/'000')."""
     if float(num_int) == int(num_int):
         n = int(num_int)
-        if (re.search(rf'{re.escape(s)}\s+0*{n}\b', t)
-                or re.search(rf'\b{n:03d}\b', t)):
-            return True
-        check_str = raw_title or t
-        for m in _RANGE_PATTERN_RE.finditer(check_str):
-            try:
-                lo, hi = int(m.group(1)), int(m.group(2))
-                if lo <= n <= hi and (hi - lo) <= 100 and hi < 1900:
-                    return True
-            except (ValueError, TypeError):
-                pass
-        return False
+        return bool(
+            re.search(rf'{re.escape(s)}\s+0*{n}\b', t)
+            or re.search(rf'\b{n:03d}\b', t)
+        )
     return bool(re.search(rf'{re.escape(s)}\s+{re.escape(str(num_int))}\b', t))
 
 
@@ -151,6 +139,31 @@ def _series_name(series: str) -> str:
     return _SERIES_YEAR_TAIL_RE.sub("", series or "").strip() or (series or "")
 
 
+# Allowed tokens immediately after the series name in a release title.
+# Extra content words ("Classic", "Deluxe", "Iron Man", "Beyond", "Eternal")
+# mark a different series/spinoff and disqualify the release (0 points).
+# Allowed: issue number (#1, 001, 10), year ((1998)), volume (Vol 2, v1),
+# or standard packaging noise (audio, digital, cbr, cbz).
+_ALLOWED_AFTER_SERIES_RE = re.compile(
+    r'^(?:'
+    r'#?\s*\d+'                                # issue number or year (001, 1998, 10, #1)
+    r'|(?:vol(?:ume)?|v)\.?\s*\d*'             # volume marker (vol 2, v1, volume, vol)
+    r'|audio|digital|cbr|cbz'                  # format/packaging noise
+    r')\b',
+    re.I
+)
+
+_PACK_AFTER_SERIES_RE = re.compile(
+    r'^(?:'
+    r'#?\s*\d+'                                # issue number, range, or year (001-030, 1998)
+    r'|(?:vol(?:ume)?|v)\.?\s*\d*'             # volume marker (vol 2, v1)
+    r'|complete|collection|pack|omnibus|complet' # pack keywords
+    r'|audio|digital|cbr|cbz'                  # format/packaging noise
+    r')\b',
+    re.I
+)
+
+
 def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     """Score an NZB title for relevance. Higher is better; 0 disqualifies."""
     if _looks_non_comic(nzb_title):
@@ -171,8 +184,10 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     # The series name LEADS a release ('Nights.012.2025.Digital'); a name found
     # mid-title belongs to a different comic — '1001 Arabian Nights - The
     # Adventures of Sinbad 012' is not Nights #12, whatever the number says.
+    # Any extra word immediately after the series name indicates a different series
+    # ('Buffy the Vampire Slayer Classic', 'The Walking Dead Deluxe', 'Invincible Iron Man').
     lead = _norm(_fold(re.sub(r"^(?:\[[^\]]*\]\s*|\(?(?:19|20)\d{2}\)?[\s.]+)+", "", nzb_title))).strip()
-    if not (lead == s or lead.startswith(s + " ")):
+    if not (lead == s or (lead.startswith(s + " ") and _ALLOWED_AFTER_SERIES_RE.match(lead[len(s) + 1:].strip()))):
         return 0
     score = 10
     if _issue_num_present(t, s, num_int, raw_title=nzb_title):
@@ -199,9 +214,13 @@ def _pack_score(nzb_title: str, series: str, size: int, missing: int | None = No
     if _looks_non_comic(nzb_title):
         return 0
     series = _series_name(series)
-    t = _norm(nzb_title)
     s = _norm(series)
-    if not s or not re.search(rf"(?<![a-z0-9]){re.escape(s)}(?![a-z0-9])", t):
+    if not s:
+        return 0
+    # Pack releases must also lead with the series name and not add spinoff words:
+    # "Buffy the Vampire Slayer Classic 001-030" is not Buffy the Vampire Slayer.
+    lead = _norm(_fold(re.sub(r"^(?:\[[^\]]*\]\s*|\(?(?:19|20)\d{2}\)?[\s.]+)+", "", nzb_title))).strip()
+    if not (lead == s or (lead.startswith(s + " ") and _PACK_AFTER_SERIES_RE.match(lead[len(s) + 1:].strip()))):
         return 0
     if (len(s) < 4 or s.replace(" ", "").isdigit()) and not (_RANGE_RE.search(nzb_title) or _COMIC_EVIDENCE_RE.search(nzb_title)):
         return 0        # '100', 'X', 'Y' — the name alone proves nothing
