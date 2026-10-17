@@ -2476,32 +2476,43 @@ def external_image(u: str):
 
 @app.get("/api/series/{series_id}/issues/{number}/locg-details")
 def get_issue_locg_details(series_id: int, number: float):
-    """Description + credits — Metron first, LOCG for issues Metron lacks
-    (kometa.issue_meta). Route name kept for the frontend; cached either way
-    (the external kometa-recommend project also reads the LOCG entries)."""
+    """The issue card's whole answer, the same on the web and both apps (2026-10-17):
+    its header — the run, publisher and year, the date, owned or ignored, the run's
+    status, the book behind an owned issue — then the details: description and credits,
+    Metron first, LOCG for issues Metron lacks (kometa.issue_meta), and what readers and
+    critics say. An issue no catalogue knows still gets its header. Route name kept for
+    the frontends; cached either way (kometa-recommend also reads the LOCG entries)."""
     from kometa import record
-    issues = db.get_issues_for_series(series_id, DB_PATH)
+    from kometa.auth import is_admin
+    s = db.get_series_by_id(series_id, DB_PATH)
+    issues = db.get_issues_for_series(series_id, DB_PATH) if s else []
     issue = next((i for i in issues if i["number"] == number), None)
     if not issue:
         raise HTTPException(404)
-    if not (issue.get("locg_issue_id") or issue.get("metron_issue_id")):
-        # no catalogue id: only read-local-first can answer (from the record or our own tags)
-        from kometa import localfirst
-        if not localfirst.enabled(DB_PATH):
-            raise HTTPException(404)
-    try:
-        from kometa.auth import is_admin
-        d = record.details(issue, DB_PATH, stored_only=not is_admin())   # a reader never triggers a catalogue fetch
-    except Exception as e:
-        raise HTTPException(502, "Details fetch failed") from e
+    d = {}
+    from kometa import localfirst
+    # no catalogue id: only read-local-first can answer (from the record or our own tags)
+    if issue.get("locg_issue_id") or issue.get("metron_issue_id") or localfirst.enabled(DB_PATH):
+        try:
+            d = record.details(issue, DB_PATH, stored_only=not is_admin())   # a reader never triggers a catalogue fetch
+        except Exception as e:
+            raise HTTPException(502, "Details fetch failed") from e
     # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
     # the stored snapshot, never a fetch on open
     row = record.get_issue(series_id, number, DB_PATH) or {}
     from kometa.related import with_creator_ids
+    with db._connect(DB_PATH) as conn:                   # the shelf index's book, if any: no folder listing here
+        b = conn.execute("SELECT id FROM books WHERE tracked_series_id = ? AND number = ? ORDER BY mtime DESC LIMIT 1",
+                         (series_id, number)).fetchone()
     return {"desc": d.get("desc", ""), "credits": with_creator_ids(d.get("credits", []), DB_PATH, ask=is_admin()),
             "source": d.get("source"), "record": d.get("record"),
-            "store_date": d.get("store_date") or issue.get("store_date"),   # YondeB's Issue details header
-            "community": row.get("community") or None}
+            "store_date": d.get("store_date") or issue.get("store_date"),
+            "community": row.get("community") or None,
+            # the header, so every card shows the same facts without piecing them together
+            "series_title": s["title"], "publisher": s.get("publisher"), "year_began": s.get("year_began"),
+            "owned": bool(issue.get("owned")), "ignored": bool(issue.get("ignored")),
+            "run_status": runstatus.compute(s, issues),
+            "book_id": b["id"] if b and issue.get("owned") else None}
 
 
 @app.get("/api/series/{series_id}/issues/{number}/queue-status")
