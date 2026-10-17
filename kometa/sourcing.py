@@ -229,6 +229,108 @@ def confidence_tier(score: float) -> str | None:
     return None
 
 
+# --- the files' own word: year and writer ------------------------------------------------
+# 2026-10-17: the cards compared titles and issue counts and never looked inside the files,
+# so they offered the 1968 Captain Marvel beside the 2019 run the files are (Kelly Thompson,
+# 2019) and three wrong Thors. Reading the files' year and writer settled 15 of 20 by hand.
+# Now the matcher asks each candidate run for the files' own issue: a run whose issue came
+# out in another year isn't this comic and leaves the card; when exactly one run agrees on
+# year AND writer, it's linked with no card at all.
+EVIDENCE_BOOKS = 3
+YEAR_SLACK = 1                      # ComicInfo's Year is the cover date; store dates run ahead of it
+_WRITER_ROLES = {"writer", "story", "script", "plot"}
+
+
+def file_evidence(series_id: int, path=None, read=None, limit: int = EVIDENCE_BOOKS) -> list[dict]:
+    """[{number, year, writers}] from the ComicInfo of the run's first numbered books that carry a year."""
+    from kometa import covers
+    path = path or DB_PATH
+    read = read or covers.read_comicinfo
+    with db._connect(path) as conn:
+        books = conn.execute("SELECT path, number FROM books WHERE tracked_series_id = ? AND number IS NOT NULL "
+                             "ORDER BY number", (series_id,)).fetchall()
+    out = []
+    for b in books:
+        ci = read(b["path"]) or {}
+        y = (ci.get("Year") or "").strip()
+        if not y.isdigit():
+            continue
+        writers = [w for w in re.split(r"\s*[,;]\s*", ci.get("Writer") or "") if w.strip()]
+        out.append({"number": float(b["number"]), "year": int(y), "writers": writers})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _issue_year(issue: dict) -> int | None:
+    d = issue.get("cover_date") or issue.get("store_date") or ""
+    return int(d[:4]) if d[:4].isdigit() else None
+
+
+def check_with_files(evidence: list[dict], cands: list[dict], client) -> tuple[int | None, list[dict]]:
+    """Each candidate asked for the files' first issue (one Metron call, plus one for its
+    credits when the year fits). Returns (the one run that agrees on year and writer, or
+    None; the candidates still in the running, each tagged `files`: agree / year /
+    unknown / none). A run whose issue is from another year is dropped. Raises MetronUnavailable."""
+    if not evidence:
+        return None, [dict(c, files="none") for c in cands]
+    ev = evidence[0]
+    mine = {norm_key(w) for w in ev["writers"]}
+    kept, agree = [], []
+    for c in cands:
+        rows = client._get("issue/", series_id=c["id"], number=f"{ev['number']:g}").get("results") or []
+        if not rows:
+            kept.append(dict(c, files="unknown"))          # the catalogue hasn't that number: can't tell
+            continue
+        y = _issue_year(rows[0])
+        if y is not None and abs(y - ev["year"]) > YEAR_SLACK:
+            continue                                        # another run's issue: not this comic
+        tag = "unknown" if y is None else "year"
+        if y is not None and mine and rows[0].get("id"):
+            credits = client.issue_detail(rows[0]["id"]).get("credits") or []
+            theirs = {norm_key(x.get("name") or "") for x in credits if (x.get("role") or "").lower() in _WRITER_ROLES}
+            if mine & theirs:
+                tag = "agree"
+                agree.append(c)
+        kept.append(dict(c, files=tag))
+    return (agree[0]["id"] if len(agree) == 1 else None), kept
+
+
+def _settle(s: dict, cands: list[dict], path, client) -> tuple[int | None, list[dict]]:
+    """The file check on one series' candidates: (the run to link or None, what's left)."""
+    return check_with_files(file_evidence(s["id"], path), cands, client)
+
+
+def _store(s: dict, link: int | None, cands: list[dict], path) -> None:
+    with db._connect(path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_candidates_json = ? WHERE id = ?", (json.dumps(cands), s["id"]))
+        if link:
+            conn.execute("UPDATE tracked_series SET metron_series_id = ? WHERE id = ?", (link, s["id"]))
+    if link:
+        logger.info(f"Sourcing: {s['title']!r} linked to Metron {link} — its files' year and writer agree")
+
+
+def verify_deck(path=None, client=None, limit: int = PER_TICK) -> int:
+    """Cards stored before the file check: checked once each, the same way. Returns how many."""
+    path = path or DB_PATH
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT id, title, metron_candidates_json FROM tracked_series
+            WHERE metron_series_id IS NULL AND metron_candidates_json IS NOT NULL AND metron_candidates_json != '[]'
+              AND (locg_link IS NULL OR locg_link != 'none')
+              AND (metron_checked_at IS NULL OR metron_checked_at != '9999-12-31 00:00:00')""")]
+    todo = []
+    for r in rows:
+        cands = json.loads(r["metron_candidates_json"] or "[]")
+        if cands and any("files" not in c for c in cands):
+            todo.append((r, cands))
+    done = 0
+    for r, cands in todo[:limit]:
+        _store(r, *_settle(r, cands, path, client), path)
+        done += 1
+    return done
+
+
 def sourcing_candidates_query(path=None, limit: int = PER_TICK) -> list[dict]:
     """Finds LOCG-only series needing credit sourcing that have not yet searched Metron."""
     path = path or DB_PATH
@@ -256,9 +358,10 @@ def sourcing_candidates_query(path=None, limit: int = PER_TICK) -> list[dict]:
 
 
 def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
-    """One scheduler tick: queries Metron for candidates, scores them, and persists
-    the candidate set so each series is queried exactly once.
-    Stops at Metron's first refusal (shared harvest budget).
+    """One scheduler tick: queries Metron for candidates, scores them, checks them against
+    the files, and persists the candidate set so each series is queried exactly once.
+    Stops at Metron's first refusal (shared harvest budget). Every Metron call happens
+    outside a write: each series' result is written in a short transaction of its own.
     """
     path = path or DB_PATH
     if client is None:
@@ -270,67 +373,66 @@ def sourcing_tick(limit: int = PER_TICK, path=None, client=None) -> int:
 
     ensure_deck_rescored(path)
 
-    to_search = sourcing_candidates_query(path, limit=limit)
-    if not to_search:
-        return 0
-
     processed = 0
-    with db._connect(path) as conn:
-        for s in to_search:
-            try:
-                results = []
-                for q in title_variants(s["title"]):
-                    res = client.search_series(q)
-                    if res:
-                        results.extend(res)
-            except MetronUnavailable as e:
-                logger.info(f"Sourcing tick stopped: {e}")
-                break
-            except Exception as e:
-                logger.warning(f"Sourcing search failed for {s['title']!r}: {e}")
+    for s in sourcing_candidates_query(path, limit=limit):
+        try:
+            results = []
+            for q in title_variants(s["title"]):
+                res = client.search_series(q)
+                if res:
+                    results.extend(res)
+        except MetronUnavailable as e:
+            logger.info(f"Sourcing tick stopped: {e}")
+            return processed
+        except Exception as e:
+            logger.warning(f"Sourcing search failed for {s['title']!r}: {e}")
+            continue
+
+        # Deduplicate by Metron ID
+        seen_ids, scored_cands = set(), []
+        for r in results:
+            mid = r.get("id")
+            if not mid or mid in seen_ids:
                 continue
+            seen_ids.add(mid)
+            sc = score_candidate(s, r, s.get("shelf_total"))
+            tier = confidence_tier(sc)
+            if tier:
+                cand_title = r.get("title") or r.get("name") or ""
+                owned_count = s.get("owned_count") or 0
+                max_owned = s.get("max_owned_issue")
+                shelf_total = s.get("shelf_total")
+                is_single_book = (
+                    (owned_count == 1 and (max_owned is None or max_owned <= 1.0))
+                    or (shelf_total == 1 and (max_owned is None or max_owned <= 1.0))
+                )
+                is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title")) and not is_single_book
+                scored_cands.append({
+                    "id": mid,
+                    "title": cand_title,
+                    "publisher": r.get("publisher") or "",
+                    "year": r.get("year"),
+                    "issue_count": r.get("issue_count") or r.get("count"),
+                    "score": sc,
+                    "confidence": tier,
+                    "is_edition": is_ed,
+                })
 
-            # Deduplicate by Metron ID
-            seen_ids, scored_cands = set(), []
-            for r in results:
-                mid = r.get("id")
-                if not mid or mid in seen_ids:
-                    continue
-                seen_ids.add(mid)
-                sc = score_candidate(s, r, s.get("shelf_total"))
-                tier = confidence_tier(sc)
-                if tier:
-                    cand_title = r.get("title") or r.get("name") or ""
-                    owned_count = s.get("owned_count") or 0
-                    max_owned = s.get("max_owned_issue")
-                    shelf_total = s.get("shelf_total")
-                    is_single_book = (
-                        (owned_count == 1 and (max_owned is None or max_owned <= 1.0))
-                        or (shelf_total == 1 and (max_owned is None or max_owned <= 1.0))
-                    )
-                    is_ed = is_collected_edition(cand_title) and not is_collected_edition(s.get("title")) and not is_single_book
-                    scored_cands.append({
-                        "id": mid,
-                        "title": cand_title,
-                        "publisher": r.get("publisher") or "",
-                        "year": r.get("year"),
-                        "issue_count": r.get("issue_count") or r.get("count"),
-                        "score": sc,
-                        "confidence": tier,
-                        "is_edition": is_ed,
-                    })
+        # Regular series matches sort before collected editions, then by score descending
+        scored_cands.sort(key=lambda c: (c.get("is_edition", False), -c["score"]))
+        try:
+            link, top_cands = _settle(s, scored_cands[:3], path, client)
+        except MetronUnavailable as e:
+            logger.info(f"Sourcing tick stopped at the file check: {e}")
+            return processed                            # not stored: searched again next tick
+        _store(s, link, top_cands, path)
+        processed += 1
+        logger.info(f"Sourcing: {s['title']!r} -> {len(top_cands)} candidate(s) stored")
 
-            # Regular series matches sort before collected editions, then by score descending
-            scored_cands.sort(key=lambda c: (c.get("is_edition", False), -c["score"]))
-            top_cands = scored_cands[:3]
-
-            conn.execute(
-                "UPDATE tracked_series SET metron_candidates_json = ? WHERE id = ?",
-                (json.dumps(top_cands), s["id"]),
-            )
-            processed += 1
-            logger.info(f"Sourcing: {s['title']!r} -> {len(top_cands)} candidate(s) stored")
-
+    try:
+        verify_deck(path, client)
+    except MetronUnavailable as e:
+        logger.info(f"Sourcing deck check stopped: {e}")
     return processed
 
 

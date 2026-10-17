@@ -1695,8 +1695,7 @@ async function renderNeedsMatch() {
     ${sourcing.length ? `
       <div class="singles-group" style="${rows.length ? 'margin-top:32px;' : ''}">
         <div class="singles-head">
-          <span class="series-card-title">Sourcing credits <span class="settings-opt">${sourcing.length}</span></span>
-          <span class="tidy-why">Matched to League of Comic Geeks, but credits are unreachable. Pick a Metron match to restore recommendations.</span>
+          <span class="series-card-title">Is this the same comic? <span class="settings-opt">${sourcing.length}</span></span>
         </div>
         <div class="nm-list">${sourcing.map((item, i) => _sourcingRowHtml(item, i)).join('')}</div>
       </div>` : ''}`);
@@ -1973,9 +1972,8 @@ function _sourcingRowHtml(s, i) {
     <div class="sourcing-cand-card" style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-subtle, rgba(255,255,255,0.03));border:1px solid var(--border-subtle, rgba(255,255,255,0.08));border-radius:6px;padding:6px 10px;margin-top:4px">
       <div class="sourcing-cand-info u-truncate" style="margin-right:12px">
         <span style="font-weight:600;color:var(--tx)">${esc(c.title)}</span>
-        <span class="u-label" style="margin-left:6px;color:var(--tq)">${esc([c.publisher, c.year, c.issue_count != null ? `${c.issue_count} issues` : null].filter(Boolean).join(' · '))}</span>
-        ${c.is_edition ? '<span class="nm-status amber" style="margin-left:8px;font-size:10px;padding:1px 6px">Collected edition</span>' : ''}
-        <span class="nm-status ${c.confidence === 'high' ? 'green' : 'amber'}" style="margin-left:8px;font-size:10px;padding:1px 6px">${c.confidence === 'high' ? 'High' : 'Moderate'} (${c.score} pts)</span>
+        <span class="u-label" style="margin-left:6px;color:var(--tq)">${esc([c.year, c.issue_count != null ? `${c.issue_count} issue${c.issue_count === 1 ? '' : 's'}` : null].filter(Boolean).join(' · '))}</span>
+        <span class="nm-status ${c.confidence === 'high' ? 'green' : 'amber'}" style="margin-left:8px;font-size:10px;padding:1px 6px">${c.confidence === 'high' ? 'High' : 'Moderate'}</span>
       </div>
       <button class="btn btn-primary btn-sm" onclick="_sourcingConfirm(${s.id}, ${c.id})">Confirm</button>
     </div>
@@ -2030,7 +2028,7 @@ function _sourcingDifferentId(seriesId) {
   showModal(`
     <div class="modal-header"><h2>Enter Metron series ID</h2></div>
     <div class="modal-body">
-      <div class="tidy-why" style="margin-bottom:10px">Sourcing credits for <b>${esc(s.title || 'this series')}</b>${s.publisher ? ` (${esc(s.publisher)})` : ''}${s.year ? ` · ${s.year}` : ''}${s.total_issues ? ` · ${s.total_issues} issues` : ''}.</div>
+      <div class="tidy-why" style="margin-bottom:10px"><b>${esc(s.title || 'this series')}</b>${s.publisher ? ` (${esc(s.publisher)})` : ''}${s.year ? ` · ${s.year}` : ''}${s.total_issues ? ` · ${s.total_issues} issues` : ''}</div>
       <input class="browse-search" id="sourcing-diff-input" type="text" placeholder="Metron Series ID (e.g. 13649) or URL" style="width:100%" onkeydown="if(event.key==='Enter')_sourcingPreviewId(${seriesId})">
       <div id="sourcing-diff-preview" style="margin-top:12px"></div>
     </div>
