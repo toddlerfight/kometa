@@ -480,10 +480,16 @@ def test_one_time_cleanup_nulls_1970_dates_and_recomputes_stale_series(tmp_path)
         conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:2', '/comic-books/reviews/marvel/immortal-hulk', '2', 8.5, '2018-06-05', 'issue', '2026-10-17')")
         # Alpha: 1970 score but has slug year (2020)
         conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:1', '/comic-books/reviews/image/alpha-(2020)', '1', 8.0, '1970-01-01', 'profile', '2026-10-17')")
-        # Stale series table where first_year was filled with 1970
+        # Legitimate 1940 Golden Age run
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:1', '/comic-books/reviews/dc/all-star-comics-(1940)', '1', 8.0, '2015-01-01', 'profile', '2026-10-17')")
+        # Legitimate 1970 run
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:1', '/comic-books/reviews/dc/green-lantern-(1970)', '1', 8.0, '2015-01-01', 'profile', '2026-10-17')")
+        # Stale series table where first_year was filled
         conn.execute("CREATE TABLE cbr_people_series (series_path TEXT PRIMARY KEY, name TEXT, first_year INTEGER)")
         conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/marvel/immortal-hulk', 'Immortal Hulk', 1970)")
         conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/image/alpha-(2020)', 'Alpha', 1970)")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/dc/all-star-comics-(1940)', 'All-Star Comics', 1940)")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/dc/green-lantern-(1970)', 'Green Lantern', 1970)")
 
     cp.ensure_tables(fix_path)
 
@@ -499,12 +505,21 @@ def test_one_time_cleanup_nulls_1970_dates_and_recomputes_stale_series(tmp_path)
         # Alpha recomputed to 2020 (from slug year)
         alpha = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/alpha-(2020)'").fetchone()
         assert alpha[0] == 2020
+        # Legitimate pre-1970 run preserved
+        golden = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/dc/all-star-comics-(1940)'").fetchone()
+        assert golden[0] == 1940
+        # Legitimate 1970 run preserved
+        bronze = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/dc/green-lantern-(1970)'").fetchone()
+        assert bronze[0] == 1970
+        # Flag recorded
+        assert cp._get_state(conn, "epoch_cleaned") == "1"
 
-    # Idempotent on second run
+    # Subsequent run skips cleanup block
     cp.ensure_tables(fix_path)
     with db._connect(fix_path) as conn:
         hulk = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/marvel/immortal-hulk'").fetchone()
         assert hulk[0] == 2018
+
 
 
 

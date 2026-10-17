@@ -138,19 +138,21 @@ def ensure_tables(path=None):
         if _get_state(conn, "scores_version") is None:
             _bump_scores_version(conn)
 
-        # Clean up legacy 1970-01-01 Unix epoch dates from profile imports and recompute affected series
-        conn.execute("UPDATE cbr_people_scores SET date = NULL WHERE date = '1970-01-01'")
-        stale = [r[0] for r in conn.execute(
-            "SELECT series_path FROM cbr_people_series WHERE first_year IS NOT NULL AND first_year <= 1970").fetchall()]
-        if stale:
+        # One-time cleanup: null legacy 1970-01-01 Unix epoch dates from profile imports and recompute suspect series
+        if _get_state(conn, "epoch_cleaned") is None:
+            conn.execute("UPDATE cbr_people_scores SET date = NULL WHERE date = '1970-01-01'")
+            stale = [r[0] for r in conn.execute(
+                "SELECT series_path FROM cbr_people_series WHERE first_year = 1970").fetchall()]
             for sp in stale:
                 _, y = _path_key(sp)
-                r = conn.execute(
-                    "SELECT CAST(MIN(substr(date, 1, 4)) AS INTEGER) FROM cbr_people_scores "
-                    "WHERE series_path = ? AND date LIKE '____-__-__' AND date > '1970-01-01'", (sp,)).fetchone()
-                score_year = r[0] if r and r[0] else None
-                new_year = y or score_year
-                conn.execute("UPDATE cbr_people_series SET first_year = ? WHERE series_path = ?", (new_year, sp))
+                if y != 1970:
+                    r = conn.execute(
+                        "SELECT CAST(MIN(substr(date, 1, 4)) AS INTEGER) FROM cbr_people_scores "
+                        "WHERE series_path = ? AND date LIKE '____-__-__' AND date > '1970-01-01'", (sp,)).fetchone()
+                    score_year = r[0] if r and r[0] else None
+                    new_year = y or score_year
+                    conn.execute("UPDATE cbr_people_series SET first_year = ? WHERE series_path = ?", (new_year, sp))
+            _set_state(conn, "epoch_cleaned", "1")
             _bump_scores_version(conn)
 
 
@@ -816,7 +818,7 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
             qs = ",".join("?" * len(top))
             first_year = {r[0]: r[1] for r in conn.execute(
                 f"SELECT series_path, first_year FROM cbr_people_series "
-                f"WHERE series_path IN ({qs}) AND first_year IS NOT NULL AND first_year > 1970",
+                f"WHERE series_path IN ({qs}) AND first_year IS NOT NULL",
                 [sp for _, sp in top])}
             missing = [sp for _, sp in top if sp not in first_year]
             if missing:
@@ -847,7 +849,7 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
         fy = first_year.get(sp)
         items.append({
             "series_path": sp, "name": _display_name(sp, d["names"].get(sp)),
-            "year": year or (int(fy) if fy and str(fy).isdigit() and int(fy) > 1970 else None),
+            "year": year or (int(fy) if fy and str(fy).isdigit() else None),
             "publisher": pub, "publisher_name": _PUBLISHER_NAMES.get(pub) or pub.replace("-", " ").title(),
             "url": SITE + sp, "score": round(s, 4), "supporters": len(who),
             "critics": sum(1 for p in who if kind[p] == "critic"), "users": sum(1 for p in who if kind[p] == "user"),
