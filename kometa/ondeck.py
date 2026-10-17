@@ -261,6 +261,10 @@ def list_rows(reader_id=None, now=None, path=None, seen: set | None = None) -> l
                     if row:
                         c = _card(conn, row, {"page": b["progress"]["page"]} if b["progress"] else None,
                                   kind="book", position=e["position"], list_id=lst["id"])
+                        if len(e["books"]) > 1:
+                            # a whole run on the list: every one of its issues said '7/10'
+                            # (DC Absolute's Absolute Superman); the issue number says which
+                            c["tag"] = c["label"]
                         c["label"] = f"{c['series']} {c['label']}"
                         cards.append(c)
                 if len(cards) >= ROW_LIMIT:

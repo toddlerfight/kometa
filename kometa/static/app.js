@@ -1047,7 +1047,7 @@ async function renderOnDeck() {
       <div class="issue-tile-img">${c.cover ? `<img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="rl-nocover"></div>'}
         <span class="od-tag amber">${c.position}/${l.total} · not here</span></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
-    </div>` : bookCard(c, `${c.position}/${l.total}`);
+    </div>` : bookCard(c, c.tag || `${c.position}/${l.total}`);   // tag: an issue of a whole-run entry
   // Want to read: what you added, in order. A book card reads; one that isn't here
   // yet (an issue, or a run you've read all you own of) opens where to get it.
   const wantCard = c => c.kind === 'book' ? bookCard(c, c.want_series ? 'Next' : null)

@@ -163,3 +163,25 @@ def test_next_on_list_starts_at_the_continue_point_and_keeps_gaps(lib, monkeypat
         ("book", "Saga #2", 2), ("gap", "Nowhere #1", 3), ("book", "Low #1", 4)]
     # a list nobody has read from in two months isn't 'being read'
     assert od.list_rows(now=NOW.replace(month=12, day=30), path=lib["db"]) == []
+
+
+def test_a_whole_run_on_a_list_tags_each_issue_with_its_number(lib, monkeypatch):
+    """DC Absolute lists Absolute Superman as one entry: every issue said '7/10'."""
+    import kometa.related as related
+    b = lib["b"]
+    db.set_progress("me", b[("saga", 1)], 24, True, "2026-10-05T10:00:00Z", lib["db"])
+
+    def prog(done):
+        return {"page": 24, "completed": done, "updated_at": "2026-10-05T10:00:00Z"}
+    lst = {"id": 8, "name": "DC Absolute", "total": 10, "entries": [
+        {"position": 7, "series": "Saga", "number": None, "books": [
+            {"id": b[("saga", 1)], "progress": prog(True)}, {"id": b[("saga", 2)], "progress": None},
+            {"id": b[("saga", 3)], "progress": None}]},
+        {"position": 8, "series": "Low", "number": "1", "books": [{"id": b[("low", 1)], "progress": None}]},
+    ]}
+    monkeypatch.setattr(related, "_resolved_lists", lambda path: [lst])
+    monkeypatch.setattr(od, "DISCOVERY_MIN", 1)
+    cards = od.list_rows(now=NOW, path=lib["db"])[0]["cards"]
+    assert [(c["label"], c.get("tag"), c["position"]) for c in cards] == [
+        ("Saga #2", "#2", 7), ("Saga #3", "#3", 7), ("Low #1", None, 8)]       # a one-issue entry keeps its place
+
