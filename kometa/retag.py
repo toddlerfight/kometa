@@ -857,7 +857,37 @@ def retag_tick(budget: int = TICK_BUDGET, path=None, runner=None) -> dict:
         JOB_LOCK.release()
 
 
+CHANGED_MID_RUN = "the file changed since the journal saw it"
+RETRY_CHANGED = 3               # attempts before a file that keeps changing is left failed
+
+
+def tidy_journal(path=None) -> dict:
+    """Two kinds of row the tick would otherwise carry forever (2026-10-17: 21 of them).
+    - Its book is gone: the file was re-filed under a new book id (re-filing The Joker
+      Presents: A Puzzlebox re-minted all 14) or removed. The new id has a row of its own,
+      so this one is retired as skipped and stops counting as waiting or failed.
+    - It failed because the file changed mid-run (a download landing, a tidy). That's no
+      fault in the file, so it goes back on the list, up to RETRY_CHANGED attempts."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        gone = [r[0] for r in conn.execute("""SELECT j.book_id FROM retag_journal j LEFT JOIN books b ON b.id = j.book_id
+            WHERE b.id IS NULL AND j.state IN ('pending', 'failed')""")]
+        changed = [r[0] for r in conn.execute("""SELECT j.book_id FROM retag_journal j JOIN books b ON b.id = j.book_id
+            WHERE j.state = 'failed' AND j.error LIKE ? AND j.attempts < ?""", (CHANGED_MID_RUN + "%", RETRY_CHANGED))]
+    for bid in gone:
+        _set(bid, path, state="skipped", error="the book is gone: re-filed under a new id, or removed")
+    retried = 0
+    for bid in changed:
+        book = db.get_book(bid, path)
+        if book and os.path.exists(book["path"]):
+            _start(book, path)
+            retried += 1
+    return {"retired": len(gone), "retried": retried}
+
+
 def _tick(budget: int, path, runner) -> dict:
+    tidied = tidy_journal(path)
     requeued = requeue_changed(path=path)
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute(
@@ -870,5 +900,5 @@ def _tick(budget: int, path, runner) -> dict:
         if len(ids) >= budget:
             break
     out = (runner or run_batch)(ids) if ids else {"counts": {}, "stopped": None}
-    out.update(enabled=True, requeued=requeued)
+    out.update(enabled=True, requeued=requeued, tidied=tidied)
     return out

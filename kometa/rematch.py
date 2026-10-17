@@ -15,6 +15,9 @@ import kometa.db as db
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 RECHECK_DAYS = 30
+# a run you're pulling that the catalogue hasn't got yet is one it will list soon (Batman:
+# Shadow of the Bat, 2027): asked weekly, so it links within days of Metron adding it
+RECHECK_DAYS_PULLING = 7
 PER_TICK = 8
 
 
@@ -32,17 +35,19 @@ def _now() -> str:
 
 def candidates(path=None, limit: int = PER_TICK, now: datetime | None = None) -> list[dict]:
     """Unlinked series worth asking: no Metron id, marked 'none', not asked in
-    RECHECK_DAYS. Pull list first, then alphabetical."""
+    RECHECK_DAYS (RECHECK_DAYS_PULLING on the pull list). Pull list first, then alphabetical."""
     path = path or DB_PATH
     ensure_columns(path)
-    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=RECHECK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=RECHECK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_pulling = (now - timedelta(days=RECHECK_DAYS_PULLING)).strftime("%Y-%m-%d %H:%M:%S")
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute("""
             SELECT * FROM tracked_series
             WHERE metron_series_id IS NULL AND metron_link = 'none' AND (kind IS NULL OR kind != 'arc')
               AND (match_status IS NULL OR match_status != 'manual' OR from_list_id IS NOT NULL)
-              AND (metron_checked_at IS NULL OR metron_checked_at < ?)
-            ORDER BY on_pull_list DESC, title COLLATE NOCASE""", (cutoff,))]
+              AND (metron_checked_at IS NULL OR metron_checked_at < CASE WHEN on_pull_list = 1 THEN ? ELSE ? END)
+            ORDER BY on_pull_list DESC, title COLLATE NOCASE""", (cutoff_pulling, cutoff))]
     return rows[:limit]
 
 

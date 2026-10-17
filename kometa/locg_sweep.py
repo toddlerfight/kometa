@@ -214,9 +214,31 @@ def sweep_tick(budget: int = BUDGET, path=None, is_open=None, fill_variants=None
     return out
 
 
-def scheduled_tick() -> dict:
+# After the wall, the scheduled sweep rests before trying again, longer each time it meets
+# it, and starts over at the first page that comes back. 2026-10-17: LOCG put a check on its
+# issue pages FlareSolverr can't pass (two minutes made no difference), and the sweep met it
+# every 10 minutes all afternoon — three ~40 s failures a time, from one address. Lists and
+# searches don't go through the sweep and kept working.
+REST_FIRST_S = 3600
+REST_MAX_S = 12 * 3600
+_rest = {"until": 0.0, "strikes": 0}
+
+
+def scheduled_tick(clock=time.time, tick=None) -> dict:
+    now = clock()
+    if now < _rest["until"]:
+        return {"requests": 0, "variants": 0, "details": 0,
+                "stopped": f"resting after the wall until {time.strftime('%H:%M', time.localtime(_rest['until']))}"}
     try:
-        return sweep_tick()
+        out = (tick or sweep_tick)()
     except Exception as e:
         logger.info(f"LOCG sweep skipped: {e}")
         return {"requests": 0, "variants": 0, "details": 0, "stopped": str(e)}
+    if out.get("variants") or out.get("details") or out.get("community"):
+        _rest["strikes"] = 0
+    elif "the wall" in (out.get("stopped") or ""):
+        _rest["strikes"] += 1
+        rest = min(REST_MAX_S, REST_FIRST_S * 2 ** (_rest["strikes"] - 1))
+        _rest["until"] = now + rest
+        logger.info(f"LOCG sweep: met the wall {_rest['strikes']} time(s) running — resting {rest // 3600} h")
+    return out

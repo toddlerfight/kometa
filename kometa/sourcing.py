@@ -56,6 +56,7 @@ def is_collected_edition(title: str | None) -> bool:
 
 
 EDITION_PENALTY = 15.0
+YEARS_BEFORE_MAX = 10           # a candidate run may begin at most this long before the shelf run
 
 
 def score_title(shelf_title: str, cand_title: str, is_single_book: bool = False) -> float:
@@ -196,6 +197,10 @@ def score_candidate(shelf_series: dict, candidate: dict, shelf_total: int | None
             shelf_year = int(m.group(1))
 
     cand_year = candidate.get("year")
+    # A run that began decades before yours isn't yours (Batman: Shadow of the Bat, 2027:
+    # the card offered the 1992 run). Later is still possible — a collected edition.
+    if shelf_year and cand_year and int(shelf_year) - int(cand_year) > YEARS_BEFORE_MAX:
+        return 0.0
     y_score = score_year(shelf_year, cand_year)
 
     total = t_score + p_score + i_score + y_score
@@ -486,6 +491,7 @@ def rescore_deck(path=None) -> int:
                         "score": sc,
                         "confidence": tier,
                         "is_edition": is_ed,
+                        **({"files": c["files"]} if "files" in c else {}),     # the file check stands
                     })
 
             scored_cands.sort(key=lambda c: (c.get("is_edition", False), -c["score"]))
@@ -502,6 +508,6 @@ def ensure_deck_rescored(path=None):
     """Ensures existing candidate cards in the deck are re-scored once with v2 rules."""
     path = path or DB_PATH
     cfg = db.get_config(path)
-    if not cfg.get("sourcing_rescore_v2"):
+    if not cfg.get("sourcing_rescore_v3"):          # v3: a run decades before yours leaves the card
         rescore_deck(path)
-        db.set_config({"sourcing_rescore_v2": "1"}, path)
+        db.set_config({"sourcing_rescore_v2": "1", "sourcing_rescore_v3": "1"}, path)
