@@ -1032,6 +1032,17 @@ def variants(issue: dict, path=None, stored_only: bool = False) -> dict:
     row = get_issue(sid, number, path)
     if stored_only:
         return {"covers": (row or {}).get("covers") or [], "source": (row or {}).get("source"), "record": bool(row)}
+    if not issue.get("metron_issue_id"):
+        # LOCG is this issue's only variant source, and its issue pages are walled: asking one
+        # here held the Variants tab — and the iOS card's buttons — for 10 s and ended in a 502
+        # (SQUEE!, I Feel Sick, 2026-10-18). What's stored, else the main cover from LOCG's S3
+        # bucket, which isn't walled; the LOCG sweep fills the rest when pages open again.
+        covers = (row or {}).get("covers") or []
+        if not covers and issue.get("locg_issue_id"):
+            from kometa.locg_client import S3_LARGE, S3_THUMB
+            lid = issue["locg_issue_id"]
+            covers = [{"id": lid, "name": "Cover A (Main)", "thumb": S3_THUMB.format(lid), "large": S3_LARGE.format(lid)}]
+        return {"covers": covers, "source": "locg", "record": bool(row and row.get("covers"))}
     if row and row.get("variants_at") and row.get("covers"):
         if not _variants_fresh(row):
             threading.Thread(target=lambda: _safe_variants(sid, number, path), daemon=True).start()

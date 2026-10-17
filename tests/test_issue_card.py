@@ -44,3 +44,13 @@ def test_an_issue_no_catalogue_knows_still_gets_its_header(db_path, monkeypatch)
     d = main.get_issue_locg_details(sid, 3.0)              # read-local-first is off: nothing to ask
     assert not asked
     assert d["series_title"] == "Saga" and d["desc"] == "" and d["credits"] == []
+
+
+def test_an_issue_metron_lacks_answers_from_whats_stored_without_waiting_on_locg(db_path, monkeypatch):
+    sid = _seed(db_path, monkeypatch)
+    db.upsert_issue_status(sid, 4.0, "2026-11-04", False, locg_issue_id="1234", path=db_path)
+    seen = []
+    monkeypatch.setattr(record, "details", lambda issue, path, stored_only=False: seen.append(stored_only) or {})
+    d = main.get_issue_locg_details(sid, 4.0)
+    assert seen == [True]                                   # stored only: LOCG's page is never asked
+    assert d["series_title"] == "Saga" and d["owned"] is False   # and the header is there

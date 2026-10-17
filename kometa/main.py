@@ -2520,8 +2520,12 @@ def get_issue_locg_details(series_id: int, number: float):
     from kometa import localfirst
     # no catalogue id: only read-local-first can answer (from the record or our own tags)
     if issue.get("locg_issue_id") or issue.get("metron_issue_id") or localfirst.enabled(DB_PATH):
+        # A reader never triggers a catalogue fetch — and nobody waits on LOCG's issue pages, which
+        # are walled: Absolute Batman #26 (no Metron id yet, nothing stored) took 5 s and a 502, and
+        # the 502 took the card's header with it (2026-10-18). The record trickle keeps asking.
+        live = is_admin() and bool(issue.get("metron_issue_id"))
         try:
-            d = record.details(issue, DB_PATH, stored_only=not is_admin())   # a reader never triggers a catalogue fetch
+            d = record.details(issue, DB_PATH, stored_only=not live)
         except Exception as e:
             raise HTTPException(502, "Details fetch failed") from e
     # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
