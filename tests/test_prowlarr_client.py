@@ -52,3 +52,22 @@ def test_tv_show_releases_are_dropped_for_buffy():
     for t in tv_candidates:
         assert _nzb_score(t, "Buffy the Vampire Slayer", 10.0) == 0
         assert _pack_score(t, "Buffy the Vampire Slayer", 1_000_000_000) == 0
+
+
+def test_search_torrent_pack_cascades_past_dead_first_query(monkeypatch):
+    from kometa.prowlarr_client import search_torrent_pack
+
+    class FakeProwlarr:
+        def search(self, q, protocol=None):
+            if "complete" in q:
+                # First query returns only a wrong-year/season release
+                return [{"title": "Buffy the Vampire Slayer Season Eight (2007) Complete",
+                         "size": 1e9, "seeders": 5, "categories": [], "magnet": "magnet:?xt=s8"}]
+            # Second query returns the real 1998 pack
+            return [{"title": "Buffy the Vampire Slayer (001-063) (1998) (Digital)",
+                     "size": 2e9, "seeders": 10, "categories": [], "magnet": "magnet:?xt=1998"}]
+
+    fake = FakeProwlarr()
+    winner = search_torrent_pack(fake, "Buffy the Vampire Slayer", series_year=1998)
+    assert winner is not None
+    assert winner["magnet"] == "magnet:?xt=1998"

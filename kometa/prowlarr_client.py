@@ -179,7 +179,7 @@ def _best_downloadable_torrent(results: list[dict], score_fn, min_score: int = 1
         logger.info(f"Prowlarr torrent: every candidate is stale for store_date {store_date} "
                     f"— taking the best of them anyway")
     logger.info(f"Prowlarr torrent: {best['title']!r} score={score} "
-                f"seeders={best['seeders']} from {best['indexer']}")
+                f"seeders={best.get('seeders', 0)} from {best.get('indexer', '')}")
     return best
 
 
@@ -227,17 +227,17 @@ def _drop_season_mismatches(results: list[dict], title: str) -> list[dict]:
 def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> dict | None:
     """Best torrent pack/collection for a series. Returns the result dict (magnet,
     seeders, title, size) or None. Twin of search_usenet_pack below."""
-    results = []
     for q in (f"{title} complete", title):
         results = drop_not_comics(prowlarr.search(q, protocol="torrent"), single_issue=False)
-        if results:
-            break
-    results = _drop_year_mismatches(results, title, series_year)
-    results = _drop_season_mismatches(results, title)
-    if not results:
-        return None
-    return _best_downloadable_torrent(
-        results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
+        results = _drop_year_mismatches(results, title, series_year)
+        results = _drop_season_mismatches(results, title)
+        if not results:
+            continue
+        best = _best_downloadable_torrent(
+            results, lambda r: _pack_score(r["title"], title, r["size"]) + _seed_bonus(r["seeders"]))
+        if best:
+            return best
+    return None
 
 
 def _issue_queries(title: str, issue_number: float) -> list[str]:
@@ -347,7 +347,7 @@ def _best_usenet(results: list[dict], score_fn, min_score: int,
         logger.info(f"Prowlarr usenet: every candidate is stale for store_date {store_date} "
                     f"— taking the best of them anyway")
     logger.info(f"Prowlarr usenet: {best['title']!r} score={score} "
-                f"grabs={best['grabs']} from {best['indexer']}")
+                f"grabs={best.get('grabs', 0)} from {best.get('indexer', '')}")
     return best
 
 
@@ -379,14 +379,13 @@ def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, m
     """Best usenet pack/collection for a series. Returns the NZB url or None.
     Sourced through Prowlarr.
     missing: how many issues the pack is for — caps the believable size."""
-    results = []
     for q in (f"{title} complete", title):
         results = drop_not_comics(prowlarr.search(q, protocol="usenet"), single_issue=False)
-        if results:
-            break
-    results = _drop_year_mismatches(results, title, series_year)
-    results = _drop_season_mismatches(results, title)
-    if not results:
-        return None
-    best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"], missing=missing), min_score=10)
-    return best["url"] if best else None
+        results = _drop_year_mismatches(results, title, series_year)
+        results = _drop_season_mismatches(results, title)
+        if not results:
+            continue
+        best = _best_usenet(results, lambda r: _pack_score(r["title"], title, r["size"], missing=missing), min_score=10)
+        if best:
+            return best["url"]
+    return None
