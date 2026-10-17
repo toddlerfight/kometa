@@ -307,7 +307,12 @@ The recommendations work runs with an external agent writing briefs and commits 
 
 - **Commit and stop.** Only the reviewer deploys, after review. `deploy.sh` ships the
   whole working tree, so a deploy also ships anything else committed or uncommitted
-  in it — check `git status` and `git log origin/main..` before every deploy.
+  in it. Before every deploy check `git status`, and list what isn't live yet against
+  the deployed commit (KOMETA_HOST from .env), not against origin (the partner pushes its own commits, so
+  `origin/main..` shows nothing):
+  `git log $(curl -s http://$KOMETA_HOST:6969/api/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')..HEAD --oneline`
+  Every commit in that list gets reviewed before the deploy. (2026-10-17: abb81a9 went
+  live unreviewed underneath a CSS fix.)
 - **Never edit an existing test to make a change pass.** If one fails, stop and
   report it; it is enforcing a contract (9b07090 rerouted the CBR fallback test and
   hid a regression that would have unlinked 142 series).
