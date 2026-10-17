@@ -33,6 +33,7 @@ And an anthology's one-off contributors stop being a creator link: The Joker 80t
 Anniversary Special put Fiona Staples' pin-up in Saga's top five.
 """
 import json
+import logging
 import math
 import re
 import threading
@@ -566,6 +567,23 @@ def index(path=None, want: int | None = None) -> Index:
         ix = build_index(path, opts)
         c.update(at=now, path=path, fp=fp, ix=ix, opts=opts)
         return ix
+
+
+def prewarm(path=None) -> threading.Thread | None:
+    """Build the warm index in the background at startup, so the first Related row after
+    a deploy doesn't wait ~2.3 s for it. Only when the combined engine is the one in use."""
+    path = path or DB_PATH
+    if db.get_config(path).get("related_engine") != "combined":
+        return None
+
+    def run():
+        try:
+            index(path)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Related index pre-warm failed: {e}")
+    t = threading.Thread(target=run, name="related-prewarm", daemon=True)
+    t.start()
+    return t
 
 
 # --- scoring -----------------------------------------------------------------------------

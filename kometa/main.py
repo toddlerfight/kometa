@@ -149,6 +149,8 @@ async def lifespan(app: FastAPI):
     _shelf_scan(skip_if_fresh=True)   # whole-shelf index for the reader — skipped if one ran lately
     from kometa import push as _push
     _push.restore_pending(DB_PATH)    # landings a deploy interrupted still get their one buzz
+    from kometa import related_combined as _rc
+    _rc.prewarm(DB_PATH)              # the first Related row after a deploy doesn't build the index
     yield
     # Stop cleanly. The scheduler was never shut down: its job threads aren't
     # daemons, so a stop waited for whatever was running (a sync, a placement, a
