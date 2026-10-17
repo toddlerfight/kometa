@@ -840,6 +840,30 @@ def requeue_changed(limit: int = RECHECK_PER_TICK, path=None) -> int:
     return n
 
 
+def requeue_issue_now(series_id: int, number: float, path=None) -> int:
+    """An issue whose credits just changed (the credits ladder: GCD, Comic Vine) — its file
+    goes back on the list now, not at requeue_changed's weekly look: a file isn't rewritten
+    within RECHECK_MIN_AGE_DAYS of its last write, so new credits waited up to a week to reach
+    the ComicInfo that OPDS readers see (the owner, 2026-10-18). Only a tagged or skipped file,
+    and only when what it would carry now differs from what it carries. → files queued."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT j.* FROM retag_journal j JOIN books b ON b.id = j.book_id "
+            "WHERE b.tracked_series_id = ? AND b.number = ? AND j.state IN ('swapped', 'skipped')",
+            (series_id, number))]
+    n = 0
+    for row in rows:
+        book = db.get_book(row["book_id"], path)
+        if not book:
+            continue
+        xml = comicinfo.for_book(book, path, row.get("page_count"))
+        if xml is not None and comicinfo.digest(xml) != row.get("xml_digest"):
+            n += enqueue([row["book_id"]], "changed", path)
+    return n
+
+
 def retag_tick(budget: int = TICK_BUDGET, path=None, runner=None) -> dict:
     """Scheduler tick. Off unless retag_enabled = '1'."""
     path = path or DB_PATH

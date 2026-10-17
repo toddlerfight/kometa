@@ -503,6 +503,11 @@ def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: 
             with_creator_ids(out["credits"], path, ask=True)
         except Exception as e:
             logger.info(f"Credits for {series_id}#{number:g}: name lookups not started: {e}")
+        try:                                      # and into the file's ComicInfo now, not at the weekly recheck
+            from kometa import retag
+            retag.requeue_issue_now(series_id, number, path)
+        except Exception as e:
+            logger.info(f"Credits for {series_id}#{number:g}: retag not queued: {e}")
     return out
 
 
