@@ -990,6 +990,8 @@ def get_config():
         # the credits ladder (record.fill_credits): GCD, then Comic Vine, for issues Metron
         # left without credits. Off until the owner's OK — given 2026-10-17
         "credits_ladder":      cfg.get("credits_ladder") == "on",
+        # its Comic Vine rung by the run's name, for issues no catalogue gave an id (kometa/cvname.py)
+        "cv_by_name":          cfg.get("cv_by_name") == "on",
         **_locg_status(),
     }
 
@@ -1040,13 +1042,15 @@ class ConfigRequest(BaseModel):
     read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
     retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
     credits_ladder:     str | None = None   # "on"/"off" — the credits ladder (record.credits_ladder_on)
+    cv_by_name:         str | None = None   # "on"/"off" — its Comic Vine rung by the run's name (cvname.configured)
 
 
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
-    if "credits_ladder" in updates and updates["credits_ladder"] not in ("on", "off"):
-        raise HTTPException(400, "credits_ladder is on or off")
+    for k in ("credits_ladder", "cv_by_name"):
+        if k in updates and updates[k] not in ("on", "off"):
+            raise HTTPException(400, f"{k} is on or off")
     if "comics_root" in updates:
         try:
             check_comics_root(updates["comics_root"])

@@ -429,11 +429,16 @@ def _ask_gcd(row: dict) -> list | None:
 
 
 def _ask_comicvine(row: dict) -> list | None:
-    """Comic Vine's person_credits by cv_id: [] asked and none, None couldn't ask."""
-    from kometa import sources
-    cvid = (row.get("extra") or {}).get("cv_id") or row.get("cv_issue_id")
+    """Comic Vine's person_credits by cv_id — or, for an issue with no list at all and no id,
+    by its run's name (kometa/cvname.py: SQUEE!). [] asked and none, None couldn't ask."""
+    from kometa import cvname, sources
     cv = sources.comicvine()
-    if not cvid or cv is None:
+    if cv is None:
+        return None
+    cvid = (row.get("extra") or {}).get("cv_id") or row.get("cv_issue_id")
+    if not cvid and not row.get("credits") and cvname.configured(row.get("db_path")):
+        cvid = cvname.issue_id(row["tracked_series_id"], row["number"], row.get("db_path"))
+    if not cvid or not cvname.spend():                    # no id, or the ladder's Comic Vine hour is used up
         return None
     d = cv._get(f"issue/4000-{int(cvid)}/", field_list="person_credits")
     if d.get("status_code") not in (None, 1):
@@ -455,6 +460,7 @@ def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: 
         return out
     best = _credit_strength(row.get("credits") or [], credits_source(row))
     tried = dict((row.get("field_sources") or {}).get("credits_tried") or {})
+    row = dict(row, db_path=path)                         # the by-name rung keeps its matches in this DB
     for name, ask in (rungs or CREDIT_RUNGS):
         if (True, CREDIT_RANK[name]) <= best:
             break                                # nothing this rung, or one below it, says can beat it
@@ -527,8 +533,13 @@ def credits_wanted(path=None, limit: int = 50) -> list[dict]:
             WHERE (s.kind IS NULL OR s.kind != 'arc') AND (i.ignored IS NULL OR i.ignored = 0)
               AND (r.credits_json IS NULL OR r.credits_json = '[]' OR r.source IN ('locg', 'comicinfo')
                    OR r.field_sources_json LIKE '%"credits": {"source": "gcd"%')
-              AND (r.extra_json LIKE '%"gcd_id": %' OR r.extra_json LIKE '%"cv_id": %' OR r.cv_issue_id IS NOT NULL)
+              AND (r.extra_json LIKE '%"gcd_id": %' OR r.extra_json LIKE '%"cv_id": %' OR r.cv_issue_id IS NOT NULL
+                   OR r.credits_json IS NULL OR r.credits_json = '[]')     -- none at all: Comic Vine by name
             ORDER BY s.on_pull_list DESC, i.owned DESC, i.store_date DESC""")]
+    from kometa import cvname
+    # by name only while Comic Vine can actually be asked this hour: otherwise those rows
+    # would be picked every tick and do nothing, holding up the rest (review, finding 1)
+    by_name = cvname.known(path) if cvname.configured(path) and cvname.has_budget() else None
     out = []
     for r in rows:
         tried = (r.get("field_sources") or {}).get("credits_tried") or {}
@@ -537,7 +548,10 @@ def credits_wanted(path=None, limit: int = 50) -> list[dict]:
         # only rungs that could beat what's held: a row GCD already credited in full isn't
         # picked again every tick for a Comic Vine that can't replace it (review, finding 1)
         ids = [n for n, k in (("gcd", "gcd_id"), ("comicvine", "cv_id"))
-               if (e.get(k) or (n == "comicvine" and r.get("cv_issue_id"))) and (True, CREDIT_RANK[n]) > held]
+               if (e.get(k) or (n == "comicvine" and (r.get("cv_issue_id") or (
+                   by_name is not None and not r.get("credits")
+                   and cvname.could_ask(r["tracked_series_id"], r["number"], by_name)))))
+               and (True, CREDIT_RANK[n]) > held]
         if any(not tried.get(n) or _age_days(tried[n]) >= CREDIT_RUNG_RETRY_DAYS for n in ids):
             out.append(r)
         if len(out) >= limit:
