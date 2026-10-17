@@ -1101,7 +1101,87 @@ async function renderOnDeck() {
   _loadPicks();
   _loadReaders();
   _loadTrending();
+  _watchOdRows();
 }
+
+// --- On Deck: the row bar -----------------------------------------------------------
+// A strip of row names under the title (2026-10-17): tap one and the page scrolls to
+// that row; the row you're on lights up as you scroll. Read off the rows on the page,
+// so the ones that land later (Because, Readers, Trending, Picks) join as they arrive.
+// Every 'Next on {list}' is one Lists stop, every 'Because…' one Because stop.
+const _OD_STOPS = [[/^Continue reading$/, 'Continue'], [/^Want to read$/, 'Want'], [/^Next$/, 'Next'],
+  [/^Coming soon$/, 'Coming'], [/^Recently released$/, 'Released'], [/^Recently added$/, 'Added'],
+  [/^Favourites$/, 'Favourites'], [/^Next on /, 'Lists'], [/^Because you/, 'Because'], [/^Rediscover$/, 'Rediscover'],
+  [/^Quick reads$/, 'Quick'], [/^Community picks$/, 'Picks'], [/^Readers like you$/, 'Readers'], [/^Trending/, 'Trending']];
+let _odStops = [];
+let _odRowWatch = null;
+
+function _watchOdRows() {
+  _odRowWatch?.disconnect();
+  let t = null;
+  _odRowWatch = new MutationObserver(() => {
+    if (currentView !== 'ondeck') { _odRowWatch.disconnect(); return; }
+    clearTimeout(t); t = setTimeout(_paintOdBar, 80);
+  });
+  _odRowWatch.observe(document.getElementById('app'), { childList: true, subtree: true });
+  _paintOdBar();
+}
+
+function _paintOdBar() {
+  if (currentView !== 'ondeck') return;
+  const stops = [];
+  for (const row of document.querySelectorAll('#app .od-row')) {
+    const title = row.querySelector('.od-head .series-card-title')?.textContent.trim() || '';
+    const label = (_OD_STOPS.find(([re]) => re.test(title)) || [null, title])[1];
+    if (label && !stops.some(s => s.label === label)) stops.push({ label, row });
+  }
+  const sub = document.getElementById('topbar-sub');
+  const same = stops.length === _odStops.length && stops.every((s, i) => s.label === _odStops[i].label) && sub.querySelector('.od-bar');
+  _odStops = stops;
+  if (!same) sub.innerHTML = stops.length < 2 ? '' : `<nav class="od-bar" aria-label="Jump to a row">${stops.map((s, i) =>
+    `<button class="issue-tab od-stop" onclick="_odJump(${i})">${esc(s.label)}</button>`).join('')}</nav>`;
+  _odMark();
+}
+
+function _odJump(i) {
+  const s = _odStops[i];
+  if (!s) return;
+  const app = document.getElementById('app');
+  if (!s.row.offsetParent) {                    // behind More on a phone: open it up first
+    app.classList.add('od-all');
+    app.querySelector('.od-more')?.remove();
+  }
+  const top = app.scrollTop + s.row.getBoundingClientRect().top - app.getBoundingClientRect().top - 12;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  app.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+}
+
+// the row you're on: the last one whose top has passed under the bar; at the very
+// bottom, the last row (a short last row never reaches the top)
+function _odMark() {
+  if (currentView !== 'ondeck' || !_odStops.length) return;
+  const app = document.getElementById('app');
+  const line = app.getBoundingClientRect().top + 48;
+  const shown = _odStops.map((s, i) => ({ s, i })).filter(x => x.s.row.offsetParent);
+  let cur = shown.length ? shown[0].i : 0;
+  for (const { s, i } of shown) if (s.row.getBoundingClientRect().top <= line) cur = i;
+  if (shown.length && app.scrollTop + app.clientHeight >= app.scrollHeight - 4) cur = shown[shown.length - 1].i;
+  const btns = document.querySelectorAll('#topbar-sub .od-stop');
+  btns.forEach((b, i) => b.classList.toggle('active', i === cur));
+  const bar = document.querySelector('#topbar-sub .od-bar'), on = btns[cur];
+  if (bar && on) {                              // keep the lit stop in view in a strip wider than the screen
+    const l = on.offsetLeft - bar.offsetLeft, r = l + on.offsetWidth;
+    if (l < bar.scrollLeft || r > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = Math.max(0, l - 24);
+  }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  let pending = false;
+  document.getElementById('app')?.addEventListener('scroll', () => {
+    if (pending || currentView !== 'ondeck') return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; _odMark(); });
+  }, { passive: true });
+});
 
 // A catalogue card's cover (a series not on the shelf) goes through Kometa,
 // which keeps it a day on disk — nine cards no longer load cover by cover.
