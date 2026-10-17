@@ -20,3 +20,14 @@ def test_proposals_link_only_what_was_approved(db_path, monkeypatch):
     assert vols[b]["cv_volume_id"] == 7 and vols[a]["cv_volume_id"] is None      # 'Dark Entries HC' not approved
     s = db.get_series_by_id(b, db_path)
     assert s["gcd_link"] == "linked" and s["gcd_series_id"] == 5
+
+
+def test_an_approval_in_hand_survives_a_restart(db_path):
+    cvname.ensure_tables(db_path)
+    a = db.add_series(title="Aliens - Tribes GN [1992]", publisher="Dark Horse Comics", folder_path=None,
+                      on_pull_list=False, path=db_path)
+    b = db.add_series(title="Captain Marvel", publisher="Marvel Comics", folder_path=None, on_pull_list=False, path=db_path)
+    assert unpinned.apply(path=db_path, links=[{"series_id": a, "cv": 22479}, {"series_id": b, "gcd": 137204}]) == {"cv": 1, "gcd": 1}
+    vols, _ = cvname.known(db_path)
+    assert vols[a]["cv_volume_id"] == 22479
+    assert db.get_series_by_id(b, db_path)["gcd_series_id"] == 137204

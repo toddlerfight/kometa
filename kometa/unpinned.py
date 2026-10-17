@@ -110,21 +110,28 @@ def state() -> dict:
     return {k: (list(v) if isinstance(v, list) else v) for k, v in _state.items()}
 
 
-def apply(series_ids: list[int], path=None) -> dict:
+def apply(series_ids: list[int] | None = None, path=None, links: list[dict] | None = None) -> dict:
     """Link the approved proposals: Comic Vine's volume and/or GCD's run, as the ticks would.
-    → {'cv': n, 'gcd': n}"""
+    links: [{series_id, cv: id?, gcd: id?}] as approved — a restart forgets the proposals,
+    an approval in hand doesn't need them. → {'cv': n, 'gcd': n}"""
     path = path or DB_PATH
-    from kometa.cvname import _now
-    want = {int(i) for i in series_ids}
+    from kometa.cvname import _now, ensure_tables
+    ensure_tables(path)
+    if links is not None:
+        chosen = [{"series_id": int(l["series_id"]),
+                   "cv": {"id": int(l["cv"]), "why": "approved"} if l.get("cv") else None,
+                   "gcd": {"id": int(l["gcd"]), "why": "approved"} if l.get("gcd") else None} for l in links]
+    else:
+        chosen = [p for p in _state["proposals"] if p["series_id"] in {int(i) for i in series_ids or []}]
+    want = {p["series_id"] for p in chosen}
     got = {"cv": 0, "gcd": 0}
-    for p in _state["proposals"]:
-        if p["series_id"] not in want:
-            continue
+    for p in chosen:
         if p.get("cv"):
             with db._connect(path) as conn:
-                conn.execute("UPDATE cv_volume_match SET cv_volume_id = ?, why = ?, at = ?, issues_at = NULL "
-                             "WHERE tracked_series_id = ?", (p["cv"]["id"], "asked again: " + p["cv"]["why"], _now(),
-                                                             p["series_id"]))
+                conn.execute("INSERT INTO cv_volume_match (tracked_series_id, cv_volume_id, why, at) VALUES (?, ?, ?, ?) "
+                             "ON CONFLICT(tracked_series_id) DO UPDATE SET cv_volume_id = excluded.cv_volume_id, "
+                             "why = excluded.why, at = excluded.at, issues_at = NULL",
+                             (p["series_id"], p["cv"]["id"], "asked again: " + p["cv"]["why"], _now()))
             got["cv"] += 1
         if p.get("gcd"):
             db.set_gcd_link(p["series_id"], "linked", p["gcd"]["id"], [], path)

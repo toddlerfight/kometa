@@ -1869,7 +1869,8 @@ def set_series_locg(series_id: int, req: MatchRequest):
 
 
 class UnpinnedApply(BaseModel):
-    series_ids: list[int]
+    series_ids: list[int] | None = None     # from the proposals in memory
+    links: list[dict] | None = None         # or the approved links themselves: [{series_id, cv?, gcd?}]
 
 
 @app.post("/api/unpinned")
@@ -1890,7 +1891,7 @@ def unpinned_state():
 def unpinned_apply(req: UnpinnedApply):
     """Link the proposals the owner approved."""
     from kometa import unpinned
-    return unpinned.apply(req.series_ids)
+    return unpinned.apply(req.series_ids, links=req.links)
 
 
 @app.post("/api/series/{series_id}/match")
