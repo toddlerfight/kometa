@@ -19,7 +19,7 @@ Security (LAN + tailnet; Funnel is off — checked):
 - [x] Variant cover URLs: only known cover hosts, served as images only, `nosniff` (nosniff was already global). 2026-10-17.
 - [x] Scrub `apikey=` / `api_key=` / tokens out of errors, the queue and logs; Prowlarr key as a header. 2026-10-17 (the queue was already done).
 - [x] URL importer: https only, no private addresses, size cap; caps on uploads and zip entries. 2026-10-17.
-- [ ] Container: non-root user, code mounted read-only, drop capabilities.
+- [x] Container: non-root user (1026, since 2026-10-15), code mounted read-only, drop capabilities, no-new-privileges. 2026-10-17 (ginbako compose; backup compose.yml.bak-20261017-hardening).
 - [x] Pre-commit hook: catch tokens inside URLs (`user:token@host`) — how the Gitea token got in. 2026-10-17.
 - [x] Script injection through inline handlers (review item 5, missing from this list): 16 sites now `jsArg()`. 2026-10-17.
 

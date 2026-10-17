@@ -583,6 +583,9 @@ The 2026-10-11 security review, closed out. Code: kometa/main.py `_RequestGuard`
 - **Keys:** HTTP error details, test results and every log line go through `scrub()`; Prowlarr's key is a header.
 - **Inline handlers:** a value inside `onclick="…"` is `${jsArg(x)}` (reader.js), never
   `JSON.stringify(x).replace(/"/g, '&quot;')`.
+- **Container** (ginbako `~/docker/compose.yml`): user 1026, the code mount `:ro`, `cap_drop: [ALL]`,
+  `no-new-privileges`, `PYTHONDONTWRITEBYTECODE`. Deploys write on the host (tar over ssh), so `:ro` doesn't
+  touch them; anything that must write inside the container goes under /data.
 
 ## Public access: Cloudflare Tunnel + Access (2026-10-14)
 
