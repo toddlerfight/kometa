@@ -987,6 +987,9 @@ def get_config():
         # step 5: record → our own ComicInfo → online for the issue sheet. OFF until
         # the full ComicInfo rewrite has run (kometa/localfirst.py); no UI yet
         "read_local_first":    cfg.get("read_local_first", "0") == "1",
+        # the credits ladder (record.fill_credits): GCD, then Comic Vine, for issues Metron
+        # left without credits. Off until the owner's OK — given 2026-10-17
+        "credits_ladder":      cfg.get("credits_ladder") == "on",
         **_locg_status(),
     }
 
@@ -1036,11 +1039,14 @@ class ConfigRequest(BaseModel):
     fandom_user_agent:  str | None = None   # the UA the token was issued to
     read_local_first:   str | None = None   # "1"/"0" — issue details from the record + our ComicInfo first (default off)
     retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
+    credits_ladder:     str | None = None   # "on"/"off" — the credits ladder (record.credits_ladder_on)
 
 
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
+    if "credits_ladder" in updates and updates["credits_ladder"] not in ("on", "off"):
+        raise HTTPException(400, "credits_ladder is on or off")
     if "comics_root" in updates:
         try:
             check_comics_root(updates["comics_root"])

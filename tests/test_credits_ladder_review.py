@@ -78,3 +78,21 @@ def test_gcd_isnt_asked_with_no_budget_left(monkeypatch):
     monkeypatch.setattr(gcd_client, "budget", lambda: {"left": 0})
     monkeypatch.setattr(gcd_client, "issue_detail", lambda gid: 1 / 0)
     assert record._ask_gcd({"extra": {"gcd_id": 5}}) is None             # couldn't ask: not recorded as tried
+
+
+def test_the_switch_is_set_through_the_config_endpoint(tmp_path, monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from kometa import main
+    dbp = str(tmp_path / "k.db")
+    db.init_db(dbp)
+    monkeypatch.setattr(db, "DB_PATH", dbp)
+    monkeypatch.setattr(main, "DB_PATH", dbp)
+    monkeypatch.setattr(main, "_locg_status", lambda: {})
+    monkeypatch.setattr(main, "_comics_root", lambda: str(tmp_path))
+    assert main.get_config()["credits_ladder"] is False
+    assert main.update_config(main.ConfigRequest(credits_ladder="on"))["credits_ladder"] is True
+    assert record.credits_ladder_on(dbp)
+    assert main.update_config(main.ConfigRequest(credits_ladder="off"))["credits_ladder"] is False
+    with pytest.raises(HTTPException):
+        main.update_config(main.ConfigRequest(credits_ladder="yes"))
