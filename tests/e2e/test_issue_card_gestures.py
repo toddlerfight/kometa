@@ -104,3 +104,27 @@ def test_shift_only_shows_while_pages_pair(app, app_server):
     app.wait_for_timeout(1600)
     with sqlite3.connect(app_server["db_path"]) as c:
         c.execute("DELETE FROM read_progress")
+
+
+def test_a_long_credit_list_shows_writers_and_artists_first(app):
+    import json
+    credits = ([{"role": "Writer", "name": f"Writer {i}"} for i in range(8)]
+               + [{"role": "Penciller", "name": "Pencils One"}]
+               + [{"role": "Letterer", "name": f"Letters {i}"} for i in range(11)])          # 20 lines
+    app.route("**/api/series/*/issues/1/locg-details", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"desc": "", "credits": credits})))
+    _alpha(app)
+    app.locator('.issue-tile[data-num="1"] .od-menu').click()
+    box = app.locator("#modal .issue-modal-credits")
+    expect(box.get_by_text("Writer 5")).to_be_visible()
+    expect(box.get_by_text("Writer 6")).to_be_hidden()                     # six a row
+    expect(box.get_by_text("Pencils One")).to_be_visible()
+    expect(box.get_by_text("Letters 0")).to_be_hidden()                    # not a writer or artist
+    more = box.get_by_role("button", name="+ 13 more credits")               # 2 writers + 11 letterers
+    expect(more).to_be_visible()
+    box.get_by_role("button", name="+2", exact=True).click()                 # the writers' row opens
+    expect(box.get_by_text("Writer 7")).to_be_visible()
+    expect(box.get_by_role("button", name="+ 11 more credits")).to_be_visible()
+    box.get_by_role("button", name="+ 11 more credits").click()
+    expect(box.get_by_text("Letters 10")).to_be_visible()
+    expect(box.locator(".credit-more")).to_have_count(0)

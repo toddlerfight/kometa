@@ -4556,10 +4556,8 @@ function _actRowHtml(q) {
   const active = ACT_ACTIVE_STATES.includes(q.state);
   const errTip = q.error ? ` title="${esc(q.error)}"` : '';
   const pack = _actPack(q);
-  // one issue: its card (2026-10-17); a pack its list; a trade or a whole run the series
-  const oneIssue = !pack && (q.kind || 'issue') === 'issue' && q.tracked_series_id && q.issue_number != null && q.issue_number >= 0;
+  // a row is the run it's for (the owner, 2026-10-17: not the issue's card); a pack its list
   const nav = pack && pack.listId ? ` style="cursor:pointer" onclick="navigate('readlist',{id:${pack.listId}})"`
-    : oneIssue ? ` style="cursor:pointer" onclick="showIssueModal(${q.tracked_series_id}, ${q.issue_number}, {orSeries: true})"`
     : q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
   return `
         <div class="act-row${q.state === 'done' ? ' done' : ''}" data-qid="${q.id}" data-qstate="${q.state}"${errTip}>
@@ -5456,6 +5454,34 @@ function _communityHtml(c) {
     <div class="comm-more" hidden>${more.join('')}</div>`;
 }
 
+// Long credit lists (_renderIssueDetails): over this many lines, writers and artists first.
+const CREDITS_LONG = 15, CREDITS_ROW_NAMES = 6;
+const _TEAM_ROLES = new Set(['writer', 'story', 'script', 'plot', 'artist', 'penciller', 'pencils', 'pencil', 'art',
+  'layouts', 'breakdowns', 'illustrator', 'illustration', 'illustrations']);   // related.ROLE_GROUPS' writer + artist
+function _isTeamRole(role) {
+  return (role || '').toLowerCase().split(/\s*[,/&]\s*|\s+and\s+/).some(p => _TEAM_ROLES.has(p.trim()));
+}
+
+// '+N' opens the rest of its row; '+ N more credits' opens everything. The count on the
+// last one follows what's still hidden.
+function _creditsOpen(btn, all) {
+  const box = btn.closest('.issue-modal-credits');
+  _animateModalHeight(() => {
+    if (all) {
+      box.querySelectorAll('[data-rest]').forEach(e => { e.hidden = false; });
+      box.querySelectorAll('.credit-more').forEach(b => b.remove());
+      box.querySelector('.credit-more-row')?.remove();
+      return;
+    }
+    btn.previousElementSibling.hidden = false;
+    btn.remove();
+    const more = box.querySelector('.credit-more-row .credit-more');
+    if (!more) return;
+    const left = [...box.querySelectorAll('[data-rest][hidden]')].reduce((n, e) => n + +e.dataset.rest, 0);
+    if (left) more.textContent = `+ ${left} more credits`; else more.closest('.credit-more-row').remove();
+  });
+}
+
 function _renderIssueDetails(desc, credits, community) {
   const el = document.getElementById('issue-modal-details');
   if (!el) return;
@@ -5470,12 +5496,28 @@ function _renderIssueDetails(desc, credits, community) {
     const person = c => c.metron_creator_id
       ? `<button class="credit-link" onclick="showCreatorModal(${c.metron_creator_id}, ${jsArg(c.name)})">${esc(c.name)}</button>`
       : esc(c.name);
-    html += '<div class="issue-modal-credits">' +
-      Object.entries(grouped).map(([role, people]) =>
-        `<div class="issue-modal-credit-row">
+    // A long list — an anthology or a collected edition: Judge Dredd: The Complete Case Files
+    // #48 has 52 lines from GCD — shows its writers and artists, six names a row, and the rest
+    // behind '+ N more credits'. Fifteen lines or fewer: all of it. Same on the apps (2026-10-17).
+    const entries = Object.entries(grouped);
+    const lines = entries.reduce((n, [, p]) => n + p.length, 0);
+    const long = lines > CREDITS_LONG;
+    const team = entries.filter(([role]) => _isTeamRole(role));
+    const shown = !long ? entries : team.length ? team : entries.slice(0, 2);
+    const row = ([role, people], hidden) => {
+      const cap = long && !hidden ? CREDITS_ROW_NAMES : Infinity, rest = people.slice(cap);
+      return `<div class="issue-modal-credit-row"${hidden ? ` hidden data-rest="${people.length}"` : ''}>
           <div class="issue-modal-credit-role u-label">${esc(role)}</div>
-          <div class="issue-modal-credit-name">${people.map(person).join(', ')}</div>
-        </div>`).join('') + '</div>';
+          <div class="issue-modal-credit-name">${people.slice(0, cap).map(person).join(', ')}${rest.length
+            ? `<span hidden data-rest="${rest.length}">, ${rest.map(person).join(', ')}</span> <button class="credit-more" onclick="_creditsOpen(this, false)">+${rest.length}</button>`
+            : ''}</div>
+        </div>`;
+    };
+    const left = lines - shown.reduce((n, [, p]) => n + Math.min(p.length, CREDITS_ROW_NAMES), 0);
+    html += '<div class="issue-modal-credits">' + shown.map(e => row(e, false)).join('')
+      + (long ? entries.filter(e => !shown.includes(e)).map(e => row(e, true)).join('')
+          + `<div class="issue-modal-credit-row credit-more-row"><button class="credit-more" onclick="_creditsOpen(this, true)">+ ${left} more credits</button></div>` : '')
+      + '</div>';
   }
   _animateModalHeight(() => {
     el.innerHTML = html || '<div class="state-msg" style="font-size:11px;padding:8px 0;color:var(--tq)">No details available.</div>';

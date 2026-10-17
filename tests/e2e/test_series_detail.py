@@ -53,8 +53,7 @@ def test_detail_tab_does_not_leak_across_series(app):
     app.locator('.nav-item[data-view="activity"]').click()
     row = app.locator(".act-row", has_text="Gamma Run")
     expect(row).to_be_visible()
-    row.locator(".act-row-meta").click()                           # one issue: its card, then its run
-    app.locator("#modal").get_by_role("button", name="Go to series").click()
+    row.locator(".act-row-meta").click()
     expect(app.get_by_text("Gamma Run").first).to_be_visible()
     expect(app.locator(".issue-tab", has_text="all").first).to_have_class(
         "issue-tab active")

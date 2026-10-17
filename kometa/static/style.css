@@ -2499,6 +2499,10 @@ body.touch .od-menu { opacity: .85; }
 /* --- creators: tappable credits, the creator modal --- */
 .credit-link { background: none; border: 0; padding: 0; font: inherit; color: var(--tp); cursor: pointer; text-decoration: underline dotted var(--tq); text-underline-offset: 3px; }
 .credit-link:hover, .credit-link:focus-visible { color: var(--pri); text-decoration-color: var(--pri); }
+/* a long credit list's '+N' and '+ N more credits' (app.js _creditsOpen) */
+.issue-modal-credits [hidden] { display: none; }   /* the rows' own display would otherwise show them */
+.credit-more { background: none; border: 0; padding: 0; font: inherit; color: var(--tq); cursor: pointer; }
+.credit-more:hover, .credit-more:focus-visible { color: var(--pri); }
 .creator-modal { max-height: 78vh; overflow-y: auto; padding-bottom: 6px; }
 .creator-modal .od-head { margin-top: 14px; }
 .creator-modal .series-grid { grid-template-columns: repeat(auto-fill, 140px); gap: 18px 14px; }
