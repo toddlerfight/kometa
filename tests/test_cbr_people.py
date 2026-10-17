@@ -269,7 +269,13 @@ def test_readers_like_you(db_path, monkeypatch):
     _people(db_path, {"user:5": TWIN})
     assert cp.community(db_path) == out
     monkeypatch.setattr(cp, "DB_PATH", db_path)
-    assert cp.get_community()["items"] == out["items"]
+    # the route suggests only what has a cover (the owner, 2026-10-17: no blank covers):
+    # the ranking's order, the cover-less left out (Great New Thing has none yet)
+    served = cp.get_community()["items"]
+    paths = {i["series_path"] for i in served}
+    assert served and all(i.get("cover") for i in served)
+    assert [i["series_path"] for i in served] == [i["series_path"] for i in out["items"] if i["series_path"] in paths]
+    assert R + "great-new-thing" not in paths
 
 
 def test_seed_weights_tiers_and_ratings_update_live(db_path):
@@ -303,7 +309,9 @@ def test_because_one_run(db_path, monkeypatch):
         assert gone not in got                                     # owned, or < 3 supporters, or its fans didn't like Saga
     assert r["items"][0]["because"] == ["Saga"]
     monkeypatch.setattr(cp, "DB_PATH", db_path)
-    assert cp.get_because(series_id=sids["saga"], limit=1)["items"] == r["items"][:1]
+    # one asked for: the best pick that has a cover (the owner, 2026-10-17) — not Great New Thing, which has none
+    [one] = cp.get_because(series_id=sids["saga"], limit=1)["items"]
+    assert one["cover"] and one["series_path"] == R + "not-owned-tracked"
     unlinked = db.add_series(title="No Link", publisher="Image", path=db_path)
     assert cp.because(unlinked, db_path)["items"] == []
 

@@ -865,26 +865,42 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
     return out
 
 
+COVER_POOL = 3          # ask for this many rows' worth: dropping the cover-less still fills the row
+
+
+def _with_covers(items: list[dict], limit: int) -> list[dict]:
+    """Only picks with a cover are suggested (the owner, 2026-10-17: 'no blank covers').
+    enrich files the rest for the Metron tick; they join a row once one is found."""
+    from kometa.community_covers import enrich
+    enrich(items, DB_PATH)
+    return [it for it in items if it.get("cover")][:limit]
+
+
+def _n(limit: int) -> tuple[int, int]:
+    want = max(1, min(int(limit), 100))
+    return want, min(want * COVER_POOL, 300)
+
+
 @router.get("/api/discover/community")
 def get_community(limit: int = 20):
-    from kometa.community_covers import enrich           # a cover and a way in for each pick
-    r = community(limit=max(1, min(int(limit), 100)))
-    enrich(r.get("items", []), DB_PATH)
+    want, pool = _n(limit)
+    r = community(limit=pool)
+    r["items"] = _with_covers(r.get("items", []), want)
     return r
 
 
 @router.get("/api/discover/community/because")
 def get_because(series_id: int, limit: int = 12):
-    from kometa.community_covers import enrich
-    r = because(series_id, limit=max(1, min(int(limit), 100)))
-    enrich(r.get("items", []), DB_PATH)
+    want, pool = _n(limit)
+    r = because(series_id, limit=pool)
+    r["items"] = _with_covers(r.get("items", []), want)
     return r
 
 
 @router.get("/api/discover/community/because-ondeck")
 def get_because_ondeck(limit: int = 12):
-    from kometa.community_covers import enrich
-    rows = because_ondeck(limit=max(1, min(int(limit), 100)))
+    want, pool = _n(limit)
+    rows = because_ondeck(limit=pool)
     for r in rows:
-        enrich(r.get("items", []), DB_PATH)
-    return {"rows": rows}
+        r["items"] = _with_covers(r.get("items", []), want)
+    return {"rows": [r for r in rows if r["items"]]}           # a row left with nothing to show isn't shown

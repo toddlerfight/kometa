@@ -508,8 +508,8 @@ def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> 
         last_pos = max((e["position"] for e in res["entries"] if e.get("series_id") in touching), default=0)
         n = 0
         for e in res["entries"]:
-            if e["status"] == "owned" or e["position"] < last_pos or e["series"] in seen:
-                continue
+            if e["status"] == "owned" or e["position"] < last_pos or e["series"] in seen or not e.get("cover"):
+                continue            # no cover, no suggestion (the owner, 2026-10-17)
             seen.add(e["series"])
             out.append({"kind": "gap", "series_id": e.get("series_id"), "title": e["series"], "list_id": l["id"],
                         "list_name": l["name"], "item_id": e["item_id"], "cover": e.get("cover"),
@@ -730,7 +730,8 @@ def outward(seed_ids: list[int], limit: int = 12, path=None, fetch=None, max_cre
                 logger.info(f"Outward: creator {name!r} skipped: {e}")
                 continue
         for wk in works:
-            if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2 or wk.get("cover_only"):
+            if wk["metron_series_id"] in have_ids or norm_key(wk["title"]) in have_titles or wk["count"] < 2 \
+                    or wk.get("cover_only") or not wk.get("cover"):          # no cover, no suggestion
                 continue
             o = out.setdefault(wk["metron_series_id"], {"kind": "catalogue", "metron_series_id": wk["metron_series_id"],
                                                         "title": wk["title"], "year": wk["year"], "cover": wk["cover"],
@@ -777,7 +778,7 @@ def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_on
             "cover": w["cover"], "score": float(w["count"]), "why": [work_label(w, name)] if name else [], "owned": 0, "total": w["count"]}
            for w in works
            if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2
-           and (include_cover_only or not w.get("cover_only"))]
+           and (include_cover_only or not w.get("cover_only")) and w.get("cover")]       # no cover, no suggestion
     return out, False
 
 

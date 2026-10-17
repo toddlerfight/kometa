@@ -115,7 +115,7 @@ def test_creator_rows_one_per_weighty_credit_shelf_first_then_catalogue(db_path)
     with db._connect(db_path) as c:
         c.execute("INSERT INTO creator_works (creator_id, works_json) VALUES (7, ?)", (json.dumps([
             {"metron_series_id": 501, "title": "THB", "year": 1994, "count": 6, "cover": "https://m/thb.jpg"},
-            {"metron_series_id": 502, "title": "Escapo", "year": 1996, "count": 2, "cover": None},
+            {"metron_series_id": 502, "title": "Escapo", "year": 1996, "count": 2, "cover": "https://m/escapo.jpg"},
             {"metron_series_id": 503, "title": "Heavy Liquid", "year": 1999, "count": 5, "cover": None},   # on the shelf already
             {"metron_series_id": 504, "title": "One-off", "year": 2000, "count": 1, "cover": None}]),))     # a single issue isn't a run
     rows, pending = rel.creator_rows(me, path=db_path)
