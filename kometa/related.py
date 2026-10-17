@@ -34,6 +34,7 @@ SIGNAL_TTL_DAYS = 30
 EMPTY_RETRY_DAYS = 1                 # an empty answer with nothing to ask is retried this soon
 RECENT_DAYS = 60
 _ROLE_WEIGHT = {"writer": 3.0, "story": 3.0, "script": 3.0, "plot": 2.0, "artist": 2.0, "penciller": 2.0,
+                "illustrator": 2.0, "illustration": 2.0, "illustrations": 2.0, "art": 2.0,   # Metron's word for some artists
                 "inker": 1.0, "colorist": 0.5, "letterer": 0.25, "cover": 0.0}
 
 
@@ -644,7 +645,8 @@ def work_label(w: dict, name: str) -> str:
 # card: Javier Rodríguez's own art sat mixed in with books he only coloured. Now it's
 # sectioned by role, highest first, and a work sits once, under its highest role.
 ROLE_GROUPS = (("writer", "Writer", {"writer", "story", "script", "plot"}),
-               ("artist", "Artist", {"artist", "penciller", "pencils", "pencil", "art", "layouts", "breakdowns"}),
+               ("artist", "Artist", {"artist", "penciller", "pencils", "pencil", "art", "layouts", "breakdowns",
+                                     "illustrator", "illustration", "illustrations"}),
                ("colorist", "Colorist", {"colorist", "colors", "colours", "colourist"}),
                ("inker", "Inker", {"inker", "inks", "finishes"}),
                ("cover", "Covers", {"cover", "cover artist", "covers"}),

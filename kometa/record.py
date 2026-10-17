@@ -74,6 +74,10 @@ def ensure_tables(path=None):
             # when the cover list was last asked for — separate from the details'
             # clock, since variants keep landing for weeks after release
             conn.execute("ALTER TABLE issue_record ADD COLUMN variants_at TEXT")
+        if "field_sources_json" not in cols:
+            # which catalogue gave a field when it isn't the row's own source, and which
+            # rungs were asked for it (docs/credits-sourcing-design-2026-10-17.md); added 2026-10-17
+            conn.execute("ALTER TABLE issue_record ADD COLUMN field_sources_json TEXT")
         if not _relabelled.get(path or DB_PATH):
             # once per process: covers-only placeholders written as 'partial' before
             # 2026-10-10 read as finished details and were never asked again
@@ -253,6 +257,10 @@ def _row(r) -> dict | None:
             d[k] = json.loads(d.pop(f"{k}_json", None) or "null")
         except (TypeError, ValueError):
             d[k] = None
+    try:
+        d["field_sources"] = json.loads(d.pop("field_sources_json", None) or "{}") or {}
+    except (TypeError, ValueError):
+        d["field_sources"] = {}
     for k in ("credits", "arcs", "covers"):
         try:
             d[k] = json.loads(d.pop(f"{k}_json") or "[]")
@@ -300,9 +308,10 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
     with db._connect(path) as conn:
         # a variant list already fetched outlives a details write: REPLACE used to
         # wipe it and its stamp, and the LOCG sweep then fetched it all over again
-        kept = conn.execute("SELECT covers_json, variants_at, extra_json, community_json, community_at FROM issue_record "
-                            "WHERE tracked_series_id = ? AND number = ?",
+        kept = conn.execute("SELECT covers_json, variants_at, extra_json, community_json, community_at, credits_json, "
+                            "field_sources_json, source FROM issue_record WHERE tracked_series_id = ? AND number = ?",
                             (series_id, number)).fetchone()
+        credits, sources = _credits_to_keep(kept, data.get("credits") or [], source)
         extra = data.get("extra")
         # a write that brings no extra (LOCG, a stopgap) never wipes what Metron said;
         # Metron's {} — asked, nothing beyond the basics — is stored as {}, not as
@@ -322,11 +331,14 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
             (tracked_series_id, number, desc, credits_json, arcs_json, covers_json, store_date, cover_date, page_count,
              price, isbn, metron_issue_id, locg_issue_id, cv_issue_id, source, fetched_at, fill_state, extra_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (series_id, number, data.get("desc") or "", json.dumps(data.get("credits") or []),
+                     (series_id, number, data.get("desc") or "", json.dumps(credits),
                       json.dumps(data.get("arcs") or []), json.dumps(data.get("covers") or []),
                       data.get("store_date") or issue.get("store_date"), data.get("cover_date"), data.get("page_count"),
                       data.get("price"), data.get("isbn"), issue.get("metron_issue_id"), issue.get("locg_issue_id"),
                       str(cv_id) if cv_id else None, source, _now(), state, extra_json))
+        if sources:
+            conn.execute("UPDATE issue_record SET field_sources_json = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(sources), series_id, number))
         if kept and kept["variants_at"]:
             conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
                          (kept["covers_json"], kept["variants_at"], series_id, number))
@@ -336,6 +348,180 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
             conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
                          (kept["community_json"], kept["community_at"], series_id, number))
     return get_issue(series_id, number, path)
+
+
+# --- credits: one catalogue's list, the best one that has any (2026-10-17) -------------------
+# docs/credits-sourcing-design-2026-10-17.md (reviewed: credits-sourcing-review-2026-10-17.md).
+# A list is never blended across catalogues; a higher rung's list replaces a lower one's,
+# a lower rung never replaces a higher one, and an empty answer never clears a list.
+CREDIT_RANK = {"metron": 5, "gcd": 4, "comicvine": 3, "locg": 2, "comicinfo": 1}
+CREDIT_RUNG_RETRY_DAYS = 7      # a rung that had nothing is asked again after this
+
+
+def credits_source(row: dict | None) -> str | None:
+    """Who gave this row's credits: its field_sources entry, else the row's own source."""
+    if not row:
+        return None
+    fs = row.get("field_sources") or {}
+    return (fs.get("credits") or {}).get("source") or row.get("source")
+
+
+def _credits_to_keep(kept, incoming: list, source: str | None) -> tuple[list, dict]:
+    """(credits to store, field_sources to store) for a write over `kept` (a raw row or None)."""
+    try:
+        sources = json.loads((kept["field_sources_json"] if kept else None) or "{}") or {}
+    except (TypeError, ValueError):
+        sources = {}
+    try:
+        held = json.loads((kept["credits_json"] if kept else None) or "[]") or []
+    except (TypeError, ValueError):
+        held = []
+    held_from = (sources.get("credits") or {}).get("source") or (kept["source"] if kept else None)
+    if held and (not incoming or CREDIT_RANK.get(held_from, 0) > CREDIT_RANK.get(source, 0)):
+        if held_from != (source or held_from) and "credits" not in sources:
+            sources["credits"] = {"source": held_from, "at": _now()}
+        return held, sources
+    if incoming and sources.get("credits"):
+        sources["credits"] = {"source": source, "at": _now()}
+    return incoming, sources
+
+
+def _cv_credits(people: list[dict]) -> list[dict]:
+    """Comic Vine's person_credits ('artist, colorist, cover') → Metron-shaped credits."""
+    names = {"writer": "Writer", "script": "Writer", "plotter": "Plot", "penciler": "Penciller", "penciller": "Penciller",
+             "artist": "Artist", "inker": "Inker", "colorist": "Colorist", "letterer": "Letterer", "cover": "Cover"}
+    out, seen = [], set()
+    for p in people or []:
+        for r in re.split(r"\s*,\s*", (p.get("role") or "").lower()):
+            role = names.get(r.strip())
+            key = (role, (p.get("name") or "").lower())
+            if role and p.get("name") and key not in seen:
+                seen.add(key)
+                out.append({"role": role, "name": p["name"], "metron_creator_id": None})
+    return out
+
+
+def _ask_gcd(row: dict) -> list | None:
+    """GCD's story credits for this issue by its gcd_id: [] asked and none, None couldn't ask."""
+    from kometa import gcd_client
+    gid = (row.get("extra") or {}).get("gcd_id")
+    if not gid or not gcd_client.configured() or (gcd_client.budget() or {}).get("left", 0) <= 0:
+        return None
+    d = gcd_client.issue_detail(int(gid))
+    if d is None:
+        return []
+    return [dict(c, metron_creator_id=None) for c in d.get("credits") or [] if c.get("role") not in ("Editor", None)]
+
+
+def _ask_comicvine(row: dict) -> list | None:
+    """Comic Vine's person_credits by cv_id: [] asked and none, None couldn't ask."""
+    from kometa import sources
+    cvid = (row.get("extra") or {}).get("cv_id") or row.get("cv_issue_id")
+    cv = sources.comicvine()
+    if not cvid or cv is None:
+        return None
+    d = cv._get(f"issue/4000-{int(cvid)}/", field_list="person_credits")
+    if d.get("status_code") not in (None, 1):
+        return None
+    return _cv_credits((d.get("results") or {}).get("person_credits") or [])
+
+
+CREDIT_RUNGS = (("gcd", _ask_gcd), ("comicvine", _ask_comicvine))
+
+
+def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: bool = False) -> dict:
+    """Rungs 2–3 of the credits ladder for one issue whose list is empty or from a rung below.
+    Each rung asked is remembered; one that had nothing waits CREDIT_RUNG_RETRY_DAYS.
+    Returns {"source": rung or None, "credits": [...], "asked": [rungs]} — written unless dry_run."""
+    path = path or DB_PATH
+    row = get_issue(series_id, number, path)
+    out = {"source": None, "credits": [], "asked": []}
+    if not row:
+        return out
+    have = row.get("credits") or []
+    rank = CREDIT_RANK.get(credits_source(row), 0) if have else 0
+    tried = dict((row.get("field_sources") or {}).get("credits_tried") or {})
+    for name, ask in (rungs or CREDIT_RUNGS):
+        if CREDIT_RANK[name] <= rank:
+            break
+        if tried.get(name) and _age_days(tried[name]) < CREDIT_RUNG_RETRY_DAYS:
+            continue
+        try:
+            got = ask(row)
+        except Exception as e:
+            logger.info(f"Credits from {name} for {series_id}#{number:g} skipped: {e}")
+            continue
+        if got is None:
+            continue
+        out["asked"].append(name)
+        tried[name] = _now()
+        if got:
+            out.update(source=name, credits=got)
+            break
+    if dry_run:
+        return out
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT field_sources_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        try:
+            fs = json.loads((r["field_sources_json"] if r else None) or "{}") or {}
+        except (TypeError, ValueError):
+            fs = {}
+        fs["credits_tried"] = tried
+        if out["source"]:
+            fs["credits"] = {"source": out["source"], "at": _now()}
+            conn.execute("UPDATE issue_record SET credits_json = ?, field_sources_json = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(out["credits"]), json.dumps(fs), series_id, number))
+        else:
+            conn.execute("UPDATE issue_record SET field_sources_json = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(fs), series_id, number))
+    if out["source"]:
+        logger.info(f"Credits for {series_id}#{number:g} from {out['source']}: {len(out['credits'])}")
+    return out
+
+
+def credits_ladder_on(path=None) -> bool:
+    """Owner's switch (config credits_ladder): off until the dry run has been looked at."""
+    return db.get_config(path or DB_PATH).get("credits_ladder") == "on"
+
+
+CREDITS_PER_TICK = 6
+
+
+def credits_tick(path=None, limit: int = CREDITS_PER_TICK) -> int:
+    """Scheduler share: a few issues up the ladder per tick. Returns how many got credits."""
+    path = path or DB_PATH
+    if not credits_ladder_on(path):
+        return 0
+    got = 0
+    for r in credits_wanted(path, limit=limit):
+        got += bool(fill_credits(r["tracked_series_id"], r["number"], path)["source"])
+    return got
+
+
+def credits_wanted(path=None, limit: int = 50) -> list[dict]:
+    """Rows the ladder could still improve: no credits, or credits from below GCD, with a
+    GCD or Comic Vine id to ask by. Pull-list series and owned issues first."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = [_row(r) for r in conn.execute("""
+            SELECT r.* FROM issue_record r JOIN tracked_series s ON s.id = r.tracked_series_id
+            JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
+            WHERE (s.kind IS NULL OR s.kind != 'arc') AND (i.ignored IS NULL OR i.ignored = 0)
+              AND (r.credits_json IS NULL OR r.credits_json = '[]' OR r.source IN ('locg', 'comicinfo'))
+              AND (r.extra_json LIKE '%"gcd_id": %' OR r.extra_json LIKE '%"cv_id": %' OR r.cv_issue_id IS NOT NULL)
+            ORDER BY s.on_pull_list DESC, i.owned DESC, i.store_date DESC""")]
+    out = []
+    for r in rows:
+        tried = (r.get("field_sources") or {}).get("credits_tried") or {}
+        e = r.get("extra") or {}
+        ids = [n for n, k in (("gcd", "gcd_id"), ("comicvine", "cv_id")) if e.get(k) or (n == "comicvine" and r.get("cv_issue_id"))]
+        if any(not tried.get(n) or _age_days(tried[n]) >= CREDIT_RUNG_RETRY_DAYS for n in ids):
+            out.append(r)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _fresh(row: dict | None) -> bool:
@@ -602,6 +788,10 @@ def trickle(limit: int = TRICKLE_LIMIT, path=None) -> int:
         if row is not None and row.get("fill_state") != "miss":
             done += 1
     try:
+        credits_tick(path)                                     # off until the owner's OK (credits_ladder)
+    except Exception as e:
+        logger.info(f"Credits ladder tick skipped: {e}")
+    try:
         with db._connect(path) as conn:
             missing = [r[0] for r in conn.execute("""SELECT s.id FROM tracked_series s LEFT JOIN series_record r ON r.tracked_series_id = s.id
                 WHERE (s.kind IS NULL OR s.kind != 'arc') AND r.tracked_series_id IS NULL ORDER BY s.on_pull_list DESC, s.id LIMIT 5""")]
@@ -652,6 +842,8 @@ def details(issue: dict, path=None, stored_only: bool = False) -> dict:
     if row and row.get("fill_state") in ("full", "partial"):
         if not _fresh(row):                                   # old, or a stopgap: answer now, ask behind
             threading.Thread(target=lambda: _safe_refresh(sid, number, path), daemon=True).start()
+        elif not row.get("credits") and credits_ladder_on(path):
+            threading.Thread(target=lambda: _safe_credits(sid, number, path), daemon=True).start()
         return {"desc": row.get("desc") or "", "credits": row.get("credits") or [], "source": row.get("source"),
                 "arcs": row.get("arcs") or [], "store_date": row.get("store_date"), "record": True}
     from kometa import issue_meta
@@ -665,9 +857,18 @@ def details(issue: dict, path=None, stored_only: bool = False) -> dict:
 
 def _safe_refresh(sid: int, number: float, path):
     try:
-        fill_issue(sid, number, path, force=True)
+        row = fill_issue(sid, number, path, force=True)
+        if row is not None and not row.get("credits") and credits_ladder_on(path):
+            fill_credits(sid, number, path)                 # Metron still has none: the next rungs
     except Exception as e:
         logger.info(f"Record refresh for {sid}#{number} skipped: {e}")
+
+
+def _safe_credits(sid: int, number: float, path):
+    try:
+        fill_credits(sid, number, path)
+    except Exception as e:
+        logger.info(f"Credits ladder for {sid}#{number} skipped: {e}")
 
 
 # --- variants: the cover list, typed, into the record -------------------------------
