@@ -861,9 +861,10 @@ def _sweep_missing():
         if row["tracked_series_id"] in checked and row["tracked_series_id"] not in pack_submitted:
             db.queue_issue(row["tracked_series_id"], row["number"], DB_PATH)
 
-    # Bury the dead packs. A failed whole-run pack whose issues all showed up
-    # anyway (one at a time, the hard way) is just a tombstone cluttering
-    # Activity — and it kept the usenet pack gate slammed shut for nothing.
+    # Bury the dead packs and heal dead rows whose issues now sit on the shelf.
+    closed = db.close_rows_now_owned(path=DB_PATH)
+    if closed:
+        logger.info(f"Closed {closed} dead queue row(s): now on the shelf")
     retired = db.retire_completed_packs(DB_PATH)
     if retired:
         logger.info(f"Retired {retired} failed pack row(s): every issue landed")
@@ -1303,6 +1304,13 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
         force_readable_tree(dest_dir)
         if placed:
+            try:
+                from kometa.sync import rescan_owned
+                s_obj = db.get_series_by_id(item["tracked_series_id"], DB_PATH)
+                if s_obj:
+                    rescan_owned(s_obj, path=DB_PATH)
+            except Exception as e:
+                logger.info(f"Pack: rescan_owned failed: {e}")
             _resync_after_placement(item["tracked_series_id"], last_placed)
         return
 

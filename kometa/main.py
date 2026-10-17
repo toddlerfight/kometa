@@ -2305,6 +2305,7 @@ def changes():
 def queue_summary(since: str = ""):
     """The activity badge's three numbers — failed, not found, done since you
     last looked — without the whole queue (it polled all of it every 25 s)."""
+    db.close_rows_now_owned(path=DB_PATH)
     with db._connect(DB_PATH) as conn:
         rows = conn.execute("""SELECT q.state, COUNT(*) AS n FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
@@ -2328,6 +2329,7 @@ def get_queue(since: str | None = None):
     drop deleted ones and catch a state that changed without its time moving (a trade
     covering a stuck single). Pass `at` back as the next `since`; since= alone is
     the whole queue in that shape."""
+    db.close_rows_now_owned(path=DB_PATH)
     at = None
     if since is not None:
         with db._connect(DB_PATH) as conn:
@@ -2373,6 +2375,7 @@ def delete_queue_item(queue_id: int):
 def retry_not_found():
     """Bulk re-search of everything that came up empty — pull-to-refresh on
     Activity. failed items are excluded; they have per-row Retry."""
+    db.close_rows_now_owned(path=DB_PATH)
     n = db.requeue_not_found(DB_PATH)
     if n:
         threading.Thread(target=_process_queue, daemon=True).start()

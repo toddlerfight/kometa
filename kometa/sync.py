@@ -421,7 +421,7 @@ def refresh_trades_owned(series_id: int) -> None:
         logger.warning(f"Issue owned-rescan after trade failed for '{series.get('title')}': {e}")
 
 
-def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:
+def rescan_owned(series: dict, owned_numbers: set | None = None, path: str | None = None) -> dict:
     """Folder is the source of truth for ownership. Scan it and reconcile owned:
     CREATE an owned issue for each file not yet tracked, mark found ones owned, and
     clear ones whose file is gone. Pure disk — no CV/LOCG — so it works even
@@ -429,26 +429,27 @@ def rescan_owned(series: dict, owned_numbers: set | None = None) -> dict:
 
     owned_numbers: pass a set already derived from this folder (sync_one scans it
     for the metadata merge anyway) to skip re-listing the directory."""
+    p = path or DB_PATH
     folder = series.get("folder_path")
     if not folder or not os.path.isdir(folder):
         return {"scanned": False, "owned": 0}
     if owned_numbers is None:
         owned_numbers = _scan_folder_numbers(folder, series.get("title", ""))
-    existing = {i["number"]: i for i in db.get_issues_for_series(series["id"], DB_PATH)}
+    existing = {i["number"]: i for i in db.get_issues_for_series(series["id"], p)}
     db.set_owned_bulk(
         series["id"],
         [num for num in owned_numbers if num in existing and not existing[num]["owned"]],
-        True, DB_PATH,
+        True, p,
     )
     db.upsert_issue_rows(
         [(series["id"], num, None, True, None, None)  # straight from disk
          for num in owned_numbers if num not in existing],
-        path=DB_PATH,
+        path=p,
     )
     db.set_owned_bulk(
         series["id"],
         [num for num, iss in existing.items() if num not in owned_numbers and iss["owned"]],
-        False, DB_PATH,
+        False, p,
     )
-    db.close_rows_now_owned(series["id"], DB_PATH)
+    db.close_rows_now_owned(series["id"], p)
     return {"scanned": True, "owned": len(owned_numbers)}
