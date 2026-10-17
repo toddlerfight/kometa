@@ -133,3 +133,24 @@ def test_a_year_in_our_title_is_the_runs_year_not_part_of_its_name():
     batmen = [{"name": "Batman", "year": y, "publisher": "DC Comics", "cv_volume_id": y} for y in (1940, 2011, 2016, 2025)]
     run = {"title": "Batman (2025)", "publisher": "DC Comics", "id": 0}
     assert cvname.pick_volume(run, cvname.series_year(run), batmen)[0] == 2025
+
+
+def test_two_that_fit_are_told_apart_by_how_many_issues_each_has():
+    vols = [{"name": "Feral", "year": 2024, "publisher": "Image", "cv_volume_id": 1, "issue_count": 1},     # the preview
+            {"name": "Feral", "year": 2024, "publisher": "Image", "cv_volume_id": 2, "issue_count": 14}]
+    run = {"title": "Feral", "publisher": "Image Comics", "id": 0}
+    assert cvname.pick_volume(run, 2024, vols)[0] is None                       # no count to go on: no guess
+    assert cvname.pick_volume(run, 2024, vols, highest=12)[0] == 2
+    assert cvname.pick_volume(run, None, vols, highest=12)[0] == 2              # no year, but only one holds #12
+
+
+def test_a_run_on_metron_takes_metrons_comic_vine_id(db_path, monkeypatch, cv):
+    from kometa import metron_client
+    monkeypatch.setattr(metron_client, "series_detail", lambda mid: {"cv_id": 18715})
+    sid = _squee(db_path, extra={})
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE tracked_series SET metron_series_id = 99 WHERE id = ?", (sid,))
+    cv.volumes = []                                                             # a name search would find nothing
+    out = record.fill_credits(sid, 1.0, db_path, rungs=(("comicvine", record._ask_comicvine),))
+    assert out["source"] == "comicvine"
+    assert not [c for c in cv.calls if c[0] == "search"]                        # no search: Metron said

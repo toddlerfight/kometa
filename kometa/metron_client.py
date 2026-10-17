@@ -397,5 +397,6 @@ def series_detail(series_id: int) -> dict:
                        for a in d.get("associated") or [] if isinstance(a, dict) and a.get("id")],
         "imprint": imp.get("name") if isinstance(imp, dict) else (imp or None),
         "alt_names": [n for n in (d.get("alt_names") or []) if isinstance(n, str) and n.strip()],
+        "cv_id": d.get("cv_id"),          # Comic Vine's volume for the run (kometa/cvname.py)
     }
 

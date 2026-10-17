@@ -145,8 +145,9 @@ def series_year(series: dict, path=None) -> int | None:
     return int(r["d"][:4]) if r and r["d"] else None
 
 
-def pick_volume(series: dict, year: int | None, volumes: list[dict]) -> tuple[int | None, str]:
-    """(volume id, why) — the one volume whose name, year and publisher all agree, or None."""
+def pick_volume(series: dict, year: int | None, volumes: list[dict], highest: float | None = None) -> tuple[int | None, str]:
+    """(volume id, why) — the one volume whose name, year and publisher all agree, or None.
+    Two that agree: the exact year, else the only one with enough issues for our `highest`."""
     name = norm_title(split_year(series.get("title"))[0])
     fits = [v for v in volumes
             if norm_title(v.get("name")) == name
@@ -156,12 +157,18 @@ def pick_volume(series: dict, year: int | None, volumes: list[dict]) -> tuple[in
         return int(fits[0]["cv_volume_id"]), f"{fits[0].get('name')} ({fits[0].get('year')}, {fits[0].get('publisher')})"
     if not fits:
         return None, "no volume with this name, year and publisher"
-    if year is None:
+    if year is None and not highest:
         return None, f"{len(fits)} volumes fit and the run has no year"
     # two or more: the exact year breaks the tie, if it's one volume
     exact = [v for v in fits if v.get("year") is not None and int(v["year"]) == year]
     if len(exact) == 1:
         return int(exact[0]["cv_volume_id"]), f"{exact[0].get('name')} ({exact[0].get('year')}, {exact[0].get('publisher')})"
+    # still two: only one long enough to hold the issues we track (a one-shot vs the ongoing)
+    if highest:
+        big = [v for v in (exact or fits) if (v.get("issue_count") or 0) >= highest]
+        if len(big) == 1:
+            v = big[0]
+            return int(v["cv_volume_id"]), f"{v.get('name')} ({v.get('year')}, {v.get('publisher')}, {v.get('issue_count')} issues)"
     return None, f"{len(fits)} volumes fit"
 
 
@@ -190,13 +197,36 @@ def could_ask(series_id: int, number: float, state: tuple[dict, dict]) -> bool:
 
 # --- asking ----------------------------------------------------------------------------
 
-def _match_volume(cv, series: dict, path) -> int | None:
-    year = series_year(series, path)
-    query = re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", split_year(series["title"])[0])).strip()
-    if not spend():
+def _metron_volume(series: dict) -> int | None:
+    """Metron's own Comic Vine id for the run — exact, where a name search drowns: 'Batman'
+    finds twenty foreign Batmans before DC's 2025 one (2026-10-17)."""
+    if not series.get("metron_series_id"):
         return None
-    volumes = cv.search_volumes(query, limit=20)
-    vid, why = pick_volume(series, year, volumes)
+    from kometa import metron_client
+    try:
+        cid = metron_client.series_detail(series["metron_series_id"]).get("cv_id")
+    except Exception as e:                       # Metron resting, or no such series: search instead
+        logger.info(f"Comic Vine by name: Metron's id for {series['title']} not read: {e}")
+        return None
+    return int(cid) if cid else None
+
+
+def _highest_number(series_id: int, path) -> float | None:
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT MAX(number) n FROM issue_status WHERE tracked_series_id = ?", (series_id,)).fetchone()
+    return r["n"] if r and r["n"] else None
+
+
+def _match_volume(cv, series: dict, path) -> int | None:
+    vid = _metron_volume(series)
+    why = "Metron's Comic Vine id for the run" if vid else None
+    if not vid:
+        year = series_year(series, path)
+        query = re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", split_year(series["title"])[0])).strip()
+        if not spend():
+            return None
+        volumes = cv.search_volumes(query, limit=20)
+        vid, why = pick_volume(series, year, volumes, _highest_number(series["id"], path))
     with db._connect(path) as conn:
         conn.execute("INSERT INTO cv_volume_match (tracked_series_id, cv_volume_id, why, at) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(tracked_series_id) DO UPDATE SET cv_volume_id = excluded.cv_volume_id, "
