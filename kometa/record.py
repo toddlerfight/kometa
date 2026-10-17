@@ -354,8 +354,23 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
 # docs/credits-sourcing-design-2026-10-17.md (reviewed: credits-sourcing-review-2026-10-17.md).
 # A list is never blended across catalogues; a higher rung's list replaces a lower one's,
 # a lower rung never replaces a higher one, and an empty answer never clears a list.
+# Except: a list naming neither a writer nor an artist (GCD had indexed only the cover,
+# Hit-Monkey #1) loses to one that names them, whatever the rungs (implementation review,
+# docs/credits-ladder-impl-review-2026-10-17.md, decision 1).
 CREDIT_RANK = {"metron": 5, "gcd": 4, "comicvine": 3, "locg": 2, "comicinfo": 1}
 CREDIT_RUNG_RETRY_DAYS = 7      # a rung that had nothing is asked again after this
+
+
+def _has_team(credits: list) -> bool:
+    """A writer or an artist on the list: who made the comic, not just who drew its cover."""
+    from kometa.related import role_groups
+    return any({"writer", "artist"} & set(role_groups([c.get("role")])) for c in credits or [])
+
+
+def _credit_strength(credits: list, source: str | None) -> tuple:
+    """How two lists compare: one with a writer or an artist beats one without, then the
+    higher rung. Nothing at all loses to anything."""
+    return (_has_team(credits), CREDIT_RANK.get(source, 0)) if credits else (False, -1)
 
 
 def credits_source(row: dict | None) -> str | None:
@@ -377,7 +392,7 @@ def _credits_to_keep(kept, incoming: list, source: str | None) -> tuple[list, di
     except (TypeError, ValueError):
         held = []
     held_from = (sources.get("credits") or {}).get("source") or (kept["source"] if kept else None)
-    if held and (not incoming or CREDIT_RANK.get(held_from, 0) > CREDIT_RANK.get(source, 0)):
+    if held and (not incoming or _credit_strength(held, held_from) > _credit_strength(incoming, source)):
         if held_from != (source or held_from) and "credits" not in sources:
             sources["credits"] = {"source": held_from, "at": _now()}
         return held, sources
@@ -438,12 +453,11 @@ def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: 
     out = {"source": None, "credits": [], "asked": []}
     if not row:
         return out
-    have = row.get("credits") or []
-    rank = CREDIT_RANK.get(credits_source(row), 0) if have else 0
+    best = _credit_strength(row.get("credits") or [], credits_source(row))
     tried = dict((row.get("field_sources") or {}).get("credits_tried") or {})
     for name, ask in (rungs or CREDIT_RUNGS):
-        if CREDIT_RANK[name] <= rank:
-            break
+        if (True, CREDIT_RANK[name]) <= best:
+            break                                # nothing this rung, or one below it, says can beat it
         if tried.get(name) and _age_days(tried[name]) < CREDIT_RUNG_RETRY_DAYS:
             continue
         try:
@@ -455,9 +469,10 @@ def fill_credits(series_id: int, number: float, path=None, rungs=None, dry_run: 
             continue
         out["asked"].append(name)
         tried[name] = _now()
-        if got:
+        if got and _credit_strength(got, name) > best:
+            # a list with the cover artist alone is kept only until a rung below names the team
             out.update(source=name, credits=got)
-            break
+            best = _credit_strength(got, name)
     if dry_run:
         return out
     with db._connect(path) as conn:
@@ -500,8 +515,9 @@ def credits_tick(path=None, limit: int = CREDITS_PER_TICK) -> int:
 
 
 def credits_wanted(path=None, limit: int = 50) -> list[dict]:
-    """Rows the ladder could still improve: no credits, or credits from below GCD, with a
-    GCD or Comic Vine id to ask by. Pull-list series and owned issues first."""
+    """Rows the ladder could still improve: no credits, credits from below GCD, or GCD's with
+    no writer or artist — with a GCD or Comic Vine id to ask by, and a rung that could do
+    better not asked this week. Pull-list series and owned issues first."""
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -509,14 +525,19 @@ def credits_wanted(path=None, limit: int = 50) -> list[dict]:
             SELECT r.* FROM issue_record r JOIN tracked_series s ON s.id = r.tracked_series_id
             JOIN issue_status i ON i.tracked_series_id = r.tracked_series_id AND i.number = r.number
             WHERE (s.kind IS NULL OR s.kind != 'arc') AND (i.ignored IS NULL OR i.ignored = 0)
-              AND (r.credits_json IS NULL OR r.credits_json = '[]' OR r.source IN ('locg', 'comicinfo'))
+              AND (r.credits_json IS NULL OR r.credits_json = '[]' OR r.source IN ('locg', 'comicinfo')
+                   OR r.field_sources_json LIKE '%"credits": {"source": "gcd"%')
               AND (r.extra_json LIKE '%"gcd_id": %' OR r.extra_json LIKE '%"cv_id": %' OR r.cv_issue_id IS NOT NULL)
             ORDER BY s.on_pull_list DESC, i.owned DESC, i.store_date DESC""")]
     out = []
     for r in rows:
         tried = (r.get("field_sources") or {}).get("credits_tried") or {}
         e = r.get("extra") or {}
-        ids = [n for n, k in (("gcd", "gcd_id"), ("comicvine", "cv_id")) if e.get(k) or (n == "comicvine" and r.get("cv_issue_id"))]
+        held = _credit_strength(r.get("credits") or [], credits_source(r))
+        # only rungs that could beat what's held: a row GCD already credited in full isn't
+        # picked again every tick for a Comic Vine that can't replace it (review, finding 1)
+        ids = [n for n, k in (("gcd", "gcd_id"), ("comicvine", "cv_id"))
+               if (e.get(k) or (n == "comicvine" and r.get("cv_issue_id"))) and (True, CREDIT_RANK[n]) > held]
         if any(not tried.get(n) or _age_days(tried[n]) >= CREDIT_RUNG_RETRY_DAYS for n in ids):
             out.append(r)
         if len(out) >= limit:
