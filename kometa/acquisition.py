@@ -817,7 +817,33 @@ def _sweep_missing():
                     logger.info(f"Pack submitted for {series['title']!r} ({count} missing): {nzo_id}")
                     pack_submitted.add(series_id)
 
-    # Usenet had nothing (or isn't on) — try GetComics for the complete run before
+    # Usenet had nothing (or isn't on) — try torrent for the complete run
+    if _prowlarr_on() and _torrent_on() and prowlarr:
+        try:
+            qbit = _qbittorrent()
+        except Exception:
+            qbit = None
+        if qbit:
+            from kometa.prowlarr_client import search_torrent_pack
+            for series_id, count in missing_counts.items():
+                if series_id not in checked or series_id in pack_submitted:
+                    continue
+                if count < PACK_THRESHOLD or db.has_active_pack(series_id, DB_PATH):
+                    continue
+                series = db.get_series_by_id(series_id, DB_PATH)
+                if not series or not series.get("folder_path") or not series.get("on_pull_list"):
+                    continue
+                cand = search_torrent_pack(prowlarr, series["title"], series_year=series.get("year_began"))
+                if cand:
+                    source = cand.get("magnet") or cand.get("url")
+                    if source:
+                        ih = qbit.add_torrent(source)
+                        if ih:
+                            db.queue_torrent_pack(series_id, ih, source, DB_PATH)
+                            logger.info(f"Torrent pack queued for {series['title']!r} ({count} missing) -> {ih}")
+                            pack_submitted.add(series_id)
+
+    # Usenet and torrent had nothing — try GetComics for the complete run before
     # falling through to N single-issue searches. That fallthrough is what filled
     # a Hickman folder with three other volumes of the same name: each search is
     # free to pick a different run, and the single-issue matcher can't even SEE a
@@ -1495,6 +1521,35 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
     )
     note_delivered(item["tracked_series_id"], "torrent" if keep_source else "usenet")   # it delivered: counts toward trust
     force_readable_tree(dest_dir)
+
+    # Multi-issue harvest: if a multi-file download was accepted for a single-issue row
+    # (e.g. range pack like '001-030'), place and register all valid sibling issues.
+    if len(comics) > 1:
+        from kometa.naming import parse_issue_number, counts_as_owned
+        for extra in comics:
+            if extra == target:
+                continue
+            fname = os.path.basename(extra)
+            num = parse_issue_number(fname, title)
+            if num is None or num == issue_number:
+                continue
+            ext_i = os.path.splitext(extra)[1].lower()
+            dest_extra = os.path.join(dest_dir, f"{_safe(title)} #{int(num):03d}{ext_i}")
+            if not os.path.exists(dest_extra) or not counts_as_owned(dest_extra, title):
+                try:
+                    placed_extra = ensure_cbz(_place(extra, dest_extra))
+                    if os.path.exists(placed_extra) and counts_as_owned(placed_extra, title):
+                        logger.info(f"{label}: placed bonus #{int(num)} from multi-issue download: {dest_extra}")
+                except Exception as e:
+                    logger.info(f"{label}: skipping bonus file {fname}: {e}")
+        try:
+            from kometa.sync import rescan_owned
+            series = db.get_series_by_id(item["tracked_series_id"], DB_PATH)
+            if series:
+                rescan_owned(series, path=DB_PATH)
+        except Exception as e:
+            logger.info(f"Multi-issue harvest: rescan_owned failed: {e}")
+
     _resync_after_placement(item["tracked_series_id"], dest_path)
 
 

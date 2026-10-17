@@ -95,15 +95,28 @@ def _looks_non_comic(title: str) -> bool:
     return bool(_MEDIA_NOISE_RE.search(title or "") or _CJK_RE.search(title or ""))
 
 
-def _issue_num_present(t: str, s: str, num_int) -> bool:
+_RANGE_PATTERN_RE = re.compile(r'(?:#\s*|\b)0*(\d{1,4})\s*[-–]\s*#?0*(\d{1,4})\b')
+
+
+def _issue_num_present(t: str, s: str, num_int, raw_title: str | None = None) -> bool:
     """True only when the issue number sits in a comic-issue position: right
     after the series name (norm strips '#', so '#4' reads as 'series 4'), or as
-    a zero-padded 3-digit issue token ('004'/'000'). NOT a stray digit — the
-    '...MA.2.0...' → ' 0 ' match is exactly how a TV episode scored for #0."""
+    a zero-padded 3-digit issue token ('004'/'000'), or within an issue range
+    enclosure like '001-030' or '#01-18'."""
     if float(num_int) == int(num_int):
         n = int(num_int)
-        return bool(re.search(rf'{re.escape(s)}\s+0*{n}\b', t)
-                    or re.search(rf'\b{n:03d}\b', t))
+        if (re.search(rf'{re.escape(s)}\s+0*{n}\b', t)
+                or re.search(rf'\b{n:03d}\b', t)):
+            return True
+        check_str = raw_title or t
+        for m in _RANGE_PATTERN_RE.finditer(check_str):
+            try:
+                lo, hi = int(m.group(1)), int(m.group(2))
+                if lo <= n <= hi and (hi - lo) <= 100 and hi < 1900:
+                    return True
+            except (ValueError, TypeError):
+                pass
+        return False
     return bool(re.search(rf'{re.escape(s)}\s+{re.escape(str(num_int))}\b', t))
 
 
@@ -151,7 +164,7 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     # the word was in the title, the number was somewhere in it, score 15.
     # Short names need comic evidence beside them AND the number in an issue
     # position — same rule the pack scorer learned from the Beethoven box set.
-    if (len(s) <= 3 or s in _GENERIC_NAMES) and not (_COMIC_EVIDENCE_RE.search(nzb_title) and _issue_num_present(t, s, num_int)):
+    if (len(s) <= 3 or s in _GENERIC_NAMES) and not (_COMIC_EVIDENCE_RE.search(nzb_title) and _issue_num_present(t, s, num_int, raw_title=nzb_title)):
         return 0
     if not re.search(rf"\b{re.escape(s)}\b", t):      # whole words: 'die' is inside 'soldiers'
         return 0                                       # no series name, no candidate — a bare '001' is not evidence
@@ -162,7 +175,7 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
     if not (lead == s or lead.startswith(s + " ")):
         return 0
     score = 10
-    if _issue_num_present(t, s, num_int):
+    if _issue_num_present(t, s, num_int, raw_title=nzb_title):
         score += 5
     return score
 

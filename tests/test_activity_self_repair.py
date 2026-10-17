@@ -132,3 +132,61 @@ def test_pack_finalize_rescan_closes_dead_rows(monkeypatch, db_path, tmp_path):
     assert owned[2.0] == 1
     assert q_rows[1.0] == ("done", "On the shelf")
     assert q_rows[2.0] == ("done", "On the shelf")
+
+
+def test_range_enclosed_scoring():
+    """Single issue searches should score releases that encloses them in a range (001-030)."""
+    from kometa.usenet_client import _nzb_score
+
+    title = "Buffy the Vampire Slayer Classic (001-030) (Digital)"
+    series = "Buffy the Vampire Slayer"
+
+    # Issues 1, 11, 20, 30 are inside 001-030
+    assert _nzb_score(title, series, 1.0) >= 15
+    assert _nzb_score(title, series, 11.0) >= 15
+    assert _nzb_score(title, series, 20.0) >= 15
+    assert _nzb_score(title, series, 30.0) >= 15
+
+    # Issue 31 or 40 are NOT inside 001-030
+    assert _nzb_score(title, series, 31.0) < 15
+    assert _nzb_score(title, series, 40.0) < 15
+
+    # Year range (1998-2003) is NOT treated as an issue range
+    year_title = "Buffy the Vampire Slayer (1998-2003) Digital"
+    assert _nzb_score(year_title, series, 11.0) < 15
+
+
+def test_multi_issue_harvest_in_single_finalize(monkeypatch, db_path, tmp_path):
+    """When a single issue row (#1) downloads a multi-issue release (001-030),
+
+    finalize places all valid enclosed comics and closes their queue rows."""
+    dest = tmp_path / "Buffy"
+    dest.mkdir()
+    s = db.add_series("Buffy", "Dark Horse", 1998, str(dest), on_pull_list=True, path=db_path)
+
+    # Queue issue #1 (downloading) and #2 (failed)
+    db.queue_issue(s, 1.0, db_path)
+    db.queue_issue(s, 2.0, db_path)
+    with db._connect(db_path) as conn:
+        q1 = conn.execute("SELECT id FROM download_queue WHERE tracked_series_id=? AND issue_number=1.0", (s,)).fetchone()[0]
+        conn.execute("UPDATE download_queue SET state='failed', error='incomplete: articles missing' WHERE tracked_series_id=? AND issue_number=2.0", (s,))
+
+    # Staging download containing files for #1 and #2
+    stage = tmp_path / "stage_single_multi"
+    stage.mkdir()
+    _make_dummy_cbz(stage / "Buffy the Vampire Slayer #001.cbz")
+    _make_dummy_cbz(stage / "Buffy the Vampire Slayer #002.cbz")
+
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    item = {"id": q1, "tracked_series_id": s, "issue_number": 1.0, "title": "Buffy", "folder_path": str(dest)}
+    acq._finalize_download(item, q1, str(stage), label="Torrent", keep_source=False)
+
+    with db._connect(db_path) as conn:
+        q_rows = {r["issue_number"]: (r["state"], r["error"]) for r in conn.execute("SELECT issue_number, state, error FROM download_queue WHERE tracked_series_id=?", (s,))}
+        owned = {r["number"]: r["owned"] for r in conn.execute("SELECT number, owned FROM issue_status WHERE tracked_series_id=?", (s,))}
+
+    assert q_rows[1.0][0] == "done"
+    assert owned.get(1.0) == 1
+    # Issue #2 was harvested as a bonus from the multi-issue download!
+    assert owned.get(2.0) == 1
+    assert q_rows[2.0] == ("done", "On the shelf")

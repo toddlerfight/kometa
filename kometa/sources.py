@@ -108,10 +108,13 @@ def sabnzbd() -> SABnzbdClient | None:
     return _cached("sabnzbd", f"{url}|{key}|{prio}|{jump}", lambda: SABnzbdClient(url, key, prio, jump))
 
 
-def qbittorrent() -> QBittorrentClient | None:
+def qbittorrent(path=None) -> QBittorrentClient | None:
     """The torrent download client — twin of sabnzbd(). Reach it by LAN IP from
     the Kometa container (qBit rejects the Tailscale host and needs auth)."""
-    cfg = db.get_config(DB_PATH)
+    try:
+        cfg = db.get_config(path or DB_PATH)
+    except Exception:
+        return None
     url = cfg.get("qbit_url", "")
     user = cfg.get("qbit_user", "")
     pw = cfg.get("qbit_pass", "")

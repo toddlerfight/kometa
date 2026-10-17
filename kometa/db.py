@@ -1361,6 +1361,20 @@ def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):
         """, (tracked_series_id, nzo_id, nzb_url))
 
 
+def queue_torrent_pack(tracked_series_id, torrent_hash: str, source_url: str, path=DB_PATH):
+    """Insert a pack sentinel (issue_number=-1) directly into pending_torrent state."""
+    with _connect(path) as conn:
+        conn.execute("""
+            INSERT INTO download_queue (tracked_series_id, issue_number, state, torrent_hash, source_url)
+            VALUES (?, -1, 'pending_torrent', ?, ?)
+            ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
+                state        = CASE WHEN state IN ('failed', 'not_found', 'done') THEN 'pending_torrent' ELSE state END,
+                torrent_hash = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.torrent_hash ELSE torrent_hash END,
+                source_url   = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.source_url ELSE source_url END,
+                updated_at   = datetime('now')
+        """, (tracked_series_id, torrent_hash, source_url))
+
+
 def get_queue(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
