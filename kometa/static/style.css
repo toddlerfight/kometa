@@ -1966,6 +1966,10 @@ select.settings-input {
 .issue-modal-tab.active { color: var(--tp); border-bottom-color: var(--pri); }
 .issue-modal-panel { display: none; }
 .issue-modal-panel.active { display: block; }
+/* under the tabs, the tab bar's own line is the divider: the details' top edge and the
+   community row's made it three thin lines in a row (the owner, 2026-10-18) */
+.issue-modal-tabs ~ .issue-modal-panel > .issue-modal-details { border-top: 0; margin-top: 0; }
+.issue-modal-tabs ~ .issue-modal-panel > .issue-modal-details > .comm-row:first-child { border-top: 0; }
 
 .variant-grid {
   display: grid;
