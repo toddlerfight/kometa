@@ -75,9 +75,9 @@ let _autoTabFor = null;   // series id we've already made the B1 trades-default 
 let _wantTab = null;      // a tab asked for by whoever navigated here (a trade's 'Go to series' → Trades)
 
 function navigate(view, params = {}) {
-  // going somewhere closes whatever window is open — its fade plays while the page changes
-  // under it. A series card in the creator window opened the series BEHIND the window (2026-10-17).
-  if (!document.getElementById('modal')?.classList.contains('hidden')) closeModal();
+  // going somewhere closes whatever window is open (a series card in the creator window opened
+  // the series BEHIND the window, 2026-10-17) — in three beats, see _vtOverModal
+  if (!document.getElementById('modal')?.classList.contains('hidden')) _vtOverModal();
   _navBegin(view, params, 'fwd');
   currentView = view;
   currentParams = params;
@@ -136,7 +136,22 @@ const _motionOK = () => !(window.matchMedia && window.matchMedia('(prefers-reduc
 const _tabHidden = () => document.hidden === true;
 
 let _histIdx = (history.state && history.state.idx) || 0;
-const _vt = { gen: 0, ghost: null, t0: 0, dir: 'fwd', inTimer: null, dogTimer: null };
+const _vt = { gen: 0, ghost: null, t0: 0, dir: 'fwd', inTimer: null, dogTimer: null, holdUntil: 0 };
+
+// A motion token from style.css, in ms ('.15s' → 150) — the house timings, read not retyped.
+const _cssMs = name => (parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0) * 1000;
+
+// Leaving a page from inside a window, in the house's own moves, one after another: the page
+// behind goes dark (the ghost's vt-out, --t-fast), then the window sinks out (modal-out,
+// --t-mid), then the new page rises (vt-settle) — held back until the window is gone.
+// A window already on its way out just finishes; reduced motion closes it at once.
+function _vtOverModal() {
+  const closing = document.getElementById('modal-backdrop')?.classList.contains('closing');
+  if (closing || !_motionOK()) { closeModal(); if (closing) _vt.holdUntil = performance.now() + _cssMs('--t-mid'); return; }
+  const dark = _cssMs('--t-fast');
+  _vt.holdUntil = performance.now() + dark + _cssMs('--t-mid');
+  setTimeout(closeModal, dark);
+}
 const _navBar = { timer: null, on: false };
 
 // navigate/popstate call this BEFORE current{View,Params} move, and it decides
@@ -235,7 +250,7 @@ function _vtGhost(content, app) {
 function _navSettled(gen) {
   if (gen !== _vt.gen) return;                         // a slow loser from a view you've already left
   _navBarDone();
-  const wait = Math.max(0, _vt.t0 + 110 - performance.now());
+  const wait = Math.max(0, _vt.t0 + 110 - performance.now(), _vt.holdUntil - performance.now());
   setTimeout(() => requestAnimationFrame(() => _vtReveal(gen)), wait);
 }
 
@@ -245,6 +260,7 @@ function _vtReveal(gen) {
   const content = document.getElementById('content');
   if (!content || !content.classList.contains('vt-pending')) return;
   content.classList.remove('vt-pending');
+  _vt.holdUntil = 0;
   content.classList.add(_vt.dir === 'back' ? 'vt-in-back' : 'vt-in');
   // a timer, not animationend: every cascading card underneath bubbles its own
   clearTimeout(_vt.inTimer);
