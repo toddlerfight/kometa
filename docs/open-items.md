@@ -13,14 +13,15 @@ Bugs from today's waves — **fixed 2026-10-11** (kept for the record):
 - [x] `missing` counted two ways (Library card vs series page) once trades cover gaps.
 
 Security (LAN + tailnet; Funnel is off — checked):
-- [ ] One request filter: accept changes only from Kometa's own pages / YondeB / curl and only for Kometa's own addresses (CSRF + DNS rebinding).
-- [ ] Test-connection buttons only use stored keys with the stored address (today a request can name another server and get the key).
-- [ ] Fence every folder path and the comics root inside the library. (The purge depth bug is fixed, 2026-10-17: a folder trashed from straight under the root keeps its 7-day Undo.)
-- [ ] Variant cover URLs: only known cover hosts, served as images only, `nosniff`.
-- [ ] Scrub `apikey=` / `api_key=` / tokens out of errors, the queue and logs; Prowlarr key as a header.
-- [ ] URL importer: https only, no private addresses, size cap; caps on uploads and zip entries.
+- [x] One request filter: accept changes only from Kometa's own pages / YondeB / curl and only for Kometa's own addresses (CSRF + DNS rebinding). 2026-10-17: `_RequestGuard`.
+- [x] Test-connection buttons only use stored keys with the stored address. 2026-10-17.
+- [ ] Fence every folder path and the comics root inside the library. 2026-10-17: done for folder changes, derived folders, the comics root and the folder picker; a folder typed into Add series is not fenced yet — `test_explicit_folder_path_is_respected` pins `/custom/path` and waits on the owner's OK. (Purge depth bug fixed earlier the same day.)
+- [x] Variant cover URLs: only known cover hosts, served as images only, `nosniff` (nosniff was already global). 2026-10-17.
+- [x] Scrub `apikey=` / `api_key=` / tokens out of errors, the queue and logs; Prowlarr key as a header. 2026-10-17 (the queue was already done).
+- [x] URL importer: https only, no private addresses, size cap; caps on uploads and zip entries. 2026-10-17.
 - [ ] Container: non-root user, code mounted read-only, drop capabilities.
-- [ ] Pre-commit hook: catch tokens inside URLs (`user:token@host`) — how the Gitea token got in.
+- [x] Pre-commit hook: catch tokens inside URLs (`user:token@host`) — how the Gitea token got in. 2026-10-17.
+- [x] Script injection through inline handlers (review item 5, missing from this list): 16 sites now `jsArg()`. 2026-10-17.
 
 Efficiency leftovers:
 - [x] Activity fetches the whole queue every 2 s while something's active — 2026-10-17: it asks `/api/queue?since=` for what changed and merges; the whole queue on entry and once a minute.

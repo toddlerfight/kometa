@@ -418,8 +418,10 @@ def _resolve_dir(root: str, publisher: str, title: str) -> str:
     no Komga needed. Existing series resolve to their real on-disk folder
     (variation-tolerant), new ones to a fresh canonical path.
     """
-    safe_pub = _safe(publisher)
-    safe_title = _safe(title)
+    # a name that's all dots ('..', '...') comes back empty and would file the series AS
+    # the publisher folder (security review 2026-10-11)
+    safe_pub = _safe(publisher) or "Unknown"
+    safe_title = _safe(title) or "Untitled"
     pub_key = _pub_key(publisher)
 
     # Score candidate publisher dirs: exact key match beats prefix, more subdirs wins ties

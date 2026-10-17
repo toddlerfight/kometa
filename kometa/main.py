@@ -1,6 +1,7 @@
 import os
 import time
 import json
+from starlette.concurrency import run_in_threadpool
 import re
 import logging
 import threading
@@ -23,6 +24,7 @@ import kometa.db as db
 from kometa import runstatus
 from kometa.sources import (
     comics_root as _comics_root, comicvine as _comicvine,
+    OutsideLibrary, check_series_folder, check_comics_root,
 )
 from kometa.naming import (
     find_issue_file as _find_issue_file, _resolve_dir,
@@ -51,6 +53,8 @@ logging.basicConfig(
 # APScheduler narrates every 5-second poller tick at INFO — that's not
 # observability, that's a firehose aimed at the one log we just unclogged.
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
+from kometa import scrub as _scrub  # noqa: E402
+_scrub.install()                    # no key in docker logs (uvicorn's own handlers join at startup)
 
 DB_PATH = db.DB_PATH
 
@@ -149,6 +153,7 @@ async def lifespan(app: FastAPI):
     _shelf_scan(skip_if_fresh=True)   # whole-shelf index for the reader — skipped if one ran lately
     from kometa import push as _push
     _push.restore_pending(DB_PATH)    # landings a deploy interrupted still get their one buzz
+    _scrub.install("uvicorn", "uvicorn.error", "uvicorn.access")
     from kometa import related_combined as _rc
     _rc.prewarm(DB_PATH)              # the first Related row after a deploy doesn't build the index
     yield
@@ -165,6 +170,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+from starlette.exceptions import HTTPException as _StarletteHTTPException  # noqa: E402
+from fastapi.exception_handlers import http_exception_handler as _http_exception_handler  # noqa: E402
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _scrubbed_http_error(request, exc):
+    """~40 routes put an exception's text in their error, and a requests error carries
+    the URL it tried, key and all: blanked here, once, for all of them."""
+    if isinstance(exc.detail, str):
+        exc.detail = _scrub.scrub(exc.detail)
+    return await _http_exception_handler(request, exc)
 
 # Compress what's text — JSON, the JS and CSS, OPDS XML: /api/series went out as
 # 761 KB raw (65 KB gzipped), app.js 255 KB (72 KB). Covers, pages and comic
@@ -246,6 +264,102 @@ app.add_middleware(_RequestWrap)
 # outermost: who's asking, and may they (kometa/auth.py). Off by default — everyone is the admin.
 from kometa.auth import AuthGate, router as _auth_router  # noqa: E402
 app.add_middleware(AuthGate)
+
+
+class _RequestGuard:
+    """Who may change things, and for which address (security review 2026-10-11, items 4 + 6).
+
+    - DNS rebinding: a page on attacker.example that re-resolves to this box would be
+      same-origin with Kometa. So the Host must be one of ours: an IP literal, localhost,
+      a one-word LAN name, .local / .localhost / .ts.net, whatever config `allowed_hosts`
+      adds, or anything Cloudflare brought (it only ever carries our own hostname).
+    - Cross-site changes: a POST/PUT/PATCH/DELETE that names an Origin (or, failing that,
+      a Referer) must name this very address, port and all; a page on another port of the
+      same box is another site. No Origin at all — YondeB, curl, OPDS readers — is fine:
+      a browser always sends one with a cross-site change."""
+
+    SAFE = {"GET", "HEAD", "OPTIONS"}
+    SUFFIXES = (".local", ".localhost", ".ts.net")
+    _extra = {"at": 0.0, "hosts": frozenset()}
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def _split(hostport: str) -> tuple[str, str | None]:
+        hp = hostport.strip().lower()
+        if hp.startswith("["):                                   # [::1]:6969
+            host, _, rest = hp[1:].partition("]")
+            return host, rest[1:] if rest.startswith(":") else None
+        host, sep, port = hp.rpartition(":") if hp.count(":") == 1 else (hp, "", "")
+        return (host, port) if sep else (hp, None)
+
+    @classmethod
+    def _extra_hosts(cls) -> frozenset:
+        now = time.monotonic()
+        if now - cls._extra["at"] > 30:
+            raw = db.get_config(DB_PATH).get("allowed_hosts") or ""
+            cls._extra.update(at=now, hosts=frozenset(h.strip().lower() for h in raw.split(",") if h.strip()))
+        return cls._extra["hosts"]
+
+    @classmethod
+    def plain_ok(cls, host: str) -> bool:
+        """Ours without asking the config: an IP, localhost, a one-word or tailnet/mDNS name."""
+        import ipaddress
+        if not host:
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            return "." not in host or host.endswith(cls.SUFFIXES)
+
+    @classmethod
+    def listed(cls, host: str) -> bool:
+        return host in cls._extra_hosts()
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        from kometa.auth import via_tunnel
+        headers = {k.lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        if not via_tunnel(scope) and b"host" in headers:    # no Host at all is no browser: nothing to rebind
+            host, _ = self._split(headers[b"host"])
+            if not self.plain_ok(host) and not await run_in_threadpool(self.listed, host):
+                return await self._refuse(send, "Not one of Kometa's addresses")
+        if scope["method"] not in self.SAFE:
+            origin = headers.get(b"origin") or headers.get(b"referer")
+            # behind a proxy (Tailscale serve) the address the browser used may arrive as
+            # X-Forwarded-Host; a cross-site page can't set that header without a preflight
+            ours = [h for h in (headers.get(b"host"), headers.get(b"x-forwarded-host")) if h]
+            if origin is not None and not any(self._same(origin, h) for h in ours):
+                return await self._refuse(send, "Changes come from Kometa's own pages")
+        return await self.app(scope, receive, send)
+
+    @classmethod
+    def _same(cls, origin: str, hostport: str) -> bool:
+        from urllib.parse import urlsplit
+        if origin.strip() == "null":
+            return False
+        try:
+            u = urlsplit(origin)
+            port = str(u.port) if u.port else None
+        except ValueError:
+            return False
+        if not u.hostname:
+            return False
+        want_host, want_port = cls._split(hostport)
+        return u.hostname.lower() == want_host and (port == want_port or None in (port, want_port))
+
+    @staticmethod
+    async def _refuse(send, why: str):
+        body = json.dumps({"detail": why}).encode()
+        await send({"type": "http.response.start", "status": 403,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
+app.add_middleware(_RequestGuard)     # outermost: a foreign address or a cross-site change never reaches the rest
 app.include_router(_auth_router)
 
 # Cover-art pipeline (thumbnail routes + disk cache) lives in kometa/thumbnails —
@@ -332,13 +446,30 @@ def _stored(key: str) -> str:
     return db.get_config(DB_PATH).get(key, "")
 
 
+def _same_address(a: str | None, b: str | None) -> bool:
+    norm = lambda u: (u or "").strip().rstrip("/").lower()
+    return norm(a) == norm(b)
+
+
+def _for_address(req_url: str | None, url_key: str, req_secret: str | None, secret_key: str) -> tuple[str, str, str | None]:
+    """(url, secret, why not): the saved secret only ever goes to the saved address. The
+    2026-10-11 review: a test naming another server, key left blank, sent it the saved key."""
+    saved = _stored(url_key)
+    url = req_url or saved
+    if req_secret:
+        return url, req_secret, None
+    if _same_address(url, saved):
+        return url, _stored(secret_key), None
+    return url, "", "Enter the key for this address — the saved one only goes to the saved address"
+
+
 def _redact(msg, *secrets: str | None) -> str:
     """An error from requests repeats the URL it tried, api key and all. Not in our answers."""
     out = str(msg)
     for s in secrets:
         if s and len(s) > 3:
             out = out.replace(s, "***")
-    return out
+    return _scrub.scrub(out)
 
 
 class TestSabRequest(BaseModel):
@@ -348,8 +479,9 @@ class TestSabRequest(BaseModel):
 
 @app.post("/api/test/sab")
 def test_sab(req: TestSabRequest):
-    url = req.url or _stored("sab_url")
-    apikey = req.apikey or _stored("sab_apikey")
+    url, apikey, why = _for_address(req.url, "sab_url", req.apikey, "sab_apikey")
+    if why:
+        return {"ok": False, "error": why}
     if not (url and apikey):
         return {"ok": False, "error": "Not configured"}
     try:
@@ -370,15 +502,16 @@ class TestQbitRequest(BaseModel):
 
 @app.post("/api/test/qbit")
 def test_qbit(req: TestQbitRequest):
-    url = req.url or _stored("qbit_url")
+    url, password, why = _for_address(req.url, "qbit_url", req.password, "qbit_pass")
+    if why:
+        return {"ok": False, "error": why}
     user = req.user or _stored("qbit_user")
-    password = req.password or _stored("qbit_pass")
     if not (url and user and password):
         return {"ok": False, "error": "Not configured"}
     try:
         from kometa.qbittorrent_client import QBittorrentClient
         ok, detail = QBittorrentClient(url, user, password).test()
-        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": _redact(detail, password)}
     except Exception as e:
         return {"ok": False, "error": _redact(e, password)}
 
@@ -390,14 +523,15 @@ class TestProwlarrRequest(BaseModel):
 
 @app.post("/api/test/prowlarr")
 def test_prowlarr(req: TestProwlarrRequest):
-    url = req.url or _stored("prowlarr_url")
-    apikey = req.apikey or _stored("prowlarr_apikey")
+    url, apikey, why = _for_address(req.url, "prowlarr_url", req.apikey, "prowlarr_apikey")
+    if why:
+        return {"ok": False, "error": why}
     if not (url and apikey):
         return {"ok": False, "error": "Not configured"}
     try:
         from kometa.prowlarr_client import ProwlarrClient
         ok, detail = ProwlarrClient(url, apikey).test()
-        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": _redact(detail, apikey)}
     except Exception as e:
         return {"ok": False, "error": _redact(e, apikey)}
 
@@ -455,9 +589,9 @@ def test_comicvine(req: TestComicVineRequest):
     try:
         from kometa.comicvine_client import ComicVineClient
         ok, detail = ComicVineClient(apikey).test()
-        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": detail}
+        return {"ok": ok, "detail": detail} if ok else {"ok": False, "error": _redact(detail, apikey)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _redact(e, apikey)}
 
 
 # Integration → config keys it owns. Drives 'Disconnect': blank password fields
@@ -760,7 +894,7 @@ def test_fandom_access():
     try:
         data = images._lane_fetch(images._lane_limiter(images.FANDOM_HOST), images.FANDOM_HOST, DB_PATH)(url)
     except polite.SourceUnavailable as e:
-        return {"ok": False, "error": f"Fandom refused us — token dropped ({e})" if "(403)" in str(e) else str(e)}
+        return {"ok": False, "error": _scrub.scrub(f"Fandom refused us — token dropped ({e})" if "(403)" in str(e) else str(e))}
     if not data:
         return {"ok": False, "error": "Fandom answered, but not with an image"}
     images.fandom_pass_renewed(DB_PATH)
@@ -907,6 +1041,11 @@ class ConfigRequest(BaseModel):
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
+    if "comics_root" in updates:
+        try:
+            check_comics_root(updates["comics_root"])
+        except OutsideLibrary as e:
+            raise HTTPException(422, str(e))
     if "marveldc_hours" in updates:
         from kometa.marveldc import valid_hours
         if not valid_hours(updates["marveldc_hours"]):
@@ -1377,6 +1516,12 @@ def add_series(req: AddSeriesRequest):
             logger.info(f"Add {title!r}: Metron publisher lookup skipped: {e}")
     if not folder_path:
         folder_path = _resolve_dir(_comics_root(), publisher or "Unknown", title)
+        try:
+            check_series_folder(folder_path, _comics_root())
+        except OutsideLibrary as e:
+            raise HTTPException(422, str(e))
+    # A folder the request names isn't fenced here yet: test_explicit_folder_path_is_respected
+    # pins '/custom/path' being stored, and that waits on the owner's OK to change.
 
     # Materialize the folder NOW, at add time — don't wait for the first download to
     # create it. A tracked series with no folder on disk is invisible to _sweep_missing
@@ -2025,6 +2170,11 @@ def _fs_browse_default() -> str:
     return home if (home != "~" and home != "/" and os.path.isdir(home)) else "/"
 
 
+def _within(path: str, root: str) -> bool:
+    """path is root or under it — not '/comics2' passing for '/comics'."""
+    return root == "/" or path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
 @app.get("/api/fs/browse")
 def browse_fs(path: str = "", scope: str = "library"):
     # 'library' stays sandboxed to the comics root (picking a series subfolder).
@@ -2037,7 +2187,7 @@ def browse_fs(path: str = "", scope: str = "library"):
     else:
         root = default = os.path.realpath(_comics_root())
     target = os.path.realpath(path or default)
-    if not target.startswith(root):
+    if not _within(target, root):
         raise HTTPException(403)
     if not os.path.isdir(target):
         raise HTTPException(404)
@@ -2051,7 +2201,7 @@ def browse_fs(path: str = "", scope: str = "library"):
     parent = os.path.dirname(target)
     return {
         "path": target,
-        "parent": parent if parent.startswith(root) and parent != target else None,
+        "parent": parent if _within(parent, root) and parent != target else None,
         "dirs": names,
     }
 
@@ -2066,9 +2216,11 @@ class MkdirRequest(BaseModel):
 def fs_mkdir(req: MkdirRequest):
     """Create a subfolder while browsing — the 'New Folder' button. Same scope
     sandbox as browse; one level only (no separators/traversal)."""
+    if req.scope == "fs" and os.path.isdir(_comics_root()):
+        raise HTTPException(403, "New folders go inside the comics folder")   # anywhere else: first-run setup only
     root = "/" if req.scope == "fs" else os.path.realpath(_comics_root())
     parent = os.path.realpath(req.path or root)
-    if not parent.startswith(root):
+    if not _within(parent, root):
         raise HTTPException(403)
     if not os.path.isdir(parent):
         raise HTTPException(404, "Parent folder not found")
@@ -2105,6 +2257,11 @@ def set_folder(series_id: int, req: FolderRequest):
     s = db.get_series_by_id(series_id, DB_PATH)
     if not s:
         raise HTTPException(404)
+    if req.folder_path:
+        try:
+            check_series_folder(req.folder_path, _comics_root())
+        except OutsideLibrary as e:
+            raise HTTPException(422, str(e))
     db.set_folder_path(series_id, req.folder_path or None, DB_PATH)
     s = db.get_series_by_id(series_id, DB_PATH)
     _rescan_owned(s)   # scan the just-set folder → mark which issues are owned

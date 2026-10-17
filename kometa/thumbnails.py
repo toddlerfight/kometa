@@ -86,20 +86,21 @@ def _image_or_none(url: str, max_age: int = 2592000):
     fetched at most once. Cache-Control lets the browser keep it too, so flipping
     pages doesn't re-hit this endpoint at all. Returns None instead of raising —
     callers chain fallback sources."""
-    if not url:
+    from kometa import images
+    if not url or not images.cover_url_ok(url):
         return None
     headers = {"Cache-Control": f"public, max-age={max_age}"}
     path = _cache_path(url)
     cached = _read_cached(path)
-    if cached:                                      # cache hit — serve from disk
+    if cached and images._is_image(cached):         # cache hit — serve from disk
         return Response(content=cached, media_type=_img_ct(cached), headers=headers)
     try:                                            # miss — fetch once, store, serve
         r = _img_session.get(url, timeout=8)
-        if r.ok and r.content:
+        # only ever an image, typed by its own bytes: the upstream Content-Type went
+        # straight through, so a page served as text/html came back from Kometa's origin
+        if r.ok and r.content and len(r.content) <= images.MAX_IMAGE_BYTES and images._is_image(r.content):
             _write_cached(path, r.content)
-            return Response(content=r.content,
-                            media_type=r.headers.get("content-type", "image/jpeg"),
-                            headers=headers)
+            return Response(content=r.content, media_type=_img_ct(r.content), headers=headers)
     except Exception:
         pass
     return None

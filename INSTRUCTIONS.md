@@ -565,6 +565,25 @@ Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
   Panels → `enable on` → sign in on the iPad home-screen web app (it shows the sign-in page) → only then expose
   it (Cloudflare tunnel hostname + Access on the web app, never /api or /opds).
 
+## Request guard, path fence, cover fetches (2026-10-17)
+
+The 2026-10-11 security review, closed out. Code: kometa/main.py `_RequestGuard`, kometa/sources.py
+`check_series_folder` / `check_comics_root`, kometa/images.py `cover_url_ok`, kometa/scrub.py.
+- **Addresses:** a request whose Host is a domain name Kometa doesn't know gets 403 (DNS rebinding). Known:
+  any IP, localhost, a one-word name, `.local` / `.localhost` / `.ts.net`, and anything through the tunnel.
+  **A new domain name for Kometa** (not through Cloudflare): add it to config `allowed_hosts`, comma-separated
+  (`PATCH /api/config {"allowed_hosts": "comics.example.org"}`), picked up within 30 s.
+- **Changes from pages:** a POST/PUT/PATCH/DELETE that carries an Origin (or Referer) must name the address
+  it was sent to (Host or X-Forwarded-Host, port and all). No Origin = YondeB, curl, OPDS apps: fine.
+- **Folders:** a series folder is at least Publisher/Series inside the comics root, never `_trash` or hidden;
+  the comics root can't be `/`, a system folder, or hold /data or the code.
+- **Covers:** catalogue-cover fetches only go to `images.COVER_HOSTS` (built from the hosts the library's covers
+  actually came from) and only ever serve image bytes. A blank cover from a new source: look for
+  "Cover URL refused (not a cover host)" in the logs and add the host there.
+- **Keys:** HTTP error details, test results and every log line go through `scrub()`; Prowlarr's key is a header.
+- **Inline handlers:** a value inside `onclick="…"` is `${jsArg(x)}` (reader.js), never
+  `JSON.stringify(x).replace(/"/g, '&quot;')`.
+
 ## Public access: Cloudflare Tunnel + Access (2026-10-14)
 
 Kometa is reachable away from home at `https://$KOMETA_PUBLIC_HOST` (real name in `.env`, never here).

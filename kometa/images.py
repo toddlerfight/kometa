@@ -348,6 +348,32 @@ def ext_allowed(url: str) -> bool:
             and u.path.startswith(_EXT_PATH_PREFIX.get(host, "/")))
 
 
+# Every host a cover in the library came from (census of the live database, 2026-10-17).
+# The catalogue-cover fetchers take URLs from stored records — and a variant pick's URL
+# came straight from the client — so they only go to these; anything else was a way to
+# read internal services through Kometa (security review 2026-10-11, item 3).
+COVER_HOSTS = frozenset(EXT_HOSTS) | {
+    "static.wikia.nocookie.net", "comicbookroundup.com", "cdn.marvel.com", "www.marvel.com",
+    "i.annihil.us", "images.penguinrandomhouse.com", "covers.openlibrary.org", "files1.comics.org",
+    "assets.hardcover.app", "hardcover.app", "icv2.com", "leagueofcomicgeeks.com", "getcomics.org"}
+_COVER_SUFFIXES = (".fandom.com", ".wikia.nocookie.net")
+
+
+def cover_url_ok(url: str | None) -> bool:
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url or "")
+    except Exception:
+        return False
+    host = (u.hostname or "").lower()
+    if u.scheme not in ("http", "https") or not host:
+        return False
+    if not (host in COVER_HOSTS or host.endswith(_COVER_SUFFIXES)):
+        logger.info(f"Cover URL refused (not a cover host): {host}")
+        return False
+    return u.path.startswith(_EXT_PATH_PREFIX.get(host, "/"))
+
+
 def ext_key(url: str) -> str:
     import hashlib
     return "ext/" + hashlib.sha1(url.encode()).hexdigest()

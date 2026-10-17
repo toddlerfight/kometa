@@ -25,6 +25,50 @@ def comics_root() -> str:
     return db.get_config(DB_PATH).get("comics_root") or os.environ.get("COMICS_ROOT") or "/comics"
 
 
+class OutsideLibrary(ValueError):
+    """A path Kometa won't act on: the 2026-10-11 security review found any folder path,
+    and the comics root itself, could be pointed anywhere in the container — and Remove,
+    tidy and placement then act on whatever is there."""
+
+
+def check_series_folder(path: str, root: str | None = None) -> str:
+    """A series folder sits at least Publisher/Series deep inside the comics root, and not
+    in the trash or a hidden folder: the root or a publisher folder would hand Remove and
+    tidy everything under it. Returns the path as given; raises OutsideLibrary."""
+    r = os.path.realpath(root or comics_root())
+    rel = os.path.relpath(os.path.realpath(path), r)
+    parts = rel.split(os.sep)
+    if rel == "." or parts[0] == ".." or os.path.isabs(rel):
+        raise OutsideLibrary(f"{path} isn't inside the comics folder")
+    if len(parts) < 2:
+        raise OutsideLibrary(f"{path} is a publisher folder, not a series folder")
+    if parts[0] == "_trash" or any(p.startswith(".") for p in parts):
+        raise OutsideLibrary(f"{path} is in the trash or a hidden folder")
+    return path
+
+
+_NEVER_ROOTS = ("/proc", "/sys", "/dev", "/etc", "/usr", "/bin", "/sbin", "/lib", "/boot", "/root")
+_NEVER_CONTAIN = ("/var", "/home", "/Users", "/Volumes", "/mnt", "/media")   # a library may live under these, not be one
+
+
+def check_comics_root(path: str) -> str:
+    """The comics root: an existing folder that isn't '/', the app's data or code, or a
+    system folder — and doesn't contain them either. Returns the path; raises OutsideLibrary."""
+    p = os.path.realpath(path)
+    if p == "/" or not os.path.isdir(p):
+        raise OutsideLibrary(f"{path} isn't a folder Kometa can use")
+    code = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    data = os.path.dirname(os.path.realpath(db.DB_PATH))
+    for g in (code, data, *_NEVER_ROOTS):
+        g = os.path.realpath(g)
+        if p == g or p.startswith(g + os.sep) or g.startswith(p + os.sep):
+            raise OutsideLibrary(f"{path} overlaps {g}")
+    for g in _NEVER_CONTAIN:
+        if p == os.path.realpath(g):
+            raise OutsideLibrary(f"{path} is a whole system folder")
+    return path
+
+
 def staging_dir() -> str:
     """Where downloads land for validation before being filed into the library.
     Derived as a hidden child of the comics root so it shares a filesystem (moves

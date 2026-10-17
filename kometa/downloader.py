@@ -163,11 +163,15 @@ def _download_cover(cover) -> bytes | None:
             return None
     url = cover.get("large") if isinstance(cover, dict) and cover.get("large") else \
         S3_LARGE.format(cover["id"] if isinstance(cover, dict) else cover)
+    from kometa import images
+    if not images.cover_url_ok(url):            # a variant pick's URL came from the client
+        return None
     try:
         r = requests.get(url, timeout=30)
     except requests.RequestException:
         return None
-    return r.content if r.status_code == 200 and r.content else None
+    ok = r.status_code == 200 and r.content and len(r.content) <= images.MAX_IMAGE_BYTES and images._is_image(r.content)
+    return r.content if ok else None            # page 1 of a comic file: an image or nothing
 
 
 def _walk_dir_pages(d: str):
@@ -241,6 +245,10 @@ def _extract_rar_into(path: str, tmpdir: str) -> bool:
             shutil.rmtree(d, ignore_errors=True)
 
 
+MAX_PAGE_ENTRY_BYTES = 256 * 1024 * 1024        # one page of a comic, uncompressed
+MAX_PACK_ENTRY_BYTES = 3 * 1024 * 1024 * 1024    # one comic out of a pack (Prowlarr's filter stops packs at 1.5 GB)
+
+
 def _read_archive_pages(path: str, extracted_dir: str | None = None):
     """Yield (name, bytes) for every entry, sorted by name.
 
@@ -269,6 +277,11 @@ def _read_archive_pages(path: str, extracted_dir: str | None = None):
     else:
         with zipfile.ZipFile(path, 'r') as src:
             for name in sorted(src.namelist()):
+                # read whole into memory: a deflate bomb declaring gigabytes would take the
+                # container down. Refused, not skipped — a rebuild that dropped a page would
+                # be a worse file (security review 2026-10-11, item 8)
+                if src.getinfo(name).file_size > MAX_PAGE_ENTRY_BYTES:
+                    raise RuntimeError(f"{os.path.basename(path)}: {name} declares {src.getinfo(name).file_size} bytes — not a page")
                 yield name, src.read(name)
 
 
@@ -1664,8 +1677,11 @@ def _extract_pack(zip_path: str, dest_dir: str, series_title: str | None = None)
                     logger.info(f"Pack: skipping {fname} — already in library")
                     continue
                 out = os.path.join(dest_dir, fname)
+                if zf.getinfo(name).file_size > MAX_PACK_ENTRY_BYTES:
+                    logger.warning(f"Pack: skipping {name} — declares {zf.getinfo(name).file_size} bytes, not a comic")
+                    continue
                 with zf.open(name) as src, open(out, 'wb') as dst:
-                    dst.write(src.read())
+                    shutil.copyfileobj(src, dst, 1 << 20)       # streamed: a 700 MB issue isn't held in memory
                 out = _fix_extension(out)
                 if canonical:
                     have.add(num)

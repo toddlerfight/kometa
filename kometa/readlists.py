@@ -806,11 +806,21 @@ def api_delete_item(list_id: int, item_id: int):
         raise HTTPException(404, "No such entry in this list")
 
 
+# A .cbl is a few hundred KB at the very most (the biggest event list on the CBL repo is ~400 KB)
+MAX_CBL_BYTES = 5 * 1024 * 1024
+
+
 @router.post("/api/readlists/import")
 async def api_import_body(request: Request, name: str | None = None):
     """The .cbl's XML as the request body (the page reads the file and posts
-    its text — no multipart, which the image doesn't ship)."""
-    data = await request.body()
+    its text — no multipart, which the image doesn't ship). Capped: the body
+    was read whole, whatever its size."""
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf += chunk
+        if len(buf) > MAX_CBL_BYTES:
+            raise HTTPException(413, "That's too big to be a reading list")
+    data = bytes(buf)
     try:
         lid = import_cbl(data, source_ref=name)
     except CblError as e:
@@ -818,18 +828,58 @@ async def api_import_body(request: Request, name: str | None = None):
     return {"id": lid}
 
 
+def _public_host(host: str, port: int, resolve=None) -> bool:
+    """Every address the name resolves to is a public one: not this box, the LAN, the
+    tailnet or a link-local metadata address."""
+    import ipaddress
+    import socket
+    resolve = resolve or socket.getaddrinfo
+    try:
+        addrs = {ai[4][0] for ai in resolve(host, port, type=socket.SOCK_STREAM)}
+    except OSError:
+        return False
+    return bool(addrs) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addrs)
+
+
+def fetch_public(url: str, max_bytes: int, session=None, resolve=None, hops: int = 3) -> bytes:
+    """GET an https URL on the public internet, at most max_bytes, following at most `hops`
+    redirects — each one checked the same way. The importer used to fetch anything: an
+    internal address answered, and its status and error text came back (a port scanner)."""
+    import requests
+    from urllib.parse import urljoin, urlsplit
+    session = session or requests
+    for _ in range(hops + 1):
+        u = urlsplit(url)
+        if u.scheme != "https" or not u.hostname:
+            raise ValueError("Only https:// links can be imported")
+        if not _public_host(u.hostname, u.port or 443, resolve):
+            raise ValueError("That address isn't on the public internet")
+        with session.get(url, timeout=20, stream=True, allow_redirects=False) as r:
+            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+                url = urljoin(url, r.headers["location"])
+                continue
+            r.raise_for_status()
+            buf = bytearray()
+            for chunk in r.iter_content(65536):
+                buf += chunk
+                if len(buf) > max_bytes:
+                    raise ValueError("That's too big to be a reading list")
+            return bytes(buf)
+    raise ValueError("Too many redirects")
+
+
 @router.post("/api/readlists/import-url")
 def api_import_url(req: ImportUrlRequest):
     """A raw .cbl link — GitHub 'blob' links are rewritten to raw."""
-    import requests
     url = re.sub(r"^https://github\.com/([^/]+/[^/]+)/blob/", r"https://raw.githubusercontent.com/\1/", req.url.strip())
     try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
+        body = fetch_public(url, MAX_CBL_BYTES)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(400, f"Couldn't fetch that: {e}")
     try:
-        lid = import_cbl(r.content, source_ref=req.url.strip())
+        lid = import_cbl(body, source_ref=req.url.strip())
     except CblError as e:
         raise HTTPException(400, str(e))
     return {"id": lid}

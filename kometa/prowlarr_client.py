@@ -57,6 +57,8 @@ class ProwlarrClient:
         self.apikey = apikey
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "kometa/1.0"
+        # the key as a header, not ?apikey=: a failed request's error repeats its URL
+        self.session.headers["X-Api-Key"] = apikey
 
     def test(self) -> tuple[bool, str]:
         """Verify the server answers and the API key is valid. /api/v1/indexer is
@@ -65,7 +67,7 @@ class ProwlarrClient:
         try:
             r = self.session.get(
                 f"{self.base_url}/api/v1/indexer",
-                params={"apikey": self.apikey}, timeout=15,
+                timeout=15,
             )
             if r.status_code == 401:
                 return False, "Unauthorized — check the API key"
@@ -83,7 +85,7 @@ class ProwlarrClient:
         try:
             r = self.session.get(
                 f"{self.base_url}/api/v1/search",
-                params={"query": query, "type": "search", "limit": limit, "apikey": self.apikey,
+                params={"query": query, "type": "search", "limit": limit,
                         **({"categories": list(categories)} if categories else {})},
                 timeout=30,
             )

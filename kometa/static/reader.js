@@ -18,6 +18,13 @@ const _ICON_PATHS = {
   full: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   dot: '<circle cx="12" cy="12" r="6"/>',
 };
+// A value for an inline handler (onclick="f(${jsArg(x)})"): JSON, then escaped for the
+// attribute. Escaping only the quotes let a title holding a literal &quot; decode back
+// into a real quote before the handler ran, and break out of it (security review 2026-10-11).
+function jsArg(v) {
+  return String(JSON.stringify(v) ?? 'null').replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 function ico(name, open = false) {
   return `<svg class="ico ico-${name}${open ? ' ico-open' : ''}" viewBox="0 0 24 24" aria-hidden="true">${_ICON_PATHS[name]}</svg>`;
 }
@@ -703,10 +710,10 @@ function _bookTile(b, seriesTitle, extra = {}, ctx = {}) {
   const p = b.progress;
   const mark = p?.completed ? `<div class="shelf-tile-done" aria-label="Read">${ico('check')}</div>`
     : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
-  const go = `navigate('read', ${JSON.stringify({ book: b.id, ...extra }).replace(/"/g, "'")})`;
-  const actions = JSON.stringify({ book_id: b.id, series: seriesTitle, label: b.label, number: b.number ?? null,
+  const go = `navigate('read', ${jsArg({ book: b.id, ...extra })})`;
+  const actions = jsArg({ book_id: b.id, series: seriesTitle, label: b.label, number: b.number ?? null,
     series_id: ctx.series_id || null, shelf_id: ctx.shelf_id || null, dismissable: false,
-    completed: !!(p && p.completed), page_count: b.page_count || null }).replace(/"/g, '&quot;');
+    completed: !!(p && p.completed), page_count: b.page_count || null });
   return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" id="od-${b.id}" tabindex="0" role="button" title="${esc(seriesTitle)} ${esc(b.label)}"
       onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
     <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
@@ -1215,7 +1222,7 @@ async function renderReadList(id) {
     ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${_rlStarted(l) ? 'Continue' : 'Start'}</button>`
       : (done && books.length ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${books[0].id}, list: ${id}})">Read again</button>` : '')}
-    <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${JSON.stringify(l.name).replace(/"/g, '&quot;')})">Remove</button>`;
+    <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${jsArg(l.name)})">Remove</button>`;
   api.get(`/api/readlists/${id}/get-missing`).then(st => { if (st && st.running) _rlPollGetMissing(id); }).catch(() => {});
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
       aria-selected="${_rlTab === t}" onclick="setRlTab('${t}', ${id})" onkeydown="if(event.key==='Enter'||event.key===' ')setRlTab('${t}', ${id})">${t}</div>`).join('');
@@ -1231,7 +1238,7 @@ async function renderReadList(id) {
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
       tiles.push(`<div class="issue-tile rl-gap" id="rl-item-${e.item_id}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
         <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}
-          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${JSON.stringify(label).replace(/"/g, '&quot;')}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">${DOTS}</button></div>
+          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${jsArg(label)}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">${DOTS}</button></div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }

@@ -854,7 +854,7 @@ function _renderBrowseResults(quiet = false) {
   });
 
   const peopleRow = ppl && ppl.people.length ? `<div class="people-row">${ppl.people.map(p => `
-      <button class="person-chip" onclick="_personPick(${JSON.stringify({ id: p.id, name: p.name }).replace(/"/g, '&quot;')})"
+      <button class="person-chip" onclick="_personPick(${jsArg({ id: p.id, name: p.name })})"
         title="${p.count} series on your shelf">
         <span class="person-name">${esc(p.name)}</span>
         <span class="person-roles">${esc(p.roles.slice(0, 3).join(', '))} · ${p.count}</span></button>`).join('')}</div>` : '';
@@ -960,7 +960,7 @@ function _stackCardHtml(g, i) {
   const owned = g.members.reduce((n, m) => n + (m.owned ?? m.book_count ?? 0), 0);
   return `
       <div class="series-card stack-card${_casc(i)}" tabindex="0" role="button"
-        data-stack="${esc(g.key)}" onclick="${go.replace(/"/g, '&quot;')}" onkeydown="if(event.key==='Enter'||event.key===' ')${go.replace(/"/g, '&quot;')}">
+        data-stack="${esc(g.key)}" onclick="${esc(go)}" onkeydown="if(event.key==='Enter'||event.key===' ')${esc(go)}">
         <div class="series-card-img-wrap stack-fan">
           ${covers.map((u, k) => `<img class="series-card-cover stack-cover stack-cover-${k}" src="${esc(u)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`).reverse().join('')}
           <div class="stack-badge">${g.count}</div>${(d => d ? `<div class="series-card-next-release">${_fmtReleaseDate(d)}</div>` : '')(_stackDate(g))}
@@ -1028,7 +1028,7 @@ async function renderOnDeck() {
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tagHtml || tag ? `<span class="od-tag">${tagHtml || esc(tag)}</span>` : ''}
-        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">${DOTS}</button>
+        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${jsArg({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null })})">${DOTS}</button>
         ${dismissable ? `<button class="od-x" title="Mark as read" aria-label="Mark as read" onclick="event.stopPropagation(); _odMarkRead(${c.book_id}, ${c.progress ? c.progress.page : 1})">${ico('x')}</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
@@ -1231,14 +1231,14 @@ function _rowSig(el, payload) { if (el) el.dataset.sig = JSON.stringify(payload)
 function _trendCard(e) {
   const owned = e.owned && e.series_id;
   const go = owned ? `navigate('series-detail', {id: ${e.series_id}})`
-    : `showCatalogueModal(${JSON.stringify({ title: e.metron_title || e.locg_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, locg_series_id: e.locg_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] }).replace(/"/g, '&quot;')})`;
+    : `showCatalogueModal(${jsArg({ title: e.metron_title || e.locg_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, locg_series_id: e.locg_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] })})`;
   const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
   const action = owned ? ''
     : e.metron_series_id
-      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
+      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${jsArg({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true })}, this)">TRACK</button>`
     : e.locg_series_id      // Metron hasn't got it; LOCG has
-      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${JSON.stringify({ locg_id: e.locg_series_id, title: e.locg_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true }).replace(/"/g, '&quot;')}, this)">TRACK</button>`
-      : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(e.series).replace(/"/g, '&quot;')})">FIND</button>`;
+      ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${jsArg({ locg_id: e.locg_series_id, title: e.locg_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true })}, this)">TRACK</button>`
+      : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${jsArg(e.series)})">FIND</button>`;
   return `<div class="series-card rel-card${owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" title="${esc(e.title)} · ${esc(e.publisher || '')}">
     <div class="series-card-img-wrap">${e.cover ? `<img class="series-card-cover" src="${esc(_ext(e.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <div class="series-card-next-release trend-rank">#${e.rank}</div>${action}</div>
@@ -1301,8 +1301,8 @@ async function _loadPicks() {
 // Nothing harvested yet = no row at all; they turn up on their own as the data lands.
 function _readerCard(it) {
   const title = it.year ? `${it.name} (${it.year})` : it.name;
-  const sheet = JSON.stringify({ title: it.name, publisher: it.publisher_name || it.publisher || '', year: it.year,
-    why: [it.label] }).replace(/"/g, '&quot;');
+  const sheet = jsArg({ title: it.name, publisher: it.publisher_name || it.publisher || '', year: it.year,
+    why: [it.label] });
   // a pick matched to one of YOUR series (kometa/community_covers.py) opens it; the rest open the catalogue sheet
   const go = it.series_id ? `navigate('series-detail', {id: ${it.series_id}})` : `showCatalogueModal(${sheet})`;
   const src = !it.cover ? '' : it.cover.startsWith('http') ? `/api/img?u=${encodeURIComponent(it.cover)}` : it.cover;
@@ -1310,7 +1310,7 @@ function _readerCard(it) {
                     : '<div class="series-card-cover rl-nocover"></div>';
   return `<div class="series-card rel-card${it.owned ? '' : ' rel-gap'}" tabindex="0" role="button" onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}" title="${esc(it.label || title)}">
     <div class="series-card-img-wrap">${cover}
-      ${it.owned ? '' : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${JSON.stringify(it.name).replace(/"/g, '&quot;')})">FIND</button>`}</div>
+      ${it.owned ? '' : `<button class="od-menu rel-get" title="Find it in the catalogue" onclick="event.stopPropagation(); showAddWizard(${jsArg(it.name)})">FIND</button>`}</div>
     <div class="series-card-footer"><div class="series-card-title">${esc(it.name)}</div>
       <div class="series-card-count" style="color:var(--tq)">${it.supporters}</div></div>
     <div class="series-card-publisher u-truncate">${esc(it.publisher_name || it.publisher || '')}</div>
@@ -1368,8 +1368,8 @@ function _gapCard(r) {
 // the catalogue's cover, and Track puts it on the shelf (pull list off).
 function _catalogueCard(r) {
   const why = (r.why || []).join(' · ');
-  const payload = JSON.stringify({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: true }).replace(/"/g, '&quot;');
-  const open = `showCatalogueModal(${JSON.stringify(r).replace(/"/g, '&quot;')})`;
+  const payload = jsArg({ metron_id: r.metron_series_id, title: r.title, year_began: r.year || null, on_pull_list: true });
+  const open = `showCatalogueModal(${jsArg(r)})`;
   return `<div class="series-card rel-card rel-gap" tabindex="0" role="button" title="${esc(r.title)}${r.year ? ' (' + r.year + ')' : ''}" onclick="${open}" onkeydown="if(event.key==='Enter'||event.key===' ')${open}">
     <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(_ext(r.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <button class="od-menu rel-get" title="Track this series and put it on the pull list" aria-label="Track" onclick="event.stopPropagation(); _relTrack(${payload}, this)">TRACK</button></div>
@@ -1547,8 +1547,8 @@ async function showBookModal(c) {
 function showCatalogueModal(r) {
   const why = (r.why || []).filter(Boolean);
   const anchor = r.metron_series_id ? { metron_id: r.metron_series_id } : r.locg_series_id ? { locg_id: r.locg_series_id } : null;
-  const payload = JSON.stringify({ ...anchor, title: r.metron_title || r.title, publisher_name: r.publisher || '',
-    year_began: r.year || null, on_pull_list: true }).replace(/"/g, '&quot;');
+  const payload = jsArg({ ...anchor, title: r.metron_title || r.title, publisher_name: r.publisher || '',
+    year_began: r.year || null, on_pull_list: true });
   document.getElementById('modal').classList.add('modal-wide');
   showModal(`
     <div class="issue-modal-layout">
@@ -1564,7 +1564,7 @@ function showCatalogueModal(r) {
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Close</button>
       ${anchor ? `<button class="btn btn-primary" onclick="closeModal(); _relTrack(${payload}, this)">Track series</button>`
-        : `<button class="btn btn-primary" onclick="closeModal(); showAddWizard(${JSON.stringify(r.title).replace(/"/g, '&quot;')})">Find in catalogue</button>`}
+        : `<button class="btn btn-primary" onclick="closeModal(); showAddWizard(${jsArg(r.title)})">Find in catalogue</button>`}
     </div>`);
 }
 
@@ -5415,7 +5415,7 @@ function _renderIssueDetails(desc, credits, community) {
     }
     // a name with a Metron id is a door: tap it for everything by that person
     const person = c => c.metron_creator_id
-      ? `<button class="credit-link" onclick="showCreatorModal(${c.metron_creator_id}, ${JSON.stringify(c.name).replace(/"/g, '&quot;')})">${esc(c.name)}</button>`
+      ? `<button class="credit-link" onclick="showCreatorModal(${c.metron_creator_id}, ${jsArg(c.name)})">${esc(c.name)}</button>`
       : esc(c.name);
     html += '<div class="issue-modal-credits">' +
       Object.entries(grouped).map(([role, people]) =>
