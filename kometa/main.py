@@ -2494,7 +2494,8 @@ def get_issue_locg_details(series_id: int, number: float):
     # what readers and critics say (LOCG, ComicBookRoundup, Hardcover, Open Library) —
     # the stored snapshot, never a fetch on open
     row = record.get_issue(series_id, number, DB_PATH) or {}
-    return {"desc": d.get("desc", ""), "credits": d.get("credits", []), "source": d.get("source"), "record": d.get("record"),
+    from kometa.related import with_creator_ids
+    return {"desc": d.get("desc", ""), "credits": with_creator_ids(d.get("credits", []), DB_PATH), "source": d.get("source"), "record": d.get("record"),
             "store_date": d.get("store_date") or issue.get("store_date"),   # YondeB's Issue details header
             "community": row.get("community") or None}
 

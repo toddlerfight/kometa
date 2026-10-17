@@ -674,6 +674,38 @@ def creator_sections(items: list[dict]) -> list[dict]:
     return [{"role": k, "label": labels[k], "items": v} for k, v in buckets.items() if v]
 
 
+# --- a credit without a Metron id gets the one its name has elsewhere on the shelf -------------
+# 2026-10-17: w0rldtr33 #23 (not out yet) has LOCG's credits — LOCG people ids, no Metron ids —
+# so James Tynion IV and the rest weren't clickable on its sheet, though #20 of the same run
+# credits all four with theirs. A name two ids answer to is left alone: a guess opens the wrong person.
+_IDS_TTL_S = 600
+_ids_by_name: dict = {"at": 0.0, "path": None, "map": {}}
+
+
+def creator_ids_by_name(path=None) -> dict[str, int]:
+    """norm name → Metron creator id, from every shelf series' credits (series_signals)."""
+    path = path or DB_PATH
+    c = _ids_by_name
+    if c["path"] == path and time.time() - c["at"] < _IDS_TTL_S:
+        return c["map"]
+    seen: dict[str, set] = {}
+    for sig in _signals(path).values():
+        for cr in sig.get("creators") or []:
+            if cr.get("id") and cr.get("name"):
+                seen.setdefault(norm_key(cr["name"]), set()).add(int(cr["id"]))
+    c.update(at=time.time(), path=path, map={k: next(iter(v)) for k, v in seen.items() if len(v) == 1})
+    return c["map"]
+
+
+def with_creator_ids(credits: list[dict], path=None) -> list[dict]:
+    """The credits, each without a metron_creator_id given the one its name has on the shelf."""
+    if not credits or all(cr.get("metron_creator_id") for cr in credits):
+        return credits
+    known = creator_ids_by_name(path)
+    return [cr if cr.get("metron_creator_id") or not known.get(norm_key(cr.get("name") or ""))
+            else dict(cr, metron_creator_id=known[norm_key(cr["name"])]) for cr in credits]
+
+
 def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[dict]:
     """Series a creator worked on, from Metron's issue list, grouped: [{metron_series_id,
     title, year, count, cover, roles, cover_only}]. Metron's creator filter answers
