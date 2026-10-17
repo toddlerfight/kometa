@@ -103,34 +103,54 @@ def restore(trashed_path: str, root: str | None = None) -> str:
     return origin
 
 
+def _marked_below(d: str) -> bool:
+    return any(ORIGIN_FILE in files for _, _, files in os.walk(d))
+
+
+def _units(d: str, depth: int = 1):
+    """Each trashed thing once, and never a folder inside one: the first folder down any
+    path that carries an origin marker, however deep it sits. The purge used to assume
+    _trash/<publisher>/<series>/: a series trashed from straight under the root is
+    _trash/<series>/, so its own subfolders were taken for trashed series — unmarked,
+    aged by their own (old) mtime, deleted on the next purge with no week of Undo
+    (2026-10-17). A folder with no marker anywhere in it (the retag job's dated folder,
+    two deep) is still a unit at depth 2, as before."""
+    for e in list(os.scandir(d)):
+        if not e.is_dir(follow_symlinks=False):
+            continue
+        if os.path.exists(os.path.join(e.path, ORIGIN_FILE)):
+            yield e.path
+        elif depth >= 2 and not _marked_below(e.path):
+            yield e.path
+        else:
+            yield from _units(e.path, depth + 1)
+
+
 def purge(root: str | None = None, days: int = TRASH_DAYS, now: float | None = None) -> int:
     """Delete trashed folders older than `days` (by the time they were trashed —
-    the origin file's mtime). Returns how many went. Empty publisher dirs follow."""
+    the origin file's mtime). Returns how many went. Emptied folders follow."""
     root = root or sources.comics_root()
     trash_root = os.path.join(root, TRASH_DIR)
     if not os.path.isdir(trash_root):
         return 0
     now = now or time.time()
     gone = 0
-    for pub in list(os.scandir(trash_root)):
-        if not pub.is_dir():
-            continue
-        for ser in list(os.scandir(pub.path)):
-            if not ser.is_dir():
-                continue
-            stamp = os.path.join(ser.path, ORIGIN_FILE)
-            try:
-                when = os.stat(stamp).st_mtime if os.path.exists(stamp) else ser.stat().st_mtime
-            except OSError:
-                continue
-            if now - when >= days * 86400:
-                shutil.rmtree(ser.path, ignore_errors=True)
-                gone += 1
-                logger.info(f"Purged from trash: {ser.path}")
+    for unit in list(_units(trash_root)):
+        stamp = os.path.join(unit, ORIGIN_FILE)
         try:
-            os.rmdir(pub.path)          # only succeeds when empty — that's the point
+            when = os.stat(stamp).st_mtime if os.path.exists(stamp) else os.stat(unit).st_mtime
         except OSError:
-            pass
+            continue
+        if now - when >= days * 86400:
+            shutil.rmtree(unit, ignore_errors=True)
+            gone += 1
+            logger.info(f"Purged from trash: {unit}")
+    for d, _, _ in sorted(os.walk(trash_root), key=lambda w: -w[0].count(os.sep)):
+        if d != trash_root:
+            try:
+                os.rmdir(d)             # only succeeds when empty — that's the point
+            except OSError:
+                pass
     return gone
 
 

@@ -15,7 +15,7 @@ Bugs from today's waves — **fixed 2026-10-11** (kept for the record):
 Security (LAN + tailnet; Funnel is off — checked):
 - [ ] One request filter: accept changes only from Kometa's own pages / YondeB / curl and only for Kometa's own addresses (CSRF + DNS rebinding).
 - [ ] Test-connection buttons only use stored keys with the stored address (today a request can name another server and get the key).
-- [ ] Fence every folder path and the comics root inside the library; fix the purge depth bug (a folder directly under the root loses its 7-day Undo).
+- [ ] Fence every folder path and the comics root inside the library. (The purge depth bug is fixed, 2026-10-17: a folder trashed from straight under the root keeps its 7-day Undo.)
 - [ ] Variant cover URLs: only known cover hosts, served as images only, `nosniff`.
 - [ ] Scrub `apikey=` / `api_key=` / tokens out of errors, the queue and logs; Prowlarr key as a header.
 - [ ] URL importer: https only, no private addresses, size cap; caps on uploads and zip entries.

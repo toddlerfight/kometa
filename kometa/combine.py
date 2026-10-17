@@ -207,6 +207,8 @@ def _bin(path_: str, root: str, why: str, dbp):
     if not os.path.exists(marker):
         with open(marker, "w") as f:
             f.write(os.path.dirname(path_))
+    else:
+        os.utime(marker)        # the purge's week runs from the newest file binned here, not the first
     with db._connect(dbp) as c:
         c.execute("DELETE FROM read_progress WHERE book_id IN (SELECT id FROM books WHERE path = ?)", (path_,))
         c.execute("DELETE FROM books WHERE path = ?", (path_,))
