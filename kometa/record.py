@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 RECORD_TTL_DAYS = 90          # a full row is refreshed on interaction once this old
 RECORD_MISS_TTL_DAYS = 7      # a row with nothing to ask is asked again after this
+# Metron's volunteers add a new issue's credits days after it's out: a row asked on release
+# day with none is asked again daily for its first CREDITLESS_DAYS (100 Bullets: The US of
+# Anger #4 was asked on 2026-10-14 with no credits and would have kept none for 90 days)
+CREDITLESS_RETRY_DAYS = 1
+CREDITLESS_DAYS = 60
 # what the file's own tags said: a stopgap, shown until a catalogue answers, never a
 # reason not to ask one — and never thrown away for a miss
 STOPGAP_SOURCES = ("comicinfo",)
@@ -347,7 +352,18 @@ def _fresh(row: dict | None) -> bool:
         return False                                            # covers only: the details are still owed
     if row.get("source") == "metron" and row.get("extra") is None:
         return False                                            # filled before 'extra' was kept (2026-10-12): ask once more
+    if not row.get("credits") and _recently_out(row.get("store_date")) and age >= CREDITLESS_RETRY_DAYS:
+        return False                                            # out lately, no credits yet: Metron may have them now
     return age < RECORD_TTL_DAYS
+
+
+def _recently_out(store_date: str | None) -> bool:
+    today = datetime.utcnow().date()
+    try:
+        d = datetime.strptime((store_date or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return today - timedelta(days=CREDITLESS_DAYS) <= d <= today
 
 
 def merge_extra(series_id: int, number: float, fields: dict, path=None) -> None:
@@ -554,10 +570,14 @@ def pending_issues(path=None, limit: int = 200) -> list[dict]:
                    OR (r.source = 'metron' AND r.extra_json IS NULL AND i.owned = 1 AND i.metron_issue_id IS NOT NULL)
                    -- GCD or LOCG stood in while Metron had no id; it has one now, so Metron refills it
                    -- (a series linked to Metron later — the sourcing deck — has LOCG rows with names, no ids)
-                   OR (r.source IN ('gcd', 'locg') AND i.metron_issue_id IS NOT NULL))
+                   OR (r.source IN ('gcd', 'locg') AND i.metron_issue_id IS NOT NULL)
+                   -- out lately and no credits yet: Metron adds them days after release (CREDITLESS_DAYS)
+                   OR (r.source = 'metron' AND (r.credits_json IS NULL OR r.credits_json = '[]')
+                       AND i.store_date BETWEEN date('now', ?) AND date('now')
+                       AND r.fetched_at < datetime('now', ?)))
             -- what you OWN first: 2,528 owned issues sat behind 1,956 unowned record-less ones (2026-10-12)
             ORDER BY s.on_pull_list DESC, i.owned DESC, (r.tracked_series_id IS NOT NULL), i.tracked_series_id, i.number
-            LIMIT ?""", (cutoff, cutoff, limit))]
+            LIMIT ?""", (cutoff, cutoff, f"-{CREDITLESS_DAYS} days", f"-{CREDITLESS_RETRY_DAYS} days", limit))]
 
 
 def trickle(limit: int = TRICKLE_LIMIT, path=None) -> int:
