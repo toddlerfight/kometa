@@ -71,3 +71,25 @@ def test_search_torrent_pack_cascades_past_dead_first_query(monkeypatch):
     winner = search_torrent_pack(fake, "Buffy the Vampire Slayer", series_year=1998)
     assert winner is not None
     assert winner["magnet"] == "magnet:?xt=1998"
+
+
+def test_a_single_issue_is_not_a_pack():
+    from kometa.usenet_client import _pack_score
+    b = "Buffy the Vampire Slayer"
+    assert _pack_score(f"{b} 012 (1998) (digital)", b, 40_000_000) == 0
+    assert _pack_score(f"{b} #12 (1998)", b, 40_000_000) == 0
+    assert _pack_score(f"{b} 001 - 063 (1998-2003)", b, 2_000_000_000) > 10   # scene span, no '#'
+    assert _pack_score(f"{b} (1998-2003) (Digital)", b, 2_000_000_000) > 10   # the run by its dates
+
+
+def test_pack_cascade_does_not_settle_for_a_single(monkeypatch):
+    from kometa.prowlarr_client import search_torrent_pack
+
+    class FakeProwlarr:
+        def search(self, q, protocol=None):
+            if "complete" in q:
+                return []
+            return [{"title": "Buffy the Vampire Slayer 012 (1998) (digital)",
+                     "size": 40_000_000, "seeders": 9, "categories": [], "magnet": "magnet:?xt=12"}]
+
+    assert search_torrent_pack(FakeProwlarr(), "Buffy the Vampire Slayer", series_year=1998) is None

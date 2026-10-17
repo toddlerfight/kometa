@@ -202,6 +202,9 @@ def _nzb_score(nzb_title: str, series: str, issue_number: float) -> int:
 
 _PACK_KEYWORDS_RE = re.compile(r'\b(complete|collection|pack|omnibus|complet)\b', re.I)
 _RANGE_RE = re.compile(r'#\s*\d+\s*[-–]\s*#?\s*\d+')
+# Any issue span, '#' or not ('001-063', '1 - 63', '#1-#10') — but a span that
+# starts with a year is a date ('1998-2003'), not issues.
+_ISSUE_SPAN_RE = re.compile(r'(?<!\d)#?(?!(?:19|20)\d{2}\b)\d{1,4}\s*[-–]\s*#?\d{1,4}(?!\d)')
 PACK_THRESHOLD = 5
 
 
@@ -229,6 +232,13 @@ def _pack_score(nzb_title: str, series: str, size: int, missing: int | None = No
         return 0
     if (len(s) < 4 or s.replace(" ", "").isdigit()) and not (_RANGE_RE.search(nzb_title) or _COMIC_EVIDENCE_RE.search(nzb_title)):
         return 0        # '100', 'X', 'Y' — the name alone proves nothing
+    # One issue number straight after the name, no span, no 'complete': that's a
+    # single, not the run. 'Buffy the Vampire Slayer 012 (1998)' scored a pack's
+    # pass mark and would have eaten the whole series' turn for one book.
+    after = lead[len(s):].split()
+    if (after and re.fullmatch(r"\d{1,4}", after[0]) and not re.fullmatch(r"(?:19|20)\d{2}", after[0])
+            and not _PACK_KEYWORDS_RE.search(nzb_title) and not _ISSUE_SPAN_RE.search(nzb_title)):
+        return 0
     max_size = (missing * _PACK_MB_PER_ISSUE * 1024 ** 2 + 1024 ** 3) if missing else _PACK_DEFAULT_MAX
     if size and size > max_size:
         return 0
