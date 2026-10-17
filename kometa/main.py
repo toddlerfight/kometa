@@ -2628,4 +2628,6 @@ def apply_issue_variants(series_id: int, number: float, req: VariantApplyRequest
         return {"ok": True, "queued": True}
 
 
+import mimetypes  # noqa: E402
+mimetypes.add_type("font/woff2", ".woff2")      # the self-hosted Victor Mono (fonts/) — not application/octet-stream
 app.mount("/", StaticFiles(directory="kometa/static", html=True), name="static")
