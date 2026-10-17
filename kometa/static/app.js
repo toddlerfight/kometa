@@ -433,7 +433,10 @@ function issueStatus(issue) {
   const lt = _localToday(), ut = _usToday();
   if (issue.owned) return 'owned';
   if (issue.ignored) return 'ignored';              // told to stop chasing it — never 'missing'
-  if (!issue.store_date) return 'unknown';
+  // no date = a back issue the catalogue only has a cover date for (Batgirl: Year One, 2003): it's
+  // out, so it's missing — amber, a ↓, on the Missing tab — the way the server already counts it.
+  // Unscheduled future issues carry 9999-01-01, not nothing, and stay upcoming.
+  if (!issue.store_date) return 'missing';
   if (issue.store_date > lt) return 'upcoming';   // future on YOUR calendar
   if (issue.store_date >= ut) return 'today';      // out today (your date) — or still dropping in the US
   return 'missing';                                 // only once it's passed in the US too
