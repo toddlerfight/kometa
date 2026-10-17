@@ -28,7 +28,7 @@ import kometa.db as db
 from kometa.auth import current_reader
 router = APIRouter()
 DB_PATH = db.DB_PATH
-CONTINUE_DAYS = 30
+CONTINUE_DAYS = 28          # Continue reading: books touched in the last four weeks (the owner, 2026-10-18; was 30)
 ROW_LIMIT = 24
 DISCOVERY_MIN = 4          # a discovery row with fewer cards isn't a row
 LIST_RECENT_DAYS = 60      # a list counts as 'being read' if a book in it was read this recently
