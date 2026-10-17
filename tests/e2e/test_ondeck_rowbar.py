@@ -1,5 +1,7 @@
 """On Deck's row bar (app.js _paintOdBar): a stop per row under the title; a tap
 scrolls that row to the top and lights its stop."""
+import re
+
 from playwright.sync_api import expect
 
 
@@ -24,7 +26,7 @@ def test_the_row_bar_jumps_to_a_row_and_lights_it(app):
       return { top: row.getBoundingClientRect().top - app.getBoundingClientRect().top, atBottom };
     }""")
     assert gap["atBottom"] or 0 <= gap["top"] <= 60, gap
-    expect(stops.nth(target)).to_have_class("issue-tab od-stop active")
+    expect(stops.nth(target)).to_have_class(re.compile(r"\bactive\b"))
     # leaving On Deck takes the bar with it
     app.locator('.nav-item[data-view="activity"]').click()
     expect(app.locator("#topbar-sub .od-rowbar")).to_have_count(0)

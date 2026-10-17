@@ -1105,7 +1105,8 @@ async function renderOnDeck() {
 }
 
 // --- On Deck: the row bar -----------------------------------------------------------
-// A strip of row names under the title (2026-10-17): tap one and the page scrolls to
+// A strip of row names under the title (2026-10-17), in the Library's filter chips — the owner
+// wants one nav look on every page and platform: tap one and the page scrolls to
 // that row; the row you're on lights up as you scroll. Read off the rows on the page,
 // so the ones that land later (Because, Readers, Trending, Picks) join as they arrive.
 // Every 'Next on {list}' is one Lists stop, every 'Because…' one Because stop.
@@ -1151,7 +1152,7 @@ function _paintOdBar() {
     let b = have.get(st.label);
     if (!b) {
       b = document.createElement('button');
-      b.className = 'issue-tab od-stop';
+      b.className = 'browse-filter-tab u-label od-stop';      // the Library's chips: one nav look
       b.dataset.label = st.label;
       b.textContent = st.label;
       b.addEventListener('click', () => _odJump(st.label));
