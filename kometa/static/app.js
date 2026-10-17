@@ -1045,7 +1045,7 @@ async function renderOnDeck() {
   const listCard = (c, l) => c.kind === 'gap' ? `
     <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.label)} — not on the shelf" onclick="navigate('readlist', {id: ${l.list_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('readlist', {id: ${l.list_id}})">
       <div class="issue-tile-img">${c.cover ? `<img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="rl-nocover"></div>'}
-        <span class="od-tag amber">${c.position}/${l.total} · not here</span></div>
+        <span class="od-tag">${c.position}/${l.total}</span></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>` : bookCard(c, c.tag || `${c.position}/${l.total}`);   // tag: an issue of a whole-run entry
   // Want to read: what you added, in order. A book card reads; one that isn't here
@@ -1053,11 +1053,11 @@ async function renderOnDeck() {
   const wantCard = c => c.kind === 'book' ? bookCard(c, c.want_series ? 'Next' : null)
     : c.kind === 'gap' ? `
     <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)} — not on the shelf" onclick="showIssueModal(${c.series_id}, ${c.number})" onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${c.series_id}, ${c.number})">
-      <div class="issue-tile-img"><img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag amber">not here</span></div>
+      <div class="issue-tile-img"><img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>` : `
     <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} — nothing unread here" onclick="navigate('series-detail', {id: ${c.series_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail', {id: ${c.series_id}})">
-      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag amber">not here</span></div>
+      <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
       <div class="issue-tile-num">${esc(c.series)}</div>
     </div>`;
   const lastRead = iso => {
@@ -1353,7 +1353,7 @@ function _gapCard(r) {
     <div class="series-card-img-wrap">${r.cover ? `<img class="series-card-cover" src="${esc(_ext(r.cover))}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="series-card-cover rl-nocover"></div>'}
       <button class="od-menu rel-get" title="Get this" aria-label="Get" onclick="event.stopPropagation(); _rlGet(${r.list_id}, ${r.item_id}, this)">GET</button></div>
     <div class="series-card-footer"><div class="series-card-title">${esc(r.title)}</div>
-      <div class="series-card-count" style="color:var(--amb)">not here</div></div>
+      <div class="series-card-count"></div></div>
     <div class="series-card-publisher u-truncate rel-why" title="${esc(why)}">${esc(why)}</div>
   </div>`;
 }

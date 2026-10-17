@@ -2364,7 +2364,7 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-slot { display: contents; }
 .od-slot .od-row, .od-slot + .od-row, .od-row + .od-slot > .od-row:first-child {
   border-top: 1px solid var(--bd); padding-top: var(--sp-lg, 20px); margin-top: var(--sp-lg, 20px); }
-.od-gap .issue-tile-img img, .od-gap .rl-nocover { opacity: .55; }
+/* a list entry you don't have yet wears its cover at full strength, no 'not here' (the owner, 2026-10-17) */
 .od-gap .rl-nocover { width: 100%; height: 100%; }
 .od-more { display: none; margin: var(--sp-lg, 20px) auto 0; }
 /* On Deck's row bar (app.js _paintOdBar; not .od-bar, which is a card's reading-progress line):
