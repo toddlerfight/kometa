@@ -171,6 +171,13 @@ def fill_signals(series_id: int, path=None, detail=None) -> bool:
                     asked = True
             except Exception as e:
                 logger.info(f"Signals: Metron series fallback skipped for {series_id}: {e}")
+    # names with no id (LOCG, GCD and Comic Vine credits carry none) take the one the shelf or
+    # Metron gave that name: without it a creator's page can't find the run (backfill_signal_ids)
+    if any(not c.get("id") for c in creators):
+        known = creator_ids_by_name(path)
+        for c in creators:
+            if not c.get("id") and c.get("name"):
+                c["id"] = known.get(_name_key(c["name"]))
     with db._connect(path) as conn:
         # Nothing to ask yet (the issues or their credits haven't landed): the empty answer
         # is dated so it's looked at again tomorrow, not in a month. 4 Kids Walk Into A Bank
@@ -223,10 +230,40 @@ def _askable(path) -> set[int]:
                 | {r[0] for r in conn.execute("SELECT DISTINCT tracked_series_id FROM issue_status WHERE metron_issue_id IS NOT NULL")})
 
 
+def backfill_signal_ids(path=None) -> int:
+    """Stored signals with a name and no id get the id the shelf or Metron has given that name
+    since. The issue card resolves names as it draws (with_creator_ids); the signals didn't, so
+    The Dark Knight Returns- the Golden Child (LOCG credits) had Rafael Grampá by name only and
+    his page never listed it — 95 runs the same (2026-10-17). Local, no asking. → runs updated."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    known = creator_ids_by_name(path)
+    changed = 0
+    with db._connect(path) as conn:
+        for r in conn.execute("SELECT tracked_series_id, creators_json FROM series_signals").fetchall():
+            cs = json.loads(r["creators_json"] or "[]")
+            hit = False
+            for c in cs:
+                cid = None if c.get("id") or not c.get("name") else known.get(_name_key(c["name"]))
+                if cid:
+                    c["id"], hit = cid, True
+            if hit:
+                conn.execute("UPDATE series_signals SET creators_json = ? WHERE tracked_series_id = ?",
+                             (json.dumps(cs), r["tracked_series_id"]))
+                changed += 1
+    if changed:
+        logger.info(f"Signals: creator ids filled in by name on {changed} runs")
+    return changed
+
+
 def trickle_signals(limit: int = 20, path=None) -> int:
     """Background: fill signals for series that have none (or stale ones).
     Stops at the first Metron refusal — the budget is shared with everything."""
     path = path or DB_PATH
+    try:
+        backfill_signal_ids(path)                  # names resolved since: local, first
+    except Exception as e:
+        logger.info(f"Signals: id backfill skipped: {e}")
     have = _signals(path)
     askable = _askable(path)
     def due(s):
@@ -780,7 +817,11 @@ def _resolve_in_background(names: list[str], path):
 
     def run():
         try:
-            resolve_creator_names(todo, path)
+            if resolve_creator_names(todo, path):
+                _ids_by_name.update(at=0)          # the new answers count from now
+                backfill_signal_ids(path)          # and reach the creator pages straight away
+        except Exception as e:
+            logger.info(f"Creator ids: background lookup failed: {e}")
         finally:
             with _ask_lock:
                 _asking.difference_update(_name_key(n) for n in todo)
