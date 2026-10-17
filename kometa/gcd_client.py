@@ -292,8 +292,11 @@ def parse_issue(d: dict, gcd_issue_id: int | None = None) -> dict:
         "desc": desc,
         "credits": deduped,
         "covers": [{"id": f"g{gid}", "name": "Cover A (Main)", "thumb": cover, "large": cover}] if cover and gid else [],
-        "store_date": _date(d.get("on_sale_date")) or _date(d.get("key_date")),
-        "cover_date": None,
+        # the on-sale date or nothing: key_date is GCD's cover-date sort key, and stood in
+        # here as a release date until 2026-10-18 ('1990-00-00' became 1 January 1990)
+        "store_date": _date(d.get("on_sale_date")) if re.match(r"^\d{4}-\d{2}-\d{2}$", (d.get("on_sale_date") or "").strip())
+                      and not (d.get("on_sale_date") or "").strip().endswith("-00") else None,
+        "cover_date": _date(d.get("key_date")) if re.match(r"^\d{4}-(?!00)\d{2}", (d.get("key_date") or "").strip()) else None,
         "page_count": _int(d.get("page_count")),
         "price": price,
         "isbn": (d.get("isbn") or "").strip() or None,

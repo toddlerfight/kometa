@@ -189,6 +189,13 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
     except Exception as e:
         logger.warning(f"Credits ladder not scheduled: {e}")
     try:
+        from kometa.gapfill import tick as gap_tick, GAP_MINUTES
+        scheduler.add_job(_as_harvest(gap_tick), IntervalTrigger(minutes=GAP_MINUTES), id="gap_fill",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=4))
+    except Exception as e:
+        logger.warning(f"Gap fill not scheduled: {e}")
+    try:
         from kometa.record import trades_trickle
         scheduler.add_job(_as_harvest(trades_trickle), IntervalTrigger(minutes=10), id="trades_trickle",
                           replace_existing=True, coalesce=True, max_instances=1,

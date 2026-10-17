@@ -17,6 +17,7 @@ solicits looks finished for a few weeks. So, in order — first answer wins:
    graphic novel…) with nothing to come → Ended.
 4. Our last release: within 6 months → Ongoing; within 2 years → Hiatus;
    older → Ended. Metron's default 'Ongoing' never overrules a dead run.
+   An issue with no on-sale date counts by its cover date here (2026-10-18).
 5. No dates at all → no badge. Guessing is worse than saying nothing.
 """
 from datetime import date
@@ -48,6 +49,10 @@ def compute(series: dict, issues: list[dict], today: str | None = None) -> dict 
         return {"state": "finished", "label": "Ended", "why": f"ended {series['metron_year_end']}"}
     if (series.get("metron_type") or "").strip().lower() in FINITE_TYPES:
         return {"state": "finished", "label": "Ended", "why": f"{series['metron_type'].lower()}, nothing to come"}
+    # an old run's issues may only have cover dates (kometa/gapfill.py): good enough to say
+    # whether it stopped, never to say something is coming
+    from kometa.gapfill import as_date
+    dates += [as_date(i["cover_date"]) for i in issues if not i.get("store_date") and i.get("cover_date")]
     past = [d for d in dates if d <= today]
     if not past:
         return None

@@ -309,8 +309,17 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
         # a variant list already fetched outlives a details write: REPLACE used to
         # wipe it and its stamp, and the LOCG sweep then fetched it all over again
         kept = conn.execute("SELECT covers_json, variants_at, extra_json, community_json, community_at, credits_json, "
-                            "field_sources_json, source FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                            "field_sources_json, source, desc, store_date FROM issue_record WHERE tracked_series_id = ? AND number = ?",
                             (series_id, number)).fetchone()
+        # what the gap fill put in (kometa/gapfill.py) outlives a refresh that brings nothing:
+        # Metron re-asked every few weeks still has no description for Batman #282
+        try:
+            kept_fs = json.loads((kept["field_sources_json"] if kept else None) or "{}") or {}
+        except (TypeError, ValueError):
+            kept_fs = {}
+        desc = data.get("desc") or (kept["desc"] if kept and "desc" in kept_fs else "") or ""
+        store_date = data.get("store_date") or issue.get("store_date") or (
+            kept["store_date"] if kept and "store_date" in kept_fs else None)
         credits, sources = _credits_to_keep(kept, data.get("credits") or [], source)
         extra = data.get("extra")
         # a write that brings no extra (LOCG, a stopgap) never wipes what Metron said;
@@ -331,9 +340,9 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
             (tracked_series_id, number, desc, credits_json, arcs_json, covers_json, store_date, cover_date, page_count,
              price, isbn, metron_issue_id, locg_issue_id, cv_issue_id, source, fetched_at, fill_state, extra_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                     (series_id, number, data.get("desc") or "", json.dumps(credits),
+                     (series_id, number, desc, json.dumps(credits),
                       json.dumps(data.get("arcs") or []), json.dumps(data.get("covers") or []),
-                      data.get("store_date") or issue.get("store_date"), data.get("cover_date"), data.get("page_count"),
+                      store_date, data.get("cover_date"), data.get("page_count"),
                       data.get("price"), data.get("isbn"), issue.get("metron_issue_id"), issue.get("locg_issue_id"),
                       str(cv_id) if cv_id else None, source, _now(), state, extra_json))
         if sources:

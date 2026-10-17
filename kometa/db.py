@@ -410,6 +410,10 @@ def _migrate(path=DB_PATH):
             # the file of an owned TRADE that collects this issue (kometa/tradefill.py):
             # not owned as a single, but not missing either — it's in the trade
             conn.execute("ALTER TABLE issue_status ADD COLUMN covered_by TEXT")
+        if "cover_date" not in is_cols2:
+            # the month on the cover ('1994-08') or just the year ('1994') — shown and sorted by
+            # where no on-sale date is known, never as one (kometa/gapfill.py)
+            conn.execute("ALTER TABLE issue_status ADD COLUMN cover_date TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS variant_prefs (
                 tracked_series_id INTEGER NOT NULL REFERENCES tracked_series(id),

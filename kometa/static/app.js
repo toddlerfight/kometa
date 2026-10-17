@@ -5540,6 +5540,14 @@ function _renderIssueDetails(desc, credits, community) {
   });
 }
 
+// '1994-08' → 'Cover date August 1994'; '1994' → '1994'
+function _fmtCoverDate(c) {
+  const m = /^(\d{4})-(\d{2})/.exec(c || '');
+  if (!m) return (c || '').slice(0, 4);
+  const d = new Date(+m[1], +m[2] - 1, 1);
+  return `Cover date ${d.toLocaleDateString('en', { month: 'long', year: 'numeric' })}`;
+}
+
 async function showIssueModal(seriesId, number, opts = {}) {
   clearTimeout(_issueModalPollTimer);
   // Fast path: already viewing this series, its issues are cached on _detailSeries.
@@ -5617,6 +5625,10 @@ async function showIssueModal(seriesId, number, opts = {}) {
     } else {
       dateHtml = `<div class="issue-modal-release-label">Released ${fmtDate}</div>`;
     }
+  } else if (issue.cover_date) {
+    // no on-sale date anywhere: the month on the cover ('1994-08'), or just the year —
+    // never passed off as a release date (kometa/gapfill.py)
+    dateHtml = `<div class="issue-modal-release-label">${esc(_fmtCoverDate(issue.cover_date))}</div>`;
   }
 
   // The card's actions, the same wherever it opens (2026-10-17): Want to read and Go to

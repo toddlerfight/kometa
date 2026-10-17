@@ -992,6 +992,8 @@ def get_config():
         "credits_ladder":      cfg.get("credits_ladder") == "on",
         # its Comic Vine rung by the run's name, for issues no catalogue gave an id (kometa/cvname.py)
         "cv_by_name":          cfg.get("cv_by_name") == "on",
+        # on-sale dates, cover dates and descriptions for old issues (kometa/gapfill.py)
+        "gap_fill":            cfg.get("gap_fill") == "on",
         **_locg_status(),
     }
 
@@ -1043,12 +1045,13 @@ class ConfigRequest(BaseModel):
     retag_batch_armed:  str | None = None   # "1"/"0" — the full ComicInfo rewrite's routes answer (kometa/retag_batch.py)
     credits_ladder:     str | None = None   # "on"/"off" — the credits ladder (record.credits_ladder_on)
     cv_by_name:         str | None = None   # "on"/"off" — its Comic Vine rung by the run's name (cvname.configured)
+    gap_fill:           str | None = None   # "on"/"off" — dates and descriptions for old issues (gapfill.on)
 
 
 @app.patch("/api/config")
 def update_config(req: ConfigRequest):
     updates = {k: v for k, v in req.model_dump().items() if v is not None and v != ""}
-    for k in ("credits_ladder", "cv_by_name"):
+    for k in ("credits_ladder", "cv_by_name", "gap_fill"):
         if k in updates and updates[k] not in ("on", "off"):
             raise HTTPException(400, f"{k} is on or off")
     if "comics_root" in updates:
@@ -2539,7 +2542,12 @@ def get_issue_locg_details(series_id: int, number: float):
     return {"desc": d.get("desc", ""), "credits": credits,
             "ids_pending": asking,                       # names just sent to Metron: look again shortly
             "source": d.get("source"), "record": d.get("record"),
-            "store_date": d.get("store_date") or issue.get("store_date"),
+            # the on-sale date from the issue itself: a record's own date can be a file tag's bare
+            # year saved as 1 January ('Released January 1, 2019'). No on-sale date → the cover
+            # date, which the card shows as such (kometa/gapfill.py)
+            "store_date": issue.get("store_date") or (
+                d.get("store_date") if d.get("source") in ("metron", "locg") else None),
+            "cover_date": issue.get("cover_date"),
             "community": row.get("community") or None,
             # the header, so every card shows the same facts without piecing them together
             "series_title": s["title"], "publisher": s.get("publisher"), "year_began": s.get("year_began"),

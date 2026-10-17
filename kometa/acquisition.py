@@ -298,6 +298,16 @@ def _issue_store_date(item) -> str | None:
     return row["store_date"] if row else None
 
 
+def _issue_age_date(item, store_date: str | None) -> str | None:
+    """For the old-issue order only: the on-sale date, else the cover date. Uncanny X-Men
+    #201 has no on-sale date anywhere and went GetComics-first as if it were new."""
+    if store_date or item.get("kind") == "trade" or item.get("issue_number") in (None, -1):
+        return store_date
+    from kometa.gapfill import as_date
+    row = db.get_issues_for_series(item["tracked_series_id"], DB_PATH, number=item["issue_number"])
+    return as_date(row[0].get("cover_date")) if row else None
+
+
 def _failed_sources(item) -> set:
     """Release URLs whose delivery already died for this row — fed to the
     searches as exclusions so a retry buys a different release, not the same
@@ -613,7 +623,7 @@ def _acquire_issue(item, qid, gc, downloaded_urls):
     # GetComics the post is titled by the comic, so 'Die #4' there IS Die #4.
     from kometa.usenet_client import is_generic_name
     # ...and except a series whose usenet downloads keep failing: GetComics first.
-    if (_is_old_issue(store_date) and not is_generic_name(item["title"])
+    if (_is_old_issue(_issue_age_date(item, store_date)) and not is_generic_name(item["title"])
             and not distrusted(item.get("tracked_series_id"), "usenet")):
         if _fallback_usenet_torrent(item, qid, _search_nzb, nzb_name):
             return

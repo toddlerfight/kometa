@@ -55,7 +55,7 @@ def test_issue_detail_parses_credits_dates_and_cast():
     assert len(pairs) == len(d["credits"])                                      # no duplicates
     assert d["credits"][0]["role"] == "Writer"                                  # makers first
     assert d["desc"] == "Tintin uncovers a plot against King Muskar XII."     # cover synopsis isn't the story
-    assert d["store_date"] == "1959-01-01"                                     # key_date 00 → 01
+    assert d["store_date"] is None and d["cover_date"] is None                 # no on-sale date; key_date '1959-00-00' is a cover year
     assert d["page_count"] == 64 and d["price"] == "1.95 USD" and d["isbn"] is None
     assert d["covers"] == [{"id": "g550394", "name": "Cover A (Main)", "thumb": ISSUE["cover"], "large": ISSUE["cover"]}]
     x = d["extra"]
@@ -64,9 +64,15 @@ def test_issue_detail_parses_credits_dates_and_cast():
     assert x["genre"] == ["adventure", "humor"]
 
 
-def test_on_sale_date_wins_over_key_date():
+def test_on_sale_date_is_the_release_date_and_key_date_only_the_cover():
+    d = gc.parse_issue(dict(ISSUE, on_sale_date="1986-05-14", key_date="1986-06-00"), 1)
+    assert d["store_date"] == "1986-05-14" and d["cover_date"] == "1986-06-01"
+    # a month-only on-sale date isn't a day: never 'Released May 1, 1986'
     d = gc.parse_issue(dict(ISSUE, on_sale_date="1986-05-00", key_date="1986-06-00"), 1)
-    assert d["store_date"] == "1986-05-01"
+    assert d["store_date"] is None and d["cover_date"] == "1986-06-01"
+    # and GCD's cover-date key never stands in for a release date
+    d = gc.parse_issue(dict(ISSUE, on_sale_date="", key_date="1990-00-00"), 1)
+    assert d["store_date"] is None and d["cover_date"] is None
 
 
 def test_descriptors_give_numbers_and_titles(monkeypatch):
