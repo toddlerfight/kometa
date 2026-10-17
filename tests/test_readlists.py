@@ -155,7 +155,8 @@ def test_covers_for_gaps_come_from_comicvine_then_metron_and_are_remembered(shel
     # Seed of Destruction is owned → not asked; Witchfinder #3 (missing) and Chained Coffin (not on shelf) are
     assert r["filled"] == 1 and r["left"] == 0
     e = {x["position"]: x for x in rl.resolve(lid, path=shelf)["entries"]}
-    assert e[5]["cover"] and e[5]["cover"].endswith(f"/items/{e[5]['item_id']}/cover") and not e[5]["cover_pending"]
+    # the address carries a fingerprint of the cover (?c=…), so a corrected cover isn't served from a month's cache
+    assert e[5]["cover"] and f"/items/{e[5]['item_id']}/cover?c=" in e[5]["cover"] and not e[5]["cover_pending"]
     assert e[4]["cover"] is None and not e[4]["cover_pending"]          # a miss is remembered as ''
     assert rl.fill_covers(lid, path=shelf, cv=CV(), metron_search=search, metron_issues=issues)["filled"] == 0
     assert calls.count("Sir Edward Grey, Witchfinder") == 1              # asked once, not every open
@@ -320,4 +321,8 @@ def test_a_list_with_nothing_owned_wears_its_first_catalogue_cover(db_path, monk
     with db._connect(db_path) as c:
         c.execute("UPDATE reading_list_items SET cover_url = 'https://x/ig2.jpg' WHERE id = ?", (items[1]["id"],))
     card = next(c for c in rl.get_lists(db_path) if c["id"] == lid)
-    assert card["cover"] == f"/api/readlists/{lid}/items/{items[1]['id']}/cover"
+    assert card["cover"].startswith(f"/api/readlists/{lid}/items/{items[1]['id']}/cover?c=")
+    first = card["cover"]
+    with db._connect(db_path) as c:
+        c.execute("UPDATE reading_list_items SET cover_url = 'https://x/ig2-fixed.jpg' WHERE id = ?", (items[1]["id"],))
+    assert next(c for c in rl.get_lists(db_path) if c["id"] == lid)["cover"] != first      # a new cover, a new address

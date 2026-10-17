@@ -187,12 +187,20 @@ def get_lists(path=None) -> list[dict]:
 _cover_asked: set = set()
 
 
+def _cover_link(list_id: int, item_id: int, cover_url: str) -> str:
+    """A gap's cover, addressed by what it is: the endpoint answers with a month's
+    cache, so a corrected cover needs a new address — Infinity War #1–6 kept showing
+    the Adam Warlock one-shot after the fix (2026-10-17)."""
+    import hashlib
+    return f"/api/readlists/{list_id}/items/{item_id}/cover?c={hashlib.sha1(cover_url.encode()).hexdigest()[:10]}"
+
+
 def _first_catalogue_cover(list_id: int, path) -> str | None:
     with db._connect(path) as conn:
-        hit = conn.execute("""SELECT id FROM reading_list_items WHERE list_id = ? AND cover_url IS NOT NULL AND cover_url != ''
+        hit = conn.execute("""SELECT id, cover_url FROM reading_list_items WHERE list_id = ? AND cover_url IS NOT NULL AND cover_url != ''
             ORDER BY position LIMIT 1""", (list_id,)).fetchone()
     if hit:
-        return f"/api/readlists/{list_id}/items/{hit[0]}/cover"
+        return _cover_link(list_id, hit[0], hit[1])
     if list_id not in _cover_asked:
         _cover_asked.add(list_id)                     # once per process; misses are cached per item anyway
         import threading
@@ -536,7 +544,7 @@ def resolve(list_id: int, path=None) -> dict:
         hit = picked if picked is not False else next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
                  "year": it["year"], "status": "not_on_shelf", "shelf_id": None, "series_id": None, "books": [],
-                 "item_id": it["id"], "cover": f"/api/readlists/{list_id}/items/{it['id']}/cover" if it.get("cover_url") else None,
+                 "item_id": it["id"], "cover": _cover_link(list_id, it["id"], it["cover_url"]) if it.get("cover_url") else None,
                  "cover_pending": _cover_pending(it)}
         bf = by_file.get(it.get("file") or "")
         if bf:
