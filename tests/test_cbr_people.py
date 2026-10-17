@@ -449,3 +449,62 @@ def test_migration_recovers_from_leftover_v2_table(tmp_path):
         assert v2 is None
 
 
+def test_profile_and_issue_recording_ignores_1970_epoch_date(db_path):
+    cp.ensure_tables(db_path)
+    assert cp._date("Jan 1, 1970") is None
+    assert cp._date("Jan. 1, 1970") is None
+    assert cp._date("1970-01-01") is None
+
+    # Profile record with 1970-01-01 date stores NULL and does not set first_year to 1970
+    cp.record_profile("critic:andy-frisk", {
+        "name": "Andy Frisk", "outlet": None,
+        "scores": [{"series_path": "/comic-books/reviews/marvel/immortal-hulk",
+                    "series_name": "Immortal Hulk", "number": "1", "score": 9.0, "date": "1970-01-01"}]
+    }, path=db_path)
+
+    with db._connect(db_path) as conn:
+        score_row = conn.execute("SELECT date FROM cbr_people_scores WHERE person = 'critic:andy-frisk'").fetchone()
+        assert score_row[0] is None
+        series_row = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/marvel/immortal-hulk'").fetchone()
+        assert series_row[0] is None  # not set to 1970
+
+
+def test_one_time_cleanup_nulls_1970_dates_and_recomputes_stale_series(tmp_path):
+    fix_path = str(tmp_path / "fix1970.db")
+    with db._connect(fix_path) as conn:
+        conn.execute("""CREATE TABLE cbr_people_scores (
+            person TEXT NOT NULL, series_path TEXT NOT NULL, number TEXT NOT NULL, score REAL NOT NULL,
+            date TEXT, via TEXT, at TEXT, PRIMARY KEY (person, series_path, number)) WITHOUT ROWID""")
+        # Immortal Hulk: one 1970-01-01 score and one 2018 score
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:1', '/comic-books/reviews/marvel/immortal-hulk', '1', 9.0, '1970-01-01', 'profile', '2026-10-17')")
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:2', '/comic-books/reviews/marvel/immortal-hulk', '2', 8.5, '2018-06-05', 'issue', '2026-10-17')")
+        # Alpha: 1970 score but has slug year (2020)
+        conn.execute("INSERT INTO cbr_people_scores VALUES ('critic:1', '/comic-books/reviews/image/alpha-(2020)', '1', 8.0, '1970-01-01', 'profile', '2026-10-17')")
+        # Stale series table where first_year was filled with 1970
+        conn.execute("CREATE TABLE cbr_people_series (series_path TEXT PRIMARY KEY, name TEXT, first_year INTEGER)")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/marvel/immortal-hulk', 'Immortal Hulk', 1970)")
+        conn.execute("INSERT INTO cbr_people_series VALUES ('/comic-books/reviews/image/alpha-(2020)', 'Alpha', 1970)")
+
+    cp.ensure_tables(fix_path)
+
+    with db._connect(fix_path) as conn:
+        # 1970-01-01 scores are nulled
+        epoch_count = conn.execute("SELECT COUNT(*) FROM cbr_people_scores WHERE date = '1970-01-01'").fetchone()[0]
+        assert epoch_count == 0
+        null_count = conn.execute("SELECT COUNT(*) FROM cbr_people_scores WHERE date IS NULL").fetchone()[0]
+        assert null_count == 2
+        # Immortal Hulk recomputed to 2018 (earliest non-1970 review)
+        hulk = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/marvel/immortal-hulk'").fetchone()
+        assert hulk[0] == 2018
+        # Alpha recomputed to 2020 (from slug year)
+        alpha = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/image/alpha-(2020)'").fetchone()
+        assert alpha[0] == 2020
+
+    # Idempotent on second run
+    cp.ensure_tables(fix_path)
+    with db._connect(fix_path) as conn:
+        hulk = conn.execute("SELECT first_year FROM cbr_people_series WHERE series_path = '/comic-books/reviews/marvel/immortal-hulk'").fetchone()
+        assert hulk[0] == 2018
+
+
+

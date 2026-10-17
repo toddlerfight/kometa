@@ -32,6 +32,7 @@ The table `cbr_people_scores` and its indexes account for 65% of the database fi
 * **Live Usage:** The web app calls `/api/discover/community` and `/api/discover/community/because-ondeck` when rendering recommendation rows (`static/app.js:1215-1216`).
 * **Measured Query:** Finding publication years for 12 candidate series paths in `recommend()` (`cbr_people.py:718`) takes **12.6 ms with the index** and **66.9 ms without**.
 * **Clean Solution:** Store each run's `first_year` directly in `cbr_people_series` (a 2-column table of ~3k rows) during harvest, and read it from there. Once `cbr_people_series` serves the year, remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `kometa/cbr_people.py:87` and drop the index.
+* **Epoch Date Immunity:** CBR review rows without a recorded date historically rendered as the Unix epoch (`Jan 1, 1970`), causing ~350 scores to record `1970-01-01` and polluting `first_year` for 244 runs (e.g. Immortal Hulk). `_date()`, `_put_score()`, and `record_profile()` store `NULL` when dates are missing or epoch-dated; `ensure_tables()` cleanses legacy `1970-01-01` rows and recomputes `first_year` for any affected runs.
 
 #### 2. Migrating to `WITHOUT ROWID`
 * **Real Production Copy Measurement:**
@@ -183,6 +184,7 @@ EOF
 - [x] Update `recommend()` in `kometa/cbr_people.py` to read `first_year` from `cbr_people_series`.
 - [x] Remove `CREATE INDEX IF NOT EXISTS idx_cbr_people_scores_series` from `cbr_people.py`.
 - [x] Drop `idx_cbr_people_scores_series` inside `ensure_tables()` (reclaims 53 MB without query regression).
+- [x] Neutralize `1970-01-01` Unix epoch dates from dateless CBR profiles and recompute `first_year` for affected runs.
 
 ### Phase 3: `WITHOUT ROWID` Migration & Space Reclamation (Completed)
 - [x] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).

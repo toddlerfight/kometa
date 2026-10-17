@@ -125,7 +125,7 @@ def ensure_tables(path=None):
             conn.execute("""INSERT INTO cbr_people_series (series_path, first_year)
                 SELECT series_path, CAST(MIN(substr(date, 1, 4)) AS INTEGER)
                 FROM cbr_people_scores
-                WHERE date LIKE '____-__-__'
+                WHERE date LIKE '____-__-__' AND date > '1970-01-01'
                 GROUP BY series_path
                 ON CONFLICT(series_path) DO UPDATE SET
                     first_year = CASE
@@ -136,6 +136,21 @@ def ensure_tables(path=None):
 
         conn.execute("CREATE TABLE IF NOT EXISTS cbr_people_state (key TEXT PRIMARY KEY, value TEXT)")
         if _get_state(conn, "scores_version") is None:
+            _bump_scores_version(conn)
+
+        # Clean up legacy 1970-01-01 Unix epoch dates from profile imports and recompute affected series
+        conn.execute("UPDATE cbr_people_scores SET date = NULL WHERE date = '1970-01-01'")
+        stale = [r[0] for r in conn.execute(
+            "SELECT series_path FROM cbr_people_series WHERE first_year IS NOT NULL AND first_year <= 1970").fetchall()]
+        if stale:
+            for sp in stale:
+                _, y = _path_key(sp)
+                r = conn.execute(
+                    "SELECT CAST(MIN(substr(date, 1, 4)) AS INTEGER) FROM cbr_people_scores "
+                    "WHERE series_path = ? AND date LIKE '____-__-__' AND date > '1970-01-01'", (sp,)).fetchone()
+                score_year = r[0] if r and r[0] else None
+                new_year = y or score_year
+                conn.execute("UPDATE cbr_people_series SET first_year = ? WHERE series_path = ?", (new_year, sp))
             _bump_scores_version(conn)
 
 
@@ -190,9 +205,12 @@ def _date(s: str | None) -> str | None:
     s = re.sub(r"\s+", " ", (s or "").replace(".", "")).strip()
     for fmt in ("%b %d, %Y", "%B %d, %Y"):
         try:
-            return datetime.strptime(s, fmt).date().isoformat()
+            d = datetime.strptime(s, fmt).date().isoformat()
+            return None if d == "1970-01-01" else d
         except ValueError:
             pass
+    if s == "1970-01-01":
+        return None
     return s or None
 
 
@@ -358,6 +376,8 @@ def _put_score(conn, person: str, sp: str, num: str, score: float, date: str | N
     # Any future callers or writers to cbr_people_scores must bump scores_version
     # via _bump_scores_version(conn) before committing, or the community memo in
     # related_combined stays stale until a restart.
+    if date == "1970-01-01":
+        date = None
     conn.execute("""INSERT OR REPLACE INTO cbr_people_scores (person, series_path, number, score, date, via, at)
         VALUES (?, ?, ?, ?, ?, ?, ?)""", (person, sp, str(num), score, date, via, _stamp()))
 
@@ -374,11 +394,13 @@ def record_issue_page(page_path: str, sp: str, num: str, parsed: dict, path=None
             for c in parsed[kind]:
                 who = f"{kind[:-1]}:{c['ref']}"
                 _upsert_person(conn, who, c["name"], c.get("outlet"))
-                _put_score(conn, who, sp, num, c["score"], c["date"], "issue")
+                dt = None if c.get("date") == "1970-01-01" else c.get("date")
+                _put_score(conn, who, sp, num, c["score"], dt, "issue")
         n = len(parsed["critics"]) + len(parsed["users"])
         _mark_page(conn, page_path, sp, num, "done", n)
         _, y = _path_key(sp)
-        dates = [c["date"][:4] for kind in ("critics", "users") for c in parsed[kind] if c.get("date") and len(c["date"]) >= 4 and c["date"][:4].isdigit()]
+        dates = [c["date"][:4] for kind in ("critics", "users") for c in parsed[kind]
+                 if c.get("date") and len(c["date"]) >= 4 and c["date"][:4].isdigit() and c["date"][:4] != "1970"]
         year = min([int(d) for d in dates]) if dates else y
         if year:
             conn.execute("""INSERT INTO cbr_people_series (series_path, name, first_year) VALUES (?, NULL, ?)
@@ -397,12 +419,13 @@ def record_profile(person: str, parsed: dict, path=None) -> int:
     with db._connect(path or DB_PATH) as conn:
         _upsert_person(conn, person, parsed["name"], parsed["outlet"])
         for s in parsed["scores"]:
-            _put_score(conn, person, s["series_path"], s["number"], s["score"], s["date"], "profile")
+            dt = None if s.get("date") == "1970-01-01" else s.get("date")
+            _put_score(conn, person, s["series_path"], s["number"], s["score"], dt, "profile")
             if s["series_name"] and re.fullmatch(r"\d+(?:\.\d+)?", s["number"]):   # 'Run #12' names the run;
                 # an annual or special's link text ('Adventure Time: 2013 SPOooktacular') doesn't
                 year = None
-                if s.get("date") and len(s["date"]) >= 4 and s["date"][:4].isdigit():
-                    year = int(s["date"][:4])
+                if dt and len(dt) >= 4 and dt[:4].isdigit() and int(dt[:4]) > 1970:
+                    year = int(dt[:4])
                 else:
                     _, y = _path_key(s["series_path"])
                     year = y
@@ -793,14 +816,14 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
             qs = ",".join("?" * len(top))
             first_year = {r[0]: r[1] for r in conn.execute(
                 f"SELECT series_path, first_year FROM cbr_people_series "
-                f"WHERE series_path IN ({qs}) AND first_year IS NOT NULL",
+                f"WHERE series_path IN ({qs}) AND first_year IS NOT NULL AND first_year > 1970",
                 [sp for _, sp in top])}
             missing = [sp for _, sp in top if sp not in first_year]
             if missing:
                 mqs = ",".join("?" * len(missing))
                 for r in conn.execute(
                     f"SELECT series_path, MIN(substr(date, 1, 4)) FROM cbr_people_scores "
-                    f"WHERE series_path IN ({mqs}) AND date LIKE '____-__-__' GROUP BY series_path",
+                    f"WHERE series_path IN ({mqs}) AND date LIKE '____-__-__' AND date > '1970-01-01' GROUP BY series_path",
                     missing):
                     if r[1]:
                         first_year[r[0]] = r[1]
@@ -824,7 +847,7 @@ def _rank(path, seeds: dict[int, float], limit: int, min_seeds: int) -> dict:
         fy = first_year.get(sp)
         items.append({
             "series_path": sp, "name": _display_name(sp, d["names"].get(sp)),
-            "year": year or (int(fy) if fy and str(fy).isdigit() else None),
+            "year": year or (int(fy) if fy and str(fy).isdigit() and int(fy) > 1970 else None),
             "publisher": pub, "publisher_name": _PUBLISHER_NAMES.get(pub) or pub.replace("-", " ").title(),
             "url": SITE + sp, "score": round(s, 4), "supporters": len(who),
             "critics": sum(1 for p in who if kind[p] == "critic"), "users": sum(1 for p in who if kind[p] == "user"),
