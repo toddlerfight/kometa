@@ -16,13 +16,15 @@ Only picks that were actually SHOWN are asked about (enrich() files them as
 """
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import kometa.db as db
 
 logger = logging.getLogger(__name__)
 DB_PATH = db.DB_PATH
 PER_TICK = 6                     # series a tick: up to ~3 Metron calls each
+RETRY_DAYS = 7                   # a miss is asked again after a week — or at once when its year changes
+CROWDED = 100                    # a search that fills its page may have cut off the run: look again by year
 _ready: set = set()
 
 
@@ -66,6 +68,17 @@ def _local(conn, name: str, year: int | None) -> dict | None:
             "cover": f"/api/series/{best['id']}/thumbnail"}
 
 
+def _ask_again(m: dict, it: dict) -> bool:
+    """A miss is worth another look when the pick's year has changed, or after a week."""
+    if it.get("year") != m.get("year"):
+        return True
+    try:
+        return datetime.strptime((m.get("checked_at") or "")[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc) \
+            < datetime.now(timezone.utc) - timedelta(days=RETRY_DAYS)
+    except ValueError:
+        return True
+
+
 def _owned_ids(conn) -> set[int]:
     ids = {r[0] for r in conn.execute("SELECT DISTINCT tracked_series_id FROM issue_status WHERE owned = 1")}
     return ids | {r[0] for r in conn.execute("SELECT DISTINCT tracked_series_id FROM books WHERE tracked_series_id IS NOT NULL")}
@@ -85,6 +98,11 @@ def enrich(items: list[dict], path=None) -> list[dict]:
         owned = _owned_ids(conn)
         for it in items:
             m = known.get(it["series_path"])
+            if m and m["state"] == "none" and _ask_again(m, it):
+                # Immortal Hulk was asked under 1970 (an epoch date, since fixed) and stayed blank
+                conn.execute("""UPDATE community_match SET state = 'wanted', name = ?, year = ?, publisher = ?
+                                WHERE series_path = ?""", (it.get("name"), it.get("year"), it.get("publisher"), it["series_path"]))
+                m = {**m, "state": "wanted"}
             if not m or m["state"] == "wanted":
                 loc = _local(conn, it.get("name") or "", it.get("year"))
                 if loc:
@@ -139,7 +157,14 @@ def tick(limit: int = PER_TICK, path=None, client=None) -> int:
         if not client.configured() or client.harvest_share_spent():
             break
         try:
-            hit = _pick(client.search_series(r["name"] or ""), r["name"] or "", r["year"], r["publisher"])
+            rows = client.search_series(r["name"] or "")
+            hit = _pick(rows, r["name"] or "", r["year"], r["publisher"])
+            if not hit and r["year"] and len(rows) >= CROWDED:
+                # the page filled with other runs (X-Men: 100 spin-offs, no 2019 X-Men): ask by year
+                for y in (r["year"], r["year"] - 1, r["year"] + 1):
+                    hit = _pick(client.search_series(r["name"] or "", year=y), r["name"] or "", r["year"], r["publisher"])
+                    if hit:
+                        break
             cover = None
             if hit:
                 first = client._get("issue/", series_id=hit["id"]).get("results", [])

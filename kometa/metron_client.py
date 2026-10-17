@@ -243,12 +243,13 @@ def title_variants(title: str) -> list[str]:
     return [t] if colon == t else [t, colon]
 
 
-def search_series(title: str) -> list[dict]:
-    """Normalised rows: {id, title, publisher, year, cv_id, issue_count}.
-    Raises MetronUnavailable — never returns [] for 'didn't answer'."""
+def search_series(title: str, year: int | None = None) -> list[dict]:
+    """Normalised rows: {id, title, publisher, year, cv_id, issue_count}. `year` narrows
+    to runs that began that year: a bare 'X-Men' fills a page with spin-offs before the
+    2019 run turns up. Raises MetronUnavailable — never returns [] for 'didn't answer'."""
     seen, rows = set(), []
     for q in title_variants(title):
-        for r in _get("series/", name=q).get("results", []):
+        for r in _get("series/", name=q, **({"year_began": int(year)} if year else {})).get("results", []):
             if r["id"] in seen:
                 continue
             seen.add(r["id"])
