@@ -67,3 +67,40 @@ def test_off_its_page_the_card_offers_the_series(app):
     modal.get_by_role("button", name="Go to series").click()
     expect(app).to_have_url(re.compile(rf"#series-detail\?id={sid}"))
     expect(modal).to_be_hidden()
+
+
+def test_in_the_reader_the_dots_are_the_card(app, app_server):
+    app.set_viewport_size({"width": 1180, "height": 820})              # landscape: pages pair
+    _alpha(app)
+    app.locator('.issue-tile[data-num="1"]').click()
+    expect(app.locator("#reader .rd-page").first).to_be_visible()
+    app.evaluate("_rdToggleChrome(true)")
+    expect(app.locator("#reader").get_by_role("button", name="Shift pairing by one")).to_be_visible()
+    app.locator("#reader").get_by_role("button", name="Issue details").click()
+    modal = app.locator("#modal")
+    expect(modal).to_be_visible()
+    for name in ("Want to read", "Go to series", "Mark as read"):
+        expect(modal.get_by_role("button", name=name, exact=True)).to_be_visible()
+    expect(modal.get_by_role("button", name="Read", exact=True)).to_have_count(0)   # you're in it
+    expect(modal.locator(".mark-row")).to_be_visible()                 # the heart lives here now
+    modal.get_by_role("button", name="Mark as read", exact=True).click()
+    expect(modal).to_be_hidden()
+    expect(app.locator("#reader .rd-end")).to_be_visible()             # the reader's own Mark as read: the end screen
+    app.keyboard.press("Escape")
+    app.wait_for_timeout(1600)
+    with sqlite3.connect(app_server["db_path"]) as c:
+        c.execute("DELETE FROM read_progress")
+
+
+def test_shift_only_shows_while_pages_pair(app, app_server):
+    app.set_viewport_size({"width": 820, "height": 1180})              # portrait: one page at a time
+    _alpha(app)
+    app.locator('.issue-tile[data-num="1"]').click()
+    expect(app.locator("#reader .rd-page").first).to_be_visible()
+    app.evaluate("_rdToggleChrome(true)")
+    expect(app.locator("#reader").get_by_role("button", name="Issue details")).to_be_visible()
+    expect(app.locator("#reader").get_by_role("button", name="Shift pairing by one")).to_have_count(0)
+    app.keyboard.press("Escape")
+    app.wait_for_timeout(1600)
+    with sqlite3.connect(app_server["db_path"]) as c:
+        c.execute("DELETE FROM read_progress")

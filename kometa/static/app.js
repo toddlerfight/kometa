@@ -1532,7 +1532,14 @@ function _bookActions(c) {
 
 // The issue modal's shape for a book that isn't an issue: trades, one-shots,
 // untracked shelf books. Same cover column, same footer slots.
-async function showBookModal(c) {
+// Mark as read / unread on a card: the reader's own when the card is over it (Mark as read
+// there is the end screen), the plain flip anywhere else.
+function _readStateCall(bookId, done, inReader) {
+  if (inReader) return done ? '_rdMarkUnread()' : '_rdMarkRead()';
+  return `_bookSetRead(${bookId}, ${done ? 'false' : 'true'})`;
+}
+
+async function showBookModal(c, opts = {}) {
   let bk = null;
   try { bk = await api.get(`/api/books/${c.book_id}`); } catch {}
   const label = c.label || '';
@@ -1561,8 +1568,8 @@ async function showBookModal(c) {
     <div class="modal-footer">
       ${_wantBtnHtml({ book_id: c.book_id })}
       ${goSeries ? `<button class="btn btn-ghost" onclick="closeModal(); ${goSeries}">Go to series</button>` : ''}
-      <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${c.book_id}, ${completed ? 'false' : 'true'})">${completed ? 'Mark as unread' : 'Mark as read'}</button>
-      <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>
+      <button class="btn btn-ghost" onclick="closeModal(); ${_readStateCall(c.book_id, completed, opts.inReader)}">${completed ? 'Mark as unread' : 'Mark as read'}</button>
+      ${opts.inReader ? '' : `<button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>`}
     </div>`);
   // a trade the catalogue lists: the book sites' ratings under the stars
   try {
@@ -5498,7 +5505,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
     issue = homeSeries?.issues?.find(i => i.number === number);
     if (!issue) {
       // the run doesn't list it: a shelf book gets the book's card, a gap its run
-      if (opts.book) return showBookModal(opts.book);
+      if (opts.book) return showBookModal(opts.book, opts);
       if (opts.orSeries) navigate('series-detail', { id: seriesId });
       return;
     }
@@ -5564,12 +5571,13 @@ async function showIssueModal(seriesId, number, opts = {}) {
   const goSeries = onItsPage ? '' : `<button class="btn btn-ghost" onclick="navigate('series-detail', {id: ${seriesId}})">Go to series</button>`;
   let footerAction = '';
   if (st === 'owned') {
-    // Mark as read waits for the book (its read state) unless the card handed it over
+    // Mark as read waits for the book (its read state) unless the card handed it over.
+    // Opened in the reader: its own Mark as read (the end screen), and no Read — you're in it
     const b = opts.book;
     footerAction = `
         <button class="btn btn-ghost" id="issue-read-state"${b ? '' : ' hidden'}
-          onclick="closeModal(); _bookSetRead(${b ? b.book_id : 0}, ${b && b.completed ? 'false' : 'true'})">${b && b.completed ? 'Mark as unread' : 'Mark as read'}</button>
-        <button class="btn btn-primary" onclick="${b ? `navigate('read', {book: ${b.book_id}})` : `openIssueReader(${seriesId}, ${number})`}">Read</button>`;
+          onclick="closeModal(); ${_readStateCall(b && b.book_id, b && b.completed, opts.inReader)}">${b && b.completed ? 'Mark as unread' : 'Mark as read'}</button>
+        ${opts.inReader ? '' : `<button class="btn btn-primary" onclick="${b ? `navigate('read', {book: ${b.book_id}})` : `openIssueReader(${seriesId}, ${number})`}">Read</button>`}`;
   } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
         title="Stop searching for this issue">Ignore</button>
@@ -5639,7 +5647,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
         const rs = document.getElementById('issue-read-state');
         if (rs) {
           rs.textContent = done ? 'Mark as unread' : 'Mark as read';
-          rs.setAttribute('onclick', `closeModal(); _bookSetRead(${bk.id}, ${done ? 'false' : 'true'})`);
+          rs.setAttribute('onclick', `closeModal(); ${_readStateCall(bk.id, done, opts.inReader)}`);
           rs.hidden = false;
         }
       });

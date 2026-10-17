@@ -158,13 +158,9 @@ function _rdRender() {
         <div class="rd-top-r">
           <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">${ico('full')}</button>
           <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
-          <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">${DOTS}</button>
-          <div class="rd-menu hidden" id="rd-menu">
-            <button onclick="_rdToggleShift()">${_rd.shift ? ico('check') + ' ' : ''}Shift pairing by one</button>
-            <button onclick="_rdMarkRead()">Mark as read</button>
-            <button onclick="_rdToggleFav()">${_rd.book.favourite ? ico('heart') + ' Favourited' : ico('heart', true) + ' Favourite'}</button>
-            ${(_rd.book.series_id || _rd.book.shelf_id) ? `<button onclick="_rdGoSeries()">Go to series</button>` : ''}
-          </div>
+          ${_rdTwoUp() ? `<button class="rd-btn${_rd.shift ? ' on' : ''}" onclick="_rdToggleShift()" title="Shift pairing by one"
+            aria-label="Shift pairing by one" aria-pressed="${_rd.shift}">SHIFT</button>` : ''}
+          <button class="rd-btn" onclick="_rdDetails()" title="Issue details" aria-label="Issue details">${DOTS}</button>
         </div>
       </div>
       <div class="rd-bottom">
@@ -330,16 +326,6 @@ function _rdOpenNext(id) {
   navigate('read', _rd.list ? { book: id, list: _rd.list } : { book: id });
 }
 
-async function _rdToggleFav() {
-  const b = _rd.book;
-  try {
-    const r = await api.put(`/api/books/${b.id}/mark`, { favourite: !b.favourite });
-    b.favourite = r.favourite; b.rating = r.rating;
-    showToast(r.favourite ? 'Favourited' : 'Removed from favourites');
-    document.getElementById('rd-menu')?.classList.add('hidden');
-  } catch { showToast('Couldn’t save that', 'error'); }
-}
-
 // From a reading list, 'next' is the list's next, not the series'.
 async function _rdListNext(listId, bookId) {
   let nb = null;
@@ -392,7 +378,6 @@ function _rdEnded(on) {
 function _rdToggleChrome(force) {
   _rd.chrome = force ?? !_rd.chrome;
   document.getElementById('rd-chrome')?.classList.toggle('on', _rd.chrome);
-  document.getElementById('rd-menu')?.classList.add('hidden');
   if (_rd.chrome) { _rdStripLoad(); _rdCenterStrip(); }
 }
 
@@ -420,17 +405,17 @@ function _rdToggleShift() {
   _rdRender();
 }
 
-// The series this book belongs to, from inside the reader.
-function _rdGoSeries() {
+// The ⋯ is the book's card, as on every cover (2026-10-17; the apps: a long-press on the
+// page). Over the page, carrying what the old menu did — Mark as read, the heart, Go to
+// series. No Read in it: you're in it. Shift pairing is SHIFT, beside the layout button.
+function _rdDetails() {
   const b = _rd.book;
   if (!b) return;
-  if (b.series_id) navigate('series-detail', { id: b.series_id });
-  else if (b.shelf_id) navigate('shelf', { id: b.shelf_id });
-}
-
-function _rdToggleMenu(e) {
-  e.stopPropagation();
-  document.getElementById('rd-menu')?.classList.toggle('hidden');
+  const c = { book_id: b.id, series: b.title || '', label: '', number: b.number ?? null,
+    series_id: b.series_id || null, shelf_id: b.shelf_id || null,
+    completed: !!(_rd.done || b.progress?.completed), page_count: b.page_count };
+  if (c.series_id && c.number != null) showIssueModal(c.series_id, c.number, { book: c, inReader: true });
+  else showBookModal(c, { inReader: true });
 }
 
 // --- progress --------------------------------------------------------------------
@@ -474,6 +459,14 @@ async function _rdMarkRead() {
   _rdToggleChrome(false);
   _rd.markedRead = true;
   _rdEnded(true);
+}
+
+// Mark as unread from the card: this visit stops counting as finished too, or the next
+// page turn would save it read again
+async function _rdMarkUnread() {
+  _rd.done = false;
+  _rd.markedRead = false;
+  await _bookSetRead(_rd.book.id, false);
 }
 
 // --- input -------------------------------------------------------------------------

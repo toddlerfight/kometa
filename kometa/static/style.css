@@ -2233,12 +2233,7 @@ body:has(.rd-stage) { overscroll-behavior: none; }
 .rd-btn { min-width: 40px; height: 36px; padding: 0 10px; background: none; color: var(--tm);
   border: 1px solid var(--bd); border-radius: var(--r-sm); font: inherit; font-size: var(--fs-label);
   letter-spacing: var(--track); cursor: pointer; }
-.rd-menu { position: absolute; top: 44px; right: 0; background: var(--su1); border: 1px solid var(--bd);
-  border-radius: var(--r-md); padding: 6px; display: flex; flex-direction: column; min-width: 220px; }
-.rd-menu.hidden { display: none; }
-.rd-menu button { background: none; border: 0; color: var(--tm); font: inherit; font-size: var(--fs-body);
-  text-align: left; padding: 10px 12px; border-radius: var(--r-sm); cursor: pointer; }
-.rd-menu button:hover { background: var(--su2); }
+.rd-btn.on { color: var(--pri); border-color: var(--pri); }   /* SHIFT, while pairing is knocked over by one */
 
 .rd-bottom { bottom: 0; padding: 14px 20px calc(18px + env(safe-area-inset-bottom)); }
 .rd-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
