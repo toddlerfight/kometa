@@ -2369,15 +2369,15 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
 .od-gap .issue-tile-img img, .od-gap .rl-nocover { opacity: .55; }
 .od-gap .rl-nocover { width: 100%; height: 100%; }
 .od-more { display: none; margin: var(--sp-lg, 20px) auto 0; }
-/* On Deck's row bar (app.js _paintOdBar): the series page's tabs, in one strip that
+/* On Deck's row bar (app.js _paintOdBar; not .od-bar, which is a card's reading-progress line): the series page's tabs, in one strip that
    scrolls sideways; it sits on the top bar's bottom edge like .issue-tabs-row */
-.od-bar { display: flex; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--sp-xl)); padding: 0 var(--sp-xl); }
+.od-rowbar { display: flex; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--sp-xl)); padding: 0 var(--sp-xl); }
 /* the bar is the top bar's bottom edge: no padding under it (a negative margin instead
    shrank the header, and #app, painted after it, sat over the stops and took the taps) */
-#topbar:has(.od-bar) { padding-bottom: 0; }
-.od-bar::-webkit-scrollbar { display: none; }
-.od-bar .od-stop { flex: none; background: none; border: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
-.od-bar .od-stop.active { border-bottom-color: var(--pri); }
+#topbar:has(.od-rowbar) { padding-bottom: 0; }
+.od-rowbar::-webkit-scrollbar { display: none; }
+.od-rowbar .od-stop { flex: none; background: none; border: 0; border-bottom: 2px solid transparent; white-space: nowrap; }
+.od-rowbar .od-stop.active { border-bottom-color: var(--pri); }
 @media (max-width: 760px) {
   #app:not(.od-all) .od-extra { display: none; }
   #app:not(.od-all) .od-more { display: block; }

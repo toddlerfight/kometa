@@ -6,9 +6,12 @@ from playwright.sync_api import expect
 def test_the_row_bar_jumps_to_a_row_and_lights_it(app):
     app.set_viewport_size({"width": 1180, "height": 600})            # short enough that the page scrolls
     app.locator('.nav-item[data-view="ondeck"]').click()
-    stops = app.locator("#topbar-sub .od-bar .od-stop")
+    stops = app.locator("#topbar-sub .od-rowbar .od-stop")
     expect(stops.first).to_have_text("Continue")
     labels = stops.all_text_contents()
+    # really there to see: the first build reused .od-bar (a card's 2 px progress line) and clipped every stop
+    bar = app.locator("#topbar-sub .od-rowbar").bounding_box()
+    assert bar and bar["height"] >= 20, bar
     assert labels[:2] == ["Continue", "Next"] and "Added" in labels
     target = labels.index("Added")
     stops.nth(target).click()
@@ -24,4 +27,4 @@ def test_the_row_bar_jumps_to_a_row_and_lights_it(app):
     expect(stops.nth(target)).to_have_class("issue-tab od-stop active")
     # leaving On Deck takes the bar with it
     app.locator('.nav-item[data-view="activity"]').click()
-    expect(app.locator("#topbar-sub .od-bar")).to_have_count(0)
+    expect(app.locator("#topbar-sub .od-rowbar")).to_have_count(0)

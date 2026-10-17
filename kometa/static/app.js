@@ -1136,9 +1136,9 @@ function _paintOdBar() {
     if (label && !stops.some(s => s.label === label)) stops.push({ label, row });
   }
   const sub = document.getElementById('topbar-sub');
-  const same = stops.length === _odStops.length && stops.every((s, i) => s.label === _odStops[i].label) && sub.querySelector('.od-bar');
+  const same = stops.length === _odStops.length && stops.every((s, i) => s.label === _odStops[i].label) && sub.querySelector('.od-rowbar');
   _odStops = stops;
-  if (!same) sub.innerHTML = stops.length < 2 ? '' : `<nav class="od-bar" aria-label="Jump to a row">${stops.map((s, i) =>
+  if (!same) sub.innerHTML = stops.length < 2 ? '' : `<nav class="od-rowbar" aria-label="Jump to a row">${stops.map((s, i) =>
     `<button class="issue-tab od-stop" onclick="_odJump(${i})">${esc(s.label)}</button>`).join('')}</nav>`;
   _odMark();
 }
@@ -1168,7 +1168,7 @@ function _odMark() {
   if (shown.length && app.scrollTop + app.clientHeight >= app.scrollHeight - 4) cur = shown[shown.length - 1].i;
   const btns = document.querySelectorAll('#topbar-sub .od-stop');
   btns.forEach((b, i) => b.classList.toggle('active', i === cur));
-  const bar = document.querySelector('#topbar-sub .od-bar'), on = btns[cur];
+  const bar = document.querySelector('#topbar-sub .od-rowbar'), on = btns[cur];
   if (bar && on) {                              // keep the lit stop in view in a strip wider than the screen
     const l = on.offsetLeft - bar.offsetLeft, r = l + on.offsetWidth;
     if (l < bar.scrollLeft || r > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = Math.max(0, l - 24);
