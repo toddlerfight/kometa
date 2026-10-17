@@ -127,7 +127,7 @@ _NOT_A_COMIC = re.compile(
     r"ps[2345]|xbox|nsp|iso|v\d+\.\d{2,}(?:\.\d+)?|"
     r"2160p|1080p|720p|480p|4k|x26[45]|h26[45]|hevc|xvid|bluray|blu-ray|web-?dl|webrip|hdtv|dvd-?rip|bd-?rip|hd-?rip|dvd\d?|"
     r"mkv|avi|mp4|wmv|"
-    r"film collection|trilogy collection|s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|season \d+|seasons \d+|complete series|tv series|complete seasons?|"
+    r"film collection|trilogy collection|s\d{1,2}e\d{1,2}|\d{1,2}x\d{2}|season \d+|tv series|"   # not 'seasons N' (The Seasons 012) or 'complete series' (comic packs)
     r"mp3|flac|m4b|audiobook|soundtrack|discography|album|lossless|24 ?bit|tr24)\b", re.I)
 SINGLE_ISSUE_MAX_BYTES = 1_500_000_000      # a fat one-shot is a few hundred MB
 

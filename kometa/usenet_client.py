@@ -70,7 +70,10 @@ _MEDIA_NOISE_RE = re.compile(
     r'|blu-?ray|web-?dl|webrip|hdtv|dvd-?rip|bd-?rip|hd-?rip|dvd\d?' # video sources
     r'|x26[45]|h26[45]|hevc|xvid|remux'                   # video codecs
     r'|mkv|avi|mp4|wmv'                                   # video formats
-    r'|complete\s+series|tv\s+series|complete\s+seasons?|seasons?\s*\d+' # TV box sets
+    r'|tv\s+series'                                       # TV box sets; 'complete series' and 'season N'
+                                                          # are comic words too (Y The Last Man - The
+                                                          # Complete Series; The Seasons 012): a TV set
+                                                          # also says 720p/DVDRip/MKV, caught above
     r'|flac|mp3|aac|ac3|dts|ddp?5|\d{3}kbps'             # audio codecs
     r'|epub|mobi|azw3?'                                   # ebooks
     r'|digital[ ._-]?mobile'                              # vertical webtoon rips
@@ -159,7 +162,7 @@ _PACK_AFTER_SERIES_RE = re.compile(
     r'^(?:'
     r'#?\s*\d+'                                # issue number, range, or year (001-030, 1998)
     r'|(?:vol(?:ume)?|v)\.?\s*\d*'             # volume marker (vol 2, v1)
-    r'|complete|collection|pack|omnibus|complet' # pack keywords
+    r'|(?:the\s+)?(?:complete|collection|pack|omnibus|complet)' # pack keywords ('Y The Last Man - The Complete Series')
     r'|audio|digital|cbr|cbz'                  # format/packaging noise
     r')\b',
     re.I
