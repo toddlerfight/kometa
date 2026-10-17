@@ -112,18 +112,44 @@ def _held_cover(rec: dict) -> str | None:
     return from_publication(extra.get("publication_date"))
 
 
+STAMP_SPAN = 12          # one file-tag year on issues further apart than this is a pack's stamp
+
+
+def _stamped(conn) -> set:
+    """(series, year) where the files' bare Year tag is a pack's stamp, not a date: one year
+    on issues more than STAMP_SPAN numbers apart. Uncanny X-Men Annual #4–#25 all said 1992."""
+    span = {}
+    for r in conn.execute("""SELECT tracked_series_id sid, number, store_date FROM issue_record
+            WHERE source = 'comicinfo' AND store_date LIKE '____-01-01'"""):
+        lo, hi = span.get((r["sid"], r["store_date"][:4]), (r["number"], r["number"]))
+        span[(r["sid"], r["store_date"][:4])] = (min(lo, r["number"]), max(hi, r["number"]))
+    return {k for k, (lo, hi) in span.items() if hi - lo > STAMP_SPAN}
+
+
 def local_covers(path=None, dry: bool = False) -> int:
     """Copy the cover dates already held into issue_status.cover_date. → rows set."""
     path = path or DB_PATH
     with db._connect(path) as conn:
+        stamped = _stamped(conn)
         rows = [dict(r) for r in conn.execute("""
-            SELECT i.id, r.cover_date, r.store_date, r.source, r.extra_json
+            SELECT i.id, i.tracked_series_id sid, i.cover_date status_cover, r.cover_date, r.store_date, r.source, r.extra_json
             FROM issue_status i JOIN issue_record r
               ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
-            WHERE i.cover_date IS NULL""")]
-        sets = [(c, r["id"]) for r in rows if (c := _held_cover(r))]
-        if sets and not dry:
-            conn.executemany("UPDATE issue_status SET cover_date = ? WHERE id = ? AND cover_date IS NULL", sets)
+            WHERE i.cover_date IS NULL OR (r.source = 'comicinfo' AND LENGTH(i.cover_date) = 4)""")]
+        sets, clears = [], []
+        for r in rows:
+            c = _held_cover(r)
+            if c and len(c) == 4 and r["source"] == "comicinfo" and (r["sid"], c) in stamped:
+                c = None                             # a pack's stamp, not this issue's year
+            if r["status_cover"] is None and c:
+                sets.append((c, r["id"]))
+            elif r["status_cover"] is not None and c is None and (r["sid"], r["status_cover"]) in stamped:
+                clears.append((r["id"],))
+        if not dry:
+            if sets:
+                conn.executemany("UPDATE issue_status SET cover_date = ? WHERE id = ? AND cover_date IS NULL", sets)
+            if clears:
+                conn.executemany("UPDATE issue_status SET cover_date = NULL WHERE id = ?", clears)
     return len(sets)
 
 

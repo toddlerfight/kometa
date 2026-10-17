@@ -62,6 +62,22 @@ def test_held_cover_dates_reach_the_issue_without_asking_anyone(db_path):
     assert _status(db_path, b)["store_date"] is None                      # and never a release date
 
 
+def test_a_packs_year_stamp_is_not_a_cover_date(db_path):
+    sid = db.add_series(title="Uncanny X-Men Annual", publisher="Marvel", folder_path=None, on_pull_list=False, path=db_path)
+    for n in (4.0, 10.0, 25.0):
+        db.upsert_issue_status(sid, n, None, True, path=db_path)
+        record.write_issue(sid, n, {"desc": "", "credits": [], "store_date": "1992-01-01", "extra": {}},
+                           "comicinfo", "full", {}, db_path)
+    other = _issue(db_path, source="comicinfo", store_date="2019-01-01", title="They Called Us Enemy", extra={})
+    with db._connect(db_path) as conn:          # set before the guard existed
+        conn.execute("UPDATE issue_status SET cover_date = '1992' WHERE tracked_series_id = ?", (sid,))
+    gf.local_covers(db_path)
+    with db._connect(db_path) as conn:
+        got = [r[0] for r in conn.execute("SELECT cover_date FROM issue_status WHERE tracked_series_id = ?", (sid,))]
+    assert got == [None, None, None]                  # #4 to #25 can't all be 1992
+    assert _status(db_path, other)["cover_date"] == "2019"   # one book's own year stands
+
+
 def test_comic_vine_fills_the_on_sale_date_both_places_and_only_empty_descriptions(db_path):
     a = _issue(db_path)
     b = _issue(db_path, n=202.0, desc="Metron's own words.", extra={"cv_id": 5002})
