@@ -99,11 +99,10 @@ def test_library_to_series_and_back_transitions_and_keeps_the_library(motion_app
 def test_reader_fades_in_over_the_series_and_back_out(motion_app, app_server):
     page = motion_app
     page.locator(".series-card", has_text="Test Comic Alpha").click()
-    page.locator('.issue-tile[data-num="1"]').click()
-    expect(page.locator("#modal")).to_be_visible()
+    expect(page.locator('.issue-tile[data-num="1"]')).to_be_visible()
     _settled(page)
     page.evaluate(SAMPLER, 900)
-    page.locator("#modal").get_by_role("button", name="Read", exact=True).click()
+    page.locator('.issue-tile[data-num="1"]').click()                # owned: a tap reads
     expect(page.locator("#reader #rd-stage .rd-page")).to_be_visible(timeout=10000)
     page.wait_for_timeout(950)
     ops = page.evaluate("__op")

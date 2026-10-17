@@ -14,7 +14,7 @@ def test_want_to_read_from_the_sheet_to_on_deck_and_back(app, app_server):
     btn.click()
     expect(btn.locator(".ico-check")).to_have_count(1)                 # the tick, drawn (reader.js ico)
     expect(btn).to_have_text("Want to read")
-    app.locator("#modal").get_by_role("button", name="Close").click()
+    app.keyboard.press("Escape")                                    # the card has no Close: Esc or outside
     app.evaluate("navigate('ondeck')")
     row = app.locator(".od-row", has=app.locator(".od-head", has_text="Want to read"))
     card = row.locator(".od-card")
@@ -26,6 +26,6 @@ def test_want_to_read_from_the_sheet_to_on_deck_and_back(app, app_server):
     btn.click()
     expect(btn.locator(".ico-check")).to_have_count(0)
     expect(btn).to_have_text("Want to read")
-    app.locator("#modal").get_by_role("button", name="Close").click()
+    app.keyboard.press("Escape")                                    # the card has no Close: Esc or outside
     app.evaluate("navigate('library'); navigate('ondeck')")
     expect(app.locator(".od-head", has_text="Want to read")).to_have_count(0)

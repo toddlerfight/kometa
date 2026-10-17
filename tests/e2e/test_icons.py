@@ -56,7 +56,7 @@ def test_no_borrowed_glyphs_and_the_chip_icons_sit_on_the_text(app):
     app.locator(".series-card", has_text="Test Comic Alpha").click()
     expect(app.locator(".issue-tile").first).to_be_visible()
     assert _stray(app) == []
-    app.locator('.issue-tile[data-num="1"]').click()
+    app.locator('.issue-tile[data-num="1"] .od-menu').click()      # an owned issue's card: its ⋯
     expect(app.locator("#modal")).to_be_visible()
     for sel in (".rating-dot .ico", ".mark-heart .ico"):
         if app.locator(sel).count():

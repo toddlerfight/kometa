@@ -7,7 +7,7 @@ from playwright.sync_api import expect
 
 def _open_alpha_issue_1(app):
     app.locator(".series-card", has_text="Test Comic Alpha").click()
-    app.locator('.issue-tile[data-num="1"]').click()
+    app.locator('.issue-tile[data-num="1"] .od-menu').click()      # an owned issue's card: its ⋯ (a tap reads)
     expect(app.locator("#modal")).to_be_visible()
 
 

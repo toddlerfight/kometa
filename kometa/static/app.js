@@ -1045,7 +1045,6 @@ async function renderOnDeck() {
   if (currentView !== 'ondeck') return;
   const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
   const read = c => `navigate('read', {book: ${c.book_id}})`;
-  const series = c => c.series_id ? `navigate('series-detail', {id: ${c.series_id}})` : (c.shelf_id ? `navigate('shelf', {id: ${c.shelf_id}})` : '');
   const bookCard = (c, tag, dismissable, tagHtml) => `
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
@@ -1055,8 +1054,10 @@ async function renderOnDeck() {
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>`;
+  // an issue you don't have opens its card (2026-10-17), not the run
+  const card = c => `showIssueModal(${c.series_id}, ${c.number}, {orSeries: true})`;
   const soonCard = c => `
-    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${series(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${series(c)}">
+    <div class="issue-tile od-card" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${card(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${card(c)}">
       <div class="issue-tile-img"><img src="/api/series/${c.series_id}/issues/${c.number}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${c.status === 'upcoming' && c.store_date
           ? `<div class="series-card-next-release">${_fmtReleaseDate(c.store_date)}</div>`   // the Library's date pill, same everywhere
@@ -1068,10 +1069,13 @@ async function renderOnDeck() {
       <div class="issue-tile-img"><img src="/api/series/${c.series_id}/thumbnail" alt="" loading="lazy" onerror="this.style.opacity='0.15'"><span class="od-tag">${ico('heart')}</span></div>
       <div class="issue-tile-num">${esc(c.series)}</div>
     </div>` : bookCard(c, null, false, ico('heart'));
-  // reading-list card: the books from where you are on, gaps as gaps — a gap
-  // opens the list, which is where you deal with what's missing
+  // reading-list card: the books from where you are on, gaps as gaps — a gap in a
+  // run you track opens the issue's card; any other opens the list, which is where
+  // you deal with what's missing
+  const gapGo = (c, l) => c.series_id && c.number != null && !isNaN(Number(c.number))
+    ? `showIssueModal(${c.series_id}, ${Number(c.number)}, {orSeries: true})` : `navigate('readlist', {id: ${l.list_id}})`;
   const listCard = (c, l) => c.kind === 'gap' ? `
-    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.label)} — not on the shelf" onclick="navigate('readlist', {id: ${l.list_id}})" onkeydown="if(event.key==='Enter'||event.key===' ')navigate('readlist', {id: ${l.list_id}})">
+    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.label)} — not on the shelf" onclick="${gapGo(c, l)}" onkeydown="if(event.key==='Enter'||event.key===' ')${gapGo(c, l)}">
       <div class="issue-tile-img">${c.cover ? `<img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">` : '<div class="rl-nocover"></div>'}
         <span class="od-tag">${c.position}/${l.total}</span></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
@@ -1080,7 +1084,7 @@ async function renderOnDeck() {
   // yet (an issue, or a run you've read all you own of) opens where to get it.
   const wantCard = c => c.kind === 'book' ? bookCard(c, c.want_series ? 'Next' : null)
     : c.kind === 'gap' ? `
-    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)} — not on the shelf" onclick="showIssueModal(${c.series_id}, ${c.number})" onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${c.series_id}, ${c.number})">
+    <div class="issue-tile od-card od-gap" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)} — not on the shelf" onclick="${card(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${card(c)}">
       <div class="issue-tile-img"><img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'"></div>
       <div class="issue-tile-num">${esc(c.label)}</div>
     </div>` : `
@@ -1252,10 +1256,14 @@ function _rowSig(el, payload) { if (el) el.dataset.sig = JSON.stringify(payload)
 // --- Trending (kometa/trending.py): what shops sold most, from ICv2 ----------------
 function _trendCard(e) {
   const owned = e.owned && e.series_id;
-  const go = owned ? `navigate('series-detail', {id: ${e.series_id}})`
+  // a single from a run you track is an issue: you have it, a tap reads and the ⋯ is
+  // its card; you don't, a tap is its card (2026-10-17)
+  const single = owned && e.number != null;
+  const go = single ? (e.have_issue ? `openIssueReader(${e.series_id}, ${e.number})` : `showIssueModal(${e.series_id}, ${e.number}, {orSeries: true})`)
+    : owned ? `navigate('series-detail', {id: ${e.series_id}})`
     : `showCatalogueModal(${jsArg({ title: e.metron_title || e.locg_title || e.series, publisher: e.publisher, year: e.year, cover: e.cover, metron_series_id: e.metron_series_id, locg_series_id: e.locg_series_id, rank: e.rank, why: [e.number != null ? `#${fmtNum(e.number)} charted` : 'charted'] })})`;
   const label = e.number != null ? `#${fmtNum(e.number)}` : (e.vol != null ? `Vol ${e.vol}` : '');
-  const action = owned ? ''
+  const action = owned ? (single && e.have_issue ? _cardDots(e.series_id, e.number) : '')
     : e.metron_series_id
       ? `<button class="od-menu rel-get" title="Track this series and put it on the pull list" onclick="event.stopPropagation(); _relTrack(${jsArg({ metron_id: e.metron_series_id, title: e.metron_title || e.series, publisher_name: e.publisher || '', year_began: e.year || null, on_pull_list: true })}, this)">TRACK</button>`
     : e.locg_series_id      // Metron hasn't got it; LOCG has
@@ -1518,7 +1526,7 @@ function _bookActions(c) {
   // all, with the card's actions in its footer. A trade or an untracked shelf
   // book has no issue to look up, so it gets the same modal shape built from
   // the book itself (cover, pages, star, rating) — never a bare list of buttons.
-  if (c.series_id && c.number != null) return showIssueModal(c.series_id, c.number, { book: c });
+  if (c.series_id && c.number != null) return showIssueModal(c.series_id, c.number, { book: c });   // not in the run's list: the book's card
   return showBookModal(c);
 }
 
@@ -2265,6 +2273,13 @@ function buildIssueTiles(s) {
   return filtered.map(issue => _issueTileHtml(s, issue)).join('');
 }
 
+// The ⋯ on an issue you have: its card, while a tap reads it — the same on every
+// screen, and in the apps, where a long-press is the ⋯ (2026-10-17). One you don't
+// have needs no ⋯: a tap opens its card.
+function _cardDots(seriesId, number) {
+  return `<button class="od-menu" title="Issue details" aria-label="Issue details" onclick="event.stopPropagation(); showIssueModal(${seriesId}, ${number})">${DOTS}</button>`;
+}
+
 function _issueTileHtml(s, issue) {
     const st = issueStatus(issue);
     const num = `#${fmtNum(issue.number)}`;
@@ -2280,6 +2295,7 @@ function _issueTileHtml(s, issue) {
       const thumbSrc = issue.variant_cover ? issue.variant_cover : bookThumb(issue);
       inner = `<div class="issue-tile-img">
         <img src="${esc(thumbSrc)}" alt="${num}" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">
+        ${_cardDots(s.id, issue.number)}
       </div>`;
     } else {
       // variant_cover = your saved variant pick (not-yet-downloaded issues) — show it
@@ -2299,9 +2315,9 @@ function _issueTileHtml(s, issue) {
       ? `<button class="issue-tile-search" title="Get this issue" aria-label="Get issue ${fmtNum(issue.number)}" data-dl="${s.id}:${issue.number}"
            onclick="event.stopPropagation(); searchIssue(${s.id}, ${issue.number}, this)">↓</button>`
       : '';
+    const go = st === 'owned' ? `openIssueReader(${s.id}, ${issue.number})` : `showIssueModal(${s.id}, ${issue.number})`;
     return `<div class="issue-tile" data-num="${issue.number}" title="${esc(s.title)} ${num}" tabindex="0" role="button"
-      onclick="showIssueModal(${s.id}, ${issue.number})"
-      onkeydown="if(event.key==='Enter'||event.key===' ')showIssueModal(${s.id}, ${issue.number})">
+      onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
       ${inner}
       <div class="issue-tile-num">${num}${score != null
         ? ` <span class="comm-v${score >= 7.5 ? ' hi' : score < 6 ? ' lo' : ''}">${score.toFixed(1)}</span>` : ''}</div>
@@ -2422,13 +2438,15 @@ function renderArcDetail(s) {
     // Download button, variants, LOCG details — scoped to the row's OWN home series
     // (tracked_series_id, resolved server-side). Falls back to the thin arc-only
     // modal only in the rare case a participating run somehow isn't resolved yet.
-    const openIssue = i.tracked_series_id
-      ? `showIssueModal(${i.tracked_series_id}, ${Number(i.number)})`
+    // One you have reads on a tap, its ⋯ opens the card (_cardDots).
+    const home = i.tracked_series_id;
+    const openIssue = home
+      ? (owned ? `openIssueReader(${home}, ${Number(i.number)})` : `showIssueModal(${home}, ${Number(i.number)})`)
       : `showArcIssueModal(${i.reading_order})`;
     return `<div class="issue-tile" title="${ttl}" tabindex="0" role="button"
       onclick="${openIssue}"
       onkeydown="if(event.key==='Enter'||event.key===' ')${openIssue}">
-      <div class="issue-tile-img${stateCls}">${cover}${covBadge}</div>
+      <div class="issue-tile-img${stateCls}">${cover}${covBadge}${home && owned ? _cardDots(home, Number(i.number)) : ''}</div>
       <div class="issue-tile-num">${xt}${num}</div>
     </div>`;
   }).join('');
@@ -3778,10 +3796,10 @@ async function _renderPullListContent() {
         <div class="pull-group-label">${label.toUpperCase()}</div>
         ${entries.map(e => {
           const sid = e.id;
+          const card = `showIssueModal(${sid}, ${e.number}, {orSeries: true})`;   // the issue's card, as everywhere (2026-10-17)
           return `
             <div class="pull-row" tabindex="0" role="button"
-              onclick="navigate('series-detail', {id: ${sid}})"
-              onkeydown="if(event.key==='Enter'||event.key===' ')navigate('series-detail',{id:${sid}})">
+              onclick="${card}" onkeydown="if(event.key==='Enter'||event.key===' ')${card}">
               <div class="pull-thumb-wrap"><img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
                 loading="lazy" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${sid}/thumbnail'"></div>
               <div class="pull-meta">
@@ -4531,7 +4549,10 @@ function _actRowHtml(q) {
   const active = ACT_ACTIVE_STATES.includes(q.state);
   const errTip = q.error ? ` title="${esc(q.error)}"` : '';
   const pack = _actPack(q);
+  // one issue: its card (2026-10-17); a pack its list; a trade or a whole run the series
+  const oneIssue = !pack && (q.kind || 'issue') === 'issue' && q.tracked_series_id && q.issue_number != null && q.issue_number >= 0;
   const nav = pack && pack.listId ? ` style="cursor:pointer" onclick="navigate('readlist',{id:${pack.listId}})"`
+    : oneIssue ? ` style="cursor:pointer" onclick="showIssueModal(${q.tracked_series_id}, ${q.issue_number}, {orSeries: true})"`
     : q.tracked_series_id ? ` style="cursor:pointer" onclick="navigate('series-detail',{id:${q.tracked_series_id}})"` : '';
   return `
         <div class="act-row${q.state === 'done' ? ' done' : ''}" data-qid="${q.id}" data-qstate="${q.state}"${errTip}>
@@ -5319,7 +5340,11 @@ function showModal(html) {
   modal.innerHTML = html;
   modal._openedAt = performance.now();
   modal.classList.remove('hidden');
-  document.getElementById('modal-backdrop').classList.remove('hidden', 'closing');
+  const backdrop = document.getElementById('modal-backdrop');
+  backdrop.classList.remove('hidden', 'closing');
+  // opened from inside the reader (its Next issue): the window sits over the reader.
+  // Only then — one still fading out as a book opens must stay under it
+  backdrop.classList.toggle('over-reader', document.body.classList.contains('reading'));
   const first = modal.querySelector('button, input, [tabindex]');
   if (first) setTimeout(() => first.focus(), 30);
   _wantSync(modal);
@@ -5341,7 +5366,7 @@ function closeModal() {
     modal.style.height = '';
     modal.style.transition = '';
     backdrop.classList.add('hidden');
-    backdrop.classList.remove('closing');
+    backdrop.classList.remove('closing', 'over-reader');
   }, 200);                                     // match exit duration
 }
 
@@ -5471,7 +5496,12 @@ async function showIssueModal(seriesId, number, opts = {}) {
       return;
     }
     issue = homeSeries?.issues?.find(i => i.number === number);
-    if (!issue) return;
+    if (!issue) {
+      // the run doesn't list it: a shelf book gets the book's card, a gap its run
+      if (opts.book) return showBookModal(opts.book);
+      if (opts.orSeries) navigate('series-detail', { id: seriesId });
+      return;
+    }
   }
 
   // A card that hands us a book is on the shelf whatever the issue row says
@@ -5509,7 +5539,9 @@ async function showIssueModal(seriesId, number, opts = {}) {
   };
 
   let dateHtml = '';
-  if (issue.store_date) {
+  if (issue.store_date >= '9000') {
+    dateHtml = `<div class="issue-modal-release-label">Release date TBD</div>`;   // the catalogue's 'unscheduled' placeholder
+  } else if (issue.store_date) {
     const d = new Date(issue.store_date + 'T00:00:00');
     const fmtDate = d.toLocaleDateString('en', { month: 'long', day: 'numeric', year: 'numeric' });
     if (st === 'upcoming') {
@@ -5524,20 +5556,20 @@ async function showIssueModal(seriesId, number, opts = {}) {
     }
   }
 
+  // The card's actions, the same wherever it opens (2026-10-17): Want to read and Go to
+  // series always (Go to series not on that series' own page), then what the issue's
+  // state allows — Mark as read and Read for one you have, Ignore and Download for one
+  // that's out, Stop ignoring. No Close: outside click and Esc do it.
+  const onItsPage = currentView === 'series-detail' && _detailSeries?.id === seriesId;
+  const goSeries = onItsPage ? '' : `<button class="btn btn-ghost" onclick="navigate('series-detail', {id: ${seriesId}})">Go to series</button>`;
   let footerAction = '';
   if (st === 'owned') {
-    // Kometa's own reader. (The Komga link went 2026-10-10.)
-    footerAction = `<button class="btn btn-primary" onclick="openIssueReader(${seriesId}, ${number})">Read</button>`;
-    // Opened from a book card (On Deck): the same modal, with the card's
-    // actions in the footer — the series behind it, read state. No Not now
-    // (the card's ✕ is the same call) and no Close (outside click / Esc).
-    if (opts.book) {
-      const b = opts.book;
-      footerAction = `
-        <button class="btn btn-ghost" onclick="closeModal(); navigate('series-detail', {id: ${seriesId}})">Go to series</button>
-        <button class="btn btn-ghost" onclick="closeModal(); _bookSetRead(${b.book_id}, ${b.completed ? 'false' : 'true'})">${b.completed ? 'Mark as unread' : 'Mark as read'}</button>
-        <button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${b.book_id}})">Read</button>`;
-    }
+    // Mark as read waits for the book (its read state) unless the card handed it over
+    const b = opts.book;
+    footerAction = `
+        <button class="btn btn-ghost" id="issue-read-state"${b ? '' : ' hidden'}
+          onclick="closeModal(); _bookSetRead(${b ? b.book_id : 0}, ${b && b.completed ? 'false' : 'true'})">${b && b.completed ? 'Mark as unread' : 'Mark as read'}</button>
+        <button class="btn btn-primary" onclick="${b ? `navigate('read', {book: ${b.book_id}})` : `openIssueReader(${seriesId}, ${number})`}">Read</button>`;
   } else if (st === 'missing' || st === 'today') {
     footerAction = `<button class="btn btn-ghost" onclick="setIssueIgnored(${seriesId}, ${number}, true)"
         title="Stop searching for this issue">Ignore</button>
@@ -5561,6 +5593,7 @@ async function showIssueModal(seriesId, number, opts = {}) {
         <div style="margin:8px 0">${chipMap[st] || ''}${s && s.run_status
           ? ` <span class="chip chip-upcoming" title="${esc(s.run_status.why)}">${esc(s.run_status.label)}</span>` : ''}</div>
         ${dateHtml}
+        <div id="issue-modal-own"></div>
         ${hasLocgId ? `
         <div class="issue-modal-tabs" style="margin-top:12px">
           <button class="issue-modal-tab active" id="imtab-details"  onclick="_imSwitchTab('details')">Details</button>
@@ -5585,18 +5618,31 @@ async function showIssueModal(seriesId, number, opts = {}) {
       </div>
     </div>
     <div class="modal-footer" id="issue-modal-footer">
-      ${opts.book ? '' : '<button class="btn btn-ghost" onclick="closeModal()">Close</button>'}
       ${_wantBtnHtml({ series_id: seriesId, number })}
+      ${goSeries}
       ${footerAction}
     </div>
   `);
 
-  // Owned: the star and the 1–5 rating, on the book behind the issue.
+  // Owned: the 1–5 rating and the heart, the pages and where you're up to, and
+  // Mark as read — all off the book behind the issue.
   if (st === 'owned') {
     const bookP = opts.book ? api.get(`/api/books/${opts.book.book_id}`) : api.get(`/api/series/${seriesId}/issues/${number}/book`);
     bookP.then(bk => {
-      const host = document.getElementById('issue-modal-details');
-      if (host && bk) host.insertAdjacentHTML('beforebegin', _markRowHtml(bk));
+      const host = document.getElementById('issue-modal-own');
+      if (!host || !bk) return;
+      const done = !!bk.progress?.completed;
+      const where = done ? ' · read' : bk.progress ? ` · on page ${bk.progress.page}` : '';
+      _animateModalHeight(() => {
+        host.innerHTML = _markRowHtml(bk)
+          + (bk.page_count ? `<div class="issue-modal-meta">${bk.page_count} pages${where}</div>` : '');
+        const rs = document.getElementById('issue-read-state');
+        if (rs) {
+          rs.textContent = done ? 'Mark as unread' : 'Mark as read';
+          rs.setAttribute('onclick', `closeModal(); _bookSetRead(${bk.id}, ${done ? 'false' : 'true'})`);
+          rs.hidden = false;
+        }
+      });
     }).catch(() => {});
   }
 

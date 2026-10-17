@@ -254,6 +254,7 @@ def list_rows(reader_id=None, now=None, path=None, seen: set | None = None) -> l
             for e, b in flat[start:]:
                 if b is None:
                     cards.append({"kind": "gap", "series": e["series"], "number": e["number"],
+                                  "series_id": e.get("series_id"),   # a tracked run: the gap opens the issue's card
                                   "label": f"{e['series']} #{e['number']}" if e.get("number") else e["series"],
                                   "cover": e.get("cover"), "position": e["position"], "list_id": lst["id"]})
                 elif not (b["progress"] and b["progress"]["completed"]) and b["id"] not in shown:

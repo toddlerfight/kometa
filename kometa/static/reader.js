@@ -254,8 +254,9 @@ async function _rdSeriesNext(bookId, secondary = false) {
     // not in the grey footnote under the buttons, where nobody looks
     if (n && n.number != null && host && !secondary && _rd.book.series_id) {
       if (note) note.textContent = '';
+      const card = `showIssueModal(${_rd.book.series_id}, ${n.number})`;   // its card, over the reader
       host.innerHTML = `
-        <div class="rd-next-card" style="cursor:default">
+        <div class="rd-next-card" role="button" tabindex="0" onclick="${card}" onkeydown="if(event.key==='Enter'||event.key===' ')${card}">
           <img class="rd-next-cover" src="/api/series/${_rd.book.series_id}/issues/${n.number}/thumbnail" alt="" onerror="this.style.opacity='0.15'">
           <div class="rd-next-text"><div class="u-label" style="color:var(--tq)">Next issue</div>
             <div class="rd-next-title">${esc(_rd.book.title || '')} ${esc(n.label)}</div>
@@ -534,6 +535,9 @@ function _rdBindInput() {
   }, { passive: false });
   document.addEventListener('keydown', e => {
     if (currentView !== 'read' || !_rd.book) return;
+    // a card over the reader (Next issue) has the keys — one on its way out doesn't
+    const bd = document.getElementById('modal-backdrop');
+    if (bd?.classList.contains('over-reader') && !bd.classList.contains('closing')) return;
     if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); _rdStep(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); _rdStep(-1); }
     else if (e.key === 'Escape') { e.preventDefault(); _rd.chrome ? _rdToggleChrome(false) : _rdExit(); }
@@ -999,17 +1003,8 @@ async function _loadShelfFiles(s, all) {
   if (currentView !== 'series-detail' || currentParams.id !== s.id) return;
   const books = all ? shelf.books : shelf.books.filter(b => b.number == null && !b.trade);   // trades live on the Trades tab
   if (!books.length) return;
-  const tiles = books.map(b => {
-    const p = b.progress;
-    const mark = p?.completed ? `<div class="shelf-tile-done" aria-label="Read">${ico('check')}</div>`
-      : p ? `<div class="shelf-tile-bar"><div style="width:${b.page_count ? Math.round(p.page / b.page_count * 100) : 10}%"></div></div>` : '';
-    const go = `navigate('read', {book: ${b.id}})`;
-    return `<div class="issue-tile${p?.completed ? ' shelf-tile-read' : ''}" tabindex="0" role="button" title="${esc(b.label)}"
-        onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
-      <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
-        onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}</div>
-      <div class="issue-tile-num">${esc(b.label)}</div></div>`;
-  }).join('');
+  // the shared book tile: a tap reads, the ⋯ is its card — like every other cover
+  const tiles = books.map(b => _bookTile(b, s.title, {}, { series_id: s.id, shelf_id: s.shelf_id })).join('');
   const app = document.getElementById('app');
   app.querySelector('.shelf-files')?.remove();
   if (all) app.querySelector('.issue-grid')?.remove();
@@ -1235,10 +1230,14 @@ async function renderReadList(id) {
       for (const b of e.books) tiles.push(_bookTile({ ...b, label: `${e.series} ${b.label}` }, e.series, { list: id }, { series_id: e.series_id, shelf_id: e.shelf_id }));
     } else {
       const label = `${e.series}${e.number ? ' #' + e.number : ''}`;
-      const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
+      // a gap in a run you track is an issue: tap or ⋯, its card (2026-10-17); the
+      // card's Download is the Get. Anything else: the run, and Get on the ⋯
+      const card = e.series_id && e.number != null && !isNaN(Number(e.number))
+        ? `showIssueModal(${e.series_id}, ${Number(e.number)}, {orSeries: true})` : '';
+      const go = card || (e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : ''));
       tiles.push(`<div class="issue-tile rl-gap" id="rl-item-${e.item_id}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
         <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}
-          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${jsArg(label)}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">${DOTS}</button></div>
+          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); ${card || `_rlGapActions(${id}, ${e.item_id}, ${jsArg(label)}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})`}">${DOTS}</button></div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }

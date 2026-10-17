@@ -20,14 +20,14 @@ def test_detail_renders_and_tabs_switch(app):
 
 def test_issue_modal_opens_and_esc_closes(app):
     _open_alpha(app)
-    app.locator('.issue-tile[data-num="1"]').click()
+    app.locator('.issue-tile[data-num="1"] .od-menu').click()      # owned: the card is the ⋯, a tap reads
     modal = app.locator("#modal")
     expect(modal).to_be_visible()
     expect(modal.get_by_text("#1")).to_be_visible()
     app.keyboard.press("Escape")
     expect(modal).to_be_hidden()
     # Reopen — proves closeModal fully reset state (height pin, wide class)
-    app.locator('.issue-tile[data-num="2"]').click()
+    app.locator('.issue-tile[data-num="2"] .od-menu').click()
     expect(modal).to_be_visible()
     expect(modal.get_by_text("#2")).to_be_visible()
     app.keyboard.press("Escape")
@@ -53,7 +53,8 @@ def test_detail_tab_does_not_leak_across_series(app):
     app.locator('.nav-item[data-view="activity"]').click()
     row = app.locator(".act-row", has_text="Gamma Run")
     expect(row).to_be_visible()
-    row.locator(".act-row-meta").click()
+    row.locator(".act-row-meta").click()                           # one issue: its card, then its run
+    app.locator("#modal").get_by_role("button", name="Go to series").click()
     expect(app.get_by_text("Gamma Run").first).to_be_visible()
     expect(app.locator(".issue-tab", has_text="all").first).to_have_class(
         "issue-tab active")
@@ -77,7 +78,7 @@ def test_variant_card_click_zooms_instead_of_selecting(app):
     app.route("**/api/series/*/issues/*/variants", lambda route: route.fulfill(
         status=200, content_type="application/json", body=_TWO_COVERS))
     _open_alpha(app)
-    app.locator('.issue-tile[data-num="1"]').click()
+    app.locator('.issue-tile[data-num="1"] .od-menu').click()
     app.locator("#imtab-variants").click()
     card = app.locator("#vc-1")
     expect(card).to_be_visible()

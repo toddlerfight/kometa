@@ -2134,6 +2134,7 @@ body.reading { overflow: hidden; overscroll-behavior: none; }
   touch-action: pan-x pan-y pinch-zoom;
 }
 #reader.hidden { display: none; }
+#modal-backdrop.over-reader { z-index: 950; }   /* a card opened from the reader (Next issue) sits over it */
 /* Opening: the view you launched from fades off (#layout), THEN the reader fades
    up over the dark — the delay is that handover. Closing: the reader fades off
    while the layout fades back up beneath it. */
@@ -2431,6 +2432,8 @@ body.touch .od-x { opacity: .85; }
   background: rgba(0,0,0,.75); color: var(--tp); font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
   opacity: 0; transition: opacity var(--t-fast, 120ms) ease; }
 .issue-tile:hover .od-menu, .issue-tile:focus-within .od-menu, .od-card:hover .od-menu, .od-card:focus-within .od-menu, .od-menu:disabled { opacity: 1; }
+/* an issue's ⋯ on a series-shaped card (Trending's singles) */
+.rel-card:hover .od-menu:not(.rel-get), .rel-card:focus-within .od-menu:not(.rel-get) { opacity: 1; }
 .od-menu:hover { background: var(--pri); color: var(--ink, #000); }
 .od-menu.on { color: var(--pri); } .od-menu.off { color: var(--tq); }
 body.touch .od-menu { opacity: .85; }

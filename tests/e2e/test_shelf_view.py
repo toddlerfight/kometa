@@ -57,8 +57,7 @@ def test_new_folder_becomes_a_series_pull_off_and_readable(app, app_server):
         banner.get_by_role("button", name="Match now").click()       # …unless you ask
         expect(app.locator("#match-banner")).to_contain_text("Pick the run")
         expect(app.locator(".pull-switch input")).not_to_be_checked()
-        app.locator('.issue-tile[data-num="1"]').click()           # owned, straight from disk
-        app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
+        app.locator('.issue-tile[data-num="1"]').click()           # owned, straight from disk: a tap reads
         expect(app.locator("#reader .rd-page")).to_have_attribute("alt", "Page 1")
         app.keyboard.press("Escape")
     finally:

@@ -2,8 +2,7 @@
 def test_chrome_over_page(app, app_server):
     app.set_viewport_size({"width": 1180, "height": 820})
     app.locator(".series-card", has_text="Test Comic Alpha").click()
-    app.locator('.issue-tile[data-num="1"]').click()
-    app.locator("#modal").get_by_role("button", name="Read", exact=True).click()
+    app.locator('.issue-tile[data-num="1"]').click()                 # owned: a tap reads
     app.wait_for_function("document.querySelector('#reader #rd-stage .rd-page') && document.querySelector('#reader #rd-stage .rd-page').naturalWidth > 0")
     app.evaluate("_rdToggleChrome(true)")
     app.wait_for_timeout(400)
