@@ -124,3 +124,12 @@ def test_by_name_is_off_until_switched_on_and_the_switch_is_a_setting(db_path, t
     assert (sid, 1.0) in {(r["tracked_series_id"], r["number"]) for r in record.credits_wanted(db_path)}
     with pytest.raises(HTTPException):
         main.update_config(main.ConfigRequest(cv_by_name="yes"))
+
+
+def test_a_year_in_our_title_is_the_runs_year_not_part_of_its_name():
+    assert cvname.split_year("Batman (2025)") == ("Batman", 2025)
+    assert cvname.split_year("Batman- the Imposter (2021-)") == ("Batman- the Imposter", 2021)
+    assert cvname.split_year("SQUEE!") == ("SQUEE!", None)
+    batmen = [{"name": "Batman", "year": y, "publisher": "DC Comics", "cv_volume_id": y} for y in (1940, 2011, 2016, 2025)]
+    run = {"title": "Batman (2025)", "publisher": "DC Comics", "id": 0}
+    assert cvname.pick_volume(run, cvname.series_year(run), batmen)[0] == 2025

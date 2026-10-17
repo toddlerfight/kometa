@@ -101,6 +101,16 @@ def ensure_tables(path=None):
 
 # --- matching ------------------------------------------------------------------------
 
+_YEAR_TAIL = re.compile(r"\s*[(\[]\s*(\d{4})\s*(?:-\s*(?:\d{4})?\s*)?[)\]]\s*$")
+
+
+def split_year(title: str | None) -> tuple[str, int | None]:
+    """'Batman (2025)' → ('Batman', 2025); '(2021-)' too. Our titles carry the run's year to
+    tell same-named runs apart; Comic Vine keeps it in start_year, never in the name."""
+    m = _YEAR_TAIL.search(title or "")
+    return ((title or "")[:m.start()], int(m.group(1))) if m else (title or "", None)
+
+
 def norm_title(s: str | None) -> str:
     """'The Dark Knight Returns- the Golden Child' and 'Dark Knight Returns: The Golden Child'
     are one name: case, punctuation, dashes, '&' and a leading 'The' don't count."""
@@ -124,9 +134,11 @@ def same_publisher(ours: str | None, theirs: str | None) -> bool:
 
 
 def series_year(series: dict, path=None) -> int | None:
-    """The run's first year: its own, else its earliest dated issue."""
+    """The run's first year: its own, the one in its title, else its earliest dated issue."""
     if series.get("year_began"):
         return int(series["year_began"])
+    if split_year(series.get("title"))[1]:
+        return split_year(series["title"])[1]
     with db._connect(path or db.DB_PATH) as conn:
         r = conn.execute("SELECT MIN(store_date) d FROM issue_status WHERE tracked_series_id = ? "
                          "AND store_date IS NOT NULL AND store_date < '9000'", (series["id"],)).fetchone()
@@ -135,7 +147,7 @@ def series_year(series: dict, path=None) -> int | None:
 
 def pick_volume(series: dict, year: int | None, volumes: list[dict]) -> tuple[int | None, str]:
     """(volume id, why) — the one volume whose name, year and publisher all agree, or None."""
-    name = norm_title(series.get("title"))
+    name = norm_title(split_year(series.get("title"))[0])
     fits = [v for v in volumes
             if norm_title(v.get("name")) == name
             and same_publisher(series.get("publisher"), v.get("publisher"))
@@ -180,7 +192,7 @@ def could_ask(series_id: int, number: float, state: tuple[dict, dict]) -> bool:
 
 def _match_volume(cv, series: dict, path) -> int | None:
     year = series_year(series, path)
-    query = re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", series["title"])).strip()
+    query = re.sub(r"\s+", " ", re.sub(r"[-–—:/]", " ", split_year(series["title"])[0])).strip()
     if not spend():
         return None
     volumes = cv.search_volumes(query, limit=20)
