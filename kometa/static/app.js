@@ -1022,7 +1022,7 @@ async function renderOnDeck() {
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">
         ${tag ? `<span class="od-tag">${esc(tag)}</span>` : ''}
-        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">⋯</button>
+        <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${JSON.stringify({ book_id: c.book_id, series: c.series, label: c.label, number: c.number ?? null, series_id: c.series_id || null, shelf_id: c.shelf_id || null, dismissable: !!dismissable, completed: !!(c.progress && c.progress.completed), page_count: c.page_count || null }).replace(/"/g, '&quot;')})">${DOTS}</button>
         ${dismissable ? `<button class="od-x" title="Mark as read" aria-label="Mark as read" onclick="event.stopPropagation(); _odMarkRead(${c.book_id}, ${c.progress ? c.progress.page : 1})">✕</button>` : ''}
         ${c.progress ? `<div class="od-bar"><div style="width:${pct(c)}%"></div></div>` : ''}</div>
       <div class="issue-tile-num">${esc(c.label)}</div>
@@ -2827,7 +2827,7 @@ async function tradeDownload(locgId, btn) {
   const label = _volLabel(t);
   if (btn) {
     btn.disabled = true;
-    if (isArrow) btn.textContent = '⋯';
+    if (isArrow) btn.innerHTML = DOTS;
     else { btn.classList.add('btn-working'); btn.textContent = 'Queuing…'; }
   }
   try {

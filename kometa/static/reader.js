@@ -1,4 +1,8 @@
 // --- Reader ------------------------------------------------------------------
+// The ⋯ on every actions button, drawn rather than typed: Google Fonts' Victor Mono has no
+// U+22EF, so each browser drew it in its own fallback font at its own height (Safari: 2 px
+// low in a 26 px circle, 2026-10-17). Three circles sit where the geometry says.
+const DOTS = '<svg class="dots" viewBox="0 0 34 8" aria-hidden="true"><circle cx="4" cy="4" r="4"/><circle cx="17" cy="4" r="4"/><circle cx="30" cy="4" r="4"/></svg>';
 // The web half of docs/reader-spec.md. A route of its own (#read?book=42), so
 // Back, reload and a bookmarked URL all land you on the page you were on.
 //
@@ -128,7 +132,7 @@ function _rdRender() {
         <div class="rd-top-r">
           <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">⛶</button>
           <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
-          <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">⋯</button>
+          <button class="rd-btn" onclick="_rdToggleMenu(event)" aria-label="More">${DOTS}</button>
           <div class="rd-menu hidden" id="rd-menu">
             <button onclick="_rdToggleShift()">${_rd.shift ? '✓ ' : ''}Shift pairing by one</button>
             <button onclick="_rdMarkRead()">Mark as read</button>
@@ -688,7 +692,7 @@ function _bookTile(b, seriesTitle, extra = {}, ctx = {}) {
       onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
     <div class="issue-tile-img"><img src="/api/books/${b.id}/cover" alt="${esc(b.label)}" loading="lazy"
       onerror="this.parentElement.classList.add('unknown');this.remove()">${mark}
-      <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${actions})">⋯</button></div>
+      <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _bookActions(${actions})">${DOTS}</button></div>
     <div class="issue-tile-num">${esc(b.label)}</div>
   </div>`;
 }
@@ -1208,7 +1212,7 @@ async function renderReadList(id) {
       const go = e.series_id ? `navigate('series-detail', {id: ${e.series_id}})` : (e.shelf_id ? `navigate('shelf', {id: ${e.shelf_id}})` : '');
       tiles.push(`<div class="issue-tile rl-gap" id="rl-item-${e.item_id}" ${go ? `tabindex="0" role="button" onclick="${go}"` : ''} title="${esc(label)} — ${e.status === 'missing' ? 'not here yet' : 'not on the shelf'}">
         <div class="issue-tile-img missing${e.cover ? '' : ' unknown'}">${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy" onerror="this.parentElement.classList.add('unknown');this.remove()">` : ''}
-          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${JSON.stringify(label).replace(/"/g, '&quot;')}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">⋯</button></div>
+          <button class="od-menu" title="Actions" aria-label="Actions" onclick="event.stopPropagation(); _rlGapActions(${id}, ${e.item_id}, ${JSON.stringify(label).replace(/"/g, '&quot;')}, ${e.series_id || 'null'}, ${e.shelf_id || 'null'})">${DOTS}</button></div>
         <div class="issue-tile-num">${esc(label)}</div></div>`);
     }
   }
@@ -1272,7 +1276,7 @@ async function _rlGet(listId, itemId, btn) {
       if (btn) { btn.textContent = '✓'; btn.classList.add('on'); }
     } else if (r.result === 'owned') { if (btn) btn.textContent = '✓'; }
     else { showToast(r.detail || 'No catalogue knows that run', 'error'); if (btn) { btn.textContent = '?'; btn.classList.add('off'); } }
-  } catch (e) { if (btn) { btn.disabled = false; btn.textContent = '⋯'; } showToast('Couldn’t get that', 'error'); }
+  } catch (e) { if (btn) { btn.disabled = false; btn.innerHTML = DOTS; } showToast('Couldn’t get that', 'error'); }
 }
 
 // Every gap on the list, in the background; the top-bar button shows progress.
