@@ -13,10 +13,10 @@
   <link rel="apple-touch-icon" href="/favicon.svg">
   <title>コメタ</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Victor+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css?v=323">
+  <!-- Victor Mono from Kometa itself (fonts/, faces in style.css): Google's stylesheet held the
+       first paint until it answered — 4.5 s on a reload, 35 s cold (2026-10-17) -->
+  <link rel="preload" href="/fonts/victor-mono-latin.woff2?v=1" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css?v=324">
 </head>
 <body>
   <div id="nav-bar" aria-hidden="true"><div id="nav-bar-fill"></div></div>
@@ -76,6 +76,6 @@
   <div id="ptr">↓</div>
 
   <script src="/reader.js?v=76"></script>
-  <script src="/app.js?v=395"></script>
+  <script src="/app.js?v=396"></script>
 </body>
 </html>

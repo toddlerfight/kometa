@@ -228,7 +228,7 @@ class _RequestWrap:
             return await self.app(scope, receive, send)
         from kometa.interactive import INTERACTIVE
         path, qs = scope.get("path", ""), scope.get("query_string", b"")
-        versioned = path.endswith((".js", ".css")) and (qs.startswith(b"v=") or b"&v=" in qs)
+        versioned = path.endswith((".js", ".css", ".woff2")) and (qs.startswith(b"v=") or b"&v=" in qs)
 
         inm = next((v for k, v in scope.get("headers", []) if k.lower() == b"if-none-match"), b"")
         not_modified = False

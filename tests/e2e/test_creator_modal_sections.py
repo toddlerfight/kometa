@@ -21,3 +21,28 @@ def test_the_creator_modal_shows_one_section_per_role(app):
     assert [t.strip() for t in modal.locator(".od-head .series-card-title").all_inner_texts()] == ["Artist", "Colorist"]
     expect(modal.locator(".series-card").first).to_contain_text("Also colorist, cover")
     expect(modal).not_to_contain_text("On the shelf")
+
+
+def test_a_series_in_the_creator_window_opens_it_and_the_window_closes(app):
+    alpha = app.evaluate("async () => (await (await fetch('/api/series')).json()).find(s => s.title === 'Test Comic Alpha').id")
+    page = dict(PAGE, sections=[{"role": "artist", "label": "Artist", "items": [
+        {"kind": "owned", "series_id": alpha, "title": "Test Comic Alpha", "owned": 2, "total": 5, "why": []}]}])
+    app.route("**/api/creators/558*", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps(page)))
+    app.wait_for_selector(".series-card")
+    app.evaluate("showCreatorModal(558, 'Javier Rodríguez')")
+    card = app.locator("#modal .creator-modal .series-card", has_text="Test Comic Alpha")
+    expect(card).to_be_visible()
+    card.click()
+    expect(app.locator("#modal")).to_be_hidden()                       # the window goes…
+    expect(app.locator(".issue-tile").first).to_be_visible()             # …and the series is there
+    assert app.evaluate("currentView") == "series-detail" and app.evaluate("currentParams.id") == alpha
+
+
+def test_the_font_comes_from_kometa_not_google(app_server, page):
+    asked = []
+    page.on("request", lambda r: asked.append(r.url))
+    page.goto(f"{app_server['base']}/")
+    page.wait_for_selector(".series-card")
+    assert page.evaluate("document.fonts.ready.then(() => document.fonts.check('14px \"Victor Mono\"'))")
+    assert not [u for u in asked if "googleapis" in u or "gstatic" in u], asked
+    assert any("/fonts/victor-mono-latin.woff2" in u for u in asked)

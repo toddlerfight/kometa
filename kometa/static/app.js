@@ -75,6 +75,9 @@ let _autoTabFor = null;   // series id we've already made the B1 trades-default 
 let _wantTab = null;      // a tab asked for by whoever navigated here (a trade's 'Go to series' → Trades)
 
 function navigate(view, params = {}) {
+  // going somewhere closes whatever window is open — its fade plays while the page changes
+  // under it. A series card in the creator window opened the series BEHIND the window (2026-10-17).
+  if (!document.getElementById('modal')?.classList.contains('hidden')) closeModal();
   _navBegin(view, params, 'fwd');
   currentView = view;
   currentParams = params;
