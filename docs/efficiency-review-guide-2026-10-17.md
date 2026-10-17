@@ -177,7 +177,7 @@ EOF
 - [x] Add in-memory `_comm_memo` and `MAX(rowid)` / state check to `kometa/related_combined.py` (live: 0.4 ms memo, 1.1 ms fingerprint).
 - [x] Eliminate slow pacing and live third-party network fetches in test suite (suite runtime down to 38.4s).
 - [x] Pin community memoisation invalidation behavior in `tests/test_related_phase2.py`.
-- [ ] Run one-time delete of legacy `metron:%` rows in `issue_details_cache` on production.
+- [x] Run one-time delete of legacy `metron:%` rows in `issue_details_cache` on production.
 
 ### Phase 2: First-Year Cache & Index Deprecation (Completed)
 - [x] Add `first_year` column to `cbr_people_series` and populate it at harvest.
@@ -190,6 +190,5 @@ EOF
 - [x] Add `scores_version` bumping in `kometa/cbr_people.py` (`record_issue_page`, `record_profile`).
 - [x] Implement one-time atomic table migration to `WITHOUT ROWID` with explicit column list in `cbr_people.ensure_tables()`.
 - [x] Add automated test covering migration, data preservation, `WITHOUT ROWID` enforcement, and version tracking in `tests/test_cbr_people.py`.
-- [ ] Run `VACUUM` via Python on production outside nightly backup window (shrinks DB from 313 MB $\to$ 176 MB):
-  `docker exec kometa python3 -c "import sqlite3; c = sqlite3.connect('/data/kometa.db', timeout=60); c.execute('VACUUM'); c.close()"`
+- [x] Run `VACUUM` via Python on production (shrank DB from 328 MB $\to$ 177 MB, freelist count down to 3 pages).
 
