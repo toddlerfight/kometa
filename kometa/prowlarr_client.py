@@ -228,7 +228,7 @@ def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) 
     seeders, title, size) or None. Twin of search_usenet_pack below."""
     results = []
     for q in (f"{title} complete", title):
-        results = prowlarr.search(q, protocol="torrent")
+        results = drop_not_comics(prowlarr.search(q, protocol="torrent"), single_issue=False)
         if results:
             break
     results = _drop_year_mismatches(results, title, series_year)
@@ -380,7 +380,7 @@ def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, m
     missing: how many issues the pack is for — caps the believable size."""
     results = []
     for q in (f"{title} complete", title):
-        results = prowlarr.search(q, protocol="usenet")
+        results = drop_not_comics(prowlarr.search(q, protocol="usenet"), single_issue=False)
         if results:
             break
     results = _drop_year_mismatches(results, title, series_year)
