@@ -1455,9 +1455,9 @@ async function showCreatorModal(creatorId, name, attempt = 0) {
     <div class="modal-header"><h2>${esc(d.name || name || 'Creator')}</h2>
       <div class="u-label" style="color:var(--tq)">${d.shelf.length} on your shelf · ${d.catalogue.length} in the catalogue${d.pending ? ' · still looking…' : ''}</div></div>
     <div class="modal-body creator-modal">
-      ${d.shelf.length ? `<div class="od-head"><span class="series-card-title">On the shelf</span></div><div class="series-grid">${d.shelf.map(_relCard).join('')}</div>` : ''}
-      ${d.catalogue.length ? `<div class="od-head" style="margin-top:14px"><span class="series-card-title">In the catalogue</span>
-</div><div class="series-grid">${d.catalogue.map(_relCard).join('')}</div>` : ''}
+      ${(d.sections || []).map((sec, i) => `<div class="od-head"${i ? ' style="margin-top:14px"' : ''}><span class="series-card-title">${esc(sec.label)}</span>
+        <span class="settings-opt">${sec.items.length}</span></div>
+        <div class="series-grid">${sec.items.map(_relCard).join('')}</div>`).join('')}
       ${!d.shelf.length && !d.catalogue.length ? `<div class="od-empty">${d.pending ? 'Asking the catalogue…' : 'Nothing else by them that Metron knows.'}</div>` : ''}
     </div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`;

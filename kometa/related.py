@@ -639,6 +639,41 @@ def work_label(w: dict, name: str) -> str:
     return f"{_ROLE_LABEL.get(main, main.title() if main else 'Credit')}: {name}"
 
 
+# --- a person's work by what they did on it (2026-10-17) -----------------------------------
+# The creator page listed shelf then catalogue, the role in small grey type under each
+# card: Javier Rodríguez's own art sat mixed in with books he only coloured. Now it's
+# sectioned by role, highest first, and a work sits once, under its highest role.
+ROLE_GROUPS = (("writer", "Writer", {"writer", "story", "script", "plot"}),
+               ("artist", "Artist", {"artist", "penciller", "pencils", "pencil", "art", "layouts", "breakdowns"}),
+               ("colorist", "Colorist", {"colorist", "colors", "colours", "colourist"}),
+               ("inker", "Inker", {"inker", "inks", "finishes"}),
+               ("cover", "Covers", {"cover", "cover artist", "covers"}),
+               ("letterer", "Letterer", {"letterer", "letters", "lettering"}))
+_ROLE_WORD = {"writer": "writer", "artist": "artist", "colorist": "colorist", "inker": "inker",
+              "cover": "cover", "letterer": "letterer"}
+_ALL_ROLE_NAMES = set().union(*(names for _k, _l, names in ROLE_GROUPS))
+
+
+def role_groups(roles) -> list[str]:
+    """The groups a person's roles on one work fall in, highest first; 'other' when none
+    of them is a known role (or Metron's role lookups didn't reach this work)."""
+    parts = {p.strip() for r in roles or [] for p in re.split(r"\s*[,/&]\s*|\s+and\s+", (r or "").lower()) if p.strip()}
+    got = [key for key, _label, names in ROLE_GROUPS if parts & names]
+    return got or ["other"]
+
+
+def creator_sections(items: list[dict]) -> list[dict]:
+    """[{role, label, items}] in role order, then 'Other credits'. Each card names only the
+    roles the section doesn't ('Also colorist, cover'): the heading says the first."""
+    labels = {k: label for k, label, _names in ROLE_GROUPS} | {"other": "Other credits"}
+    buckets: dict[str, list] = {k: [] for k in labels}
+    for it in items:
+        groups = role_groups(it.get("roles"))
+        also = [_ROLE_WORD[g] for g in groups[1:] if g in _ROLE_WORD]
+        buckets[groups[0]].append(dict(it, why=[f"Also {', '.join(also)}"] if also else []))
+    return [{"role": k, "label": labels[k], "items": v} for k, v in buckets.items() if v]
+
+
 def creator_works(creator_id: int, path=None, fetch=None, detail=None) -> list[dict]:
     """Series a creator worked on, from Metron's issue list, grouped: [{metron_series_id,
     title, year, count, cover, roles, cover_only}]. Metron's creator filter answers
@@ -758,7 +793,8 @@ def _creator_shelf(creator_id: int, sig: dict[int, dict], series: dict[int, dict
             s = series[sid]
             out.append({"kind": "owned", "series_id": sid, "title": s["title"], "publisher": s.get("publisher"),
                         "owned": s.get("owned") or 0, "total": (s.get("owned") or 0) + (s.get("missing") or 0),
-                        "why": [work_label({"roles": roles}, name)] if name else [], "because": [], "score": 0.0})
+                        "why": [work_label({"roles": roles}, name)] if name else [], "because": [], "score": 0.0,
+                        "roles": roles})
     return out
 
 
@@ -775,39 +811,54 @@ def _creator_catalogue(creator_id: int, path, series: dict[int, dict], cached_on
     else:
         works = creator_works(creator_id, path, fetch)
     out = [{"kind": "catalogue", "metron_series_id": w["metron_series_id"], "title": w["title"], "year": w["year"],
-            "cover": w["cover"], "score": float(w["count"]), "why": [work_label(w, name)] if name else [], "owned": 0, "total": w["count"]}
+            "cover": w["cover"], "score": float(w["count"]), "why": [work_label(w, name)] if name else [], "owned": 0, "total": w["count"],
+            "roles": w.get("roles") or []}
            for w in works
            if w["metron_series_id"] not in have_ids and norm_key(w["title"]) not in have_titles and w["count"] >= 2
            and (include_cover_only or not w.get("cover_only")) and w.get("cover")]       # no cover, no suggestion
     return out, False
 
 
-def _top_creators(series_id: int, sig: dict[int, dict], max_creators: int) -> list[tuple[int, str, str]]:
-    """(id, name, verb) for the series' weightiest credited people with a Metron id."""
-    weight: dict[int, tuple[float, str, str]] = {}
+def _top_creators(series_id: int, sig: dict[int, dict], max_creators: int) -> list[tuple[int, str, str, set]]:
+    """(id, name, verb, groups here) for the people a 'More from' row is for, in turn: the top
+    writer, the top artist, the other writers and artists, then colorists. Ranked by role, a
+    co-written book never showed who drew it (Batgirl: Year One: Dixon and Beatty took both
+    rows, Marcos Martín had none, 2026-10-17)."""
+    people: dict[int, dict] = {}
     for c in sig.get(series_id, {}).get("creators", []):
-        w = _role_weight(c.get("role"))
-        if w >= 2.0 and c.get("id"):
-            prev = weight.get(c["id"], (0, "", ""))
-            weight[c["id"]] = (prev[0] + w, c["name"], "wrote" if w >= 3 else "drew")
-    return [(cid, name, verb) for cid, (w, name, verb) in sorted(weight.items(), key=lambda kv: -kv[1][0])[:max_creators]]
+        if not c.get("id"):
+            continue
+        e = people.setdefault(c["id"], {"name": c["name"], "weight": 0.0, "groups": set()})
+        e["weight"] += _role_weight(c.get("role"))
+        e["groups"].update(g for g in role_groups([c.get("role")]) if g != "other")
+    by_weight = sorted(people.items(), key=lambda kv: -kv[1]["weight"])
+    writers = [kv for kv in by_weight if "writer" in kv[1]["groups"]]
+    artists = [kv for kv in by_weight if "artist" in kv[1]["groups"] and kv not in writers]
+    colorists = [kv for kv in by_weight if "colorist" in kv[1]["groups"] and kv not in writers and kv not in artists]
+    order = writers[:1] + artists[:1] + writers[1:] + artists[1:] + colorists
+    verb = lambda g: "wrote" if "writer" in g else "drew" if "artist" in g else "coloured"
+    return [(cid, e["name"], verb(e["groups"]), e["groups"]) for cid, e in order[:max_creators]]
 
 
-def creator_rows(series_id: int, max_rows: int = 2, min_items: int = 4, path=None, cached_only: bool = True):
-    """The series page's 'More from {Name}' rows: one per weighty credit, shelf
-    series by them first, then catalogue runs. The title is the reason, so the
-    cards carry none. Rows under min_items don't exist. → (rows, pending)."""
+def creator_rows(series_id: int, max_rows: int = 4, min_items: int = 4, path=None, cached_only: bool = True):
+    """The series page's 'More from {Name}' rows: the writer, the artist, then the rest (see
+    _top_creators). Shelf series by them first, then catalogue runs, the work in the role
+    they had HERE leading (a row for the book he drew leads with his art). Rows under
+    min_items don't exist. → (rows, pending)."""
     path = path or DB_PATH
     sig = _signals(path)
     series = _series_with_counts(path)
     rows, pending = [], False
-    for cid, name, verb in _top_creators(series_id, sig, max_creators=max_rows + 2):
+    for cid, name, verb, here in _top_creators(series_id, sig, max_creators=max_rows + 4):
         # same rule both sides of the row: a cover alone isn't 'more from' anyone
         shelf = [x for x in _creator_shelf(cid, sig, series, exclude=series_id, name=name)
                  if not (x.get("why") and x["why"][0].startswith("Cover:"))]
-        cat, p = _creator_catalogue(cid, path, series, cached_only, name=name)
+        if verb == "coloured" and _cached_works(cid, path) is None:
+            cat, p = [], False          # a colorist's catalogue isn't fetched for a row (30+ Metron calls): only what's known
+        else:
+            cat, p = _creator_catalogue(cid, path, series, cached_only, name=name)
         pending = pending or p
-        items = shelf + cat
+        items = sorted(shelf + cat, key=lambda x: role_groups(x.get("roles"))[0] not in here)
         if len(items) < min_items:
             continue
         rows.append({"creator_id": cid, "name": name, "role_verb": verb, "items": items[:16]})
@@ -826,7 +877,8 @@ def creator_page(creator_id: int, name: str | None = None, path=None, cached_onl
     shelf = _creator_shelf(creator_id, sig, series, name=name)
     # everything by this person, covers included — labelled 'Cover: Name' like the modal's credits
     cat, pending = _creator_catalogue(creator_id, path, series, cached_only, name=name, include_cover_only=True)
-    return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending}
+    return {"creator_id": creator_id, "name": name, "shelf": shelf, "catalogue": cat, "pending": pending,
+            "sections": creator_sections(shelf + cat)}
 
 
 def _askable_one(series_id: int, path=None) -> bool:
