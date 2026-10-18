@@ -429,7 +429,8 @@ def _ask_gcd(row: dict) -> list | None:
     """GCD's story credits for this issue by its gcd_id: [] asked and none, None couldn't ask."""
     from kometa import gcd_client
     gid = (row.get("extra") or {}).get("gcd_id")
-    if not gid or not gcd_client.configured() or (gcd_client.budget() or {}).get("left", 0) <= 0:
+    if not gid or not gcd_client.configured() \
+            or (not gcd_client.local() and (gcd_client.budget() or {}).get("left", 0) <= 0):
         return None
     d = gcd_client.issue_detail(int(gid))
     if d is None:

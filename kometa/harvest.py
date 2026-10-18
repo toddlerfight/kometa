@@ -245,6 +245,12 @@ def cv_covers_tick(limit: int = CV_BATCH, path=None, client=None) -> int:
 # --- the Grand Comics Database: the back catalogue Metron hasn't got (1g) ---------
 GCD_LINK_PER_TICK = 3
 GCD_FILL_BUDGET = 12                # GCD requests per tick (series lists + issues): ~1,700 a day at 10 min
+# With GCD's download in place a tick asks the file this many times; the website still gets
+# no more than the polite numbers above (gcd_client.website_share).
+GCD_FILE_LINK_PER_TICK = 30
+GCD_FILE_FILL_BUDGET = 300
+GCD_FILE_GENRE_PER_TICK = 30
+GCD_LINK_WEB_SHARE = 6              # a run's search can take a few requests (queries x two pages)
 GCD_SERIES_TTL_DAYS = 30            # a run's issue list is asked again after this
 GCD_CANDIDATES_KEPT = 8
 # Step 4 of the recommendations design (owner said yes, 2026-10-16): GCD's story
@@ -271,8 +277,11 @@ def ensure_gcd_tables(path=None):
 
 
 def _gcd_on(path) -> bool:
+    """The Settings toggle on, and something to ask: GCD's download or a website login."""
+    from kometa import gcd_local
     cfg = db.get_config(path)
-    return cfg.get("gcd_enabled", "1") != "0" and bool((cfg.get("gcd_user") or "").strip() and cfg.get("gcd_pass"))
+    login = bool((cfg.get("gcd_user") or "").strip() and cfg.get("gcd_pass"))
+    return cfg.get("gcd_enabled", "1") != "0" and (login or gcd_local.available(path))
 
 
 def _gcd_name(name: str) -> str:
@@ -428,7 +437,7 @@ def gcd_link_candidates(path=None, limit: int = GCD_LINK_PER_TICK) -> list[dict]
     return out
 
 
-def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int:
+def gcd_link_tick(limit: int | None = None, path=None, client=None) -> int:
     """Scheduler tick: a few Metron-less runs searched on GCD by title, linked
     only on the conservative rule (gcd_match). Stops at GCD's first refusal or
     the day's cap, leaving the run unasked for next time."""
@@ -437,6 +446,14 @@ def gcd_link_tick(limit: int = GCD_LINK_PER_TICK, path=None, client=None) -> int
         return 0
     if client is None:
         from kometa import gcd_client as client
+    from kometa import gcd_client
+    if limit is None:
+        limit = gcd_client.tick_size(GCD_LINK_PER_TICK, GCD_FILE_LINK_PER_TICK)
+    with gcd_client.website_share(GCD_LINK_WEB_SHARE):
+        return _gcd_link(limit, path, client)
+
+
+def _gcd_link(limit: int, path, client) -> int:
     from kometa.gcd_client import GCDUnavailable
     linked = 0
     # runs left 'ambiguous' get the shelf's tie-breaks again (cheap: publisher names are
@@ -521,7 +538,7 @@ def gcd_fill_candidates(path=None) -> list[dict]:
             ORDER BY s.on_pull_list DESC, i.tracked_series_id, i.number""", (cutoff,))]
 
 
-def gcd_fill_tick(budget: int = GCD_FILL_BUDGET, path=None, client=None) -> int:
+def gcd_fill_tick(budget: int | None = None, path=None, client=None) -> int:
     """Scheduler tick: GCD's issue detail (credits, story synopses, cast, dates,
     price, cover) for owned issues Metron can't answer, into the record as
     source 'gcd'. budget counts every GCD request, the run's list included.
@@ -532,6 +549,14 @@ def gcd_fill_tick(budget: int = GCD_FILL_BUDGET, path=None, client=None) -> int:
         return 0
     if client is None:
         from kometa import gcd_client as client
+    from kometa import gcd_client
+    if budget is None:
+        budget = gcd_client.tick_size(GCD_FILL_BUDGET, GCD_FILE_FILL_BUDGET)
+    with gcd_client.website_share(GCD_FILL_BUDGET):
+        return _gcd_fill(budget, path, client)
+
+
+def _gcd_fill(budget: int, path, client) -> int:
     from kometa import record
     from kometa.gcd_client import GCDUnavailable
     left = [budget]
@@ -588,8 +613,9 @@ def gcd_status(path=None) -> dict:
     out = {"linked": links.get("linked", 0), "ambiguous": links.get("ambiguous", 0), "none": links.get("none", 0),
            "filled": filled}
     try:
-        from kometa import gcd_client
+        from kometa import gcd_client, gcd_local
         out["budget"] = gcd_client.budget()
+        out["file"] = gcd_local.info(path)
     except Exception:
         out["budget"] = None
     return out
@@ -645,7 +671,7 @@ def gcd_genre_candidates(path=None, limit: int = GCD_GENRE_PER_TICK) -> list[dic
     return out
 
 
-def gcd_genre_tick(limit: int = GCD_GENRE_PER_TICK, path=None, client=None) -> int:
+def gcd_genre_tick(limit: int | None = None, path=None, client=None) -> int:
     """Scheduler tick: GCD's story genres for a run, into series_tags as source 'gcd'.
     A record GCD already filled says them (no request); otherwise one issue is asked.
     An answer with no genres is still an answer: the run isn't asked again for
@@ -655,6 +681,14 @@ def gcd_genre_tick(limit: int = GCD_GENRE_PER_TICK, path=None, client=None) -> i
         return 0
     if client is None:
         from kometa import gcd_client as client
+    from kometa import gcd_client
+    if limit is None:
+        limit = gcd_client.tick_size(GCD_GENRE_PER_TICK, GCD_FILE_GENRE_PER_TICK)
+    with gcd_client.website_share(GCD_GENRE_PER_TICK):
+        return _gcd_genres(limit, path, client)
+
+
+def _gcd_genres(limit: int, path, client) -> int:
     from kometa import record
     from kometa.gcd_client import GCDUnavailable
     done = 0

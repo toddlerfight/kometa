@@ -373,6 +373,36 @@ down: `POST /api/unpinned` asks Comic Vine and GCD again and only proposes; `GET
 the proposals; `POST /api/unpinned/apply {"links": [{"series_id", "cv"|"gcd"}]}` links
 the approved ones (the proposals live in memory — a restart forgets them).
 
+## GCD's download — the first answer for GCD (2026-10-18)
+
+GCD questions are answered from GCD's own database file first (`kometa/gcd_local.py`);
+the website (`comics.org/api/`, the login in Settings) is only asked for an issue or series
+newer than the file, or a series search the file finds nothing for.
+
+- **Where:** ginbako `~/docker/apps/kometa/data/gcd.db` = `/data/gcd.db` in the container
+  (config `gcd_db_path` overrides). Kept OUT of the Voot II mirror (`ops/ginbako-backup.sh`)
+  — it is re-downloadable.
+- **Get / refresh:** comics.org/download/ (signed in to GCD — the owner does this step) →
+  Private use → tick the licence box → *Download SQLite Dump* → a zip of `YYYY-MM-DD.db`
+  (~1.9 GB zipped, ~6.7 GB unzipped). Unzip it into a NEW folder on ginbako, then
+  `mv` it over `~/docker/apps/kometa/data/gcd.db` (same disk = instant). No restart: the
+  app sees the new mtime and reopens within a minute.
+- **Licence:** CC BY-SA 4.0; private use unrestricted. Anything public that shows GCD text
+  needs GCD's credit and a link back.
+- **What's not in it:** cover images (GCD doesn't redistribute them; the cover host blocks
+  us anyway — images.BLOCKED_IMAGE_HOSTS).
+- **Indexes:** the dump has indexes but no ANALYZE statistics, so SQLite picks the `deleted`
+  index (millions of rows) — every query writes `+x.deleted = 0` to stay off it. Without
+  that, one issue took 2–21 s; with it, 1–2 ms. Never ANALYZE the file (it is opened
+  immutable; a refresh would lose it anyway).
+- **Tick sizes:** with the file present, gap fill asks 500 issues a tick, harvest fill 300,
+  linking 30 runs, genres 30 — but each tick still sends no more than the old numbers to the
+  website (`gcd_client.website_share`).
+- **Checked 2026-10-18:** 20 issues, website vs file through `parse_issue` — 13 identical;
+  the 7 others were the website's own noise (studio suffix "of Virtual Calligraphy" on
+  letterers, nested brackets garbling names into "Walter Simonson )") or one story GCD added
+  after the snapshot.
+
 ## Related switches (2026-10-17)
 
 Related reads three switches from config. Set them in the container and restart, since

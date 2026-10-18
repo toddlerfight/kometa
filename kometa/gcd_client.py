@@ -1,7 +1,11 @@
 """Grand Comics Database — the back catalogue's memory.
 
-Read-only REST API at comics.org/api/ (Django REST Framework). Basic auth with
-a free account lifts the limit from 30/hour anonymous to 2,000/day
+GCD's own download answers first (kometa/gcd_local.py: the whole database as one
+file, no limits). The website is the fallback for what the file can't answer — an
+issue or series newer than the snapshot, a search the file finds nothing for.
+
+The website: a read-only REST API at comics.org/api/ (Django REST Framework). Basic auth
+with a free account lifts the limit from 30/hour anonymous to 2,000/day
 (gcd-django settings.py: DEFAULT_THROTTLE_RATES). No X-RateLimit headers come
 back, so we count for ourselves: one client, one lock, a gap between requests,
 and a daily cap below the account's 2,000 (docs/library-enrichment-spec.md, 1g).
@@ -11,11 +15,12 @@ import re
 import threading
 import time
 import urllib.parse
+from contextlib import contextmanager
 from datetime import date
 
 import requests
 
-from kometa import health
+from kometa import gcd_local, health
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,7 @@ _PROBE_ISSUE = 256114
 
 _lock = threading.Lock()
 _state = {"last": 0.0, "day": "", "count": 0, "paused_until": 0.0}
+_tick = threading.local()       # a scheduler tick's website share (website_share)
 
 
 class GCDUnavailable(RuntimeError):
@@ -47,13 +53,36 @@ def _creds() -> tuple[str, str] | None:
 
 
 def configured() -> bool:
-    """A login, and the Settings toggle on."""
+    """The file or a login, and the Settings toggle on."""
     from kometa import db
     try:
         cfg = db.get_config(db.DB_PATH)
     except Exception:
         return False
-    return cfg.get("gcd_enabled", "1") != "0" and _creds() is not None
+    return cfg.get("gcd_enabled", "1") != "0" and (_creds() is not None or gcd_local.available())
+
+
+def local() -> bool:
+    """GCD's download is in place: asks cost nothing, so a tick can take a big bite."""
+    return gcd_local.available()
+
+
+def tick_size(web: int, file: int) -> int:
+    """How many asks a scheduler tick makes: the website's polite few, or many off the file."""
+    return file if gcd_local.available() else web
+
+
+@contextmanager
+def website_share(n: int):
+    """Inside this, at most n requests reach the website; past that _get says GCDUnavailable
+    and the tick stops. The file is never counted: a tick of 500 file answers can still
+    only knock n times for the issues newer than the snapshot."""
+    prev = getattr(_tick, "share", None)
+    _tick.share = [n]
+    try:
+        yield
+    finally:
+        _tick.share = prev
 
 
 def _roll_day():
@@ -69,8 +98,17 @@ def budget() -> dict:
 
 
 def _get(path: str, **params):
-    """One request through the one throttle. Returns parsed JSON, or None for a
-    404 (the thing isn't there). Raises GCDUnavailable for everything else."""
+    """The file's answer, else one request through the one throttle. Returns parsed JSON,
+    or None for a 404 (the thing isn't there). Raises GCDUnavailable for everything else."""
+    if gcd_local.available():
+        hit = gcd_local.answer(path, params)
+        if hit is not gcd_local.MISS:
+            return hit
+    share = getattr(_tick, "share", None)
+    if share is not None:
+        if share[0] <= 0:
+            raise GCDUnavailable("GCD: this tick's website share is spent")
+        share[0] -= 1
     creds = _creds()
     if not creds:
         raise GCDUnavailable("GCD not configured")

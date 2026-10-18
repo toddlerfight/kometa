@@ -94,8 +94,9 @@ if mount | grep -q " on /Volumes/Catbus " && [ -n "$(ls -A "$COVERS" 2>/dev/null
 else
   ok=0; notes+=("covers skipped: Catbus not mounted or covers empty"); say "covers SKIPPED (Catbus not mounted / empty)"
 fi
+# gcd.db is GCD's 6.7 GB download — comics.org hands out a fresh one any day, so it never rides along
 mirror docker "$DOCKER" "$DEST/docker/" --exclude "apps/kometa/data/page-cache/" --exclude "apps/kometa/data/covers/" \
-  --exclude "apps/kometa/data/covers.moved-*/" \
+  --exclude "apps/kometa/data/covers.moved-*/" --exclude "apps/kometa/data/gcd.db" \
   --exclude "*.db-wal" --exclude "*.db-shm" --exclude ".voot-backup.db" --exclude ".DS_Store"
 
 # 3. the comics, from the NAS — the big one; incremental after the first night.

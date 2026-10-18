@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 
 GAP_MINUTES = 10
 CV_CALLS_PER_TICK = 3          # 100 issues a call; shares Comic Vine's hour with the ladder (cvname.spend)
-GCD_PER_TICK = 6               # one call an issue; ~860 a day of GCD's 1,800 at most
+GCD_PER_TICK = 6               # website calls a tick, one an issue; ~860 a day of GCD's 1,800 at most
+GCD_FILE_PER_TICK = 500        # with GCD's download in place: issues a tick off the file (~1 ms each)
 RETRY_DAYS = 30                # a source that had nothing is asked again after this
 DESC_MAX = 1500
 
@@ -396,46 +397,50 @@ def cv_fill(path=None, calls: int = CV_CALLS_PER_TICK, dry: bool = False, client
     return out
 
 
-def gcd_fill(path=None, limit: int = GCD_PER_TICK, dry: bool = False, fetch=None) -> dict:
+def gcd_fill(path=None, limit: int | None = None, dry: bool = False, fetch=None) -> dict:
     """GCD, one issue a call: its on-sale date (never its cover-date key), its synopsis,
-    its cover month. → counts."""
+    its cover month. → counts. Off the file: GCD_FILE_PER_TICK issues, still no more
+    than GCD_PER_TICK of them from the website."""
     path = path or DB_PATH
     from kometa import gcd_client
     if fetch is None:
         if not gcd_client.configured():
             return {"asked": 0}
         fetch = lambda g: gcd_client._get(f"issue/{int(g)}/")
+    if limit is None:
+        limit = gcd_client.tick_size(GCD_PER_TICK, GCD_FILE_PER_TICK)
     out = {"asked": 0, "store_date": 0, "desc": 0, "cover_date": 0, "date_cleared": 0}
     touched = []
-    for r in gcd_wanted(path, limit=limit):
-        try:
-            raw = fetch(_ids(r)[1])
-        except gcd_client.GCDUnavailable as e:
-            logger.info(f"Gap fill: {e}")
-            break
-        out["asked"] += 1
-        raw = raw or {}
-        sd = gcd_client._date(raw.get("on_sale_date")) if re.match(r"^\d{4}-\d{2}-\d{2}", raw.get("on_sale_date") or "") \
-            and not (raw.get("on_sale_date") or "").endswith("-00") else None
-        stories = [s for s in raw.get("story_set") or [] if (s.get("type") or "").lower() != "cover"]
-        desc = "\n\n".join(s["synopsis"].strip() for s in stories if (s.get("synopsis") or "").strip()) or None
-        cover = cover_month(raw.get("key_date")) or from_publication(raw.get("publication_date"))
-        # only a date that IS GCD's cover key: a record also copies the issue's own date
-        # (Hellboy #3, 4 February 2004 from the release list) and that one stays
-        clear = (_suspect_gcd_date(r) and r["store_date"] != sd
-                 and r["store_date"] == gcd_client._date(raw.get("key_date")))
-        if dry:
-            out["store_date"] += bool(sd and (not r["status_date"] or clear))
-            out["desc"] += bool(desc and not (r["desc"] or "").strip())
-            out["cover_date"] += bool(cover and not r["status_cover"])
-            out["date_cleared"] += bool(clear)
-            continue
-        with db._connect(path) as conn:
-            ch = _write(conn, r, "gcd", store_date=sd, desc=desc, cover=cover, clear_date=clear)
-        for k in ("store_date", "desc", "cover_date", "date_cleared"):
-            out[k] += k in ch
-        if r["owned"] and ch:
-            touched.append((r["sid"], r["number"]))
+    with gcd_client.website_share(GCD_PER_TICK):
+        for r in gcd_wanted(path, limit=limit):
+            try:
+                raw = fetch(_ids(r)[1])
+            except gcd_client.GCDUnavailable as e:
+                logger.info(f"Gap fill: {e}")
+                break
+            out["asked"] += 1
+            raw = raw or {}
+            sd = gcd_client._date(raw.get("on_sale_date")) if re.match(r"^\d{4}-\d{2}-\d{2}", raw.get("on_sale_date") or "") \
+                and not (raw.get("on_sale_date") or "").endswith("-00") else None
+            stories = [s for s in raw.get("story_set") or [] if (s.get("type") or "").lower() != "cover"]
+            desc = "\n\n".join(s["synopsis"].strip() for s in stories if (s.get("synopsis") or "").strip()) or None
+            cover = cover_month(raw.get("key_date")) or from_publication(raw.get("publication_date"))
+            # only a date that IS GCD's cover key: a record also copies the issue's own date
+            # (Hellboy #3, 4 February 2004 from the release list) and that one stays
+            clear = (_suspect_gcd_date(r) and r["store_date"] != sd
+                     and r["store_date"] == gcd_client._date(raw.get("key_date")))
+            if dry:
+                out["store_date"] += bool(sd and (not r["status_date"] or clear))
+                out["desc"] += bool(desc and not (r["desc"] or "").strip())
+                out["cover_date"] += bool(cover and not r["status_cover"])
+                out["date_cleared"] += bool(clear)
+                continue
+            with db._connect(path) as conn:
+                ch = _write(conn, r, "gcd", store_date=sd, desc=desc, cover=cover, clear_date=clear)
+            for k in ("store_date", "desc", "cover_date", "date_cleared"):
+                out[k] += k in ch
+            if r["owned"] and ch:
+                touched.append((r["sid"], r["number"]))
     if touched:
         _retag(touched, path)
     return out
