@@ -403,6 +403,14 @@ newer than the file, or a series search the file finds nothing for.
   letterers, nested brackets garbling names into "Walter Simonson )") or one story GCD added
   after the snapshot.
 
+## Hard-to-find back issues (2026-10-18)
+
+When the sweep can't find a run's last gaps, use the local `/backfill` skill
+(`.claude/skills/backfill/SKILL.md`; `.claude/` is gitignored, so it lives only in this checkout).
+It checks GCD's file for collections that reprint the gaps, then fills single issues through the
+owner's own browser with a four-agent pull / check / package / import pipeline. A copied file is
+owned after `POST /api/sync/<id>`, but only readable after `POST /api/shelf/scan`.
+
 ## Related switches (2026-10-17)
 
 Related reads three switches from config. Set them in the container and restart, since
