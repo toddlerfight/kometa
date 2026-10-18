@@ -371,10 +371,12 @@ class TestFolderSpellings:
         assert db.get_series_by_id(b, db_path) and did and did[0].startswith("left")
 
 
-def test_clear_history_takes_only_finished_downloads(db_path, series):
-    for n, state in ((1.0, "done"), (2.0, "failed"), (3.0, "not_found")):
+def test_clear_history_takes_finished_and_not_found_but_leaves_failed(db_path, series):
+    # owner, 2026-10-18: not-found rows clear too (the sweep re-asks; a find shows as a
+    # download); failed ones stay — something broke and they may want Retry
+    for n, state in ((1.0, "done"), (2.0, "failed"), (3.0, "not_found"), (4.0, "queued")):
         db.queue_issue(series, n, db_path)
         with db._connect(db_path) as c:
             c.execute("UPDATE download_queue SET state = ? WHERE issue_number = ?", (state, n))
-    assert db.clear_queue_history(db_path) == 1
-    assert sorted(q["state"] for q in db.get_queue(db_path)) == ["failed", "not_found"]
+    assert db.clear_queue_history(db_path) == 2
+    assert sorted(q["state"] for q in db.get_queue(db_path)) == ["failed", "queued"]

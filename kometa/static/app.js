@@ -4816,7 +4816,10 @@ async function clearHistory(btn) {
   // section would flash). Stagger them a touch for a tidy cascade, then drop the sig so
   // the next poll reconciles cleanly.
   _activityRemoving = true;
-  const rows = Array.from(document.querySelectorAll('.act-section[data-sec="completed"] .act-row'));
+  // only what the server cleared — finished and not-found; a failed row stays (it used to
+  // fade with the rest and pop back on the next poll)
+  const rows = Array.from(document.querySelectorAll(
+    '.act-section[data-sec="completed"] .act-row:is([data-qstate="done"], [data-qstate="not_found"])'));
   rows.forEach((row, i) => { row.style.transitionDelay = `${i * 30}ms`; });
   await Promise.all(rows.map(_animateRowOut));
   // The Completed section header is now stranded with no rows — yank it too.

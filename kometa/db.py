@@ -1726,10 +1726,12 @@ def remove_queue_item(queue_id, path=DB_PATH):
 
 
 def clear_queue_history(path=DB_PATH) -> int:
-    """Clear History: the finished downloads only. It also wiped every failed and
-    not-found row — the ones still waiting on you, and trades issues were waiting on."""
+    """Clear History: finished downloads and searches that found nothing (the owner,
+    2026-10-18: 21 Buffy not-founds sat in Activity with no way to clear them). A cleared
+    not-found is simply missing again — the next sweep asks for it, and a find shows as a
+    download. Failed rows stay: something broke, and they carry Retry."""
     with _connect(path) as conn:
-        return conn.execute("DELETE FROM download_queue WHERE state = 'done'").rowcount
+        return conn.execute("DELETE FROM download_queue WHERE state IN ('done', 'not_found')").rowcount
 
 
 def get_missing_counts_by_series(path=DB_PATH) -> dict[int, int]:
