@@ -437,6 +437,14 @@ def _ask_gcd(row: dict) -> list | None:
     return [dict(c, metron_creator_id=None) for c in d.get("credits") or [] if c.get("role") not in ("Editor", None)]
 
 
+def by_name_ok(row: dict) -> bool:
+    """May Comic Vine be asked by the run's name for this issue? With no list at all (SQUEE!),
+    or a catalogue's list naming no writer or artist (GCD indexed only Hellboy #2's cover,
+    the owner's yes 2026-10-18). Never over LOCG's or the file's own list (the owner, 2026-10-17)."""
+    credits = row.get("credits") or []
+    return not credits or (not _has_team(credits) and credits_source(row) not in ("locg", "comicinfo"))
+
+
 def _ask_comicvine(row: dict) -> list | None:
     """Comic Vine's person_credits by cv_id — or, for an issue with no list at all and no id,
     by its run's name (kometa/cvname.py: SQUEE!). [] asked and none, None couldn't ask."""
@@ -445,7 +453,7 @@ def _ask_comicvine(row: dict) -> list | None:
     if cv is None:
         return None
     cvid = (row.get("extra") or {}).get("cv_id") or row.get("cv_issue_id")
-    if not cvid and not row.get("credits") and cvname.configured(row.get("db_path")):
+    if not cvid and by_name_ok(row) and cvname.configured(row.get("db_path")):
         cvid = cvname.issue_id(row["tracked_series_id"], row["number"], row.get("db_path"))
     if not cvid or not cvname.spend():                    # no id, or the ladder's Comic Vine hour is used up
         return None
@@ -572,7 +580,7 @@ def credits_wanted(path=None, limit: int = 50) -> list[dict]:
         # picked again every tick for a Comic Vine that can't replace it (review, finding 1)
         ids = [n for n, k in (("gcd", "gcd_id"), ("comicvine", "cv_id"))
                if (e.get(k) or (n == "comicvine" and (r.get("cv_issue_id") or (
-                   by_name is not None and not r.get("credits")
+                   by_name is not None and by_name_ok(r)
                    and cvname.could_ask(r["tracked_series_id"], r["number"], by_name)))))
                and (True, CREDIT_RANK[n]) > held]
         if any(not tried.get(n) or _age_days(tried[n]) >= CREDIT_RUNG_RETRY_DAYS for n in ids):

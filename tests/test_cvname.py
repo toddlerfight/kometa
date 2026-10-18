@@ -180,3 +180,16 @@ def test_spacing_and_a_binding_word_dont_make_another_book():
                                 [{"name": "Gen 13", "year": 1995, "publisher": "WildStorm", "cv_volume_id": 1},
                                  {"name": "Gen13", "year": 1995, "publisher": "WildStorm", "cv_volume_id": 2}])
     assert vid == 2
+
+
+def test_a_catalogue_list_without_the_team_is_asked_by_name_but_never_locgs(db_path, cv):
+    cover = [{"role": "Cover", "name": "Mike Mignola", "metron_creator_id": None}]
+    sid = _squee(db_path, credits=cover, source="gcd")            # GCD indexed only the cover (Hellboy #2)
+    assert (sid, 1.0) in {(r["tracked_series_id"], r["number"]) for r in record.credits_wanted(db_path)}
+    out = record.fill_credits(sid, 1.0, db_path, rungs=(("comicvine", record._ask_comicvine),))
+    assert out["source"] == "comicvine"
+    assert any(c["role"] == "Writer" for c in record.get_issue(sid, 1.0, db_path)["credits"])
+    # the same thin list from LOCG or the file itself is left alone (owner, 2026-10-17)
+    for src in ("locg", "comicinfo"):
+        row = dict(record.get_issue(sid, 1.0, db_path), credits=cover, source=src, field_sources={}, db_path=db_path)
+        assert not record.by_name_ok(row)
