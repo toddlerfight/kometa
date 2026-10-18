@@ -811,37 +811,42 @@ def get_all_series_summaries(path=DB_PATH, series_id=None):
     today = str(date.today())
     cutoff = str(date.today() + timedelta(days=30))
     week_ago = str(date.today() - timedelta(days=RECENT_RELEASE_DAYS))
+    sid_arg = (series_id,) if series_id is not None else ()
     with _connect(path) as conn:
+        # The card issue is picked ONCE per series and its columns read off that row —
+        # five correlated subqueries used to run the same ORDER BY ... LIMIT 1 again for
+        # each column (db sweep, 2026-10-18), and on a same-date tie could even read
+        # number and cover off different issues. Ties break on the number now; an
+        # ignored issue is never the next-issue cover (the counts already skipped it).
         rows = conn.execute(f"""
-            SELECT
-                tracked_series_id,
-                MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
-                SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,  -- issue-based: a trade reprint doesn't make the single not-missing; released-today counts (out today AND missing both hold)
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
-                SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
-                MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
-                MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date >= ? AND store_date < '9999' THEN store_date END) as next_upcoming,
-                (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
-                   ORDER BY i2.store_date ASC LIMIT 1) as up_number,
-                (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.owned = 0 AND i2.store_date >= ? AND i2.store_date <= ? AND i2.metron_image IS NOT NULL
-                   ORDER BY i2.store_date ASC LIMIT 1) as up_image,
-                (SELECT number FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_number,
-                (SELECT metron_image FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_image,
-                (SELECT owned FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
-                   AND i2.store_date IS NOT NULL AND i2.store_date <= ?
-                   ORDER BY i2.store_date DESC LIMIT 1) as recent_owned
-            FROM issue_status
-            {"WHERE tracked_series_id = ?" if series_id is not None else ""}
-            GROUP BY tracked_series_id
-        """, (week_ago, today, today, today, today, today, cutoff, today, today, cutoff, today, cutoff, today, today, today)
-            + ((series_id,) if series_id is not None else ()))
+            SELECT agg.*, up.number AS up_number, up.metron_image AS up_image,
+                   rec.number AS recent_number, rec.metron_image AS recent_image, rec.owned AS recent_owned
+            FROM (
+                SELECT
+                    tracked_series_id,
+                    MAX(CASE WHEN ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as recent_release,
+                    SUM(CASE WHEN owned = 1 THEN 1 ELSE 0 END) as owned,
+                    SUM(CASE WHEN owned = 0 AND ignored = 0 AND (store_date IS NULL OR store_date <= ?) THEN 1 ELSE 0 END) as missing,  -- issue-based: a trade reprint doesn't make the single not-missing; released-today counts (out today AND missing both hold)
+                    SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date > ? THEN 1 ELSE 0 END) as upcoming,
+                    SUM(CASE WHEN owned = 0 AND ignored = 0 AND store_date = ? THEN 1 ELSE 0 END) as out_today,
+                    MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date IS NOT NULL AND store_date >= ? AND store_date <= ? THEN store_date END) as next_release,
+                    MIN(CASE WHEN owned = 0 AND ignored = 0 AND store_date >= ? AND store_date < '9999' THEN store_date END) as next_upcoming,
+                    -- the soonest release within 30 days that has solicit art
+                    (SELECT i2.id FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                       AND i2.owned = 0 AND i2.ignored = 0 AND i2.store_date >= ? AND i2.store_date <= ?
+                       AND i2.metron_image IS NOT NULL
+                       ORDER BY i2.store_date ASC, i2.number ASC LIMIT 1) AS up_id,
+                    -- else the most recently released
+                    (SELECT i2.id FROM issue_status i2 WHERE i2.tracked_series_id = issue_status.tracked_series_id
+                       AND i2.store_date IS NOT NULL AND i2.store_date <= ?
+                       ORDER BY i2.store_date DESC, i2.number DESC LIMIT 1) AS rec_id
+                FROM issue_status
+                {"WHERE tracked_series_id = ?" if series_id is not None else ""}
+                GROUP BY tracked_series_id
+            ) agg
+            LEFT JOIN issue_status up ON up.id = agg.up_id
+            LEFT JOIN issue_status rec ON rec.id = agg.rec_id
+        """, (week_ago, today, today, today, today, today, cutoff, today, today, cutoff, today) + sid_arg)
         rows = [dict(r) for r in rows]
 
         # Resolve every variant pick (owned + upcoming) to a cover URL — same logic
