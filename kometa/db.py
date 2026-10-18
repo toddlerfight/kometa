@@ -1191,7 +1191,13 @@ def set_locg_series_id(series_id, locg_series_id, path=DB_PATH):
 # once it's ten minutes old so a download that only just landed isn't fetched twice. Buffy
 # the Vampire Slayer #1–#8 (2026-10-18): BOOM!'s 2019 files trashed, rows still 'done', and
 # neither the sweep nor a Download press could ever ask for them again.
-_REQUEUEABLE = """(state IN ('failed', 'not_found')
+# A 'queued' row waiting days with no error to say why is the bulk re-queue's leftover
+# (queue_issues_bulk kept a not_found's wait until 1ca4bae): shown queued, never picked —
+# Buffy #11-#55 until 2026-10-20. GetComics' rate-limit park always carries its error.
+_STRANDED = """(state = 'queued' AND error IS NULL AND retry_after IS NOT NULL
+    AND retry_after > datetime('now', '+1 hour'))"""
+
+_REQUEUEABLE = f"""(state IN ('failed', 'not_found') OR {_STRANDED}
     OR (state = 'done' AND COALESCE(kind, 'issue') = 'issue' AND updated_at < datetime('now', '-10 minutes')
         AND EXISTS (SELECT 1 FROM issue_status i WHERE i.tracked_series_id = download_queue.tracked_series_id
                     AND i.number = download_queue.issue_number AND i.owned = 0)))"""
@@ -1853,7 +1859,9 @@ def get_missing_for_monitored(path=DB_PATH):
                   SELECT 1 FROM download_queue q
                   WHERE q.tracked_series_id = s.id
                     AND q.issue_number = i.number
-                    AND (q.state NOT IN ('failed', 'not_found', 'done')
+                    AND ((q.state NOT IN ('failed', 'not_found', 'done')
+                          AND NOT (q.state = 'queued' AND q.error IS NULL AND q.retry_after IS NOT NULL
+                                   AND q.retry_after > datetime('now', '+1 hour')))   -- stranded: _STRANDED
                          -- a not_found row still in its back-off window holds the issue out
                          -- of the auto sweep (see NOT_FOUND_RETRY_DAYS); failed still blocks
                          OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now'))

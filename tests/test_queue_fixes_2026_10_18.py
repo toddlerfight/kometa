@@ -60,3 +60,19 @@ def test_a_requeued_pack_drops_the_other_channels_handle_and_the_old_error(db_pa
     db.queue_torrent_pack(series, "def456", "magnet:?xt=new", db_path)
     q = _q(db_path, series, -1)
     assert q["torrent_hash"] == "def456" and q["sab_nzo_id"] is None
+
+
+def test_sweep_missing_frees_a_row_the_bulk_requeue_stranded(db_path, series):
+    _set(db_path, "UPDATE tracked_series SET on_pull_list = 1 WHERE id = ?", series)
+    for n in (27.0, 28.0):
+        db.upsert_issue_status(series, n, "2000-08-01", False, path=db_path)
+        db.queue_issue(series, n, db_path)
+    # 27: stranded before 1ca4bae (queued, no error, a days-long wait); 28: GetComics' park, which says why
+    _set(db_path, "UPDATE download_queue SET retry_after = datetime('now', '+2 days') WHERE issue_number = 27")
+    _set(db_path, "UPDATE download_queue SET retry_after = datetime('now', '+2 days'), error = 'GetComics rate limit' "
+                  "WHERE issue_number = 28")
+    missing = {r["number"] for r in db.get_missing_for_monitored(db_path)}
+    assert 27.0 in missing and 28.0 not in missing
+    db.queue_issue(series, 27.0, db_path)                       # what the sweep does with it
+    assert _q(db_path, series, 27.0)["retry_after"] is None
+    assert _q(db_path, series, 28.0)["retry_after"] is not None
