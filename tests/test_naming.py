@@ -45,6 +45,12 @@ class TestParseIssueNumber:
         assert naming.parse_issue_number(
             "Avengers 034.1 (2014) (Digital) (Zone-Empire).cbz", "Avengers") == 34.1
 
+    def test_minus_one_keeps_its_sign(self):
+        # Flashback month (1997): #-1 is its own issue, not a second #1
+        assert naming.parse_issue_number("Uncanny X-Men - Vol. 1 #-1 (1997).cbz", "Uncanny X-Men") == -1.0
+        assert naming.parse_issue_number("Uncanny X-Men - Vol. 1 #001 (1963).cbz", "Uncanny X-Men") == 1.0
+        assert naming.parse_issue_number("Saga #1-5 (2012).cbz", "Saga") == 1.0
+
 
 class TestScanFolderNumbers:
     def test_collects_comic_numbers_ignores_other_files(self, tmp_path):

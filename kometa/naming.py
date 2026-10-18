@@ -42,8 +42,9 @@ _VOLUME_MARK_RE = re.compile(r"\b(?:v|vol\.?|volume)\s*\d+\b", re.I)
 
 def parse_issue_number(filename: str, series_title: str = "") -> float | None:
     name = _strip_ext(filename)
-    # #001 or #1.5
-    m = re.search(r'#(\d+(?:\.\d+)?)', name)
+    # #001 or #1.5 — or #-1: Marvel's 1997 Flashback month numbered whole runs minus one,
+    # and dropping the sign filed Uncanny X-Men #-1 on top of #1
+    m = re.search(r'#(-?\d+(?:\.\d+)?)', name)
     if m:
         return float(m.group(1))
     # Issue 001
