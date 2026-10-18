@@ -346,6 +346,33 @@ The recommendations work runs with an external agent writing briefs and commits 
   in the same harness run inherited the themes: "community" and "themes + community"
   printed identical numbers.
 
+- **A deploy restarts the app.** Anything mid-search or mid-download is reset. When the
+  owner has just pressed Sweep Missing (or a background agent is editing files in this
+  tree), wait: check `download_queue` for `searching`/`downloading`/`processing` first,
+  and never deploy a tree another agent is still editing (2026-10-18).
+- **Live DB writes go through the app**, not sqlite from outside: an endpoint, or a GET
+  that makes the app refresh (opening a card re-asks Metron for a stale record). The
+  auto-mode classifier blocks raw writes to the live DB, and the app path keeps
+  provenance and caches right (2026-10-18: Aliens #2-#4 linked by opening their cards).
+- **Check a new file's name is free** (`ls`, `git ls-files`) before creating it. On
+  2026-10-18 a new `kometa/rematch.py` and `tests/test_rematch.py` overwrote the existing
+  Metron re-match module and its tests; the suite caught it.
+
+## Data fill switches (2026-10-18)
+
+Set with `PATCH /api/config` (all three are in ConfigRequest); each has a dry run.
+
+| Key | What | Live |
+|---|---|---|
+| `credits_ladder` | GCD then Comic Vine credits for issues Metron left thin (record.credits_tick, 10 min) | on |
+| `cv_by_name` | Comic Vine by the run's name when no id (cvname); also for a catalogue list with no writer/artist, never LOCG/file lists | on |
+| `gap_fill` | on-sale dates (Comic Vine, GCD on_sale_date only), cover dates (issue_status.cover_date, shown "Cover date August 1994"), descriptions (kometa/gapfill.py, 10 min) | on |
+
+`gapfill.dry_run()` in the container says what a pass would do. Runs no catalogue pinned
+down: `POST /api/unpinned` asks Comic Vine and GCD again and only proposes; `GET` shows
+the proposals; `POST /api/unpinned/apply {"links": [{"series_id", "cv"|"gcd"}]}` links
+the approved ones (the proposals live in memory — a restart forgets them).
+
 ## Related switches (2026-10-17)
 
 Related reads three switches from config. Set them in the container and restart, since
