@@ -1224,6 +1224,9 @@ def queue_issues_bulk(pairs, path=DB_PATH):
                 ON CONFLICT(tracked_series_id, issue_number) DO UPDATE SET
                     state      = CASE WHEN {_REQUEUEABLE} THEN 'queued' ELSE state END,
                     error      = CASE WHEN {_REQUEUEABLE} THEN NULL ELSE error END,
+                    -- as queue_issue: a not_found's three-day wait went with it, and the row sat
+                    -- 'queued' but unpicked (Buffy #11-#55, 2026-10-18)
+                    retry_after = CASE WHEN {_REQUEUEABLE} THEN NULL ELSE retry_after END,
                     updated_at = datetime('now')
             """, (sid, num))
     return len(pairs)
@@ -1373,6 +1376,11 @@ def queue_pack(tracked_series_id, nzo_id: str, nzb_url: str, path=DB_PATH):
                 state      = CASE WHEN state IN ('failed', 'not_found', 'done') THEN 'pending_usenet' ELSE state END,
                 sab_nzo_id = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.sab_nzo_id ELSE sab_nzo_id END,
                 source_url = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.source_url ELSE source_url END,
+                -- a torrent pack's leftover hash sent this usenet pack to the torrent poller after
+                -- a restart (reset_stuck_queue_items routes on it); the old failure isn't this one's
+                torrent_hash = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE torrent_hash END,
+                error       = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE error END,
+                retry_after = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE retry_after END,
                 updated_at = datetime('now')
         """, (tracked_series_id, nzo_id, nzb_url))
 
@@ -1387,6 +1395,9 @@ def queue_torrent_pack(tracked_series_id, torrent_hash: str, source_url: str, pa
                 state        = CASE WHEN state IN ('failed', 'not_found', 'done') THEN 'pending_torrent' ELSE state END,
                 torrent_hash = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.torrent_hash ELSE torrent_hash END,
                 source_url   = CASE WHEN state IN ('failed', 'not_found', 'done') THEN excluded.source_url ELSE source_url END,
+                sab_nzo_id   = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE sab_nzo_id END,
+                error        = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE error END,
+                retry_after  = CASE WHEN state IN ('failed', 'not_found', 'done') THEN NULL ELSE retry_after END,
                 updated_at   = datetime('now')
         """, (tracked_series_id, torrent_hash, source_url))
 
@@ -1665,7 +1676,9 @@ def complete_download(queue_id, tracked_series_id, issue_number, store_date,
             ON CONFLICT(tracked_series_id, number) DO UPDATE SET
                 store_date      = COALESCE(excluded.store_date, store_date),
                 owned        = excluded.owned,
-                metron_image    = excluded.metron_image,
+                -- a download never had a cover to give: NULL here wiped the Metron one
+                -- (the series card's recent art, Activity) until the next sync (db sweep, 2026-10-18)
+                metron_image    = COALESCE(excluded.metron_image, metron_image),
                 locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id)
         """, (tracked_series_id, issue_number, store_date))
     # out of the transaction: tell the phone (pull-list series, batched — kometa/push.py)
@@ -1816,11 +1829,19 @@ def has_active_pack(series_id, path=DB_PATH) -> bool:
 
 
 def get_missing_for_monitored(path=DB_PATH):
-    """Return missing released issues for all monitored series not already queued."""
+    """Return missing released issues for all monitored series not already queued.
+
+    A 'done' row whose file is gone from disk doesn't hold its issue out (the file was
+    trashed as the wrong book: Buffy #1-#8, 2026-10-17) — the same re-ask queue_issue's
+    _REQUEUEABLE allows by hand, which the nightly sweep never got (db sweep, 2026-10-18).
+    Not for an issue an owned trade covers, and not while the file is still there: that's
+    an ownership slip, and re-asking would download it again every night."""
     with _connect(path) as conn:
-        return [dict(r) for r in conn.execute("""
+        rows = [dict(r) for r in conn.execute("""
             SELECT i.id as issue_id, i.number, i.store_date,
-                   s.id as tracked_series_id, s.title, s.publisher
+                   s.id as tracked_series_id, s.title, s.publisher,
+                   (SELECT q.filename FROM download_queue q WHERE q.tracked_series_id = s.id
+                      AND q.issue_number = i.number AND q.state = 'done') AS done_file
             FROM issue_status i
             JOIN tracked_series s ON s.id = i.tracked_series_id
             WHERE i.owned = 0
@@ -1832,12 +1853,23 @@ def get_missing_for_monitored(path=DB_PATH):
                   SELECT 1 FROM download_queue q
                   WHERE q.tracked_series_id = s.id
                     AND q.issue_number = i.number
-                    AND (q.state NOT IN ('failed', 'not_found')
+                    AND (q.state NOT IN ('failed', 'not_found', 'done')
                          -- a not_found row still in its back-off window holds the issue out
                          -- of the auto sweep (see NOT_FOUND_RETRY_DAYS); failed still blocks
-                         OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now')))
+                         OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now'))
+                         -- a done row holds it unless its file was taken away (checked below)
+                         OR (q.state = 'done' AND (COALESCE(q.kind, 'issue') != 'issue' OR q.filename IS NULL
+                                                   OR i.covered_by IS NOT NULL
+                                                   OR q.updated_at >= datetime('now', '-10 minutes'))))
               )
         """)]
+    out = []
+    for r in rows:
+        f = r.pop("done_file")
+        if f and os.path.exists(f):
+            continue            # still on disk: an ownership slip, not a missing book
+        out.append(r)
+    return out
 
 
 def set_issue_ignored(series_id, number, ignored: bool, path=DB_PATH) -> bool:
