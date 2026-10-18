@@ -200,7 +200,6 @@ def once_per_db(fn):
     per cover tile. Keyed by path, so each test's fresh DB still gets its tables;
     the module's own DB_PATH (patched by tests) is read at call time."""
     import functools
-    import threading
     done: set = set()
     lock = threading.Lock()
 
@@ -291,8 +290,6 @@ def _migrate(path=DB_PATH):
         # Story arcs ride the tracked_series machinery (folder, trades, queue)
         # as kind='arc'; their cross-title reading order lives in the
         # dedicated arc_issues table (issue_status is single-title, can't hold it).
-        # NB: the kind/cv_arc_id COLUMNS are added AFTER the nullable-rebuilds below
-        # — those recreate tracked_series and would drop anything added up here.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS arc_issues (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,17 +316,13 @@ def _migrate(path=DB_PATH):
             # one run, more than one Metron series: Metron files The X-Men (1963,
             # #1–141) and The Uncanny X-Men (1981, #142–544) apart; your folder is
             # one numbering. Comma-separated, merged into the issue list by number.
-            # (Down here, after the rebuilds above, or they'd drop it.)
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_extra_ids TEXT")
         # The Grand Comics Database run for series Metron hasn't got (harvest 1g):
         # gcd_link 'linked' / 'none' / 'ambiguous' (candidates kept for you to pick).
-        # Same rule as above: after the rebuilds, or they'd drop them.
         for col, typ in (("gcd_series_id", "INTEGER"), ("gcd_link", "TEXT"), ("gcd_candidates_json", "TEXT"),
                          ("metron_checked_at", "TEXT"), ("metron_candidates_json", "TEXT")):
             if col not in ts_cols:
                 conn.execute(f"ALTER TABLE tracked_series ADD COLUMN {col} {typ}")
-        if "cv_volume_id" not in ts_cols:
-            conn.execute("ALTER TABLE tracked_series ADD COLUMN cv_volume_id TEXT")
         # Per-series single-issue page ceiling. NULL = the global default (70).
         # Exists because Head Lopper is a 72-page quarterly and the webtoon guard
         # kept executing it for the crime of being exactly what it says it is.
@@ -373,13 +366,14 @@ def _migrate(path=DB_PATH):
             # Metron's series type (One-Shot / Limited / Trade Paperback / …) —
             # what tells a one-file folder apart from a stub (kometa/singles.py)
             conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_type TEXT")
-        if "metron_status" not in series_cols:
-            # Metron's run status (Ongoing / Completed / Cancelled / Hiatus) and year
-            # ended, off the same series page metron_type comes from — the series
-            # page's run badge (kometa/runstatus.py). _at = when Metron was last asked
-            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_status TEXT")
-            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_year_end INTEGER")
-            conn.execute("ALTER TABLE tracked_series ADD COLUMN metron_status_at TEXT")
+        # Metron's run status (Ongoing / Completed / Cancelled / Hiatus) and year
+        # ended, off the same series page metron_type comes from — the series
+        # page's run badge (kometa/runstatus.py). _at = when Metron was last asked.
+        # Each column on its own check: one guard over three ALTERs left the other
+        # two missing for good if the first landed and the process died.
+        for col, typ in (("metron_status", "TEXT"), ("metron_year_end", "INTEGER"), ("metron_status_at", "TEXT")):
+            if col not in series_cols:
+                conn.execute(f"ALTER TABLE tracked_series ADD COLUMN {col} {typ}")
         if "from_list_id" not in series_cols:
             # the reading list whose 'Get' tracked this run (pull list off): the
             # series page says why it exists, and the Library counts it honestly
@@ -604,7 +598,6 @@ def get_issue_details_cache(locg_issue_id, path=DB_PATH, max_age_days=None):
     'metron:<id>' for Metron ones (same table — the Details tab doesn't care).
     max_age_days: treat older entries as missing (variants keep arriving for
     an issue right up to release; LOCG entries were never re-fetched)."""
-    import json
     with _connect(path) as conn:
         row = conn.execute(
             "SELECT data_json, fetched_at FROM issue_details_cache WHERE locg_issue_id = ?",
@@ -620,7 +613,6 @@ def get_issue_details_cache(locg_issue_id, path=DB_PATH, max_age_days=None):
 
 
 def set_issue_details_cache(locg_issue_id, data, path=DB_PATH):
-    import json
     with _connect(path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO issue_details_cache (locg_issue_id, data_json, fetched_at) "
@@ -1054,7 +1046,6 @@ def rename_book_path(old_path, new_path, path=DB_PATH) -> int:
     'Dr. Manhattan TPB 01.cbz' had none, 'Before Watchmen - Dr. Manhattan #001'
     does, and a book that keeps a stale null shows twice on the series page
     (as issue #1 and again under 'Also on the shelf'). kometa/tidy.py."""
-    import os
     from kometa.naming import parse_issue_number
     with _connect(path) as conn:
         n = conn.execute("UPDATE books SET path = ? WHERE path = ?", (new_path, old_path)).rowcount
@@ -1073,7 +1064,6 @@ def rename_book_path(old_path, new_path, path=DB_PATH) -> int:
 def reparse_null_numbers(path=DB_PATH) -> int:
     """Books indexed with no number whose name parses to one now: give them it.
     The heal for everything renamed before rename_book_path learned to."""
-    import os
     from kometa.naming import parse_issue_number
     fixed = 0
     with _connect(path) as conn:
@@ -1120,7 +1110,6 @@ def book_names_by_series(path=DB_PATH) -> dict[int, list[str]]:
     """{tracked_series_id: [file name, …]} from the books table — one query for
     the whole shelf, instead of a directory listing per series over SMB (the
     clean-up reports took 47 s each that way)."""
-    import os
     out: dict[int, list[str]] = {}
     with _connect(path) as conn:
         for r in conn.execute("SELECT tracked_series_id, path FROM books WHERE tracked_series_id IS NOT NULL ORDER BY path"):
@@ -1482,14 +1471,13 @@ def add_failed_source(queue_id, url, path=DB_PATH):
     releases has bigger problems than list growth."""
     if not url:
         return
-    import json as _json
     with _connect(path) as conn:
         row = conn.execute(
             "SELECT failed_sources FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
         if row is None:
             return
         try:
-            sources = _json.loads(row[0]) if row[0] else []
+            sources = json.loads(row[0]) if row[0] else []
         except (ValueError, TypeError):
             sources = []
         if url in sources:
@@ -1497,7 +1485,7 @@ def add_failed_source(queue_id, url, path=DB_PATH):
         sources = (sources + [url])[-20:]
         conn.execute(
             "UPDATE download_queue SET failed_sources = ?, updated_at = datetime('now') WHERE id = ?",
-            (_json.dumps(sources), queue_id),
+            (json.dumps(sources), queue_id),
         )
         # ...and against the issue itself, so a fresh row for the same issue
         # inherits the verdict instead of re-buying the corpse.
@@ -1520,21 +1508,20 @@ def failed_releases_for(tracked_series_id, issue_number, path=DB_PATH) -> set:
 def add_failed_channel(queue_id, channel, path=DB_PATH):
     """Bench a delivery channel ('usenet'/'torrent') for this queue row — the
     next attempt skips it and starts at the next rung of the cascade."""
-    import json as _json
     with _connect(path) as conn:
         row = conn.execute(
             "SELECT failed_channels FROM download_queue WHERE id = ?", (queue_id,)).fetchone()
         if row is None:
             return
         try:
-            channels = _json.loads(row[0]) if row[0] else []
+            channels = json.loads(row[0]) if row[0] else []
         except (ValueError, TypeError):
             channels = []
         if channel in channels:
             return
         conn.execute(
             "UPDATE download_queue SET failed_channels = ?, updated_at = datetime('now') WHERE id = ?",
-            (_json.dumps(channels + [channel]), queue_id),
+            (json.dumps(channels + [channel]), queue_id),
         )
 
 
@@ -2125,7 +2112,7 @@ def prune_shelf(scanned_at, path=DB_PATH) -> int:
     """Drop series folders the latest scan didn't see. Book rows (and any read
     progress on them) are kept — a book that comes back keeps its history."""
     with _connect(path) as conn:
-        return conn.execute("DELETE FROM shelf_series WHERE scanned_at IS NOT ? ",
+        return conn.execute("DELETE FROM shelf_series WHERE scanned_at IS NOT ?",
                             (scanned_at,)).rowcount
 
 
