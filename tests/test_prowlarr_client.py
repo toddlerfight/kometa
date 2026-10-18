@@ -150,3 +150,22 @@ def test_without_the_comics_tag_every_indexer_is_asked_as_before(monkeypatch):
     c.search("Saga 054", protocol="torrent")
     p = [p for u, p in s.calls if u == "search"][0]
     assert "indexerIds" not in p and "categories" not in p
+
+
+def test_a_pack_dated_after_the_run_ended_is_another_run(monkeypatch):
+    from kometa.prowlarr_client import search_torrent_pack
+
+    class FakeProwlarr:
+        def search(self, q, protocol=None):
+            return [{"title": "Buffy the Vampire Slayer v04 (2020) (Digital) (Kileko Empire).cbz", "size": 2e8,
+                     "seeders": 9, "categories": [], "magnet": "magnet:?xt=boom"}]
+
+    assert search_torrent_pack(FakeProwlarr(), "Buffy the Vampire Slayer", series_year=1998, run_end=2003) is None
+    # a run still going (or one we don't know the end of) keeps the old rule
+    assert search_torrent_pack(FakeProwlarr(), "Buffy the Vampire Slayer", series_year=2019, run_end=2022)["magnet"] == "magnet:?xt=boom"
+
+
+def test_a_pack_spanning_the_run_still_passes():
+    from kometa.prowlarr_client import _drop_after_run
+    rows = [{"title": "Buffy the Vampire Slayer 001-063 (1998-2003) (Digital)"}, {"title": "Buffy the Vampire Slayer Complete"}]
+    assert _drop_after_run(rows, "Buffy the Vampire Slayer", 2003) == rows

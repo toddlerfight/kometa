@@ -298,6 +298,16 @@ def _issue_store_date(item) -> str | None:
     return row["store_date"] if row else None
 
 
+def _run_end_year(series_id: int) -> int | None:
+    """The year of the run's last dated issue — on-sale date, else cover date — the upper
+    bound for a whole-run pack (prowlarr_client._drop_after_run)."""
+    with db._connect(DB_PATH) as conn:
+        r = conn.execute("SELECT MAX(store_date) d, MAX(cover_date) c FROM issue_status WHERE tracked_series_id = ? "
+                         "AND (store_date IS NULL OR store_date < '9000')", (series_id,)).fetchone()
+    years = [int(v[:4]) for v in ((r["d"], r["c"]) if r else ()) if v]
+    return max(years) if years else None
+
+
 def _issue_age_date(item, store_date: str | None) -> str | None:
     """For the old-issue order only: the on-sale date, else the cover date. Uncanny X-Men
     #201 has no on-sale date anywhere and went GetComics-first as if it were new."""
@@ -819,7 +829,8 @@ def _sweep_missing():
             series = db.get_series_by_id(series_id, DB_PATH)
             if not series:
                 continue
-            nzb_url = search_usenet_pack(prowlarr, series["title"], series_year=series.get("year_began"), missing=count)
+            nzb_url = search_usenet_pack(prowlarr, series["title"], series_year=series.get("year_began"), missing=count,
+                                         run_end=_run_end_year(series_id))
             if nzb_url:
                 nzo_id = sab.add_nzb_url(nzb_url, nzb_name=f"{series['title']} - Pack")
                 if nzo_id:
@@ -843,7 +854,8 @@ def _sweep_missing():
                 series = db.get_series_by_id(series_id, DB_PATH)
                 if not series or not series.get("folder_path") or not series.get("on_pull_list"):
                     continue
-                cand = search_torrent_pack(prowlarr, series["title"], series_year=series.get("year_began"))
+                cand = search_torrent_pack(prowlarr, series["title"], series_year=series.get("year_began"),
+                                           run_end=_run_end_year(series_id))
                 if cand:
                     source = cand.get("magnet") or cand.get("url")
                     if source:

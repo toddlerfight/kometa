@@ -245,6 +245,26 @@ def _drop_year_mismatches(results: list[dict], title: str, series_year,
     return kept
 
 
+def _drop_after_run(results: list[dict], title: str, run_end: int | None) -> list[dict]:
+    """A pack is for a run that ended in run_end: one whose EARLIEST year is past that
+    (and the year after) is another run of the name. Pack searches have no issue date,
+    so year_mismatch only closed the door downward — 'Buffy the Vampire Slayer v04
+    (2020)', BOOM!'s trade, walked in as the pack for Dark Horse's 1998-2003 run
+    (2026-10-18). Unknown end, or no year in the title: passes."""
+    if not run_end:
+        return results
+    from kometa.usenet_client import _TITLE_YEAR_RE
+    kept = []
+    for r in results:
+        years = [int(m.group(0)) for m in _TITLE_YEAR_RE.finditer(r.get("title") or "")]
+        if years and min(years) > int(run_end) + 1:
+            continue
+        kept.append(r)
+    if len(kept) < len(results):
+        logger.info(f"Prowlarr: dropped {len(results) - len(kept)} pack(s) dated after {title!r} ended ({run_end})")
+    return kept
+
+
 def _drop_season_mismatches(results: list[dict], title: str) -> list[dict]:
     """Drop releases that belong to a DIFFERENT season of this title.
 
@@ -267,12 +287,13 @@ def _drop_season_mismatches(results: list[dict], title: str) -> list[dict]:
     return kept
 
 
-def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None) -> dict | None:
+def search_torrent_pack(prowlarr: ProwlarrClient, title: str, series_year=None, run_end: int | None = None) -> dict | None:
     """Best torrent pack/collection for a series. Returns the result dict (magnet,
     seeders, title, size) or None. Twin of search_usenet_pack below."""
     for q in (f"{title} complete", title):
         results = drop_not_comics(prowlarr.search(q, protocol="torrent"), single_issue=False)
         results = _drop_year_mismatches(results, title, series_year)
+        results = _drop_after_run(results, title, run_end)
         results = _drop_season_mismatches(results, title)
         if not results:
             continue
@@ -418,13 +439,15 @@ def search_usenet(prowlarr: ProwlarrClient, title: str, issue_number: float, ser
     return None
 
 
-def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, missing: int | None = None) -> str | None:
+def search_usenet_pack(prowlarr: ProwlarrClient, title: str, series_year=None, missing: int | None = None,
+                       run_end: int | None = None) -> str | None:
     """Best usenet pack/collection for a series. Returns the NZB url or None.
     Sourced through Prowlarr.
     missing: how many issues the pack is for — caps the believable size."""
     for q in (f"{title} complete", title):
         results = drop_not_comics(prowlarr.search(q, protocol="usenet"), single_issue=False)
         results = _drop_year_mismatches(results, title, series_year)
+        results = _drop_after_run(results, title, run_end)
         results = _drop_season_mismatches(results, title)
         if not results:
             continue
