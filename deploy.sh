@@ -44,7 +44,7 @@ if [ -z "${KOMETA_DEPLOY_FORCE:-}" ]; then
   waited=0
   while :; do
     busy=$($SSH "curl -s -m 10 -H \"Authorization: Bearer \$(cat ~/.kometa-claude-token 2>/dev/null)\" http://localhost:6969/api/queue" 2>/dev/null \
-      | grep -oE '"state": *"(downloading|processing)"' | wc -l | tr -d ' ')
+      | { grep -oE '"state": *"(downloading|processing)"' || true; } | wc -l | tr -d ' ')   # no match = 0, not a pipefail exit
     [ "${busy:-0}" -eq 0 ] && break
     if [ "$waited" -ge "${KOMETA_DEPLOY_WAIT:-900}" ]; then
       echo "  ✗ still $busy download(s) running after ${waited}s — files are synced, NOT restarted;"
