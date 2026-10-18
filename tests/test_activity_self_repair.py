@@ -193,3 +193,18 @@ def test_single_issue_finalize_only_places_target_issue(monkeypatch, db_path, tm
     # Issue #2 was NOT placed by single issue #1 finalize
     assert not owned.get(2.0)
     assert q_rows[2.0][0] == "failed"
+
+
+def test_close_rows_now_owned_for_one_series_leaves_the_others(db_path, tmp_path):
+    """One UPDATE serves both: with a series_id, only that series' dead rows close."""
+    s1 = db.add_series("Series One", "Publisher", 2020, str(tmp_path / "s1"), on_pull_list=True, path=db_path)
+    s2 = db.add_series("Series Two", "Publisher", 2020, str(tmp_path / "s2"), on_pull_list=True, path=db_path)
+    for sid in (s1, s2):
+        db.queue_issue(sid, 1.0, db_path)
+        with db._connect(db_path) as conn:
+            conn.execute("UPDATE download_queue SET state='failed' WHERE tracked_series_id=?", (sid,))
+            conn.execute("INSERT INTO issue_status (tracked_series_id, number, owned) VALUES (?, 1.0, 1)", (sid,))
+    assert db.close_rows_now_owned(s1, db_path) == 1
+    with db._connect(db_path) as conn:
+        states = dict(conn.execute("SELECT tracked_series_id, state FROM download_queue").fetchall())
+    assert states == {s1: "done", s2: "failed"}

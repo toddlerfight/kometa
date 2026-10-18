@@ -1772,27 +1772,17 @@ def close_rows_now_owned(series_id: int | None = None, path=DB_PATH) -> int:
     anyway (2026-10-12). Only dead rows; a working one is never touched.
     series_id=None cleans across all monitored series."""
     with _connect(path) as conn:
-        if series_id is not None:
-            return conn.execute("""
-                UPDATE download_queue
-                SET state = 'done', error = 'On the shelf', updated_at = datetime('now')
-                WHERE tracked_series_id = ?
-                  AND COALESCE(kind, 'issue') = 'issue'
-                  AND issue_number >= 0
-                  AND state IN ('failed', 'not_found')
-                  AND EXISTS (SELECT 1 FROM issue_status i
-                              WHERE i.tracked_series_id = download_queue.tracked_series_id
-                                AND i.number = download_queue.issue_number AND i.owned = 1)""",
-                (series_id,)).rowcount
         return conn.execute("""
             UPDATE download_queue
             SET state = 'done', error = 'On the shelf', updated_at = datetime('now')
-            WHERE COALESCE(kind, 'issue') = 'issue'
+            WHERE (? IS NULL OR tracked_series_id = ?)
+              AND COALESCE(kind, 'issue') = 'issue'
               AND issue_number >= 0
               AND state IN ('failed', 'not_found')
               AND EXISTS (SELECT 1 FROM issue_status i
                           WHERE i.tracked_series_id = download_queue.tracked_series_id
-                            AND i.number = download_queue.issue_number AND i.owned = 1)""").rowcount
+                            AND i.number = download_queue.issue_number AND i.owned = 1)""",
+            (series_id, series_id)).rowcount
 
 
 def retire_completed_packs(path=DB_PATH) -> int:
@@ -2139,11 +2129,15 @@ def prune_shelf(scanned_at, path=DB_PATH) -> int:
                             (scanned_at,)).rowcount
 
 
-_SHELF_STATS_SQL = """
-    SELECT b.shelf_series_id AS sid,
-           SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
+# What a reader has done with a run's books — one definition for the shelf's folders and the
+# Library's tracked series, so a rule like 'page 1 is opening, not reading' (0546043) lands once.
+_READING_COUNTS = """SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
            SUM(CASE WHEN p.completed = 0 AND p.page > 1 THEN 1 ELSE 0 END) AS in_progress,   -- page 1 is opening, not reading
-           MAX(p.updated_at) AS last_read
+           MAX(p.updated_at) AS last_read"""
+
+_SHELF_STATS_SQL = f"""
+    SELECT b.shelf_series_id AS sid,
+           {_READING_COUNTS}
     FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
     GROUP BY b.shelf_series_id
 """
@@ -2184,11 +2178,9 @@ def reading_by_tracked_series(reader_id, path=DB_PATH) -> dict[int, dict]:
     Reading chip for tracked series."""
     with _connect(path) as conn:
         return {r["tid"]: {"read_count": r["read_count"], "in_progress": r["in_progress"], "last_read": r["last_read"]}
-                for r in conn.execute("""
+                for r in conn.execute(f"""
             SELECT b.tracked_series_id AS tid,
-                   SUM(CASE WHEN p.completed = 1 THEN 1 ELSE 0 END) AS read_count,
-                   SUM(CASE WHEN p.completed = 0 AND p.page > 1 THEN 1 ELSE 0 END) AS in_progress,   -- page 1 is opening, not reading
-                   MAX(p.updated_at) AS last_read
+                   {_READING_COUNTS}
             FROM books b JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
             WHERE b.tracked_series_id IS NOT NULL
             GROUP BY b.tracked_series_id
