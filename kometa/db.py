@@ -229,11 +229,15 @@ def _open(path):
     # flush is a round trip
     conn.execute("PRAGMA synchronous=NORMAL")
     # The mount makes every disk page fetch a round trip, so keep as much resident
-    # as we can: a 64MB page cache, 256MB mmap reads, and temp sorts in RAM. These
-    # are per-connection; _connect pools one per thread, so each pays this once.
+    # as we can: a 64MB page cache and temp sorts in RAM. These are per-connection;
+    # _connect pools one per thread, so each pays this once.
     # (journal_mode=WAL is set once at init — it's persistent, not per-connection.)
+    # No mmap. It was 256MB here until 2026-10-18: measured then, three rounds each
+    # way, read-only process against the live file — Library 5 ms either way, Batman
+    # (1940) 1 ms, On Deck up_next 13–14 ms. The VM's page cache already holds the
+    # file hot, so mmap bought nothing, and SQLite warns that mmap over a shared or
+    # host-folder mount can SIGBUS the whole process instead of raising an error.
     conn.execute("PRAGMA cache_size=-64000")
-    conn.execute("PRAGMA mmap_size=268435456")
     conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 
