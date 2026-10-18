@@ -28,3 +28,18 @@ def test_activity_has_one_action_view_chips_and_clear_history_at_the_end(app):
 
     now.click()
     expect(app.locator("#act-clear")).to_have_count(0)
+
+
+def test_a_running_download_has_a_stop_x_and_placing_does_not(app):
+    """Before 2026-10-18 a running row had no X — the Loveless pack ran 871 MB
+    with no way to stop it from Activity."""
+    app.locator('.nav-item[data-view="activity"]').click()
+    got = app.evaluate(
+        """() => Object.fromEntries(
+      ['downloading', 'pending_usenet', 'pending_torrent', 'processing', 'searching'].map(st => {
+        const html = _actActionsHtml({ id: 9, state: st, kind: 'trade', issue_number: null });
+        return [st, html.includes('aria-label="Stop download"')];
+      }))"""
+    )
+    assert got == {"downloading": True, "pending_usenet": True, "pending_torrent": True,
+                   "processing": False, "searching": False}

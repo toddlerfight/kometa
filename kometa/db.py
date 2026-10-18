@@ -1517,6 +1517,18 @@ def failed_releases_for(tracked_series_id, issue_number, path=DB_PATH) -> set:
             (tracked_series_id, issue_number))}
 
 
+def forget_failed_releases(queue_id, path=DB_PATH) -> int:
+    """Retry fresh=1: the rejection's cause was fixed, so the issue's remembered
+    failures go too — not just the row's own list. Clearing only the row's list
+    (as fresh did from day one) left the per-issue memory excluding the very
+    releases the fix was for: Dark Ark #2–10 (2026-10-18)."""
+    with _connect(path) as conn:
+        return conn.execute("""
+            DELETE FROM failed_releases WHERE (tracked_series_id, issue_number) IN
+                (SELECT tracked_series_id, issue_number FROM download_queue WHERE id = ?)""",
+            (queue_id,)).rowcount
+
+
 def add_failed_channel(queue_id, channel, path=DB_PATH):
     """Bench a delivery channel ('usenet'/'torrent') for this queue row — the
     next attempt skips it and starts at the next rung of the cascade."""
@@ -1798,24 +1810,45 @@ def retire_completed_packs(path=DB_PATH) -> int:
     and is never touched. The series must own at least one issue, so an empty or
     never-scanned catalogue can't read as 'complete'. Retiring also lifts the
     pack_attempt_failed gate (it only reads failed/not_found): if the series
-    later falls 5+ behind again, a fresh pack gets its one shot."""
+    later falls 5+ behind again, a fresh pack gets its one shot.
+
+    Both pack shapes: usenet/torrent's (an 'issue' row numbered -1) and
+    GetComics' complete-run post (a 'trade' row on locg_id -1, acquisition's
+    PACK_LOCG_SENTINEL) — the second one used to be invisible here."""
     with _connect(path) as conn:
-        return conn.execute("""
+        rows = conn.execute("""
+            SELECT id, tracked_series_id FROM download_queue
+            WHERE state IN ('failed', 'not_found')
+              AND ((issue_number = -1 AND COALESCE(kind, 'issue') = 'issue')
+                   OR (kind = 'trade' AND locg_id = -1))
+        """).fetchall()
+        done = [(r["id"],) for r in rows if _run_complete(conn, r["tracked_series_id"])]
+        conn.executemany("""
             UPDATE download_queue
             SET state = 'done', error = 'Every issue landed', updated_at = datetime('now')
-            WHERE issue_number = -1
-              AND COALESCE(kind, 'issue') = 'issue'
-              AND state IN ('failed', 'not_found')
-              AND EXISTS (SELECT 1 FROM issue_status i
-                          WHERE i.tracked_series_id = download_queue.tracked_series_id
-                            AND i.owned = 1)
-              AND NOT EXISTS (SELECT 1 FROM issue_status i
-                              WHERE i.tracked_series_id = download_queue.tracked_series_id
-                                AND i.owned = 0
-                                AND i.ignored = 0
-                                AND i.covered_by IS NULL
-                                AND (i.store_date IS NULL OR i.store_date <= date('now')))
-        """).rowcount
+            WHERE id = ?""", done)
+        return len(done)
+
+
+def _run_complete(conn, series_id) -> bool:
+    return bool(conn.execute("""
+        SELECT EXISTS (SELECT 1 FROM issue_status i
+                       WHERE i.tracked_series_id = ? AND i.owned = 1)
+           AND NOT EXISTS (SELECT 1 FROM issue_status i
+                           WHERE i.tracked_series_id = ?
+                             AND i.owned = 0
+                             AND i.ignored = 0
+                             AND i.covered_by IS NULL
+                             AND (i.store_date IS NULL OR i.store_date <= date('now')))
+    """, (series_id, series_id)).fetchone()[0])
+
+
+def run_complete(series_id, path=DB_PATH) -> bool:
+    """Owns at least one issue and nothing released is still missing (ignored,
+    trade-covered and unreleased issues don't count). The question a whole-run
+    pack has to ask before it spends a gigabyte."""
+    with _connect(path) as conn:
+        return _run_complete(conn, series_id)
 
 
 def has_active_pack(series_id, path=DB_PATH) -> bool:

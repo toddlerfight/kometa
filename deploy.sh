@@ -36,6 +36,24 @@ COPYFILE_DISABLE=1 tar czf - --exclude '__pycache__' --exclude '.DS_Store' \
   kometa | $SSH "cd '$APP_DIR' && tar xzf -"
 echo "  ✓ synced kometa/"
 
+# A restart kills a download mid-stream too: the bytes so far are thrown away and the
+# row starts over from zero (2026-10-18: 561 MB of a Loveless pack). Downloads and
+# placements run inside the container; SABnzbd/qBittorrent jobs carry on without it.
+# Wait for them, up to KOMETA_DEPLOY_WAIT seconds (default 900); KOMETA_DEPLOY_FORCE=1 overrides.
+if [ -z "${KOMETA_DEPLOY_FORCE:-}" ]; then
+  waited=0
+  while :; do
+    busy=$($SSH "curl -s -m 10 -H \"Authorization: Bearer \$(cat ~/.kometa-claude-token 2>/dev/null)\" http://localhost:6969/api/queue" 2>/dev/null \
+      | grep -oE '"state": *"(downloading|processing)"' | wc -l | tr -d ' ')
+    [ "${busy:-0}" -eq 0 ] && break
+    if [ "$waited" -ge "${KOMETA_DEPLOY_WAIT:-900}" ]; then
+      echo "  ✗ still $busy download(s) running after ${waited}s — files are synced, NOT restarted;"
+      echo "    run again later, or KOMETA_DEPLOY_FORCE=1"; exit 1
+    fi
+    echo "  … $busy download(s) running on $HOST — waiting (${waited}s)"
+    sleep 15; waited=$((waited + 15))
+  done
+fi
 echo "restarting..."
 $SSH "cd '$COMPOSE_DIR' && $DOCKER compose restart kometa" > /dev/null
 echo "done — verify: curl http://$HOST:6969/api/version"

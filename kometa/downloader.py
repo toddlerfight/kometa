@@ -97,13 +97,19 @@ def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
     times — GetComics' hosts drop big files partway: FF 001–023 at 160 MB of
     742, an Avengers Academy trade at 252 of 673, each started over from zero).
     If it can't be finished, take the half-file with it: a cut connection left
-    252 MB sitting in /downloads looking like a download that had landed."""
+    252 MB sitting in /downloads looking like a download that had landed.
+
+    The bytes go to '<name>.partial' and only take the real name once they're
+    all here. A restart kills this thread before the cleanup below can run —
+    the 2026-10-18 deploy left 561 MB of 'Loveless #017.cbz' in /downloads,
+    named like a finished comic — so clear_partials() bins them at the next boot."""
     done, resp, tries = 0, r, 0
     url = getattr(r, "url", None)
     req = getattr(r, "request", None)
     sent = {k: v for k, v in (getattr(req, "headers", None) or HEADERS).items() if k.lower() != "range"}
+    part = staging_path + PARTIAL_EXT
     try:
-        with open(staging_path, "wb") as f:
+        with open(part, "wb") as f:
             while True:
                 try:
                     win_t, win_b = _clock(), 0
@@ -140,12 +146,38 @@ def _stream_to(r, staging_path: str, total: int, progress_fn=None) -> None:
             resp.close()
         if total and done < total:
             raise IncompleteDownloadError(f"download cut off at {done // 1048576} of {total // 1048576} MB")
+        os.replace(part, staging_path)
     except BaseException:
         try:
-            os.remove(staging_path)
+            os.remove(part)
         except OSError:
             pass
         raise
+
+
+PARTIAL_EXT = ".partial"
+
+
+def clear_partials() -> int:
+    """Bin the half-written downloads a restart left behind. Boot only, before
+    the queue runs again — nothing is writing then. Top-level '*.partial' files
+    and nothing else: on the live box staging IS /downloads, which SABnzbd and
+    qBittorrent share."""
+    stage = sources.staging_dir()
+    n = 0
+    try:
+        names = os.listdir(stage)
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(stage, name)
+        if name.endswith(PARTIAL_EXT) and os.path.isfile(path):
+            try:
+                os.remove(path)
+                n += 1
+            except OSError as e:
+                logger.warning(f"Couldn't remove leftover {name}: {e}")
+    return n
 
 
 def _download_cover(cover) -> bytes | None:
@@ -798,7 +830,10 @@ def _count_images_in_dir(d: str) -> int:
 # normal start either way — we can't tell 0-based from 1-based, so 1 gets the
 # benefit of the doubt. Interior holes need to be real: at least 3 pages AND 10%
 # of the run, so a single skipped number (an ad pulled, a stray rename) passes.
-_PAGE_TRAIL_RE = re.compile(r'(\d+(?:[-_ .]+\d+)*)$')
+# One trailing letter rides along: d'argh-Empire marks a merged spread
+# 'dark_ark_006_010_011m.jpg', and without it six whole Dark Ark issues were
+# turned away as '010, 011, 020, 021 missing' (2026-10-18).
+_PAGE_TRAIL_RE = re.compile(r'(\d+(?:[-_ .]+\d+)*)[a-z]?$', re.I)
 _PAGE_GROUP_MIN = 8
 _PAGE_MIN_SINGLE = 4     # fewer images than this is not a comic, it is a fragment (Puzzlebox #2: three truncated pages, 2026-10-16)
 _PAGE_GROUP_SHARE = 0.6

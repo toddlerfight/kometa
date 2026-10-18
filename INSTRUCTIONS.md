@@ -97,6 +97,13 @@ ships the working tree, committed or not — on 2026-10-17 the pre-commit hook r
 commit, the `;` ran the deploy anyway, and uncommitted code was live for minutes.
 **A restart kills anything running inside the container** (`docker exec … python3 -`
 dry runs included): don't deploy while one is going, or run it from a copy that resumes.
+`deploy.sh` waits on its own for downloads and placements (`downloading` / `processing`
+rows) before the restart — up to `KOMETA_DEPLOY_WAIT` seconds (default 900), then it
+stops with the files synced but not restarted; `KOMETA_DEPLOY_FORCE=1` skips the wait.
+SABnzbd/qBittorrent jobs (`pending_*`) are outside the container and aren't waited for.
+GetComics downloads write `<name>.partial` and rename when complete; boot deletes any
+leftover top-level `*.partial` in the staging dir (on the live box that is `/downloads`,
+shared with SABnzbd/qBittorrent — nothing else there is touched).
 
 Remotes (set 2026-06-18):
 - `origin` → `https://github.com/toddlerfight/kometa.git` (GitHub, **PUBLIC**, canonical) — `git push origin main` is the pre-deploy rollback point.

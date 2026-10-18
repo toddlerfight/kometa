@@ -219,3 +219,110 @@ def test_a_dead_issue_row_closes_once_the_issue_is_on_the_shelf(db_path, big_bac
     assert st[3.0] == ("done", "On the shelf")
     assert st[4.0][0] == "not_found"          # still not here
     assert st[5.0][0] == "downloading"        # a working row is never touched
+
+
+# --- a pack for a run that filled up while it waited -----------------------------
+# Loveless, 2026-10-18: the complete-run pack was queued with the folder empty, all
+# 24 singles landed first, and the 871 MB pack downloaded anyway, added nothing,
+# then parked to fetch the same gigabyte again every six hours.
+
+PACK_URL = "https://getcomics.org/dls/THE-PACK"
+
+
+def _gc_pack_row(db_path, sid, state="queued"):
+    db.queue_trade(sid, acq.PACK_LOCG_SENTINEL, "New Avengers", pack_url=PACK_URL, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE download_queue SET state=? WHERE kind='trade'", (state,))
+        return conn.execute("SELECT id FROM download_queue WHERE kind='trade'").fetchone()[0]
+
+
+def _worker(monkeypatch, db_path, download_trade, fallbacks=None):
+    monkeypatch.setattr(acq, "DB_PATH", db_path)
+    monkeypatch.setattr(acq, "GetComicsClient", _FakeGC)
+    monkeypatch.setattr(acq, "_resync_after_placement", lambda *a, **k: None)
+    monkeypatch.setattr(acq.downloader, "download_trade", download_trade)
+    monkeypatch.setattr(acq, "_fallback_usenet_torrent",
+                        lambda *a, **k: (fallbacks.append(a) if fallbacks is not None else None) or False)
+    acq._process_queue()
+
+
+def _no_download(*a, **k):
+    raise AssertionError("downloaded a pack for a run with nothing missing")
+
+
+def test_queued_gc_pack_for_a_whole_run_closes_without_downloading(monkeypatch, db_path, big_backlog):
+    qid = _gc_pack_row(db_path, big_backlog)
+    _own_all(db_path, big_backlog)
+    _worker(monkeypatch, db_path, _no_download)
+    row = _row(db_path, qid)
+    assert (row["state"], row["error"]) == ("done", "Every issue landed")
+
+
+def test_queued_usenet_pack_for_a_whole_run_closes_without_searching(monkeypatch, db_path, big_backlog):
+    qid = _pack_row(db_path, big_backlog, "queued", error=None)
+    _own_all(db_path, big_backlog)
+    monkeypatch.setattr(acq, "_acquire_issue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("searched a whole run")))
+    _worker(monkeypatch, db_path, _no_download)
+    assert _row(db_path, qid)["state"] == "done"
+
+
+def test_queued_pack_with_gaps_still_downloads(monkeypatch, db_path, big_backlog):
+    _gc_pack_row(db_path, big_backlog)
+    calls = []
+    _worker(monkeypatch, db_path, lambda *a, **k: calls.append(a) or [])
+    assert len(calls) == 1
+
+
+def test_pack_that_adds_nothing_closes_when_the_run_is_whole(monkeypatch, db_path, big_backlog):
+    """The singles finish while the pack is still downloading."""
+    qid = _gc_pack_row(db_path, big_backlog)
+
+    def _all_dupes(*a, **k):
+        _own_all(db_path, big_backlog)
+        raise acq.DuplicateIssueError("Pack contained no files not already in library")
+    _worker(monkeypatch, db_path, _all_dupes)
+    row = _row(db_path, qid)
+    assert (row["state"], row["error"]) == ("done", "Every issue landed")
+    assert row["retry_after"] is None, "parked to re-download the same pack"
+
+
+def test_pack_that_adds_nothing_with_gaps_left_is_blacklisted(monkeypatch, db_path, big_backlog):
+    qid = _gc_pack_row(db_path, big_backlog)
+    fallbacks = []
+
+    def _all_dupes(*a, **k):
+        raise acq.DuplicateIssueError("Pack contained no files not already in library")
+    _worker(monkeypatch, db_path, _all_dupes, fallbacks)
+    row = _row(db_path, qid)
+    assert row["state"] == "failed" and row["retry_after"] is None
+    assert PACK_URL in json.loads(row["failed_sources"])
+    assert len(fallbacks) == 1, "usenet/torrent never got their turn"
+
+
+def test_an_ordinary_trade_duplicate_still_parks(monkeypatch, db_path, big_backlog):
+    db.queue_trade(big_backlog, "loc5", "New Avengers", vol=5, path=db_path)
+    monkeypatch.setattr(_FakeGC, "search_trade", lambda self, *a, **k: ("https://gc/vol5", None), raising=False)
+
+    def _dupe(*a, **k):
+        raise acq.DuplicateIssueError("New Avengers v05.cbz already exists in library")
+    _worker(monkeypatch, db_path, _dupe)
+    with db._connect(db_path) as conn:
+        row = dict(conn.execute("SELECT * FROM download_queue WHERE kind='trade'").fetchone())
+    assert row["state"] == "queued" and row["retry_after"] is not None
+
+
+@pytest.mark.parametrize("state", ["failed", "not_found"])
+def test_dead_gc_pack_retires_once_every_issue_landed(db_path, big_backlog, state):
+    qid = _gc_pack_row(db_path, big_backlog, state)
+    _own_all(db_path, big_backlog)
+    assert db.retire_completed_packs(db_path) == 1
+    assert _row(db_path, qid)["state"] == "done"
+
+
+def test_dead_ordinary_trade_is_not_a_pack(db_path, big_backlog):
+    db.queue_trade(big_backlog, "loc5", "New Avengers", vol=5, path=db_path)
+    with db._connect(db_path) as conn:
+        conn.execute("UPDATE download_queue SET state='failed' WHERE kind='trade'")
+    _own_all(db_path, big_backlog)
+    assert db.retire_completed_packs(db_path) == 0

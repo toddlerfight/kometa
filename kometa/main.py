@@ -137,6 +137,10 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Folder spelling repair failed: {e}")
     # Recover items orphaned by a mid-flight container restart
     db.reset_stuck_queue_items(DB_PATH)
+    # ...and the half-written files their downloads left (before the queue starts)
+    from kometa.downloader import clear_partials
+    if (n := clear_partials()):
+        logger.info(f"Removed {n} half-written download(s) left by the last restart")
     from kometa.shelf_import import trickle_tick
     scheduler = start_scheduler(_sync_all_job, _process_queue, _release_day_retry, _poll_usenet_jobs, _poll_torrent_jobs,
                                 trickle_fn=trickle_tick)
@@ -2397,6 +2401,12 @@ def get_queue(since: str | None = None):
 
 @app.delete("/api/queue/{queue_id}", status_code=204)
 def delete_queue_item(queue_id: int):
+    # a running download stops with its row, instead of carrying on unseen
+    from kometa.acquisition import stop_download
+    try:
+        stop_download(queue_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     db.remove_queue_item(queue_id, DB_PATH)
 
 
@@ -2431,6 +2441,7 @@ def retry_queue_item(queue_id: int, fresh: int = 0):
         # turned away by a page check that's since been corrected
         with db._connect(DB_PATH) as conn:
             conn.execute("UPDATE download_queue SET failed_sources = NULL, failed_channels = NULL WHERE id = ?", (queue_id,))
+        db.forget_failed_releases(queue_id, DB_PATH)
     db.update_queue_state(queue_id, "queued", error=None, path=DB_PATH)
     db.reset_rl_attempts(queue_id, path=DB_PATH)
     busy = queue_busy()

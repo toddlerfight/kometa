@@ -96,6 +96,73 @@ def get_progress(qid: int) -> dict | None:
     return _dl_progress.get(qid)
 
 
+class DownloadStopped(BaseException):
+    """Activity's X on a running download. A BaseException, like asyncio's
+    CancelledError: every 'that host failed — try the mirror / try usenet'
+    handler on the way up catches Exception, and a stop is not a failure to
+    route around by fetching the comic somewhere else."""
+
+
+# Queue ids whose in-process download should stop at its next chunk.
+_stop_requested: set[int] = set()
+
+
+def _progress_for(qid: int):
+    """The progress callback a GetComics download reports through — and where a
+    stop request lands: the stream deletes its .partial on the way out."""
+    def report(done: int, total: int) -> None:
+        if qid in _stop_requested:
+            raise DownloadStopped(qid)
+        set_progress(qid, done, total)
+    return report
+
+
+def _stopped(qid: int) -> None:
+    _stop_requested.discard(qid)
+    clear_progress(qid)
+    logger.info(f"Queue item {qid}: download stopped from Activity")
+
+
+def stop_download(qid: int) -> None:
+    """Activity's X on a running row, before the row goes. Before this, removing
+    a running download only deleted its record: the Loveless pack (2026-10-18)
+    carried on for 871 MB with nothing on screen to show for it. A GetComics
+    download is flagged and unwinds at its next chunk; a SABnzbd or qBittorrent
+    job is cancelled there, files and all. A row already placing its files is
+    past stopping — half a placement is worse than a finished one."""
+    with db._connect(DB_PATH) as conn:
+        row = conn.execute("SELECT state, sab_nzo_id, torrent_hash FROM download_queue WHERE id = ?",
+                           (qid,)).fetchone()
+    if not row:
+        return
+    if row["state"] == "processing":
+        raise ValueError("Already placing it — too late to stop")
+    if row["state"] == "downloading":
+        _stop_requested.add(qid)
+    elif row["state"] == "pending_usenet":
+        _cancel_external_job(qid, row["sab_nzo_id"], None, "Stop")
+    elif row["state"] == "pending_torrent":
+        _cancel_external_job(qid, None, row["torrent_hash"], "Stop")
+
+
+def _cancel_external_job(qid: int, sab_nzo_id, torrent_hash, why: str) -> None:
+    """Drop a row's SABnzbd job / qBittorrent torrent and the files it fetched."""
+    if sab_nzo_id:
+        sab = _sabnzbd()
+        deleter = getattr(sab, "delete_job", None) if sab else None
+        if deleter:
+            deleter(sab_nzo_id)
+        _usenet_seen.pop(qid, None)
+    if torrent_hash:
+        try:
+            from kometa import sources
+            qb = sources.qbittorrent()
+            if qb:
+                qb.delete_torrent(torrent_hash)
+        except Exception as e:
+            logger.info(f"{why}: qBit cancel for qid {qid}: {e}")
+
+
 def _trade_label(vol, vol_range) -> str:
     if vol_range:
         return f"Vol {vol_range[0]}-{vol_range[1]}"
@@ -221,6 +288,13 @@ def _process_queue_locked():
     pace = len(items) > 1
     for i, item in enumerate(items):
         qid = item["id"]
+        # A pack whose run filled up while it waited has nothing left to bring.
+        # Loveless, 2026-10-18: all 24 singles landed one by one, then the
+        # 871 MB complete-run pack downloaded anyway, added nothing, and parked
+        # itself to do the whole thing again six hours later. Ask first.
+        if _is_run_pack(item) and db.run_complete(item["tracked_series_id"], DB_PATH):
+            db.update_queue_state(qid, "done", error="Every issue landed", path=DB_PATH)
+            continue
         db.update_queue_state(qid, "searching", path=DB_PATH)
         try:
             # One queue, two kinds. Everything around this branch — state moves,
@@ -251,6 +325,10 @@ def _process_queue_locked():
                     retry_after=retry_at, path=DB_PATH)
                 logger.info(f"Queue item {qid}: rate limited — parked until {retry_at} UTC")
             break  # we're blocked either way — stop hammering with the rest of the queue
+        except DownloadStopped:
+            # the GetComics paths catch their own; this is the net under them, so
+            # a stop can never take the rest of the pass down with it
+            _stopped(qid)
         except DuplicateIssueError as e:
             # The file we were about to place is already there. If it's a real,
             # readable copy of this issue, that IS the download done — the Dirt
@@ -420,6 +498,15 @@ _OLD_ISSUE_DAYS = 90
 PACK_LOCG_SENTINEL = -1
 
 
+def _is_run_pack(item) -> bool:
+    """A whole-run pack, either shape: usenet/torrent's 'issue' row numbered -1,
+    or GetComics' complete-run post queued as a trade on PACK_LOCG_SENTINEL
+    (locg_id is a TEXT column — it comes back as '-1')."""
+    if (item.get("kind") or "issue") == "issue":
+        return item.get("issue_number") == -1
+    return item.get("kind") == "trade" and str(item.get("locg_id")) == str(PACK_LOCG_SENTINEL)
+
+
 def _is_old_issue(store_date: str | None) -> bool:
     if not store_date:
         return False  # no date on record — don't assume old, keep GetComics-first
@@ -473,7 +560,7 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
             issue_number=item["issue_number"],
             store_date=store_date,
             hint_filename=hint,
-            progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+            progress_fn=_progress_for(qid),
             dest_dir=item.get("folder_path") or None,
             tracked_series_id=item["tracked_series_id"],
             db_path=DB_PATH,
@@ -504,6 +591,10 @@ def _try_getcomics(item, qid, gc, downloaded_urls, store_date) -> tuple[bool, st
                                 f"#{item['issue_number']}: {me}")
             if dest is None:
                 raise e
+    except DownloadStopped:
+        # handled: the row is already gone — no mirror, no usenet, no state to write
+        _stopped(qid)
+        return True, None
     except DuplicateIssueError:
         raise
     except UnreadableArchiveError as e:
@@ -754,11 +845,28 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         placed = downloader.download_trade(
             dl_url, dest_dir, hint_filename=hint, fallback_name=fallback,
             series_title=title,
-            progress_fn=lambda done, total, qid=qid: set_progress(qid, done, total),
+            progress_fn=_progress_for(qid),
             on_bytes_done=lambda qid=qid: db.update_queue_state(qid, "processing", path=DB_PATH),
         )
+    except DownloadStopped:
+        _stopped(qid)
+        return
     except DuplicateIssueError:
-        raise
+        if not _is_run_pack(item):
+            raise
+        # The pack held nothing new. The shared handler parks a duplicate for six
+        # hours and tries again — for a whole-run pack that's the same gigabyte,
+        # forever. Whole run: done. Still gaps: this pack can't fill them, so
+        # blacklist it and let the cascade look elsewhere.
+        clear_progress(qid)
+        if db.run_complete(item["tracked_series_id"], DB_PATH):
+            db.update_queue_state(qid, "done", error="Every issue landed", path=DB_PATH)
+            return
+        db.add_failed_source(qid, dl_url, path=DB_PATH)
+        if _fallback_usenet_torrent(item, qid, _search_nzb, query):
+            return
+        db.update_queue_state(qid, "failed", error="The pack held nothing you're missing", path=DB_PATH)
+        return
     except Exception as e:
         logger.info(f"GetComics trade download failed for {query!r}: {e} — trying usenet/torrent")
         clear_progress(qid)
@@ -1080,20 +1188,7 @@ def try_getcomics_now(qid: int, background: bool = True) -> dict:
     item = dict(row)
     if item.get("kind") in ("trade", "list_pack") or item.get("issue_number") is None or item["issue_number"] < 0:
         raise ValueError("GetComics-now is for single issues")
-    if item.get("sab_nzo_id"):
-        sab = _sabnzbd()
-        deleter = getattr(sab, "delete_job", None) if sab else None
-        if deleter:
-            deleter(item["sab_nzo_id"])
-        _usenet_seen.pop(qid, None)
-    if item.get("torrent_hash"):
-        try:
-            from kometa import sources
-            qb = sources.qbittorrent()
-            if qb:
-                qb.delete_torrent(item["torrent_hash"])
-        except Exception as e:
-            logger.info(f"Try GetComics: qBit cancel for qid {qid}: {e}")
+    _cancel_external_job(qid, item.get("sab_nzo_id"), item.get("torrent_hash"), "Try GetComics")
     with db._connect(DB_PATH) as conn:
         conn.execute("UPDATE download_queue SET sab_nzo_id = NULL, torrent_hash = NULL WHERE id = ?", (qid,))
     clear_progress(qid)

@@ -641,6 +641,56 @@ def test_a_dropped_download_resumes_where_it_stopped(tmp_path, monkeypatch):
     assert dest.read_bytes() == body and asked == ["bytes=40-"]
 
 
+def test_a_download_only_takes_its_name_once_every_byte_is_here(tmp_path):
+    """A restart kills the thread mid-stream: what it leaves must say 'partial',
+    not look like 'Loveless #017.cbz' (561 MB of one, 2026-10-18)."""
+    import kometa.downloader as dl
+    dest = tmp_path / "Loveless #017.cbz"
+    seen = []
+    class R:
+        def iter_content(self, chunk_size):
+            yield b"x" * 10
+            seen.append((dest.exists(), (tmp_path / "Loveless #017.cbz.partial").exists()))
+            yield b"y" * 10
+    dl._stream_to(R(), str(dest), 20)
+    assert seen == [(False, True)]
+    assert dest.read_bytes() == b"x" * 10 + b"y" * 10
+    assert [p.name for p in tmp_path.iterdir()] == ["Loveless #017.cbz"]
+
+
+def test_a_broken_download_leaves_no_partial_either(tmp_path):
+    import kometa.downloader as dl
+    class R:
+        def iter_content(self, chunk_size):
+            yield b"x" * 10
+            raise ConnectionError("cut")
+    with pytest.raises(ConnectionError):
+        dl._stream_to(R(), str(tmp_path / "Trade Vol 02.cbz"), 100)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_boot_clears_partials_and_nothing_else(tmp_path, monkeypatch):
+    """On the live box staging is /downloads, shared with SABnzbd and qBittorrent."""
+    import kometa.downloader as dl
+    from kometa import sources
+    monkeypatch.setattr(sources, "staging_dir", lambda: str(tmp_path))
+    (tmp_path / "Loveless.cbz.partial").write_bytes(b"x")
+    (tmp_path / "Dark Ark #001.cbz").write_bytes(b"x")          # finished, waiting to be placed
+    (tmp_path / "complete").mkdir()
+    (tmp_path / "complete" / "job.partial").write_bytes(b"x")   # someone else's folder
+    (tmp_path / "incomplete.partial").mkdir()                   # a directory, not ours
+    assert dl.clear_partials() == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["Dark Ark #001.cbz", "complete", "incomplete.partial"]
+    assert (tmp_path / "complete" / "job.partial").exists()
+
+
+def test_boot_with_no_staging_dir_is_fine(tmp_path, monkeypatch):
+    import kometa.downloader as dl
+    from kometa import sources
+    monkeypatch.setattr(sources, "staging_dir", lambda: str(tmp_path / "missing"))
+    assert dl.clear_partials() == 0
+
+
 class TestOnlyComicsGetPlaced:
     """2026-10-08: a mirror answered a trade download with its WeTransfer upload page
     (31 KB of HTML) and download_trade placed it as 'Killadelphia Vol 05.cbz' — past

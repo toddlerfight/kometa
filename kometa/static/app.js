@@ -4375,6 +4375,10 @@ function _actActionsHtml(q) {
     btns = `
             <button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)" title="Search GetComics/Usenet now (skip backoff)">Search now</button>
             <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Remove from queue" aria-label="Remove from queue">${ico('x')}</button>`;
+  } else if (['downloading', 'pending_usenet', 'pending_torrent'].includes(q.state)) {
+    // A running download stops with its row: the bytes so far are binned.
+    btns = `
+            <button class="btn btn-ghost btn-sm" onclick="removeQueue(${q.id}, this)" title="Stop the download and remove it" aria-label="Stop download">${ico('x')}</button>`;
   } else if (!ACT_ACTIVE_STATES.includes(q.state)) {
     const retry = q.state !== 'done' ? `<button class="btn btn-ghost btn-sm" onclick="retryQueue(${q.id}, this)">Retry</button>` : '';
     btns = `
@@ -4851,7 +4855,15 @@ async function retryQueue(id, btn) {
 
 async function removeQueue(id, btn) {
   btn.disabled = true;
-  await api.del(`/api/queue/${id}`);
+  try {
+    await api.del(`/api/queue/${id}`);
+  } catch (e) {
+    // a download that reached placing its files can't be stopped (409)
+    btn.disabled = false;
+    showToast(String(e?.message) === '409' ? 'Already placing the files — too late to stop'
+                                           : 'Couldn’t remove it — ' + (e?.message || e), 'error');
+    return;
+  }
   // Animate ONLY this row out — don't rebuild the list (that flashes every cover).
   // Drop the sig so the next poll rebuilds from scratch without trying to re-add the
   // row we just collapsed.

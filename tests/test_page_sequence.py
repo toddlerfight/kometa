@@ -209,3 +209,16 @@ def test_a_bad_crc_entry_condemns_the_archive(tmp_path):
     cbz.write_bytes(bytes(raw))
     problem = _truncated_page_problem(str(cbz))
     assert problem and "p-002.jpg" in problem and "CRC" in problem
+
+
+def test_a_merged_spread_with_a_letter_on_the_end_covers_both_pages():
+    """d'argh-Empire's Dark Ark: 'dark_ark_006_010_011m.jpg' is pages 10 and 11.
+    Six complete issues were refused as '010, 011, 020, 021 missing' (2026-10-18)."""
+    d = "Dark Ark 006 (2018) (digital) (d'argh-Empire)/"
+    pages = [f"dark_ark_006_{n:03d}.jpg" for n in range(1, 35) if n not in (10, 11, 20, 21)]
+    names = [d + p for p in pages] + [d + "dark_ark_006_010_011m.jpg", d + "dark_ark_006_020_021m.jpg",
+                                      d + "zzdelirium_dargh.png"]
+    assert _page_sequence_problem(names) is None
+    # the same release really missing a spread is still caught
+    gone = [n for n in names if not any(s in n for s in ("020_021m", "_015", "_016", "_017"))]
+    assert "5 numbered pages missing (015, 016, 017, 020, 021)" in (_page_sequence_problem(gone) or "")
