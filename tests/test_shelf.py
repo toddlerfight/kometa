@@ -164,8 +164,10 @@ def test_a_vanished_folders_unread_books_go_and_read_ones_stay(shelf):
     shutil.rmtree(root / "DC Comics" / "Batman - Knightfall")
     sh.scan_shelf(str(root))
     with db._connect(sh.DB_PATH) as c:
-        left = {r[0] for r in c.execute("SELECT id FROM books WHERE shelf_series_id = ?", (kid,))}
-    assert left == {b[0]["id"]}
+        left = {r[0]: r[1] for r in c.execute("SELECT id, shelf_series_id FROM books WHERE id IN (%s)"
+                                              % ",".join("?" * len(b)), [x["id"] for x in b])}
+    assert set(left) == {b[0]["id"]}                     # the read one stays…
+    assert left[b[0]["id"]] is None                      # …no longer pointing at the folder that's gone (db sweep 9)
 
 
 def test_loose_rows_from_long_gone_folders_are_cleared(shelf):

@@ -678,14 +678,22 @@ _SERIES_ROWS = ("trade_record", "trades_cache", "download_queue", "series_record
 
 
 def remove_series(series_id, path=DB_PATH):
+    """The series and everything hanging off it, in one transaction. Its books and its
+    shelf folder stay, unlinked: they pointed at the dead id until the next shelf scan
+    re-stamped them, and meanwhile the folder hid from the untracked shelf (db sweep 9 —
+    links are fixed here, at the source; SQLite's foreign keys stay off by choice)."""
     with _connect(path) as conn:
         conn.execute("DELETE FROM issue_status WHERE tracked_series_id = ?", (series_id,))
         conn.execute("DELETE FROM arc_issues WHERE arc_series_id = ?", (series_id,))
         for table in _SERIES_ROWS:
             try:
                 conn.execute(f"DELETE FROM {table} WHERE tracked_series_id = ?", (series_id,))
-            except sqlite3.OperationalError:
-                pass                                       # a table this install never made
+            except sqlite3.OperationalError as e:
+                if "no such table" not in str(e):
+                    raise                                  # a typo'd column is a bug, not a missing table
+                # a table this install never made
+        conn.execute("UPDATE books SET tracked_series_id = NULL WHERE tracked_series_id = ?", (series_id,))
+        conn.execute("UPDATE shelf_series SET tracked_series_id = NULL WHERE tracked_series_id = ?", (series_id,))
         conn.execute("DELETE FROM tracked_series WHERE id = ?", (series_id,))
 
 
@@ -2110,8 +2118,11 @@ def remove_shelf_series_by_path(folder, path=DB_PATH) -> int:
 
 def prune_shelf(scanned_at, path=DB_PATH) -> int:
     """Drop series folders the latest scan didn't see. Book rows (and any read
-    progress on them) are kept — a book that comes back keeps its history."""
+    progress on them) are kept — a book that comes back keeps its history — but no
+    longer point at the folder that's gone (db sweep 9)."""
     with _connect(path) as conn:
+        conn.execute("""UPDATE books SET shelf_series_id = NULL WHERE shelf_series_id IN
+                        (SELECT id FROM shelf_series WHERE scanned_at IS NOT ?)""", (scanned_at,))
         return conn.execute("DELETE FROM shelf_series WHERE scanned_at IS NOT ?",
                             (scanned_at,)).rowcount
 
