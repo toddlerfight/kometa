@@ -597,8 +597,14 @@ def _book_payload(book: dict) -> dict:
         "number": book.get("number"),
         "version": _version(book["size"], book["mtime"]),
         "page_count": book["page_count"],
-        # wide = a two-page spread drawn as one image: shown on its own, never paired
-        "pages": [{"w": w, "h": h, "wide": bool(w and h and w > h)} for _, w, h in book["pages"]],
+        # wide = a two-page spread drawn as one image: shown on its own, never paired.
+        # name = the entry inside the archive — YondeB reads its own copy of the
+        # file by these, so page 7 on the iPad is page 7 here, not whatever its
+        # own sort order dreams up at 2am
+        "pages": [{"name": n, "w": w, "h": h, "wide": bool(w and h and w > h)} for n, w, h in book["pages"]],
+        # where the original lands on a device: <folder>/<file>, the shelf's own names
+        "file": os.path.basename(book["path"]),
+        "folder": os.path.basename(os.path.dirname(book["path"])),
         "finish_within_pages": FINISH_WITHIN_PAGES,
         "progress": db.get_progress(current_reader(), book["id"], DB_PATH),
         **_mark(book["id"]),

@@ -51,6 +51,11 @@ class TestBooks:
         assert names[:4] == ["p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg"] and names[-1] == "p10.jpg"
         assert b["title"] == "Midnight Spider-Man" and b["series_id"] == sid and b["number"] == 1.0
 
+    def test_payload_names_each_page_and_the_file_for_a_device_copy(self, shelf):
+        b = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        assert [p["name"] for p in b["pages"]][:3] == ["p1.jpg", "p2.jpg", "p3.jpg"]
+        assert b["file"] == "Midnight Spider-Man #001.cbz" and b["folder"] == "Midnight Spider-Man"
+
     def test_opens_on_the_page_list_and_flags_wide_spreads_once_sizes_land(self, shelf):
         b = asyncio.run(rd.issue_book(shelf[1], 1.0))
         assert b["page_count"] and not any(p["wide"] for p in b["pages"])      # open now, sizes still coming
