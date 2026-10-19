@@ -525,95 +525,14 @@ Diagnose a stall: `sample <rsync pid> 1` (stuck in `openat` under `send_director
 - It's a static file: sync it (deploy) and it's live; no restart needed.
 - The user reads this page instead of asking for status. Keep tasks self-contained: what, why, how, blocking or not.
 
-## Full ComicInfo rewrite — batch run (Thursday)
+## Full ComicInfo rewrite
 
-Step 3f of docs/library-enrichment-spec.md, done as three hand-started phases in
-`kometa/retag_batch.py`, on top of the tested engine in `kometa/retag.py` (its swap
-safety is unchanged). Every file is read from a snapshot of the library on Catbus
-(falling back to the NAS only when the copy isn't the NAS file), built and verified on
-Catbus, checked by the user, and only then swapped onto the NAS.
-
-- Arming: config `retag_batch_armed = "1"` (PATCH /api/config). When unarmed, the queue/build/swap
-  routes answer 403. Stop (`POST /api/retag/batch/stop`) and the read-only routes always answer.
-- While armed, the scheduler's `retag_tick` stands down. Otherwise it would swap verified rows
-  between the phases, before the user's OK. One phase runs at a time; a second start answers 409.
-- Build refuses (409) when `/retag/source` is missing or empty. It stops itself when more than half
-  of its first 25 builds fall back to the NAS (the snapshot doesn't match), or when Catbus drops below 20 GB free.
-- A snapshot copy counts when its size matches, its mtime is within 2 s, and (for a CBZ) its central
-  directory lists the same pages as the NAS file's.
-- Space: the snapshot is ~470 GB and the builds are about the same again (~940 GB). Catbus has 1.7 TB free.
-- The build phase journals `build_source` (`snapshot`/`nas`) for each row. The swap phase marks an original that
-  changed since it was stamped as `stale` and never touches it; a re-queue picks up stale and failed rows again.
-
-`$K` below = `http://$KOMETA_HOST:6969`. Run host commands on ginbako; `docker` is `/usr/local/bin/docker`.
-
-0. **Before Thursday:** deploy the code (`./deploy.sh`) and install the backup script
-   (`cp ops/ginbako-backup.sh ~/bin/kometa-backup.sh` on ginbako). Check the last nightly ran clean:
-   `cat "/Volumes/Voot II/Kometa-Backup/status.json"`. The snapshot is only as fresh as that run.
-1. **Pause the comics backup:** `touch ~/docker/apps/kometa/data/.pause-comics-backup`.
-   The 02:00 run then logs `comics PAUSED (retag batch)` and still copies the DB, covers and docker.
-   Make sure no mirror is running now: `pgrep -fl rsync` returns nothing.
-2. **Snapshot** Voot II's mirror onto Catbus (`-a` keeps the mtimes, which the build compares):
-   ```bash
-   mount | grep -q " on /Volumes/Catbus " && mount | grep -q " on /Volumes/Voot II " && \
-   mkdir -p /Volumes/Catbus/kometa/retag/source /Volumes/Catbus/kometa/retag/build && \
-   /usr/bin/rsync -a --exclude "_trash/" --exclude "_kometa-backup/" --exclude "@eaDir/" \
-     --exclude "#recycle/" --exclude ".DS_Store" \
-     "/Volumes/Voot II/Kometa-Backup/comics/" /Volumes/Catbus/kometa/retag/source/
-   du -sh /Volumes/Catbus/kometa/retag/source; df -h /Volumes/Catbus
-   ```
-3. **Bind it into the container.** In `~/docker/compose.yml`, under the kometa service's
-   `volumes:`, beside the other Catbus binds:
-   ```yaml
-      - type: bind
-        source: /Volumes/Catbus/kometa/retag
-        target: /retag
-        bind:
-          create_host_path: false
-   ```
-   Then run `cd ~/docker && docker compose up -d kometa`. This is a recreate; see the NFS note above if it
-   complains. Check: `docker exec kometa ls /retag/source | head`.
-4. **Arm, queue, build:**
-   ```bash
-   curl -s -X PATCH -H 'Content-Type: application/json' -d '{"retag_batch_armed":"1"}' $K/api/config >/dev/null
-   curl -s $K/api/retag/batch/dry-count            # would_queue, would_requeue_changed, catalogue vs stopgap
-   curl -s -X POST $K/api/retag/batch/queue
-   curl -s $K/api/retag/batch-report | jq .progress  # wait for finished_at
-   curl -s -X POST $K/api/retag/batch/build
-   curl -s $K/api/retag/batch-report | jq '.progress | {done, total, from_snapshot, from_nas, counts, stopped, error}'
-   ```
-   In the first minutes, `from_nas` should be close to 0. If it isn't, stop
-   (`curl -s -X POST $K/api/retag/batch/stop`) and check the snapshot.
-   A re-run of build skips what's already verified, so stopping costs nothing.
-5. **Check the report and spot-check:**
-   ```bash
-   curl -s "$K/api/retag/batch-report?sample=10" | jq '{states, build_source, problems, cbr_to_cbz: .cbr_to_cbz.total, staged, disk, sample}'
-   curl -s $K/api/retag/batch/staged/<book_id>/comicinfo        # what will be written (X-Journal-Digest must match)
-   curl -s $K/api/books/<book_id>/comicinfo-preview             # what the record says today
-   ```
-   Copy the sampled builds off Catbus (`/Volumes/Catbus/kometa/retag/build/<book_id>.cbz`) with a
-   tar pipe and open them in a second reader. Check that every page is there, in order, and that the new details show.
-   Open the same books in Kometa's reader (still the NAS originals at this point) to compare.
-6. **User's OK** before anything is written to the NAS.
-7. **Swap:** `curl -s -X POST $K/api/retag/batch/swap`. It does one file at a time and pauses while anyone is
-   reading. Progress is in the same report. Stopping and restarting is safe at any point.
-8. **Verify the NAS:** the report's `states` holds only `swapped`, `skipped`, `stale` and `failed`
-   (no `verified` or `pending`), and `staged.files` is 0. Read the reasons in `problems`. Spot-check: open the
-   sampled books in Kometa's reader and in a second reader straight off the NAS, and read a tag back:
-   `docker exec kometa python -c "import zipfile,sys; print(zipfile.ZipFile(sys.argv[1]).read('ComicInfo.xml').decode())" "/comics/<path>"`.
-9. **User's OK.**
-10. **Unpause the backup and run it once by hand.** It re-copies about 455 GB, which takes about 5 h:
-    `rm ~/docker/apps/kometa/data/.pause-comics-backup && launchctl kickstart gui/$(id -u)/dev.kometa.backup`,
-    then `tail -f "/Volumes/Voot II/Kometa-Backup/backup.log"` until `--- done ok=1`.
-11. **Confirm Voot II:** a sampled file under `Kometa-Backup/comics/` now holds the new ComicInfo (run the unzip
-    from step 8 against the Voot II path), and `Kometa-Backup/deleted/<day>/comics/` holds the originals
-    (kept 30 days). The CBR originals are also in the NAS `_trash/<publisher>/retag-cbr-<date>/` (7 days).
-12. **User's OK.**
-13. **Clean up**, in this order: disarm
-    (`curl -s -X PATCH -H 'Content-Type: application/json' -d '{"retag_batch_armed":"0"}' $K/api/config`),
-    remove the `/retag` bind from `compose.yml` and run `docker compose up -d kometa`, then
-    `rm -rf /Volumes/Catbus/kometa/retag`. Remove the bind before deleting the folder, so the container never
-    holds a deleted mount.
+Done by the scheduler's own `retag_tick`, not the Catbus batch once planned here (snapshot → build →
+swap; never run, nothing to clean up). By 2026-10-20, 7,027 of 7,336 shelf files carried Kometa's tags;
+the rest have no record to write. Each tick, `retag.tidy_journal` also puts any shelf book with no journal
+row on the list as an arrival (hand copies, backfills, re-filed files), so a file that didn't come
+through a download still gets tagged. `kometa/retag_batch.py` and its `/api/retag/batch/*` routes are
+still there (unarmed) if a whole-library rebuild is ever wanted again.
 
 ## Long jobs beside Kometa (2026-10-15)
 

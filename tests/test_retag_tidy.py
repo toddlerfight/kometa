@@ -41,5 +41,27 @@ def test_other_failures_are_left_for_a_person(db_path, tmp_path):
     bid = _book(db_path, tmp_path, "Broken #001.cbz")
     retag.enqueue([bid], "run", path=db_path)
     retag._set(bid, db_path, state="failed", error="BadZipFile: Bad CRC-32 for file '001.jpg'", attempts=1)
-    assert retag.tidy_journal(db_path) == {"retired": 0, "retried": 0}
+    assert retag.tidy_journal(db_path) == {"retired": 0, "retried": 0, "found": 0}
     assert retag.journal(bid, db_path)["state"] == "failed"
+
+
+def test_a_book_that_never_came_through_a_download_goes_on_the_list(db_path, tmp_path):
+    # a hand copy / backfill: on the shelf, no journal row, never tagged
+    bid = _book(db_path, tmp_path, "Buffy the Vampire Slayer #030.cbz")
+    assert retag.journal(bid, db_path) is None
+    assert retag.tidy_journal(db_path)["found"] == 1
+    row = retag.journal(bid, db_path)
+    assert row["state"] == "pending" and row["queued_for"] == "arrival"   # still waits for its record
+    assert retag.tidy_journal(db_path)["found"] == 0                       # once
+
+
+def test_a_finished_or_missing_book_is_not_swept_again(db_path, tmp_path):
+    done = _book(db_path, tmp_path, "Saga #001.cbz")
+    retag.enqueue([done], "run", path=db_path)
+    retag._set(done, db_path, state="swapped")
+    gone = _book(db_path, tmp_path, "Deadpool #036.cbz")
+    with db._connect(db_path) as c:
+        c.execute("UPDATE books SET missing_at = datetime('now') WHERE id = ?", (gone,))
+    assert retag.enqueue_unjournaled(db_path) == 0
+    assert retag.journal(done, db_path)["state"] == "swapped"
+    assert retag.journal(gone, db_path) is None

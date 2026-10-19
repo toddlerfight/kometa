@@ -907,7 +907,20 @@ def tidy_journal(path=None) -> dict:
         if book and os.path.exists(book["path"]):
             _start(book, path)
             retried += 1
-    return {"retired": len(gone), "retried": retried}
+    return {"retired": len(gone), "retried": retried, "found": enqueue_unjournaled(path)}
+
+
+def enqueue_unjournaled(path=None) -> int:
+    """Only a download that Kometa placed itself went on the list (acquisition's arrival
+    hook). A hand copy, a backfill, a file re-filed under a new id: a book on the shelf
+    with no journal row at all, never tagged (2026-10-20: 148 of them — Deadpool (2015),
+    Justice League, Buffy). Each goes on as an arrival, so it still waits for its record."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        ids = [r[0] for r in conn.execute("""SELECT b.id FROM books b LEFT JOIN retag_journal j ON j.book_id = b.id
+            WHERE j.book_id IS NULL AND b.missing_at IS NULL""")]
+    return enqueue(ids, "arrival", path) if ids else 0
 
 
 def _tick(budget: int, path, runner) -> dict:
