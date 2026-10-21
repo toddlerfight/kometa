@@ -43,3 +43,29 @@ def test_a_running_download_has_a_stop_x_and_placing_does_not(app):
     )
     assert got == {"downloading": True, "pending_usenet": True, "pending_torrent": True,
                    "processing": False, "searching": False}
+
+
+def test_an_empty_or_failed_row_says_when_it_was_tried_and_when_it_tries_next(app):
+    """Not Found read the same at 3:06pm as three days later (2026-10-21)."""
+    app.locator('.nav-item[data-view="activity"]').click()
+    got = app.evaluate(
+        """() => {
+      const stamp = q => { const t = document.createElement('template');
+        t.innerHTML = _actRowHtml({ id: 9, title: 'Absolute Flash', issue_number: 20, kind: 'issue',
+                                    tracked_series_id: 1, ...q }).trim();
+        const w = t.content.querySelector('.act-row-when'); return w ? w.textContent : null; };
+      const ago = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+      const soon = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+      return {
+        not_found: stamp({ state: 'not_found', updated_at: ago, next_try: soon }),
+        failed: stamp({ state: 'failed', updated_at: ago, next_try: null }),
+        parked: stamp({ state: 'queued', updated_at: ago, next_try: soon }),
+        queued: stamp({ state: 'queued', updated_at: ago, next_try: null }),
+        done: stamp({ state: 'done', updated_at: ago }),
+      };
+    }"""
+    )
+    assert re.fullmatch(r"Tried \w{3} \d+(:\d\d)?[ap]m · next \w{3} \d+(:\d\d)?[ap]m", got["not_found"])
+    assert re.fullmatch(r"Tried \w{3} \d+(:\d\d)?[ap]m", got["failed"])        # only Retry tries it again
+    assert re.fullmatch(r"next \w{3} \d+(:\d\d)?[ap]m", got["parked"])         # a rate-limit park
+    assert got["queued"] is None and got["done"] is None
