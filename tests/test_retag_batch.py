@@ -55,6 +55,9 @@ def bat(tmp_path, db_path, series, monkeypatch):
     monkeypatch.setattr(rb, "DB_PATH", db_path)
     monkeypatch.setattr(rb, "BATCH_ROOT", str(batch_root))
     monkeypatch.setattr(downloader, "_rar_entry_count", lambda p: None)
+    # plenty of room: the build's disk-full stop read the machine running the tests, and a
+    # laptop under 20 GB free failed 13 of these (2026-10-22). The stop has its own test below.
+    monkeypatch.setattr(rb, "_free_bytes", lambda: 1 << 40)
     from kometa import sources
     monkeypatch.setattr(sources, "comics_root", lambda: str(root))
     rb._STOP.clear()
@@ -110,6 +113,15 @@ def test_build_reads_the_snapshot_and_journals_the_nas_stat(bat, monkeypatch):
         assert (j["old_size"], j["old_mtime"]) == (st.st_size, st.st_mtime)          # the NAS file's, not the copy's
         staged = os.path.join(bat["build"], f"{bid}.cbz")
         retag.verify(staged, retag._want(j))
+
+
+def test_build_stops_before_the_disk_is_full(bat, monkeypatch):
+    monkeypatch.setattr(rb, "_free_bytes", lambda: rb.MIN_FREE_BYTES - 1)
+    _queue(bat)
+    out = _build(bat)
+    assert out["from_snapshot"] == 0 and out["from_nas"] == 0
+    assert "nearly full" in out["stopped"]
+    assert not os.listdir(bat["build"]) if os.path.isdir(bat["build"]) else True
 
 
 def test_build_falls_back_to_the_nas_when_the_copy_differs(bat, monkeypatch):
