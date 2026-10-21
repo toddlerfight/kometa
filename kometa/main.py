@@ -18,7 +18,7 @@ from kometa.models import AddSeriesRequest
 from kometa.arcs import (
     router as _arcs_router, _owned_collection, _add_arc,
 )
-from kometa.scheduler import start_scheduler, last_scheduled_sync_utc
+from kometa.scheduler import start_scheduler, last_scheduled_sync_utc, next_try
 from kometa.version import build_info as _build_info
 import kometa.db as db
 from kometa import runstatus
@@ -2384,6 +2384,7 @@ def get_queue(since: str | None = None):
         if item["state"] == "via_trade" and item["id"] in trade_fate:
             item["error"] = trade_fate[item["id"]]
         item["error"] = db.plain_error(item.get("error"))
+        item["next_try"] = next_try(item)
         for k in _QUEUE_PRIVATE:
             item.pop(k, None)
         prog = get_progress(item["id"])

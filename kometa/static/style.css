@@ -1747,6 +1747,13 @@ select.settings-input {
   line-height: 1.4;
 }
 
+.act-row-when {
+  font-size: var(--fs-label);
+  color: var(--tq);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
 .act-row-actions {
   display: flex;
   align-items: center;

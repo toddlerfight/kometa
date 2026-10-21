@@ -1417,9 +1417,12 @@ def queue_torrent_pack(tracked_series_id, torrent_hash: str, source_url: str, pa
 def get_queue(path=DB_PATH):
     with _connect(path) as conn:
         return [dict(r) for r in conn.execute("""
-            SELECT q.*, s.title, s.publisher, s.year_began
+            SELECT q.*, s.title, s.publisher, s.year_began, s.on_pull_list,
+                   i.store_date, i.ignored
             FROM download_queue q
             JOIN tracked_series s ON s.id = q.tracked_series_id
+            LEFT JOIN issue_status i ON i.tracked_series_id = q.tracked_series_id
+                                    AND i.number = q.issue_number
             ORDER BY q.updated_at DESC
         """)]
 
@@ -1609,6 +1612,12 @@ def plain_error(err):
 # re-queue (queue_issue / requeue_not_found) clears retry_after, so "search again" is
 # instant; only the automatic sweep (get_missing_for_monitored) honours the cooldown.
 NOT_FOUND_RETRY_DAYS = 3
+# ...except a fresh release. Indexers pick up Wednesday's books over the following hours,
+# and the release-day retry (every two hours, 3-11pm) exists to catch them — but the wait
+# held a book that missed its first search out of every one of those passes. Absolute
+# Flash #20 & co., 2026-10-21: one search at 3:05pm, next chance Saturday. A book out
+# within this many days skips the wait; the release-day retry's own window is the same.
+FRESH_RELEASE_DAYS = 7
 
 
 def update_queue_state(queue_id, state, source_url=None, filename=None, error=None, retry_after=None, path=DB_PATH):
@@ -1872,7 +1881,7 @@ def get_missing_for_monitored(path=DB_PATH):
     Not for an issue an owned trade covers, and not while the file is still there: that's
     an ownership slip, and re-asking would download it again every night."""
     with _connect(path) as conn:
-        rows = [dict(r) for r in conn.execute("""
+        rows = [dict(r) for r in conn.execute(f"""
             SELECT i.id as issue_id, i.number, i.store_date,
                    s.id as tracked_series_id, s.title, s.publisher,
                    (SELECT q.filename FROM download_queue q WHERE q.tracked_series_id = s.id
@@ -1892,8 +1901,10 @@ def get_missing_for_monitored(path=DB_PATH):
                           AND NOT (q.state = 'queued' AND q.error IS NULL AND q.retry_after IS NOT NULL
                                    AND q.retry_after > datetime('now', '+1 hour')))   -- stranded: _STRANDED
                          -- a not_found row still in its back-off window holds the issue out
-                         -- of the auto sweep (see NOT_FOUND_RETRY_DAYS); failed still blocks
-                         OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now'))
+                         -- of the auto sweep (see NOT_FOUND_RETRY_DAYS) unless it's a fresh
+                         -- release (FRESH_RELEASE_DAYS); failed still blocks
+                         OR (q.state = 'not_found' AND q.retry_after IS NOT NULL AND q.retry_after > datetime('now')
+                             AND NOT (i.store_date IS NOT NULL AND i.store_date >= date('now', '-{FRESH_RELEASE_DAYS} days')))
                          -- a done row holds it unless its file was taken away (checked below)
                          OR (q.state = 'done' AND (COALESCE(q.kind, 'issue') != 'issue' OR q.filename IS NULL
                                                    OR i.covered_by IS NOT NULL

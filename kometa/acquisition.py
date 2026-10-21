@@ -1767,7 +1767,7 @@ def _torrent_dead(item, qid, infohash, why: str) -> None:
     db.update_queue_state(qid, "failed", error=f"Torrent: {why}", path=DB_PATH)
 
 
-RELEASE_RETRY_DAYS = 7              # how far back a "recent release" stays on the frequent retry
+RELEASE_RETRY_DAYS = db.FRESH_RELEASE_DAYS   # how far back a "recent release" stays on the frequent retry
 
 def _release_day_retry():
     """Re-queue recently-released pull-list issues (within RELEASE_RETRY_DAYS) that are

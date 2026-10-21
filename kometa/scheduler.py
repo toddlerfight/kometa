@@ -59,6 +59,53 @@ def last_scheduled_sync_utc() -> str:
     return max(candidates).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+RELEASE_RETRY_HOURS = (15, 17, 19, 21, 23)
+
+
+def _utc(stamp: str | None) -> datetime | None:
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc) if stamp else None
+    except ValueError:
+        return None
+
+
+def next_try(row: dict, now: datetime | None = None) -> str | None:
+    """When the queue will next search this row on its own, as a UTC 'YYYY-MM-DD HH:MM:SS'
+    — or None when nothing automatic ever will (failed: that's the Retry button's job;
+    an issue off the pull list; a trade). Activity prints it beside the last attempt.
+
+    The answer is the pass that re-queues it, not the end of its wait: a not_found is
+    picked up by the nightly sweep (sync_hours) or, while it's a fresh release, by the
+    release-day retry — which skips the wait entirely (db.FRESH_RELEASE_DAYS). The
+    queue searches within five minutes of either. Mirrors get_missing_for_monitored
+    and _release_day_retry; dates there are the container's, which is UTC."""
+    from kometa.db import FRESH_RELEASE_DAYS
+    now = now or datetime.now(timezone.utc)
+    wait = _utc(row.get("retry_after"))
+    if row.get("state") == "queued":
+        return row["retry_after"] if wait and wait > now else None    # a GetComics rate-limit park
+    if (row.get("state") != "not_found" or (row.get("kind") or "issue") != "issue"
+            or row.get("issue_number") is None or row["issue_number"] < 0      # #0 is an issue
+            or not row.get("on_pull_list") or row.get("ignored")):
+        return None
+    store = row.get("store_date")
+    hours = sorted({(h, False) for h in sync_hours()} | {(h, True) for h in RELEASE_RETRY_HOURS})
+    local = now.astimezone(TZ)
+    for day in range(FRESH_RELEASE_DAYS + 3):
+        for hour, release in hours:
+            slot = (local + timedelta(days=day)).replace(hour=hour, minute=0, second=0, microsecond=0)
+            if slot <= local:
+                continue
+            today = slot.astimezone(timezone.utc).date()
+            fresh = bool(store) and str(today - timedelta(days=FRESH_RELEASE_DAYS)) <= store <= str(today)
+            if release and not fresh:
+                continue                     # the release-day retry only looks at the last week
+            if not fresh and wait and slot.astimezone(timezone.utc) < wait:
+                continue                     # still sitting out its three days
+            return slot.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return None
+
+
 def _as_harvest(fn):
     """The job, run inside interactive.harvesting() — Metron's harvest floor applies
     (kometa/metron_client.py). functools.wraps keeps the name APScheduler logs."""
@@ -131,7 +178,7 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
         )
 
     # Release-day retry: 3PM–11PM AEST every 2h on any day with releases
-    for hour in (15, 17, 19, 21, 23):
+    for hour in RELEASE_RETRY_HOURS:
         scheduler.add_job(
             release_retry_fn,
             CronTrigger(hour=hour, minute=0, timezone=TZ),  # same tzlocal() trap as above

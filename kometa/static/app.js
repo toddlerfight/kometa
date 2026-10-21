@@ -4351,7 +4351,33 @@ function _actSubHtml(q) {
     return `<div class="act-row-reason" style="color:var(--amb)">Found by name, not verified — ${f.length} file${f.length === 1 ? '' : 's'}, ${pages} pages, ${mb} MB${name ? ' · ' + esc(name) : ''}. Is this it?</div>`;
   }
   const reason = _actReason(q);
-  return reason ? `<div class="act-row-reason">${esc(reason)}</div>` : '';
+  return (reason ? `<div class="act-row-reason">${esc(reason)}</div>` : '') + _actWhenHtml(q);
+}
+
+// 'Tried Wed 3:05pm · next Sat 5pm' under a row that came up empty, failed or is parked:
+// when it was last searched, and the pass that will search it again (the server's
+// next_try, absent when only Retry will). Without it, 'Not Found' read the same at
+// 3:06pm as three days later.
+function _actWhenHtml(q) {
+  if (!['not_found', 'failed'].includes(q.state) && !(q.state === 'queued' && q.next_try)) return '';
+  const tried = q.state === 'queued' ? '' : _actWhen(q.updated_at);
+  const next = _actWhen(q.next_try);
+  const line = [tried && `Tried ${tried}`, next && `next ${next}`].filter(Boolean).join(' · ');
+  return line ? `<div class="act-row-when">${esc(line)}</div>` : '';
+}
+
+// A UTC 'YYYY-MM-DD HH:MM:SS' as '3:05pm' today, 'Wed 3:05pm' within the week, '21 Oct 3:05pm' past it
+function _actWhen(s) {
+  if (!s) return '';
+  const d = new Date(s.replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return '';
+  const now = new Date();
+  const time = d.toLocaleTimeString('en-AU', d.getMinutes() ? { hour: 'numeric', minute: '2-digit' } : { hour: 'numeric' })
+    .replace(/\s/g, '').toLowerCase();
+  if (d.toDateString() === now.toDateString()) return time;
+  const day = Math.abs(d - now) < 6 * 86400000 ? d.toLocaleDateString('en-AU', { weekday: 'short' })
+    : d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  return `${day} ${time}`;
 }
 
 // Chip + buttons cluster for a row's current state.
@@ -4672,12 +4698,13 @@ function _morphActRow(el, q) {
   }
   // Swap the sub-block (search line / progress bar / failure reason); the
   // replacement animates open via the act-sub-in keyframe in CSS.
-  el.querySelectorAll('.act-row-progress, .act-row-reason').forEach(n => n.remove());
+  el.querySelectorAll('.act-row-progress, .act-row-reason, .act-row-when').forEach(n => n.remove());
   const sub = _actSubHtml(q);
   const meta = el.querySelector('.act-row-meta');
   if (sub && meta) {
+    const before = meta.children.length;
     meta.insertAdjacentHTML('beforeend', sub);
-    meta.lastElementChild.classList.add('act-sub-in');   // grow open, don't shove
+    [...meta.children].slice(before).forEach(n => n.classList.add('act-sub-in'));   // grow open, don't shove
   }
 }
 
