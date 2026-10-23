@@ -341,7 +341,49 @@ def enrich_trades(series: dict, trades: list[dict],
         if f:
             t["owned"], t["file"] = True, f
             claimed.add(f)
+    # Third pass: a VOLUME edition whose book has no volume in its file name.
+    # 'Superior Spider-Man Omnibus (2023).cbz' IS the 'Omnibus Vol. 1 HC' — its
+    # ComicInfo says 'Vol. 1' — but the volume pass only sees numbered names, so
+    # the Trades tab called it missing and the book had no tile to open from
+    # (2026-10-23). The file's own ComicInfo names the volume. A file that names
+    # none can only be Vol. 1, and only while the catalogue holds no other volume
+    # of that edition: 'Something is Killing the Children.cbz' is Vol. 2 inside,
+    # and a bare-name guess would have stamped Vol. 1 owned and starved the sweep.
+    series_title = series.get("title") or ""
+    pool = {k: f for k, f in owned_names.items() if _parse_issue_number(f, series_title) is None}
+    inner: dict[str, int | None] = {}
+
+    def _inner_vol(fname):
+        if fname not in inner:
+            inner[fname] = _comicinfo_volume(os.path.join(folder, fname))
+        return inner[fname]
+
+    for t in trades:
+        if t.get("owned") or t.get("vol") is None or not pool:
+            continue
+        kws = _edition_keywords(t.get("title", ""))
+        sole = not any(o is not t and o.get("vol") not in (None, 1) and _edition_keywords(o.get("title", "")) == kws
+                       for o in trades)
+        fits = {k: f for k, f in pool.items()
+                if f not in claimed and _edition_keywords(f) == kws
+                and (t["vol"] == _inner_vol(f) if _inner_vol(f) is not None else (t["vol"] == 1 and sole))}
+        f = _loose_edition_file(t.get("title", ""), kws, fits, claimed, series_title)
+        if f:
+            t["owned"], t["file"] = True, f
+            claimed.add(f)
     return trades
+
+
+def _comicinfo_volume(path: str) -> int | None:
+    """The volume a collected file's ComicInfo names in its Series or Title
+    ('Superior Spider-Man Omnibus: Vol. 1', 'Vol. 2'), or None."""
+    from kometa.covers import read_comicinfo
+    ci = read_comicinfo(path) or {}
+    for tag in ("Series", "Title"):
+        v = _parse_volume_number(ci.get(tag) or "")
+        if v is not None:
+            return v
+    return None
 
 
 def _format_of(name: str) -> str | None:

@@ -383,6 +383,49 @@ def test_a_no_volume_edition_matches_loosely_when_the_words_agree_and_never_stea
     assert [t["owned"] for t in hl] == [True, False]                       # one file, one trade
 
 
+def test_a_volume_edition_whose_file_name_has_no_volume_reads_it_from_comicinfo(tmp_path):
+    """'Superior Spider-Man Omnibus (2023).cbz' is the Omnibus Vol. 1 HC (its
+    ComicInfo says 'Vol. 1'); 'Something is Killing the Children.cbz' is Vol. 2
+    inside and must never stand in for Vol. 1. A file that names no volume can be
+    Vol. 1 only while the catalogue has no other volume of that edition."""
+    import zipfile
+    from kometa.sync import enrich_trades
+
+    def cbz(name, ci=None):
+        with zipfile.ZipFile(tmp_path / name, "w") as zf:
+            zf.writestr("000.jpg", b"\xff\xd8\xff\xe0")
+            if ci:
+                zf.writestr("ComicInfo.xml", f"<ComicInfo><Series>{ci}</Series></ComicInfo>")
+
+    cbz("Superior Spider-Man #001 (2013).cbz", "Superior Spider-Man")
+    cbz("Superior Spider-Man Omnibus (2023).cbz", "Superior Spider-Man Omnibus: Vol. 1")
+    ssm = [{"title": "Superior Spider-Man Vol. 1: Complete Collection TP", "vol": 1},
+           {"title": "Superior Spider-Man Omnibus Vol. 1 HC", "vol": 1}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Superior Spider-Man"}, ssm)
+    assert [t["owned"] for t in ssm] == [False, True]                      # omnibus ≠ plain TP
+    assert ssm[1]["file"] == "Superior Spider-Man Omnibus (2023).cbz"
+
+    for p in tmp_path.iterdir():
+        p.unlink()
+    cbz("Something is Killing the Children.cbz", "Something is Killing the Children: Vol. 2")
+    sik = [{"title": "Something Is Killing the Children Vol. 1: Volume One TPB", "vol": 1},
+           {"title": "Something Is Killing the Children Vol. 2 TP", "vol": 2}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Something Is Killing the Children"}, sik)
+    assert [t["owned"] for t in sik] == [False, True]
+
+    # names nothing: Vol. 1 while it's the only volume of the edition, never once Vol. 2 exists
+    for p in tmp_path.iterdir():
+        p.unlink()
+    cbz("Dark Nights - Metal - The Deluxe Edition (2018).cbz")
+    dnm = [{"title": "Dark Nights - Metal Vol. 1: The Deluxe Edition HC", "vol": 1}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Dark Nights - Metal"}, dnm)
+    assert dnm[0]["owned"] is True
+    dnm = [{"title": "Dark Nights - Metal Vol. 1: The Deluxe Edition HC", "vol": 1},
+           {"title": "Dark Nights - Metal Vol. 2: The Deluxe Edition HC", "vol": 2}]
+    enrich_trades({"folder_path": str(tmp_path), "title": "Dark Nights - Metal"}, dnm)
+    assert [t["owned"] for t in dnm] == [False, False]
+
+
 def test_trade_refresh_also_reconciles_single_issues_from_a_pack(tmp_path, db_path, monkeypatch):
     """A complete-run pack lands as singles: the trade row completes, and the
     issues must flip to owned right then, not at the next sync."""
