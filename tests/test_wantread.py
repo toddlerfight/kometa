@@ -120,3 +120,16 @@ def test_whoever_wanted_it_hears_when_it_lands(want):
     from kometa import push
     wr.add(series_id=want["low"], number=3, path=want["db"], reader_id="pal")
     assert want["low"] in push.interested("pal", want["db"])
+
+
+def test_taking_a_run_off_never_cancels_what_was_queued_by_hand(want):
+    dbp = want["db"]
+    with db._connect(dbp) as c:                                          # Low: #3 and #4 missing, a big run → pull stays off
+        for n in range(4, 40):
+            c.execute("INSERT INTO issue_status (tracked_series_id, number, store_date, owned) VALUES (?, ?, '2024-04-01', 0)", (want["low"], float(n)))
+    db.queue_issue(want["low"], 50.0, dbp)                              # the admin's own ↓ on an issue the want won't touch
+    w = wr.add(series_id=want["low"], path=dbp)
+    assert wr.fetch(want["low"], path=dbp, process=lambda: None, today="2026-10-24") == 33
+    assert db.get_series_by_id(want["low"], dbp)["on_pull_list"] == 0
+    wr.remove(w["id"], path=dbp)
+    assert _queued(dbp, want["low"]) == [50.0]                          # the want's 33 went; the hand-queued one stayed

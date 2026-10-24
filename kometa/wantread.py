@@ -46,6 +46,10 @@ def ensure_tables(path=None):
         # one entry per thing: COALESCE because SQLite counts NULLs as distinct
         conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS want_to_read_one ON want_to_read
             (reader_id, COALESCE(book_id, -1), COALESCE(series_id, -1), COALESCE(number, -1))""")
+        # the queue rows a want put there — the ONLY ones taking it off may cancel. One you
+        # queued by hand on the same run is yours, whatever happens to the list
+        conn.execute("""CREATE TABLE IF NOT EXISTS want_queued (
+            series_id INTEGER NOT NULL, number REAL NOT NULL, PRIMARY KEY (series_id, number))""")
 
 
 def _now() -> str:
@@ -138,6 +142,7 @@ def fetch(series_id: int, number=None, created=False, path=None, sync=None, proc
     """Queue what a Want to read entry asks for. Returns how many were queued."""
     from kometa import listget, main
     path = path or DB_PATH
+    ensure_tables(path)
     s = db.get_series_by_id(series_id, path)
     if not s:
         return 0
@@ -145,6 +150,7 @@ def fetch(series_id: int, number=None, created=False, path=None, sync=None, proc
         (sync or listget._sync)(s)
     issues = db.get_issues_for_series(series_id, path)
     today = today or str(date.today())
+    before = _waiting(series_id, path)
     if number is None:
         if s["on_pull_list"] and not created:
             return 0                             # a run already followed: the sweep has it in hand
@@ -164,16 +170,29 @@ def fetch(series_id: int, number=None, created=False, path=None, sync=None, proc
                 db.queue_issue(series_id, n, path)
                 queued = 1
     if queued:
+        ours = _waiting(series_id, path) - before
+        if ours:
+            with db._connect(path) as conn:
+                conn.executemany("INSERT OR IGNORE INTO want_queued (series_id, number) VALUES (?, ?)",
+                                 [(series_id, n) for n in ours])
         (process or (lambda: threading.Thread(target=main._process_queue, daemon=True).start()))()
     logger.info(f"Want: {s['title']!r}{'' if number is None else f' #{float(number):g}'} → {queued} queued")
     return queued
 
 
+def _waiting(series_id: int, path) -> set[float]:
+    with db._connect(path) as conn:
+        return {r[0] for r in conn.execute("""SELECT issue_number FROM download_queue WHERE tracked_series_id = ?
+            AND state IN ('queued', 'not_found', 'failed')""", (series_id,))}
+
+
 def cancel(series_id: int, number=None, path=None) -> int:
-    """Taken off the list before it came: drop what's still only WAITING in the queue for it.
-    Not on a run that's on the pull list (followed either way), and nothing someone else
-    still wants. In-flight searches and downloads finish. Returns how many rows went."""
+    """Taken off the list before it came: drop what's still only WAITING in the queue for it —
+    only rows a want put there (want_queued), never one queued by hand. Not on a run that's on
+    the pull list (followed either way), and nothing someone else still wants. In-flight
+    searches and downloads finish. Returns how many rows went."""
     path = path or DB_PATH
+    ensure_tables(path)
     s = db.get_series_by_id(series_id, path)
     if not s or s["on_pull_list"]:
         return 0
@@ -181,12 +200,12 @@ def cancel(series_id: int, number=None, path=None) -> int:
         others = [r["number"] for r in conn.execute("SELECT number FROM want_to_read WHERE series_id = ?", (series_id,))]
         if any(n is None for n in others):
             return 0                             # someone wants the whole run
-        if number is not None:
-            nums = [float(number)]
-        else:
-            nums = [r[0] for r in conn.execute("""SELECT issue_number FROM download_queue WHERE tracked_series_id = ?
-                AND state IN ('queued', 'not_found', 'failed')""", (series_id,))]
-    return sum(db.dequeue_waiting_issue(series_id, n, path) for n in nums if n not in others)
+        ours = {r[0] for r in conn.execute("SELECT number FROM want_queued WHERE series_id = ?", (series_id,))}
+    nums = [n for n in ([float(number)] if number is not None else ours) if n in ours and n not in others]
+    gone = sum(db.dequeue_waiting_issue(series_id, n, path) for n in nums)
+    with db._connect(path) as conn:
+        conn.executemany("DELETE FROM want_queued WHERE series_id = ? AND number = ?", [(series_id, n) for n in nums])
+    return gone
 
 
 def _fetch_quietly(series_id, number, created):
