@@ -67,3 +67,17 @@ def test_no_confident_match_is_left_alone(db_path, monkeypatch):
     cc.tick(path=db_path, client=m)
     [it] = cc.enrich([_pick("Velvet", 2013, "/comic-books/reviews/image-comics/velvet-(2013)", "image-comics")], db_path)
     assert "cover" not in it                                              # a wrong cover is worse than none
+
+
+def test_a_pick_tracked_after_it_was_matched_opens_as_yours(db_path, monkeypatch):
+    # matched to Metron while nobody tracked it; then Want to read tracked it (2026-10-24)
+    monkeypatch.setattr(cc, "DB_PATH", db_path)
+    cc.ensure_tables(db_path)
+    p = _pick("Step By Bloody Step", 2022, path="/comic-books/reviews/image-comics/step-by-bloody-step", pub="image-comics")
+    with db._connect(db_path) as c:
+        c.execute("""INSERT INTO community_match (series_path, state, name, year, publisher, metron_series_id, series_id, cover)
+                     VALUES (?, 'linked', ?, 2022, 'image-comics', 3174, NULL, 'https://x/c.jpg')""", (p["series_path"], p["name"]))
+    assert cc.enrich([dict(p)], db_path)[0]["series_id"] is None
+    sid = db.add_series(title="Step By Bloody Step", publisher="Image", folder_path=None, on_pull_list=True, path=db_path)
+    db.set_metron_series_id(sid, 3174, db_path)
+    assert cc.enrich([dict(p)], db_path)[0]["series_id"] == sid

@@ -117,6 +117,14 @@ def enrich(items: list[dict], path=None) -> list[dict]:
                     conn.execute("""INSERT OR IGNORE INTO community_match (series_path, state, name, year, publisher)
                                     VALUES (?, 'wanted', ?, ?, ?)""",
                                  (it["series_path"], it.get("name"), it.get("year"), it.get("publisher")))
+            if m and m.get("state") == "linked" and not m.get("series_id") and m.get("metron_series_id"):
+                # matched to the catalogue back when nobody tracked it, and since asked for (Want to
+                # read tracks it, 2026-10-24): it's a run of yours now — the tile opens it, not the ask
+                t = conn.execute("SELECT id FROM tracked_series WHERE metron_series_id = ? AND kind != 'arc'",
+                                 (m["metron_series_id"],)).fetchone()
+                if t:
+                    m = {**m, "series_id": t[0]}
+                    conn.execute("UPDATE community_match SET series_id = ? WHERE series_path = ?", (t[0], it["series_path"]))
             if m and m.get("state") == "linked":
                 it["cover"] = m.get("cover")
                 it["metron_series_id"] = m.get("metron_series_id")
