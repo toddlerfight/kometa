@@ -12,6 +12,13 @@ from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 import kometa.db as db
 from kometa import push
 
+# the headline rotates (push.LANDED): any of its words will do
+_ONE = {one for one, _ in push.LANDED}
+
+
+def _many(n):
+    return {many.format(n=n) for _, many in push.LANDED}
+
 
 class R:
     def __init__(self, code, body=None):
@@ -89,7 +96,7 @@ def test_pull_list_only_and_batched_into_one(setup, db_path, monkeypatch):
     res = push.flush(db_path, post=lambda u, h, body: sent.append(json.loads(body)) or R(200))
     assert res["sent"] == 1 and len(sent) == 1
     p = sent[0]
-    assert p["aps"]["alert"]["title"] == "2 new on the shelf"
+    assert p["aps"]["alert"]["title"] in _many(2)
     assert p["aps"]["alert"]["body"] == "Midnight X-Men #2, Midnight X-Men #3"
     assert p["dest"] == "recent" and p["book_ids"] == [77, 77] and "book_id" not in p and p["kind"] == "new"
     db.set_config({"push_scope": "all"}, db_path)
@@ -262,7 +269,7 @@ def test_fcm_send_shape_signed_assertion_and_token_caching(fcm_setup, db_path):
     assert url == FCM_URL and h["authorization"] == "Bearer ya29.n1" and h["content-type"] == "application/json"
     m = msg["message"]
     assert m["token"] == "dAbC:APA91b-android_token_1"
-    assert m["notification"] == {"title": "New on the shelf", "body": "Saga #3"}
+    assert m["notification"]["title"] in _ONE and m["notification"]["body"] == "Saga #3"
     assert m["data"] == {"kind": "new", "series_id": "12", "book_id": "77"}
     assert all(isinstance(v, str) for v in m["data"].values())
     assert m["android"]["priority"] == "high"
@@ -273,7 +280,7 @@ def test_fcm_send_shape_signed_assertion_and_token_caching(fcm_setup, db_path):
                                 {"series_id": 13, "number": 1.0, "title": "Ice Cream Man", "book_id": 78}])
     push.send(batch, db_path, g)
     m = g.sends[1][2]["message"]
-    assert m["notification"]["title"] == "2 new on the shelf"
+    assert m["notification"]["title"] in _many(2)
     assert m["data"] == {"kind": "new", "series_id": "12", "dest": "recent", "book_ids": "[77,78]"}
     assert m["android"]["notification"]["tag"] == "kometa-new-recent"
     # one token exchange for two sends: cached
@@ -353,7 +360,8 @@ def test_mixed_apns_and_fcm_fan_out_from_one_landing(setup, fcm_setup, db_path, 
     assert push.flush(db_path, post=post) == {"sent": 2, "failed": 0, "dead": 0}
     assert len(apple) == 1 and len(g.sends) == 1
     assert apple[0][0] == "https://api.push.apple.com/3/device/" + "aa" * 32
-    assert apple[0][2]["aps"]["alert"] == {"title": "New on the shelf", "body": "Midnight X-Men #2"}
+    alert = apple[0][2]["aps"]["alert"]
+    assert alert["title"] in _ONE and alert["body"] == "Midnight X-Men #2"
     assert apple[0][2]["book_id"] == 77
     m = g.sends[0][2]["message"]
     assert m["notification"] == apple[0][2]["aps"]["alert"]                 # same words on both lock screens
@@ -413,7 +421,7 @@ def test_a_series_still_pulling_holds_its_landings_for_one_notification(setup, d
         conn.execute("UPDATE download_queue SET state = 'done' WHERE tracked_series_id = ?", (a,))
     push.issue_landed(a, 2.0, db_path); push.issue_landed(a, 3.0, db_path); push._timer.cancel()
     res = push.flush(db_path, post=post)
-    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] == "3 new on the shelf"
+    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] in _many(3)
     assert sent[-1]["aps"]["alert"]["body"] == "A Puzzlebox #1, A Puzzlebox #2, A Puzzlebox #3"
     # a stuck queue cannot hold a landing hostage past HOLD_MAX_S
     db.queue_issue(a, 9.0, db_path)
@@ -436,7 +444,7 @@ def test_a_series_whose_hold_expires_releases_every_landing_together(setup, db_p
     push.issue_landed(a, 2.0, db_path); push.issue_landed(a, 3.0, db_path); push._timer.cancel()
     push._pending[0]["at"] -= push.HOLD_MAX_S + 1                            # #2 is old, #3 is fresh
     res = push.flush(db_path, post=post)
-    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] == "2 new on the shelf"
+    assert res["sent"] == 1 and sent[-1]["aps"]["alert"]["title"] in _many(2)
     assert push._pending == []
     if push._timer: push._timer.cancel()
 
@@ -457,3 +465,10 @@ def test_held_landings_survive_a_restart(setup, db_path, monkeypatch):
     assert push.restore_pending(db_path) == 1
     assert [(i["series_id"], i["number"]) for i in push._pending] == [(a, 1.0)] and push._timer is not None
     push._timer.cancel()
+
+
+def test_the_headline_never_repeats_twice_running():
+    seen = [push.build_alert([{"title": "Saga", "number": 1}])["title"] for _ in range(40)]
+    assert all(a != b for a, b in zip(seen, seen[1:]))
+    assert set(seen) <= _ONE and len(set(seen)) > 3
+    assert push.build_alert([{"title": "Saga", "number": 1}] * 3)["title"] in _many(3)

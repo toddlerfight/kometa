@@ -21,6 +21,7 @@ import base64
 import json
 import logging
 import os
+import random
 import threading
 import time
 
@@ -315,11 +316,26 @@ def _book_id(series_id: int, number) -> int | None:
         return None
 
 
+# The headline rotates — same news, never the same words twice running (the owner,
+# 2026-10-24: "mix it up"). Each has a one-comic form and a batch form.
+LANDED = (("Just landed", "{n} just landed"), ("In hand", "{n} in hand"), ("Fresh in", "{n} fresh in"),
+          ("Pulled", "{n} pulled"), ("Just in", "{n} just in"), ("Just dropped", "{n} just dropped"),
+          ("Off the rack", "{n} off the rack"), ("Off the press", "{n} off the press"))
+_last_landed = None
+
+
+def _landed_words() -> tuple[str, str]:
+    global _last_landed
+    _last_landed = random.choice([w for w in LANDED if w != _last_landed])
+    return _last_landed
+
+
 def build_alert(items: list[dict]) -> dict:
     """The words on the lock screen — the same on every platform."""
+    one, many = _landed_words()
     if len(items) == 1:
-        return {"title": "New on the shelf", "body": _label(items[0])}
-    return {"title": f"{len(items)} new on the shelf",
+        return {"title": one, "body": _label(items[0])}
+    return {"title": many.format(n=len(items)),
             "body": ", ".join(_label(i) for i in items[:4]) + ("…" if len(items) > 4 else "")}
 
 
