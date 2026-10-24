@@ -493,18 +493,22 @@ def flush(path=None, post=None) -> dict | None:
 
 
 def interested(reader_id: str, path=None) -> set[int]:
-    """The series a landing should buzz this person for. The admin: the pull list
+    """The series a landing should buzz this person for. Everyone: what's on their Want to
+    read (they asked for it — that's the whole point of asking). The admin: the pull list
     (push_scope 'pull', the default) or everything ('all'). A reader: their own pull
     list, plus — unless their pref push.reading is off — what they're reading or
     have favourited."""
-    from kometa import auth
+    from kometa import auth, wantread
     path = path or DB_PATH
+    wantread.ensure_tables(path)
     with db._connect(path) as conn:
+        wanted = {r[0] for r in conn.execute("SELECT DISTINCT series_id FROM want_to_read WHERE reader_id = ? AND series_id IS NOT NULL",
+                                              (reader_id,))}
         if reader_id == auth.OWNER:
             if (db.get_config(path).get("push_scope") or "pull") == "all":
                 return {r[0] for r in conn.execute("SELECT id FROM tracked_series")}
-            return {r[0] for r in conn.execute("SELECT id FROM tracked_series WHERE on_pull_list = 1")}
-    ids = auth.pull_ids(reader_id, path)
+            return wanted | {r[0] for r in conn.execute("SELECT id FROM tracked_series WHERE on_pull_list = 1")}
+    ids = auth.pull_ids(reader_id, path) | wanted
     if auth.get_prefs(reader_id, path).get("push.reading", True):
         from kometa import marks
         marks.ensure_tables(path)                        # made on first use; a reader may beat it here

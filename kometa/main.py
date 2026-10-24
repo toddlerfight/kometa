@@ -1598,24 +1598,25 @@ PULL_AUTO_CAP = 33          # the owner's number ("33 just cause", 2026-10-16)
 
 
 def _auto_pull(series_id: int, issues: list[dict], today: str | None = None, path=None) -> int:
-    """A run tracked from a card goes on the pull list and its released, missing issues are
-    queued — unless there are more than PULL_AUTO_CAP of them. Then the pull list is switched
-    OFF instead and nothing is queued: Track is one tap on a Trending card, and one tap must
-    never start a 500-file grab of Batman (1940). The series page shows the toggle off; turn
-    it on there and the whole run comes, or take issues one at a time with ↓.
+    """The pull rule for a run someone asked for (Track from a card, Want to read on a run):
+    PULL_AUTO_CAP or fewer released, missing issues → the pull list goes ON and all of them
+    are queued. More → the pull list goes OFF and only the FIRST PULL_AUTO_CAP are queued, from
+    #1 up (the owner, 2026-10-24 — it used to queue nothing at all). One tap still never
+    starts a 500-file grab of Batman (1940); the rest wait for the series page's toggle or ↓.
     Returns how many were queued."""
     path = path or DB_PATH
     today = today or str(date.today())
     # Batch the queue insert — per-issue queue_issue is one fresh connection + fsync EACH,
     # which the NAS disk does not appreciate.
-    pairs = [(series_id, issue["number"]) for issue in issues
+    pairs = [(series_id, issue["number"]) for issue in sorted(issues, key=lambda i: i["number"])
              if not issue["owned"] and not issue.get("ignored")
              and (not issue["store_date"] or issue["store_date"] <= today)]
-    if len(pairs) > PULL_AUTO_CAP:
-        db.set_pull_list(series_id, False, path)
+    over = len(pairs) > PULL_AUTO_CAP
+    db.set_pull_list(series_id, not over, path)
+    if over:
         logger.info(f"Track: {len(pairs)} missing issues is over the auto-pull cap of {PULL_AUTO_CAP} — "
-                    f"pull list left off for series {series_id}")
-        return 0
+                    f"pull list off for series {series_id}, the first {PULL_AUTO_CAP} queued")
+        pairs = pairs[:PULL_AUTO_CAP]
     if pairs:
         db.queue_issues_bulk(pairs, path)
     return len(pairs)

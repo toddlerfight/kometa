@@ -12,14 +12,25 @@ An entry leaves when you've finished it: a book or issue once it's read, a serie
 once every issue you own is read and nothing is missing. Starting one puts it in
 Continue reading as well; it stays here until it's done. The row keeps the order
 you added things in, oldest first — a queue, not a feed.
+
+Wanting something that isn't here goes and GETS it (2026-10-24 — Want to read doubles
+as the request; the apps have no Track or Download). A run Kometa doesn't track yet —
+a recommendation, known only by its catalogue id — is tracked first. One issue is that
+issue and nothing more; a whole run follows Track's rule (main._auto_pull): 33 or fewer
+missing → pull list on, all of them; more → pull list off, the first 33. Not out yet →
+the nightly sweep takes it on release day (db.get_missing_for_monitored). Taken off the
+list before it came → what's still only waiting in the queue goes too.
 """
-from datetime import datetime, timezone
+import logging
+import threading
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import kometa.db as db
 from kometa.auth import current_reader
+logger = logging.getLogger(__name__)
 router = APIRouter()
 DB_PATH = db.DB_PATH
 
@@ -92,7 +103,97 @@ def remove(want_id: int, path=None, reader_id=None) -> None:
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
+        w = conn.execute("SELECT * FROM want_to_read WHERE id = ? AND reader_id = ?", (want_id, reader_id)).fetchone()
         conn.execute("DELETE FROM want_to_read WHERE id = ? AND reader_id = ?", (want_id, reader_id))
+    if w and w["series_id"] is not None:
+        cancel(w["series_id"], w["number"], path)
+
+
+# --- the request: wanting what isn't here gets it ------------------------------------------
+def run_for(metron_series_id=None, locg_series_id=None, title=None, year=None, publisher=None,
+            path=None, root=None) -> tuple[dict, bool]:
+    """The tracked series for a catalogue run → (series, created). A run Kometa doesn't track
+    yet is tracked here, pull list OFF; fetch() decides what comes."""
+    from kometa import listget, sources
+    path = path or DB_PATH
+    run = {"source": "metron", "id": int(metron_series_id)} if metron_series_id else {"source": "locg", "id": int(locg_series_id)}
+    existing = listget._existing_for(run, path)
+    if existing:
+        return existing, False
+    if not title:
+        raise HTTPException(400, "A run Kometa doesn't track needs its title")
+    if metron_series_id and not publisher:
+        try:                                     # a recommendation carries no publisher: the folder needs one
+            from kometa import metron_client
+            publisher = metron_client.series_detail(int(metron_series_id)).get("publisher")
+        except Exception as e:
+            logger.info(f"Want: Metron publisher lookup for {title!r} skipped: {e}")
+    run.update(title=title, year=year, publisher=publisher)
+    s = listget._track(run, None, path, root or sources.comics_root())
+    logger.info(f"Want: tracked {s['title']!r} (#{s['id']}) to fetch it")
+    return s, True
+
+
+def fetch(series_id: int, number=None, created=False, path=None, sync=None, process=None, today=None) -> int:
+    """Queue what a Want to read entry asks for. Returns how many were queued."""
+    from kometa import listget, main
+    path = path or DB_PATH
+    s = db.get_series_by_id(series_id, path)
+    if not s:
+        return 0
+    if created:
+        (sync or listget._sync)(s)
+    issues = db.get_issues_for_series(series_id, path)
+    today = today or str(date.today())
+    if number is None:
+        if s["on_pull_list"] and not created:
+            return 0                             # a run already followed: the sweep has it in hand
+        queued = main._auto_pull(series_id, issues, today, path)
+    else:
+        n = float(number)
+        if created:                              # one issue asked for: 1 of 1, not 1 of 60
+            for i in issues:
+                if i["number"] != n and not i["owned"]:
+                    db.set_issue_ignored(series_id, i["number"], True, path)
+        it = next((i for i in issues if i["number"] == n), None)
+        queued = 0
+        if it and not it["owned"]:
+            if it.get("ignored"):
+                db.set_issue_ignored(series_id, n, False, path)
+            if not it["store_date"] or it["store_date"] <= today:
+                db.queue_issue(series_id, n, path)
+                queued = 1
+    if queued:
+        (process or (lambda: threading.Thread(target=main._process_queue, daemon=True).start()))()
+    logger.info(f"Want: {s['title']!r}{'' if number is None else f' #{float(number):g}'} → {queued} queued")
+    return queued
+
+
+def cancel(series_id: int, number=None, path=None) -> int:
+    """Taken off the list before it came: drop what's still only WAITING in the queue for it.
+    Not on a run that's on the pull list (followed either way), and nothing someone else
+    still wants. In-flight searches and downloads finish. Returns how many rows went."""
+    path = path or DB_PATH
+    s = db.get_series_by_id(series_id, path)
+    if not s or s["on_pull_list"]:
+        return 0
+    with db._connect(path) as conn:
+        others = [r["number"] for r in conn.execute("SELECT number FROM want_to_read WHERE series_id = ?", (series_id,))]
+        if any(n is None for n in others):
+            return 0                             # someone wants the whole run
+        if number is not None:
+            nums = [float(number)]
+        else:
+            nums = [r[0] for r in conn.execute("""SELECT issue_number FROM download_queue WHERE tracked_series_id = ?
+                AND state IN ('queued', 'not_found', 'failed')""", (series_id,))]
+    return sum(db.dequeue_waiting_issue(series_id, n, path) for n in nums if n not in others)
+
+
+def _fetch_quietly(series_id, number, created):
+    try:
+        fetch(series_id, number, created)
+    except Exception:
+        logger.exception(f"Want: fetching series {series_id} #{number} failed")
 
 
 def row(path=None, reader_id=None) -> list[dict]:
@@ -167,6 +268,12 @@ class WantRequest(BaseModel):
     book_id: int | None = None
     series_id: int | None = None
     number: float | None = None
+    # a run Kometa doesn't track (a recommendation): its catalogue id, and what the card knows
+    metron_series_id: int | None = None
+    locg_series_id: int | None = None
+    title: str | None = None
+    year: int | None = None
+    publisher: str | None = None
 
 
 @router.get("/api/wantread")
@@ -176,15 +283,29 @@ def api_items():
 
 
 @router.get("/api/wantread/check")
-def api_check(book_id: int | None = None, series_id: int | None = None, number: float | None = None):
+def api_check(book_id: int | None = None, series_id: int | None = None, number: float | None = None,
+              metron_series_id: int | None = None, locg_series_id: int | None = None):
+    if book_id is None and series_id is None and (metron_series_id or locg_series_id):
+        from kometa import listget
+        run = {"source": "metron", "id": metron_series_id} if metron_series_id else {"source": "locg", "id": locg_series_id}
+        s = listget._existing_for(run, DB_PATH)
+        if not s:
+            return {"want_id": None, "series_id": None}  # never tracked, so nobody's wanted it
+        series_id = s["id"]
     w = find(book_id, series_id, number)
-    return {"want_id": w["id"] if w else None}
+    return {"want_id": w["id"] if w else None, "series_id": series_id}
 
 
 @router.post("/api/wantread")
 def api_add(req: WantRequest):
-    w = add(req.book_id, req.series_id, req.number)
-    return {"want_id": w["id"] if w else None}
+    sid, created = req.series_id, False
+    if req.book_id is None and sid is None and (req.metron_series_id or req.locg_series_id):
+        s, created = run_for(req.metron_series_id, req.locg_series_id, req.title, req.year, req.publisher)
+        sid = s["id"]
+    w = add(req.book_id, sid, req.number)
+    if w and w["series_id"] is not None:          # a book is already here; an issue or a run may not be
+        threading.Thread(target=_fetch_quietly, args=(w["series_id"], w["number"], created), daemon=True).start()
+    return {"want_id": w["id"] if w else None, "series_id": w["series_id"] if w else sid}
 
 
 @router.delete("/api/wantread/{want_id}", status_code=204)

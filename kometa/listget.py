@@ -87,8 +87,9 @@ def _existing_for(run: dict, path) -> dict | None:
     return None
 
 
-def _track(run: dict, list_id: int, path, root: str) -> dict:
-    """A new tracked series for the run, pull list OFF, tagged with the list."""
+def _track(run: dict, list_id: int | None, path, root: str) -> dict:
+    """A new tracked series for the run, pull list OFF, tagged with the list (if it came from one —
+    Want to read tracks through here too, with no list)."""
     title = re.sub(r"\s*\(\d{4}\)\s*$", "", run["title"]).strip()
     folder = _resolve_dir(root, run.get("publisher") or "Unknown", title)
     # another run already lives under this name (the shelf's Fantastic Four is
@@ -103,7 +104,8 @@ def _track(run: dict, list_id: int, path, root: str) -> dict:
         db.set_metron_series_id(sid, run["id"], path)
         db.set_metron_link(sid, "linked", path)
     db.set_match_status(sid, "manual", path)
-    db.set_from_list(sid, list_id, path)
+    if list_id is not None:
+        db.set_from_list(sid, list_id, path)
     try:
         os.makedirs(folder, exist_ok=True)
     except OSError as e:

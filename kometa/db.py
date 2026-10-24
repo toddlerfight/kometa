@@ -1879,8 +1879,15 @@ def get_missing_for_monitored(path=DB_PATH):
     trashed as the wrong book: Buffy #1-#8, 2026-10-17) — the same re-ask queue_issue's
     _REQUEUEABLE allows by hand, which the nightly sweep never got (db sweep, 2026-10-18).
     Not for an issue an owned trade covers, and not while the file is still there: that's
-    an ownership slip, and re-asking would download it again every night."""
+    an ownership slip, and re-asking would download it again every night.
+
+    A run off the pull list still has its Want to read ISSUES swept: one wanted before it was
+    out comes on release day (wantread.py). Whole-run wants don't widen it — that's the pull
+    rule's job, and it would undo the 33 cap."""
     with _connect(path) as conn:
+        wanted = ("OR EXISTS (SELECT 1 FROM want_to_read w WHERE w.series_id = s.id AND w.number = i.number)"
+                  if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'want_to_read'").fetchone()
+                  else "")
         rows = [dict(r) for r in conn.execute(f"""
             SELECT i.id as issue_id, i.number, i.store_date,
                    s.id as tracked_series_id, s.title, s.publisher,
@@ -1892,7 +1899,7 @@ def get_missing_for_monitored(path=DB_PATH):
               AND i.ignored = 0
               -- issue-based pull: an owned trade does not suppress the single
               AND (i.store_date IS NULL OR i.store_date <= date('now'))
-              AND s.on_pull_list = 1
+              AND (s.on_pull_list = 1 {wanted})
               AND NOT EXISTS (
                   SELECT 1 FROM download_queue q
                   WHERE q.tracked_series_id = s.id
