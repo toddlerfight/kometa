@@ -68,3 +68,15 @@ def test_fill_covers_reads_the_volume_from_the_cbl(db_path):
         got = [row[0] for row in c.execute("SELECT cover_url FROM reading_list_items WHERE list_id = ? ORDER BY position", (lid,))]
     assert got == ["mokf-2015-1.jpg", "mokf-2015-4.jpg", "infinity-war-3.jpg"]
     assert asked.count(("search", "Master of Kung Fu")) == 1
+
+
+def test_a_run_another_entry_names_never_lends_its_covers():
+    """Riri Williams' Invincible Iron Man (a list's 2016, Metron's 2017) wore the 2015 run's covers:
+    both were a year off. The 2015 run is the list's 2015 entries' (2026-10-25)."""
+    rows = {"Invincible Iron Man": [{"id": 1828, "title": "Invincible Iron Man", "year": 2015},
+                                    {"id": 1829, "title": "Invincible Iron Man", "year": 2017}]}
+    ISSUES[1828] = [{"number": float(n), "image": f"iim-2015-{n}.jpg"} for n in range(1, 15)]
+    ISSUES[1829] = [{"number": float(n), "image": f"iim-2017-{n}.jpg"} for n in list(range(1, 12)) + list(range(593, 601))]
+    search, issues, _ = _stubs(rows)
+    assert rl.metron_cover("Invincible Iron Man", "2", 2016, search, issues, {}, claimed={2015}) == "iim-2017-2.jpg"
+    assert rl.metron_cover("Invincible Iron Man", "2", 2015, search, issues, {}, claimed={2016}) == "iim-2015-2.jpg"

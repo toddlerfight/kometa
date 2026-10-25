@@ -264,6 +264,25 @@ def _num(n) -> float | None:
         return None
 
 
+def list_years(items: list[dict]) -> dict[str, set]:
+    """{title key: the run years the list names it under}. A title under two years is two runs
+    (Invincible Iron Man 2015 and 2016, both from #1): a year one entry names belongs to that
+    entry's run, and another year's entries never take it, a year either side or not — every
+    lookup (the shelf, covers, Get, packs) goes by this (2026-10-25)."""
+    out: dict[str, set] = {}
+    for it in items:
+        v = str(it.get("volume") or "")
+        if re.match(r"^(19|20)\d{2}$", v):
+            out.setdefault(norm_key(_YEAR.sub("", it["series"] or "").strip()), set()).add(int(v))
+    return out
+
+
+def claimed_years(years: dict[str, set], series: str, volume) -> set:
+    """The years OTHER entries of this title name — runs this entry mustn't take."""
+    own = int(volume) if re.match(r"^(19|20)\d{2}$", str(volume or "")) else None
+    return (years.get(norm_key(_YEAR.sub("", series or "").strip())) or set()) - {own}
+
+
 def _shelf_index(path) -> dict[str, dict]:
     """key → shelf series (first wins on a collision, alphabetical)."""
     idx: dict[str, dict] = {}
@@ -313,7 +332,7 @@ def _shelf_runs(path) -> dict[str, list[dict]]:
 
 
 def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: bool = False,
-              strict: bool = False) -> dict | None | bool:
+              claimed: set = frozenset()) -> dict | None | bool:
     """The shelf series for a list entry that names its run's start year.
     False = no opinion (no year given: use the plain name match); None = the
     name is on the shelf but only as OTHER runs (not on the shelf).
@@ -323,15 +342,16 @@ def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: 
     edition. Fantastic Four (2018) has no #500, so it can't be 1998's.
     That allowance is for a list that names a run ONCE (a trade order). A list
     naming issue by issue means that run: Marvel Zombies 2015 #1 is not 2005's.
-    strict: the list names this title under more than one year — they're different
-    runs, so only the year itself fits (see resolve)."""
+    claimed: years other entries of this title name (list_years) — those runs are theirs."""
     if not (volume and re.match(r"^(19|20)\d{2}$", str(volume))):
         return False
     want = int(volume)
     cands = [c for k in keys for c in runs.get(k, [])]
     if not cands:
         return False
-    fits = [c for c in cands if c["run_year"] and abs(c["run_year"] - want) <= (0 if strict else 1)]
+    fits = sorted((c for c in cands if c["run_year"] and abs(c["run_year"] - want) <= 1
+                   and (c["run_year"] == want or c["run_year"] not in claimed)),
+                  key=lambda c: abs(c["run_year"] - want))
     if fits:
         return fits[0]
     unknown = [c for c in cands if not c["run_year"]]
@@ -522,14 +542,10 @@ def resolve(list_id: int, path=None) -> dict:
     idx = _shelf_index(path)
     runs = _shelf_runs(path) if any(re.match(r"^(19|20)\d{2}$", str(it.get("volume") or "")) for it in items) else None
     per_series: dict[str, int] = {}
-    years: dict[str, set] = {}
     for it in items:
         per_series[norm_key(it["series"])] = per_series.get(norm_key(it["series"]), 0) + 1
-        if re.match(r"^(19|20)\d{2}$", str(it.get("volume") or "")):
-            years.setdefault(norm_key(it["series"]), set()).add(int(it["volume"]))
-    # The year slack (a catalogue a year off the list's) is off for a title the list names
-    # under two years: those are two runs. Invincible Iron Man 2016 #1 took the shelf's 2015 #1,
-    # and Get would have filled 2015 (2026-10-25)
+    # a title under two years is two runs: Invincible Iron Man 2016 #1 took the shelf's 2015 #1
+    years = list_years(items)
     # A trade order names each run once ('Hellboy: Seed of Destruction'); an
     # issue order names issues ('Secret Wars: Battleworld #1-4'). Only a trade
     # order may read a subtitled entry as 'a trade of a run held whole' — in an
@@ -549,7 +565,7 @@ def resolve(list_id: int, path=None) -> dict:
             series_name, want_n = nb[0], float(nb[1])
         picked = (_pick_run(runs, _keys(series_name), it.get("volume"), want_n, path,
                             whole_run=per_series.get(norm_key(it["series"]), 0) == 1,
-                            strict=len(years.get(norm_key(it["series"]), ())) > 1)
+                            claimed=claimed_years(years, it["series"], it.get("volume")))
                   if runs is not None else False)
         hit = picked if picked is not False else next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
@@ -667,7 +683,7 @@ def _entry_year(item: dict, series: str) -> int | None:
     return None
 
 
-def metron_cover(series: str, number, year: int | None, search, issues, asked: dict) -> str:
+def metron_cover(series: str, number, year: int | None, search, issues, asked: dict, claimed: set = frozenset()) -> str:
     """The cover of this issue of this run, or '' — never another run's, never another
     issue's. The search's first row stood in when no title matched, and the run's first
     cover stood in when the number wasn't there: Infinity War #1–6 all wore Infinity
@@ -682,7 +698,10 @@ def metron_cover(series: str, number, year: int | None, search, issues, asked: d
     if year:
         # a run whose year disagrees is out; one with no year on record can't be judged,
         # so it comes after the ones that agree
-        runs = sorted((r for r in runs if not r.get("year") or abs(int(r["year"]) - year) <= 1),
+        # a run another entry's year names is that entry's (list_years): Riri's 2016 run wore
+        # the 2015 run's covers — Metron dates hers 2017, a year off just the same (2026-10-25)
+        runs = sorted((r for r in runs if not r.get("year") or (abs(int(r["year"]) - year) <= 1
+                                                                and (int(r["year"]) == year or int(r["year"]) not in claimed))),
                       key=lambda r: abs(int(r["year"]) - year) if r.get("year") else 2)
     n = _num(number)
     for r in runs[:3]:
@@ -738,13 +757,15 @@ def fill_covers(list_id: int, path=None, cv=None, metron_search=None, metron_iss
         search = metron_search or (metron_client.search_series if metron_client.configured() else None)
         issues = metron_issues or metron_client.series_issues
         asked: dict = {}                       # six Infinity War entries are one search, not six
+        years = list_years(list(items.values()))
         for e in rest:
             if not search:
                 break
             try:
                 it = items[e["item_id"]]
                 found[e["item_id"]] = metron_cover(e["series"], e["number"], _entry_year(it, e["series"]),
-                                                   search, issues, asked)
+                                                   search, issues, asked,
+                                                   claimed_years(years, e["series"], it.get("volume")))
             except Exception as ex:
                 logger.info(f"Reading list cover: Metron skipped {e['series']!r}: {ex}")
                 break

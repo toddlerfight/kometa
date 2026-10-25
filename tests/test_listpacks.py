@@ -192,3 +192,15 @@ def test_a_fresh_retry_forgets_the_rejected_releases(db_path, series, monkeypatc
     main.retry_queue_item(qid, fresh=1)
     with db._connect(db_path) as c:
         assert tuple(c.execute("SELECT failed_sources, failed_channels FROM download_queue WHERE id = ?", (qid,)).fetchone()) == (None, None)
+
+
+def test_a_title_the_list_names_under_two_years_never_fills_from_a_pack(db_path):
+    """A pack's 'Invincible Iron Man 006 (2016)' could be either run's #6: those entries go one by
+    one through the catalogue. A single-run title still packs (2026-10-25)."""
+    lid = rl.save_list("IIM", [{"series": "Invincible Iron Man", "number": "2", "volume": "2015"},
+                               {"series": "Invincible Iron Man", "number": "6", "volume": "2016"},
+                               {"series": "Infamous Iron Man", "number": "3", "volume": "2016"}], "cbl", None, db_path)
+    gaps = lp.gap_index(lid, db_path)
+    assert lp._key("Invincible Iron Man") not in gaps
+    assert lp.match_file("Infamous Iron Man 003 (2017) (Digital).cbz", gaps) is not None
+    assert lp.match_file("Invincible Iron Man 006 (2016) (Digital).cbz", gaps) is None

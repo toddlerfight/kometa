@@ -34,14 +34,15 @@ class ListGetError(RuntimeError):
     pass
 
 
-def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None) -> dict | None:
+def _find_run(entry: dict, item: dict, search_metron=None, search_locg=None, claimed: set = frozenset()) -> dict | None:
     """{source, id, title, publisher, year} for the run a list entry names, or None."""
     from kometa.shelf_import import find_metron_match, find_confident_match
     title = entry["series"]
     vol = item.get("volume") or ""
     if _YEAR4.match(vol) and not re.search(r"\(\d{4}\)\s*$", title):
         title = f"{title} ({vol})"                   # the CBL's volume year disambiguates same-named runs
-    fake = {"title": title, "publisher": None, "folder_path": None}
+    fake = {"title": title, "publisher": None, "folder_path": None,
+            "not_years": claimed}                    # runs other entries of this title name (readlists.list_years)
     unanswered = 0
     metron_silent = False
     try:
@@ -132,7 +133,9 @@ def get_entry(list_id: int, item_id: int, path=None, search_metron=None, search_
     series = db.get_series_by_id(entry["series_id"], path) if entry.get("series_id") else None
     created = False
     if not series:
-        run = _find_run(entry, item, search_metron, search_locg)
+        items = readlists.get_items(list_id, path)
+        run = _find_run(entry, item, search_metron, search_locg,
+                        claimed=readlists.claimed_years(readlists.list_years(items), entry["series"], item.get("volume")))
         if run and run.get("retry"):
             return {"entry": entry["series"], "result": "try_later", "queued": 0, "created": False,
                     "detail": "Neither catalogue answered (Metron blocked or LOCG paused) — try again later"}

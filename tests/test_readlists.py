@@ -281,22 +281,27 @@ def test_issue_by_issue_lists_need_the_run_year_to_fit(db_path, tmp_path):
 
 def test_a_title_the_list_names_under_two_years_is_two_runs(db_path, tmp_path):
     """Invincible Iron Man 2016 #1 is not the shelf's Invincible Iron Man (2015) #1 when the list
-    also names the 2015 run — but a catalogue a year off a list naming ONE year still fits
-    (Books of Doom, Hickman's FF in 'Doom: before Avengers Doomsday') (2026-10-25)."""
+    also names the 2015 run — the 2015 run is the 2015 entries'. Riri's run, which the catalogue
+    dates 2017, still takes the 2016 entries once it's here, and a catalogue a year off a list
+    naming ONE year still fits (Books of Doom in 'Doom: before Avengers Doomsday') (2026-10-25)."""
     root = tmp_path / "comics" / "Marvel Comics"
     iim = db.add_series(title="Invincible Iron Man", publisher="Marvel", year_began=2015, folder_path=str(root / "Invincible Iron Man (2015)"), on_pull_list=False, path=db_path)
     _shelf(db_path, root, "Invincible Iron Man (2015)", ["Invincible Iron Man #001.cbz"], tracked=iim)
-    db.upsert_issue_status(iim, 1.0, "2015-10-07", 1, path=db_path)
     bod = db.add_series(title="Books of Doom", publisher="Marvel", year_began=2005, folder_path=str(root / "Books of Doom"), on_pull_list=False, path=db_path)
     _shelf(db_path, root, "Books of Doom", ["Books of Doom #001.cbz", "Books of Doom #002.cbz"], tracked=bod)
-    lid = rl.save_list("IIM", [{"series": "Invincible Iron Man", "number": "1", "volume": "2015"},
-                               {"series": "Invincible Iron Man", "number": "1", "volume": "2016"},
-                               {"series": "Invincible Iron Man", "number": "2", "volume": "2016"},
-                               {"series": "Books of Doom", "number": "1", "volume": "2006"},
-                               {"series": "Books of Doom", "number": "2", "volume": "2006"}], "cbl", None, db_path)
+    items = [{"series": "Invincible Iron Man", "number": "1", "volume": "2015"},
+             {"series": "Invincible Iron Man", "number": "1", "volume": "2016"},
+             {"series": "Invincible Iron Man", "number": "593", "volume": "2016"},
+             {"series": "Books of Doom", "number": "1", "volume": "2006"},
+             {"series": "Books of Doom", "number": "2", "volume": "2006"}]
+    lid = rl.save_list("IIM", items, "cbl", None, db_path)
     e = rl.resolve(lid, db_path)["entries"]
     assert [x["status"] for x in e] == ["owned", "not_on_shelf", "not_on_shelf", "owned", "owned"]
-    assert e[1]["series_id"] is None and e[2]["series_id"] is None        # Get looks 2016 up, never fills 2015
+    assert e[1]["series_id"] is None                                      # Get looks 2016 up, never fills 2015
+    riri = db.add_series(title="Invincible Iron Man", publisher="Marvel", year_began=2017, folder_path=str(root / "Invincible Iron Man (2017)"), on_pull_list=False, path=db_path)
+    _shelf(db_path, root, "Invincible Iron Man (2017)", ["Invincible Iron Man #001 (2017).cbz", "Invincible Iron Man #593 (2018).cbz"], tracked=riri)
+    e = rl.resolve(lid, db_path)["entries"]
+    assert [(x["status"], x["series_id"]) for x in e[:3]] == [("owned", iim), ("owned", riri), ("owned", riri)]
 
 
 def test_an_issue_order_never_reads_a_subtitled_tie_in_as_its_base_run(db_path, tmp_path):

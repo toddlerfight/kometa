@@ -127,6 +127,9 @@ def _confident_row(rows, series: dict) -> dict | None:
         cand_year = r.get("year") or cand_year_in_title
         if first_year and cand_year and abs(int(cand_year) - int(first_year)) > 1:
             continue
+        # a reading list's other entries name this year for another run of the title (listget)
+        if cand_year and int(cand_year) in series.get("not_years", ()) and (not first_year or int(cand_year) != int(first_year)):
+            continue
         passing.append(r)
     if len(passing) == 1:
         return passing[0]

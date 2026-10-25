@@ -63,9 +63,13 @@ def _key(title: str) -> str:
 def gap_index(list_id: int, path=None) -> dict:
     """{series key: {"title", "numbers": {number: item_id}}} for every gap in the list."""
     res = readlists.resolve(list_id, path or DB_PATH)
+    # a title the list names under two years is two runs a pack's files can't tell apart (a
+    # file's year is the issue's cover date, not the run's): those go entry by entry, by the
+    # catalogue (Invincible Iron Man 2015/2016, 2026-10-25)
+    two_runs = {k for k, ys in readlists.list_years(readlists.get_items(list_id, path or DB_PATH)).items() if len(ys) > 1}
     out: dict = {}
     for e in res["entries"]:
-        if e["status"] == "owned":
+        if e["status"] == "owned" or norm_key(readlists._YEAR.sub("", e["series"] or "").strip()) in two_runs:
             continue
         n = readlists._num(e["number"])
         if n is None:

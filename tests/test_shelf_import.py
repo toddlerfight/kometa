@@ -296,3 +296,13 @@ def test_clean_title_and_title_and_year_strip_leading_hyphen_and_track_prefixes(
     assert si._title_and_year("100 Bullets (1999)") == ("100 Bullets", 1999)
     assert si._clean_title("4 Kids Walk Into A Bank") == "4 Kids Walk Into A Bank"
 
+
+
+def test_a_year_another_list_entry_names_is_not_a_candidate():
+    """listget: Invincible Iron Man (2016) fits Metron's 2015 AND 2017 runs (a year either side)
+    — not confident, so Get fell back. The list's 2015 entries own 2015: the 2017 run is the one."""
+    from kometa.shelf_import import _confident_row
+    rows = [{"id": 1828, "title": "Invincible Iron Man", "year": 2015}, {"id": 1829, "title": "Invincible Iron Man", "year": 2017}]
+    fake = {"title": "Invincible Iron Man (2016)", "publisher": None, "folder_path": None}
+    assert _confident_row(rows, fake) is None
+    assert _confident_row(rows, dict(fake, not_years={2015}))["id"] == 1829
