@@ -312,7 +312,8 @@ def _shelf_runs(path) -> dict[str, list[dict]]:
     return out
 
 
-def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: bool = False) -> dict | None | bool:
+def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: bool = False,
+              strict: bool = False) -> dict | None | bool:
     """The shelf series for a list entry that names its run's start year.
     False = no opinion (no year given: use the plain name match); None = the
     name is on the shelf but only as OTHER runs (not on the shelf).
@@ -321,14 +322,16 @@ def _pick_run(runs: dict, keys: set, volume, number=None, path=None, whole_run: 
     TPB-order list dates 'Hellboy in Mexico' by the story, the shelf by the
     edition. Fantastic Four (2018) has no #500, so it can't be 1998's.
     That allowance is for a list that names a run ONCE (a trade order). A list
-    naming issue by issue means that run: Marvel Zombies 2015 #1 is not 2005's."""
+    naming issue by issue means that run: Marvel Zombies 2015 #1 is not 2005's.
+    strict: the list names this title under more than one year — they're different
+    runs, so only the year itself fits (see resolve)."""
     if not (volume and re.match(r"^(19|20)\d{2}$", str(volume))):
         return False
     want = int(volume)
     cands = [c for k in keys for c in runs.get(k, [])]
     if not cands:
         return False
-    fits = [c for c in cands if c["run_year"] and abs(c["run_year"] - want) <= 1]
+    fits = [c for c in cands if c["run_year"] and abs(c["run_year"] - want) <= (0 if strict else 1)]
     if fits:
         return fits[0]
     unknown = [c for c in cands if not c["run_year"]]
@@ -519,8 +522,14 @@ def resolve(list_id: int, path=None) -> dict:
     idx = _shelf_index(path)
     runs = _shelf_runs(path) if any(re.match(r"^(19|20)\d{2}$", str(it.get("volume") or "")) for it in items) else None
     per_series: dict[str, int] = {}
+    years: dict[str, set] = {}
     for it in items:
         per_series[norm_key(it["series"])] = per_series.get(norm_key(it["series"]), 0) + 1
+        if re.match(r"^(19|20)\d{2}$", str(it.get("volume") or "")):
+            years.setdefault(norm_key(it["series"]), set()).add(int(it["volume"]))
+    # The year slack (a catalogue a year off the list's) is off for a title the list names
+    # under two years: those are two runs. Invincible Iron Man 2016 #1 took the shelf's 2015 #1,
+    # and Get would have filled 2015 (2026-10-25)
     # A trade order names each run once ('Hellboy: Seed of Destruction'); an
     # issue order names issues ('Secret Wars: Battleworld #1-4'). Only a trade
     # order may read a subtitled entry as 'a trade of a run held whole' — in an
@@ -539,7 +548,8 @@ def resolve(list_id: int, path=None) -> dict:
         if nb and not any(k in idx for k in _keys(series_name)):
             series_name, want_n = nb[0], float(nb[1])
         picked = (_pick_run(runs, _keys(series_name), it.get("volume"), want_n, path,
-                            whole_run=per_series.get(norm_key(it["series"]), 0) == 1)
+                            whole_run=per_series.get(norm_key(it["series"]), 0) == 1,
+                            strict=len(years.get(norm_key(it["series"]), ())) > 1)
                   if runs is not None else False)
         hit = picked if picked is not False else next((idx[k] for k in _keys(series_name) if k in idx), None)
         entry = {"position": it["position"], "series": it["series"], "number": it["number"],
