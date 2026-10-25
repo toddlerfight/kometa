@@ -4,9 +4,9 @@ from playwright.sync_api import expect
 
 def test_pull_list_groups_upcoming(app):
     app.locator('.nav-item[data-view="pull-list"]').click()
-    expect(app.locator(".pull-group-label").first).to_be_visible()
-    row = app.locator(".pull-row", has_text="Test Comic Alpha")
-    expect(row.first).to_be_visible()          # issue #4 is on the pull list
+    expect(app.locator(".pull-group .od-head").first).to_be_visible()
+    tile = app.locator(".pull-grid .issue-tile", has_text="Test Comic Alpha")
+    expect(tile.first).to_be_visible()         # issue #4 is on the pull list
 
 
 def test_activity_shows_queue_states(app):

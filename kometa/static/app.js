@@ -3647,10 +3647,13 @@ function _trackTileDownload(seriesId, number, title) {
       const obj = onView ? _detailSeries?.issues?.find(i => i.number === number) : null;
       if (obj) obj.owned = 1;
       const tile = onView ? document.querySelector(`.issue-tile[data-num="${number}"]`) : null;
+      const pulled = currentView === 'pull-list' ? _pullItems.find(i => i.id === seriesId && i.number === number) : null;
       if (tile && obj && _detailSeries) tile.outerHTML = _issueTileHtml(_detailSeries, obj);
-      // Pull-list rows aren't .issue-tile — their ↓ button was left frozen at
-      // the last percent forever on success (the failure branch below resets
-      // it; this is the success-side twin). Flip it to a done check.
+      else if (pulled && btn?.closest('.issue-tile')) { pulled.owned = 1; btn.closest('.issue-tile').outerHTML = _pullTileHtml(pulled); }
+      // A pull-list tile repaints from its own row, the same way. Anywhere else
+      // there's nothing to repaint from — the ↓ was left frozen at the last
+      // percent forever on success (the failure branch below resets it; this is
+      // the success-side twin). Flip it to a done check.
       else if (btn) { btn.innerHTML = ico('check'); btn.title = 'Downloaded'; btn.disabled = true; }
     } else if (st === 'failed' || st === 'not_found') {
       const why = qs.error ? ` — ${qs.error}` : '';
@@ -3726,13 +3729,27 @@ async function doDelete(id) {
 
 // --- Pull List ---
 
-function _pullStatus(e) {
-  const lt = _localToday(), ut = _usToday();
-  if (e.owned) return `<span class="pull-status pull-status-owned">${ico('check')}</span>`;
-  if (e.ignored) return `<span class="pull-status pull-status-ignored">Ignored</span>`;
-  if (e.store_date > lt) return `<span class="pull-status pull-status-upcoming">${fmtDayDate(e.store_date)}</span>`;
-  if (e.store_date >= ut) return `<span class="pull-status pull-status-today">Today</span>`;
-  return `<span class="pull-status pull-status-missing">Missing</span>`;
+// A pull-list issue as the series page draws it — same tile, same frames (amber
+// missing, blue upcoming), same date pill, same ↓ — only the label carries the
+// run's name, since a week of releases is many runs on one grid.
+function _pullTileHtml(e) {
+  const sid = e.id, st = issueStatus(e);
+  const num = `#${fmtNum(e.number)}`;
+  const pill = st === 'today' ? `<div class="series-card-next-release">TODAY</div>`
+    : st === 'upcoming' ? `<div class="series-card-next-release">${_fmtReleaseDate(e.store_date)}</div>` : '';
+  const img = st === 'owned'
+    ? `<div class="issue-tile-img"><img src="${bookThumb({ tracked_series_id: sid, number: e.number })}" alt="${num}" loading="lazy"
+        onerror="this.parentElement.classList.add('unknown');this.remove()">${_cardDots(sid, e.number)}</div>`
+    : `<div class="issue-tile-img ${st}"><img src="/api/series/${sid}/issues/${e.number}/thumbnail?c=3" alt="${num}" loading="lazy"
+        onerror="this.remove()">${pill}</div>`;
+  const dl = (st === 'missing' || st === 'today')
+    ? `<button class="issue-tile-search" title="Get this issue" aria-label="Get issue ${fmtNum(e.number)}" data-dl="${sid}:${e.number}"
+         onclick="event.stopPropagation(); pullDownload(${sid}, ${e.number}, this)">↓</button>` : '';
+  // what you have reads, as on the series page; what you don't opens its card (2026-10-17)
+  const go = st === 'owned' ? `openIssueReader(${sid}, ${e.number})` : `showIssueModal(${sid}, ${e.number}, {orSeries: true})`;
+  return `<div class="issue-tile" data-num="${e.number}" title="${esc(e.title)} ${num}" tabindex="0" role="button"
+    onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
+    ${img}<div class="issue-tile-num">${esc(e.title)} ${num}</div>${dl}</div>`;
 }
 
 let _pullShowPast = false;
@@ -3796,31 +3813,13 @@ async function _renderPullListContent() {
     }
   }
 
+  // the weeks are On Deck's rows: a heading, then the series page's grid
   const html = Object.entries(groups)
     .filter(([, entries]) => entries.length > 0)
     .map(([label, entries]) => `
-      <div class="pull-group">
-        <div class="pull-group-label">${label.toUpperCase()}</div>
-        ${entries.map(e => {
-          const sid = e.id;
-          const card = `showIssueModal(${sid}, ${e.number}, {orSeries: true})`;   // the issue's card, as everywhere (2026-10-17)
-          return `
-            <div class="pull-row" tabindex="0" role="button"
-              onclick="${card}" onkeydown="if(event.key==='Enter'||event.key===' ')${card}">
-              <div class="pull-thumb-wrap"><img class="pull-thumb" src="/api/series/${sid}/issues/${e.number}/thumbnail" alt=""
-                loading="lazy" onerror="this.onerror=function(){this.onerror=null;this.style.opacity='0.15'};this.src='/api/series/${sid}/thumbnail'"></div>
-              <div class="pull-meta">
-                <div class="pull-series u-truncate">${esc(e.title)}</div>
-                <div class="pull-issue">#${fmtNum(e.number)}</div>
-              </div>
-              ${_pullStatus(e)}
-              <span class="pull-act">${(!e.owned && e.store_date < _usToday())
-                ? `<button class="pull-dl" data-dl="${sid}:${e.number}" title="Download this issue" aria-label="Download issue ${fmtNum(e.number)}"
-                     onclick="event.stopPropagation(); pullDownload(${sid}, ${e.number}, this)">↓</button>`
-                : ''}</span>
-            </div>
-          `;
-        }).join('')}
+      <div class="od-row pull-group">
+        <div class="od-head"><span class="series-card-title">${label}</span></div>
+        <div class="issue-grid pull-grid">${entries.map(_pullTileHtml).join('')}</div>
       </div>
     `).join('');
 
