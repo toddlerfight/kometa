@@ -73,6 +73,30 @@ def test_next_follows_the_issue_you_finished_whatever_else_in_the_series_is_open
     assert [r["label"] for r in od.up_next(path=lib["db"])] == ["#2"]
 
 
+def test_close_to_the_end_puts_the_next_one_up_and_keeps_the_place(lib):
+    # the last 3 pages (or last 10%) count for what's next: #1 stays on Continue, #2 is Next
+    # (the owner, 2026-10-25: "if I'm CLOSE to the end … it should put the next issue in next")
+    b = lib["b"]
+    db.set_progress("me", b[("saga", 1)], 20, False, "2026-10-02T10:00:00Z", lib["db"])    # 4 left of 24: not yet
+    assert od.up_next(path=lib["db"]) == []
+    db.set_progress("me", b[("saga", 1)], 21, False, "2026-10-02T11:00:00Z", lib["db"])    # 3 left
+    assert [(r["label"], r["finished"]) for r in od.up_next(path=lib["db"])] == [("#2", 0)]
+    assert [r["label"] for r in od.continue_reading(path=lib["db"])] == ["#1"]
+    # the last owned one, nearly done, with the next not here yet: Coming soon has it
+    db.set_progress("me", b[("saga", 1)], 24, True, "2026-10-02T12:00:00Z", lib["db"])
+    db.set_progress("me", b[("saga", 2)], 24, True, "2026-10-03T10:00:00Z", lib["db"])
+    db.set_progress("me", b[("saga", 3)], 23, False, "2026-10-04T10:00:00Z", lib["db"])
+    assert [r["label"] for r in od.coming_soon(path=lib["db"])] == ["#4"]
+
+
+def test_coming_soon_ignores_an_open_trade(lib):
+    b = lib["b"]
+    for n in (1, 2, 3):
+        db.set_progress("me", b[("saga", n)], 24, True, f"2026-10-0{n}T10:00:00Z", lib["db"])
+    db.set_progress("me", b[("saga", "tpb")], 40, False, "2026-10-05T10:00:00Z", lib["db"])
+    assert [r["label"] for r in od.coming_soon(path=lib["db"])] == ["#4"]
+
+
 def test_coming_soon_only_when_caught_up_and_labels_from_real_data(lib):
     b = lib["b"]
     for n in (1, 2, 3):

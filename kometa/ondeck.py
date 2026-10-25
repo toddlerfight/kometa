@@ -3,10 +3,11 @@
 Three rows, each straight from the reading tables:
   continue  — books with partial progress, most recently read first; a book
               untouched for 30 days drops off (its progress is kept).
-  next      — series you're reading (at least one finished, nothing in
-              progress): the first unread owned book AFTER the last one you
-              finished, in Kometa's own issue order. Trades and oddities
-              (no number) never count as 'next'.
+  next      — series you're reading: the first unread owned book AFTER the
+              last one you finished (or are within a few pages of finishing —
+              _through), in Kometa's own issue order, whatever else in the
+              series is open. Off it only once you've started it (Continue
+              has it then). Trades and oddities (no number) never count as 'next'.
   soon      — series you're reading and caught up on whose next issue isn't
               here yet: not released, released but not downloaded, or
               downloading. Labelled from Kometa's real data.
@@ -110,6 +111,20 @@ def _series_groups(conn, reader_id):
     return groups
 
 
+NEAR_END_PAGES = 3          # this close to the end counts as through it for what's next (the owner, 2026-10-25)
+NEAR_END_SHARE = 0.10       # ...or this share of the book, if that's more pages
+
+
+def _through(b) -> bool:
+    """Finished, or close enough to the end that the next one is up: the last 3 pages
+    (or last 10%) are letters, ads and previews. The book itself stays on Continue."""
+    if b["completed"] == 1:
+        return True
+    if not b["updated_at"] or not b["page_count"] or b["page"] is None:
+        return False
+    return b["page_count"] - b["page"] <= max(NEAR_END_PAGES, round(b["page_count"] * NEAR_END_SHARE))
+
+
 def up_next(reader_id=None, path=None, groups=None) -> list[dict]:
     reader_id = reader_id or current_reader()
     path = path or DB_PATH
@@ -117,17 +132,18 @@ def up_next(reader_id=None, path=None, groups=None) -> list[dict]:
     with db._connect(path) as conn:
         for key, books in (groups if groups is not None else _series_groups(conn, reader_id)).items():
             numbered = [b for b in books if b["number"] is not None]
-            done = [b for b in numbered if b["completed"] == 1]
-            if not done:
+            through = [b for b in numbered if _through(b)]
+            if not through:
                 continue
-            last_done = max(b["number"] for b in done)
-            last_read_at = max(b["updated_at"] for b in done)
+            last_done = max(b["number"] for b in through)
+            last_read_at = max(b["updated_at"] for b in through)
             nxt = next((b for b in numbered if b["number"] > last_done and not b["completed"]), None)
             # finish one, the next one is up — whatever else in the series is open (a half-read
             # omnibus hid Superior Spider-Man #2 from BOTH rows, the owner, 2026-10-25). Only the
             # next issue itself, already started, skips Next: Continue (or its Not now) has it
             if nxt and not (nxt["updated_at"] and (nxt["page"] or 0) > 1):
-                out.append(_card(conn, nxt, None, last_read_at=last_read_at, finished=len(done)))
+                out.append(_card(conn, nxt, None, last_read_at=last_read_at,
+                                 finished=sum(1 for b in numbered if b["completed"] == 1)))
     out.sort(key=lambda c: c["last_read_at"], reverse=True)
     return out[:ROW_LIMIT]
 
@@ -147,9 +163,8 @@ def coming_soon(reader_id=None, path=None, groups=None) -> list[dict]:
                 continue
             tid = key[1]
             numbered = [b for b in books if b["number"] is not None]
-            if not numbered or any(b["completed"] == 0 and b["updated_at"] for b in books):
-                continue
-            done = [b for b in numbered if b["completed"] == 1]
+            # caught up = every numbered issue read through (a trade open alongside doesn't count)
+            done = [b for b in numbered if _through(b)]
             if not done or len(done) < len(numbered):
                 continue
             last_done = max(b["number"] for b in done)
