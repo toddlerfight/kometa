@@ -59,6 +59,20 @@ def test_next_is_the_first_unread_after_the_last_finished_and_skips_trades(lib):
     assert od.up_next(path=lib["db"]) == []
 
 
+def test_next_follows_the_issue_you_finished_whatever_else_in_the_series_is_open(lib):
+    # finished #1 with the omnibus half read (and Not-now'd off Continue): #2 is still Next —
+    # the open omnibus hid it from both rows (Superior Spider-Man, the owner, 2026-10-25)
+    b = lib["b"]
+    db.set_progress("me", b[("saga", "tpb")], 143, False, "2026-10-01T10:00:00Z", lib["db"])
+    db.set_progress("me", b[("saga", 1)], 24, True, "2026-10-02T10:00:00Z", lib["db"])
+    assert [r["label"] for r in od.up_next(path=lib["db"])] == ["#2"]
+    assert db.set_dismissed("me", b[("saga", "tpb")], True, lib["db"])
+    assert [r["label"] for r in od.up_next(path=lib["db"])] == ["#2"]
+    # a glance at #2 (page 1) isn't reading it: still Next
+    db.set_progress("me", b[("saga", 2)], 1, False, "2026-10-03T10:00:00Z", lib["db"])
+    assert [r["label"] for r in od.up_next(path=lib["db"])] == ["#2"]
+
+
 def test_coming_soon_only_when_caught_up_and_labels_from_real_data(lib):
     b = lib["b"]
     for n in (1, 2, 3):

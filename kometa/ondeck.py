@@ -117,15 +117,16 @@ def up_next(reader_id=None, path=None, groups=None) -> list[dict]:
     with db._connect(path) as conn:
         for key, books in (groups if groups is not None else _series_groups(conn, reader_id)).items():
             numbered = [b for b in books if b["number"] is not None]
-            if any(b["completed"] == 0 and b["updated_at"] for b in books):
-                continue                                           # something in progress → Continue row
             done = [b for b in numbered if b["completed"] == 1]
             if not done:
                 continue
             last_done = max(b["number"] for b in done)
             last_read_at = max(b["updated_at"] for b in done)
             nxt = next((b for b in numbered if b["number"] > last_done and not b["completed"]), None)
-            if nxt:
+            # finish one, the next one is up — whatever else in the series is open (a half-read
+            # omnibus hid Superior Spider-Man #2 from BOTH rows, the owner, 2026-10-25). Only the
+            # next issue itself, already started, skips Next: Continue (or its Not now) has it
+            if nxt and not (nxt["updated_at"] and (nxt["page"] or 0) > 1):
                 out.append(_card(conn, nxt, None, last_read_at=last_read_at, finished=len(done)))
     out.sort(key=lambda c: c["last_read_at"], reverse=True)
     return out[:ROW_LIMIT]
