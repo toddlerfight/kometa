@@ -440,10 +440,13 @@ function _volLabel(t, fallback) {
 
 // The issue/trade modal's left cover column — image (dimmed on load failure)
 // or the blank slab. Three modals were carrying identical copies of this.
+// A cover that fails to load becomes the blank cover block — the same as no cover at
+// all. Dimming it left the browser's broken-image icon and the alt text ghosting
+// through (100 Bullets: The US of Anger #5 before any catalogue had its art, 2026-10-25).
 function _modalCoverHtml(src, alt) {
   return `<div class="issue-modal-cover">
         ${src
-          ? `<img src="${esc(src)}" alt="${esc(alt || '')}" onerror="this.style.opacity='0.1'">`
+          ? `<img src="${esc(src)}" alt="${esc(alt || '')}" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'issue-modal-no-cover'}))">`
           : `<div class="issue-modal-no-cover"></div>`}
       </div>`;
 }
@@ -1019,7 +1022,7 @@ function _shelfCardHtml(s, i, pub) {
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
         <div class="series-card-img-wrap">
           <img class="series-card-cover" src="/api/shelf/${s.id}/cover" alt="${esc(s.title)}"
-            loading="lazy" onerror="this.style.opacity='0.15'">
+            loading="lazy" onerror="this.remove()">
         </div>
         <div class="series-card-bar-track">
           <div class="series-card-bar-fill" style="width:${pct}%;background:var(--tq)"></div>
