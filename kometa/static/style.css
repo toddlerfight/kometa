@@ -2161,8 +2161,9 @@ body:has(.rd-stage) { overscroll-behavior: none; }
   padding: calc(12px + env(safe-area-inset-top)) 20px 12px; }
 .rd-top-l { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .rd-top-r { display: flex; align-items: center; gap: 8px; position: relative; }
-.rd-back { background: none; border: 0; color: var(--pri); font: inherit; font-size: var(--fs-body);
-  letter-spacing: var(--track); text-transform: uppercase; cursor: pointer; padding: 8px 0; }
+/* the house back: the green chevron, no words (YondeB's PageHeading) */
+.rd-back { background: none; border: 0; color: var(--pri); cursor: pointer; padding: 6px 4px 6px 0; display: flex; align-items: center; }
+.rd-back .ico { width: 26px; height: 26px; stroke-width: 2.6; }
 .rd-titles { min-width: 0; }
 .rd-title { color: var(--tp); font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rd-sub { color: var(--tq); font-size: 9px; letter-spacing: var(--track); margin-top: 2px; }
@@ -2172,17 +2173,28 @@ body:has(.rd-stage) { overscroll-behavior: none; }
 .rd-btn.on { color: var(--pri); border-color: var(--pri); }   /* SHIFT, while pairing is knocked over by one */
 
 .rd-bottom { bottom: 0; padding: 14px 20px calc(18px + env(safe-area-inset-bottom)); }
-.rd-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
-.rd-strip::-webkit-scrollbar { display: none; }
+/* the page strip: dragged through a fixed box in the middle — page 1's middle sits in it at the start, the last page's at the end */
+.rd-strip-wrap { position: relative; }
+.rd-strip, .rd-issues { display: flex; gap: 8px; overflow-x: auto; padding: 4px calc(50% - 22px) 6px; scrollbar-width: none; }
+.rd-strip::-webkit-scrollbar, .rd-issues::-webkit-scrollbar { display: none; }
+.rd-strip { cursor: grab; }
+.rd-strip.rd-dragging { cursor: grabbing; }
+.rd-strip.rd-dragging .rd-thumb { pointer-events: none; }
+.rd-box { position: absolute; top: 0; left: 50%; transform: translateX(-50%); height: 78px; width: 56px;
+  border: 2px solid var(--pri); border-radius: 4px; pointer-events: none; }
+.rd-strip-label { color: var(--tq); font-size: var(--fs-label); letter-spacing: var(--track); margin-top: 6px; }
+/* the issue strip: the list's or the run's covers; this one framed, ones not here dimmed */
+.rd-issues { padding-inline: 16px; }
+.rd-ithumb.on img { border-color: var(--pri); }
+.rd-ithumb.gone img { opacity: .35; }
+.rd-ithumb:disabled { cursor: default; }
+.rd-issues-msg { color: var(--tq); font-size: var(--fs-label); padding: 28px 0; }
 .rd-thumb { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 4px;
   background: none; border: 0; padding: 0; cursor: pointer; color: var(--tq); font: inherit; font-size: 9px; }
 .rd-thumb img { width: 44px; height: 66px; object-fit: cover; border-radius: 2px; border: 2px solid transparent;
   background: var(--su2); }
-.rd-thumb.on img { border-color: var(--pri); }
+.rd-strip .rd-thumb.on img { border-color: transparent; }   /* the box frames what's on screen */
 .rd-thumb.on span { color: var(--pri); }
-.rd-scrub { display: flex; align-items: center; gap: 14px; font-size: var(--fs-label); color: var(--tq); }
-.rd-scrub span:first-child { color: var(--tp); min-width: 2ch; text-align: right; }
-.rd-scrub input { flex: 1; accent-color: var(--pri); }
 
 .rd-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 14px; padding: 40px; text-align: center; }
@@ -2518,3 +2530,14 @@ body.touch .od-menu { opacity: .85; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important;
     transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Add a reading list: the community's lists, searched by name (kometa/listcatalog.py) */
+.rl-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 280px; overflow-y: auto; }
+.rl-result { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%;
+  background: var(--su2); border: 1px solid var(--bd); border-radius: var(--r-sm); padding: 9px 12px; cursor: pointer; font: inherit; color: var(--tp); }
+.rl-result:hover { border-color: var(--pri); }
+.rl-result.rl-adding { opacity: .5; cursor: progress; }
+.rl-result-name { font-size: 13px; font-weight: 700; }
+.rl-result-folder { font-size: 11px; color: var(--tq); }
+.rl-result-none { color: var(--tq); font-size: 12px; padding: 6px 2px; }
+.rl-shared { color: var(--pri); border-color: var(--pri); }

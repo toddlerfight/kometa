@@ -339,8 +339,12 @@ function renderView() {
   // the screen, and only then fade — one clean crossfade onto a finished page, not
   // a fade onto a page still rebuilding itself.
   const fromReader = !!(_vt.quiet && _vt.quiet.gen === gen);
+  // your last place goes FIRST, and the view waits for it (2 s at most): it reloaded before the
+  // reader's close sent it, and On Deck came back without what you'd just read (2026-10-26)
+  _rdFlushSave();
   if (!fromReader) closeReader();
-  const paint = (() => {
+  const paint = (async () => {
+    await _rdSettled();
     switch (view) {
       case 'library':       return renderLibraryBrowse();
       case 'stack':         return renderStackPage(currentParams.key);
@@ -1047,7 +1051,8 @@ async function renderOnDeck() {
   const d = await api.get('/api/ondeck');
   if (currentView !== 'ondeck') return;
   const pct = c => c.page_count && c.progress ? Math.round(c.progress.page / c.page_count * 100) : 0;
-  const read = c => `navigate('read', {book: ${c.book_id}})`;
+  // a card read from a list opens with it (Continue reading's remembered list, Next on {list}): Up next and LIST follow it
+  const read = c => c.list_id != null ? `navigate('read', {book: ${c.book_id}, list: ${c.list_id}})` : `navigate('read', {book: ${c.book_id}})`;
   const bookCard = (c, tag, dismissable, tagHtml) => `
     <div class="issue-tile od-card" id="od-${c.book_id}" role="button" tabindex="0" title="${esc(c.series)} ${esc(c.label)}" onclick="${read(c)}" onkeydown="if(event.key==='Enter'||event.key===' ')${read(c)}">
       <div class="issue-tile-img"><img src="/api/books/${c.book_id}/cover" alt="" loading="lazy" onerror="this.style.opacity='0.15'">

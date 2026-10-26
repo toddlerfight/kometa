@@ -15,6 +15,7 @@ const _ICON_PATHS = {
   diamond: '<path d="M12 2.5 21.5 12 12 21.5 2.5 12z"/>',
   right: '<path d="M4 12h15m-6-6 6 6-6 6"/>',
   left: '<path d="M20 12H5m6-6-6 6 6 6"/>',
+  chevron: '<path d="m15 4-8 8 8 8"/>',
   full: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   dot: '<circle cx="12" cy="12" r="6"/>',
 };
@@ -50,6 +51,8 @@ const _rd = {
   saveTimer: null,
   lastSaved: null,
   touch: null,
+  strip: 'pages',    // the bottom bar: the book's 'pages', or the 'issues' of its list or run (LIST / SERIES)
+  liveAt: null,      // the spread the strip is showing while you drag it (the pages follow it live)
 };
 
 const _RD_MODE_KEY = 'kometa.reader.mode';
@@ -129,18 +132,17 @@ function _rdRender() {
   const last = spread[spread.length - 1];
   // each page carries its own shape (--ar = w/h, from the book's page list) so CSS
   // can size the box to the picture itself — see .rd-page in style.css
-  const ar = p => { const pg = b.pages[p - 1]; return pg && pg.w && pg.h ? (pg.w / pg.h).toFixed(4) : ''; };
-  const imgs = spread.map(p => `
-    <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"${ar(p) ? ` style="--ar:${ar(p)}"` : ''}
-      src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false"
-      onload="this.parentElement.classList.add('rd-loaded');_rdOpened()" onerror="_rdOpened()">`).join('');
+  const imgs = _rdPagesHtml(spread);
   const label = spread.length === 2 ? `${spread[0]}–${spread[1]}` : `${spread[0]}`;
   const outgoing = document.getElementById('rd-stage');     // the spread you're leaving
   const thumbs = b.pages.map((_, i) => {
     const p = i + 1, on = spread.includes(p);
-    return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdGo(${p})">
+    return `<button class="rd-thumb${on ? ' on' : ''}" data-page="${p}" aria-label="Page ${p}" onclick="_rdThumbClick(event, ${p})">
       <img ${_rd.chrome ? 'src' : 'data-src'}="${_rdPageUrl(p, 120)}" alt="" loading="lazy" draggable="false"><span>${p}</span></button>`;
   }).join('');
+  const src = _rdIssueSource();
+  if (_rd.strip === 'issues' && !src) _rd.strip = 'pages';
+  const keepStrip = document.getElementById('rd-strip');      // the strip you may be dragging: kept, not rebuilt
   const loader = _rd.opening ? document.getElementById('rd-loading') : null;
   el.innerHTML = `
     <div class="rd-stage${spread.length === 2 ? ' rd-two' : ''}${loader ? ' rd-opening' : ''}" id="rd-stage"><div class="rd-spin" aria-hidden="true"></div>${imgs}</div>
@@ -149,7 +151,7 @@ function _rdRender() {
     <div class="rd-chrome${_rd.chrome ? ' on' : ''}" id="rd-chrome">
       <div class="rd-top">
         <div class="rd-top-l">
-          <button class="rd-back" onclick="_rdExit()">‹ Back</button>
+          <button class="rd-back" onclick="_rdExit()" aria-label="Back" title="Back">${ico('chevron')}</button>
           <div class="rd-titles">
             <div class="rd-title">${esc(_rdTitle())}</div>
             <div class="rd-sub">${esc((b.publisher || '').toUpperCase())}${b.publisher ? ' · ' : ''}${b.page_count} PAGES</div>
@@ -157,6 +159,8 @@ function _rdRender() {
         </div>
         <div class="rd-top-r">
           <button class="rd-btn" onclick="_rdFullscreen()" title="Full screen (F)" aria-label="Full screen">${ico('full')}</button>
+          ${src ? `<button class="rd-btn${_rd.strip === 'issues' ? ' on' : ''}" onclick="_rdToggleIssues()" aria-pressed="${_rd.strip === 'issues'}"
+            title="The issues around this one" aria-label="${src.kind === 'list' ? 'Issues in this list' : 'Issues in this series'}">${src.kind === 'list' ? 'LIST' : 'SERIES'}</button>` : ''}
           <button class="rd-btn" onclick="_rdCycleMode()" title="Page layout" aria-label="Page layout">${{ auto: 'AUTO', single: '1-UP', double: '2-UP' }[_rd.mode]}</button>
           ${_rdTwoUp() ? `<button class="rd-btn${_rd.shift ? ' on' : ''}" onclick="_rdToggleShift()" title="Shift pairing by one"
             aria-label="Shift pairing by one" aria-pressed="${_rd.shift}">SHIFT</button>` : ''}
@@ -164,17 +168,21 @@ function _rdRender() {
         </div>
       </div>
       <div class="rd-bottom">
-        <div class="rd-strip" id="rd-strip">${thumbs}</div>
-        <div class="rd-scrub">
-          <span>${spread[0]}</span>
-          <input type="range" min="1" max="${b.page_count}" value="${spread[0]}" aria-label="Page"
-            oninput="this.previousElementSibling.textContent=this.value" onchange="_rdGo(+this.value)">
-          <span>${b.page_count}</span>
-        </div>
+        ${_rd.strip === 'issues' ? `<div class="rd-issues" id="rd-issues">${_rdIssuesHtml()}</div>` : `
+        <div class="rd-strip-wrap">
+          <div class="rd-strip" id="rd-strip" data-key="${b.id}:${_rd.spreads.length}">${thumbs}</div>
+          <div class="rd-box" id="rd-box" aria-hidden="true"></div>
+        </div>`}
+        <div class="rd-strip-label" id="rd-strip-label">${_rdLabel(spread)}</div>
       </div>
     </div>`;
+  // the strip you were dragging (or had scrolled) stays the same element: rebuilt, it jumped to its start
+  const fresh = document.getElementById('rd-strip');
+  if (fresh && keepStrip && keepStrip.dataset.key === fresh.dataset.key) fresh.replaceWith(keepStrip);
+  _rdBindStrip();
+  _rdMarkStrip(spread);
   if (loader) { el.appendChild(loader); _rdStage('pages'); }   // the open isn't over until page 1 shows
-  if (_rd.chrome) _rdCenterStrip();
+  if (_rd.chrome) { _rdCenterStrip(!!keepStrip); if (_rd.strip === 'issues') _rdLoadIssues(); }
   _rdTurnMotion(outgoing);
   _rdPreload();
   _rdQueueSave(last);
@@ -343,9 +351,202 @@ async function _rdListNext(listId, bookId) {
   } catch { if (note) note.textContent = 'Next on the list couldn’t open.'; }
 }
 
-function _rdCenterStrip() {
-  const on = document.querySelector('#rd-strip .rd-thumb.on');
-  if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+// One spread's pages, for the stage (a turn) and for the strip's live follow (a drag).
+function _rdPagesHtml(spread) {
+  const b = _rd.book;
+  // each page carries its own shape (--ar = w/h, from the book's page list) so CSS
+  // can size the box to the picture itself — see .rd-page in style.css
+  const ar = p => { const pg = b.pages[p - 1]; return pg && pg.w && pg.h ? (pg.w / pg.h).toFixed(4) : ''; };
+  return spread.map(p => `
+    <img class="rd-page${spread.length === 2 ? (p === spread[0] ? ' rd-left' : ' rd-right') : ''}"${ar(p) ? ` style="--ar:${ar(p)}"` : ''}
+      src="${_rdPageUrl(p, _rdSlotWidth(spread.length))}" alt="Page ${p}" draggable="false"
+      onload="this.parentElement.classList.add('rd-loaded');_rdOpened()" onerror="_rdOpened()">`).join('');
+}
+
+function _rdLabel(spread) {
+  const n = _rd.book.page_count;
+  return spread.length === 2 ? `pages ${spread[0]}–${spread[1]} of ${n}` : `page ${spread[0]} of ${n}`;
+}
+
+// --- the page strip (YondeB's, 2026-10-24: no slider) -------------------------------------
+// Drag it — a trackpad's sideways swipe, a mouse drag, the wheel — and the pages follow
+// whatever sits in the fixed lime box in the middle, live; let go and the nearest spread
+// settles into the box. A click on a thumbnail still jumps.
+
+// Lit thumbnails, the box one or two thumbnails wide, the label: what's in the box now.
+function _rdMarkStrip(spread) {
+  document.querySelectorAll('#rd-strip .rd-thumb').forEach(t => t.classList.toggle('on', spread.includes(+t.dataset.page)));
+  const box = document.getElementById('rd-box'), first = document.querySelector('#rd-strip .rd-thumb');
+  if (box && first) {
+    const w = first.offsetWidth || 44, n = spread.length;
+    box.style.width = `${n * w + (n - 1) * 8 + 8}px`;
+  }
+  const lab = document.getElementById('rd-strip-label');
+  if (lab) lab.textContent = _rdLabel(spread);
+}
+
+// The spread's middle under the box. Our own scrolls are marked, so they move no pages.
+function _rdCenterStrip(smooth = false) {
+  const strip = document.getElementById('rd-strip');
+  const on = strip ? [...strip.querySelectorAll('.rd-thumb.on')] : [];
+  if (!on.length) return;
+  const mid = (on[0].offsetLeft + on[on.length - 1].offsetLeft + on[on.length - 1].offsetWidth) / 2;
+  _rd.stripAuto = performance.now();
+  strip.scrollTo({ left: mid - strip.clientWidth / 2, behavior: smooth && _rdMotionOK() ? 'smooth' : 'auto' });
+}
+
+function _rdMotionOK() { return typeof _motionOK !== 'function' || _motionOK(); }
+
+// The page under the box: thumbnails are all one width, so where the strip is IS the page.
+function _rdStripPage(strip) {
+  const first = strip.querySelector('.rd-thumb');
+  if (!first) return 1;
+  const cell = first.offsetWidth + 8;
+  const x = strip.scrollLeft + strip.clientWidth / 2 - (first.offsetLeft + first.offsetWidth / 2);
+  return Math.max(1, Math.min(_rd.book.page_count, Math.round(x / cell) + 1));
+}
+
+// While you drag, the pages change in place — no turn, no save; the strip isn't rebuilt.
+function _rdLive(i) {
+  if (i === _rd.liveAt) return;
+  _rd.liveAt = i;
+  const spread = _rd.spreads[i], stage = document.getElementById('rd-stage');
+  if (!spread || !stage) return;
+  stage.classList.toggle('rd-two', spread.length === 2);
+  stage.innerHTML = `<div class="rd-spin" aria-hidden="true"></div>${_rdPagesHtml(spread)}`;
+  const last = spread[spread.length - 1];
+  const prog = document.querySelector('#reader .rd-progress');
+  if (prog) prog.style.transform = `scaleX(${last / _rd.book.page_count})`;
+  const count = document.querySelector('#reader .rd-count');
+  if (count) count.textContent = `${spread.length === 2 ? `${spread[0]}–${spread[1]}` : spread[0]} / ${_rd.book.page_count}`;
+  _rdMarkStrip(spread);
+}
+
+// Let go (or the coast ran out): the spread in the box is where you are.
+function _rdStripSettle() {
+  if (!_rd.stripUser) return;
+  _rd.stripUser = false;
+  const i = _rd.liveAt ?? _rd.at;
+  _rd.liveAt = null;
+  if (i !== _rd.at) { _rd.at = i; _rd.ended = false; _rdRender(); }   // the strip is kept; it centres itself
+  else _rdCenterStrip(true);
+}
+
+function _rdBindStrip() {
+  const strip = document.getElementById('rd-strip');
+  if (!strip || strip.dataset.bound) return;
+  strip.dataset.bound = '1';
+  let settleT = null;
+  strip.addEventListener('scroll', () => {
+    if (performance.now() - (_rd.stripAuto || 0) < 450) return;      // our own centring
+    _rd.stripUser = true;
+    _rdLive(_rdSpreadOf(_rdStripPage(strip)));
+    clearTimeout(settleT);
+    settleT = setTimeout(_rdStripSettle, 160);                        // Safari has no scrollend
+  }, { passive: true });
+  strip.addEventListener('scrollend', () => { clearTimeout(settleT); _rdStripSettle(); });
+  // a mouse wheel turns the strip sideways (a trackpad's sideways swipe already does)
+  strip.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { strip.scrollLeft += e.deltaY * (e.deltaMode === 1 ? 16 : 1); e.preventDefault(); }
+  }, { passive: false });
+  // a mouse drags it; a drag is never a click on the thumbnail it ends on
+  let drag = null;
+  strip.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    drag = { x: e.clientX, left: strip.scrollLeft, moved: false };
+  });
+  strip.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) < 4) return;
+    if (!drag.moved) { drag.moved = true; strip.setPointerCapture(e.pointerId); strip.classList.add('rd-dragging'); }
+    strip.scrollLeft = drag.left - dx;
+  });
+  const end = () => {
+    if (drag?.moved) { _rd.stripDragged = performance.now(); strip.classList.remove('rd-dragging'); }
+    drag = null;
+  };
+  strip.addEventListener('pointerup', end);
+  strip.addEventListener('pointercancel', end);
+}
+
+function _rdThumbClick(e, p) {
+  if (performance.now() - (_rd.stripDragged || 0) < 250) return;     // the end of a drag, not a click
+  _rdGo(p);
+}
+
+// --- the issue strip (YondeB's LIST / SERIES, 2026-10-26) -------------------------------------
+// The bottom bar's other face: the covers of the list the book was opened from (or the
+// list Kometa remembers it being read from), else its run, this issue framed. Click
+// another and the reader goes straight to it — the bar and this strip stay up for the
+// next pick. Not on the shelf: dimmed, dead to the click.
+const _rdIssueCache = {};
+
+function _rdIssueSource() {
+  if (!_rd.book) return null;
+  if (_rd.list != null) return { kind: 'list', id: _rd.list };
+  return _rd.book.series_id ? { kind: 'series', id: _rd.book.series_id } : null;
+}
+
+function _rdToggleIssues() {
+  _rd.strip = _rd.strip === 'issues' ? 'pages' : 'issues';
+  _rdRender();
+}
+
+async function _rdLoadIssues() {
+  const src = _rdIssueSource();
+  if (!src) return;
+  const key = `${src.kind}:${src.id}`;
+  if (!_rdIssueCache[key]) {
+    try {
+      if (src.kind === 'list') {
+        const l = await api.get(`/api/readlists/${src.id}`);
+        _rdIssueCache[key] = l.entries.flatMap(e => e.books.length
+          ? e.books.map(b => ({ book: b.id, label: b.label || '', cover: `/api/books/${b.id}/cover`, here: true, read: !!(b.progress && b.progress.completed) }))
+          : [{ label: e.number ? `#${e.number}` : '', cover: e.cover ? _ext(e.cover) : '', here: false }]);
+      } else {
+        const sd = await api.get(`/api/series/${src.id}`);
+        _rdIssueCache[key] = (sd.issues || []).slice().sort((a, b) => a.number - b.number).map(i => ({
+          series: src.id, number: i.number, label: `#${fmtNum(i.number)}`,
+          cover: `/api/series/${src.id}/issues/${i.number}/thumbnail`, here: !!i.owned }));
+      }
+    } catch { _rdIssueCache[key] = null; }
+  }
+  const el = document.getElementById('rd-issues');
+  if (!el || _rd.strip !== 'issues') return;
+  el.innerHTML = _rdIssuesHtml();
+  el.querySelector('.rd-thumb.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+function _rdIssuesHtml() {
+  const src = _rdIssueSource();
+  const tiles = src && _rdIssueCache[`${src.kind}:${src.id}`];
+  if (tiles === undefined) return '<div class="rd-issues-msg">Loading…</div>';
+  if (!tiles) return '<div class="rd-issues-msg">Couldn’t load these</div>';
+  const b = _rd.book;
+  return tiles.map(t => {
+    const current = t.book != null ? t.book === b.id : (t.number != null && t.number === b.number);
+    const click = !t.here || current ? '' : t.book != null ? `_rdPickIssue({book: ${t.book}})` : `_rdPickIssue({series: ${t.series}, number: ${t.number}})`;
+    return `<button class="rd-thumb rd-ithumb${current ? ' on' : ''}${t.here ? '' : ' gone'}" ${click ? `onclick="${click}"` : 'disabled'}
+      aria-label="${esc(t.label)}${t.here ? '' : ', not on the shelf'}"><img src="${esc(t.cover)}" alt="" loading="lazy" draggable="false"
+      onerror="this.style.opacity='0'"><span>${esc(t.label)}${t.read ? ' ✓' : ''}</span></button>`;
+  }).join('');
+}
+
+// Straight to it, in place: the history entry is replaced (Back still leaves the reader),
+// and the bar and the issue strip come up again on the new book.
+async function _rdPickIssue(t) {
+  let id = t.book;
+  if (id == null) {
+    try { id = (await api.get(`/api/series/${t.series}/issues/${t.number}/book`)).id; }
+    catch (e) { showToast('Couldn’t open that issue', 'error'); return; }
+  }
+  _rdFlushSave();
+  const params = _rd.list != null ? { book: id, list: _rd.list } : { book: id };
+  _rd.keepIssues = true;
+  currentParams = params;
+  history.replaceState({ view: 'read', params, idx: _histIdx }, '', `#read?${new URLSearchParams(params).toString()}`);
+  renderReader(params);
 }
 
 // --- navigation ----------------------------------------------------------------
@@ -378,7 +579,7 @@ function _rdEnded(on) {
 function _rdToggleChrome(force) {
   _rd.chrome = force ?? !_rd.chrome;
   document.getElementById('rd-chrome')?.classList.toggle('on', _rd.chrome);
-  if (_rd.chrome) { _rdStripLoad(); _rdCenterStrip(); }
+  if (_rd.chrome) { _rdStripLoad(); _rdCenterStrip(); if (_rd.strip === 'issues') _rdLoadIssues(); }
 }
 
 // The strip's thumbnails load when the strip is first shown, not on open: hidden
@@ -425,7 +626,23 @@ function _rdDetails() {
 
 function _rdQueueSave(page, completed) {
   clearTimeout(_rd.saveTimer);
-  _rd.saveTimer = setTimeout(() => _rdSave(page, completed), 1200);
+  _rd.saveTimer = setTimeout(() => { _rd.saveTimer = null; _rdSaving = _rdSave(page, completed); }, 1200);
+}
+
+// The last save, sent before the view behind the reader reloads, and waited on there
+// (renderView): the reader saved as it closed — AFTER that view had already asked the
+// server what you're reading, so On Deck came back without what you'd just read
+// (YondeB 2026-10-26; here the order was guaranteed wrong).
+let _rdSaving = null;
+function _rdFlushSave() {
+  if (!_rd.book || !_rd.saveTimer) return;
+  clearTimeout(_rd.saveTimer); _rd.saveTimer = null;
+  const s = _rd.spreads[_rd.at];
+  if (s && !_rd.ended) _rdSaving = _rdSave(s[s.length - 1]);
+}
+function _rdSettled(capMs = 2000) {
+  const p = _rdSaving; _rdSaving = null;
+  return p ? Promise.race([p.catch(() => {}), new Promise(r => setTimeout(r, capMs))]) : Promise.resolve();
 }
 
 async function _rdSave(page, completed) {
@@ -441,6 +658,7 @@ async function _rdSave(page, completed) {
   if (_rd.lastSaved === key) return;
   const body = { page, updated_at: new Date().toISOString() };
   if (completed) body.completed = true;
+  if (_rd.list != null) body.list_id = _rd.list;        // read from a list: Continue reading reopens it with the list
   try {
     await api.put(`/api/books/${_rd.book.id}/progress`, body);
     _rd.lastSaved = key;
@@ -613,8 +831,9 @@ async function renderReader(params) {
   _rdRecButton();
   try {
     const book = await api.get(`/api/books/${params.book}`);
-    Object.assign(_rd, { book, shift: false, chrome: false, ended: false, lastSaved: null, done: false, markedRead: false,
-      list: params.list ? parseInt(params.list, 10) : null });
+    const picked = _rd.keepIssues; _rd.keepIssues = false;    // off the issue strip: the bar and the strip stay up
+    Object.assign(_rd, { book, shift: false, chrome: picked, ended: false, lastSaved: null, done: false, markedRead: false,
+      list: params.list ? parseInt(params.list, 10) : null, strip: picked ? 'issues' : 'pages', liveAt: null });
     _rd.spreads = _rdBuildSpreads();
     const p = book.progress;
     const start = params.page ? +params.page : (p && !p.completed ? p.page : 1);
@@ -657,11 +876,7 @@ function _rdFullscreenHint(standalone) {
 function closeReader() {
   const el = document.getElementById('reader');
   if (!el || el.classList.contains('hidden') || el.classList.contains('rd-leaving')) return;
-  if (_rd.book && _rd.saveTimer) {
-    clearTimeout(_rd.saveTimer); _rd.saveTimer = null;
-    const s = _rd.spreads[_rd.at];
-    if (s && !_rd.ended) _rdSave(s[s.length - 1]);
-  }
+  _rdFlushSave();
   document.body.classList.remove('reading');            // the view underneath fades back up…
   _rd.book = null;
   _rd.opening = false;
@@ -1072,7 +1287,7 @@ async function renderReadLists() {
   setTopbar();
   document.getElementById('topbar-title').textContent = 'Reading lists';
   document.getElementById('topbar-actions').innerHTML =
-    `<button class="btn btn-primary btn-sm" onclick="_rlImportModal()">+ Import</button>`;
+    `<button class="btn btn-primary btn-sm" onclick="_rlImportModal()">+ Add a list</button>`;
   setApp('<div class="state-msg">Loading...</div>');
   const lists = await api.get('/api/readlists');
   if (currentView !== 'readlists') return;
@@ -1094,7 +1309,10 @@ async function renderReadLists() {
     const coverSrc = l.cover_book_id ? `/api/books/${l.cover_book_id}/cover` : (l.cover ? _ext(l.cover) : '');
     const cover = coverSrc ? `<img class="series-card-cover" src="${esc(coverSrc)}" alt="" loading="lazy" onerror="this.style.opacity='0.15'">`
       : `<div class="series-card-cover rl-nocover"></div>`;
-    const sub = [books ? `${pct}% READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : ''].filter(Boolean).join(' · ');
+    // Want to read (pinned first): what's in it — a finished one leaves, so a % would sit at 0
+    const sub = l.pinned ? `${total} TO READ`
+      : [books ? `${pct}% READ` : '', gaps ? `<span style="color:var(--amb)">${gaps} MISSING</span>` : '',
+         l.shared ? 'SHARED' : ''].filter(Boolean).join(' · ');
     return `
       <div class="series-card card-cascade" style="animation-delay:${Math.min(i, 14) * STAGGER_MS}ms" tabindex="0" role="button"
         onclick="${go}" onkeydown="if(event.key==='Enter'||event.key===' ')${go}">
@@ -1110,12 +1328,17 @@ async function renderReadLists() {
   setApp(`<div class="series-grid">${cards}</div>`);
 }
 
-// One modal, two ways in: a .cbl file, or a link to one.
+// One modal, three ways in: the community's lists by name (kometa/listcatalog.py, the
+// way the apps add one), a .cbl file, or a link to one.
 function _rlImportModal() {
   showModal(`
-    <div class="modal-header"><h2>Import a reading list</h2></div>
+    <div class="modal-header"><h2>Add a reading list</h2></div>
     <div class="modal-body rl-import">
-      <label class="btn btn-ghost rl-file">Choose a .cbl file<input type="file" accept=".cbl,.xml,text/xml" onchange="_rlImportFile(this)" hidden></label>
+      <div class="settings-field"><label class="settings-field-label u-label" for="rl-q">Search the community’s lists</label>
+        <input class="settings-input" id="rl-q" type="search" placeholder="Secret Wars, Hellboy, Batman…" autocomplete="off" spellcheck="false"
+          oninput="_rlSearch(this.value)" style="width:100%"></div>
+      <div class="rl-results" id="rl-results"></div>
+      <label class="btn btn-ghost rl-file" style="margin-top:14px">Choose a .cbl file<input type="file" accept=".cbl,.xml,text/xml" onchange="_rlImportFile(this)" hidden></label>
       <div class="settings-field" style="margin-top:14px"><label class="settings-field-label u-label" for="rl-url">Or a link to one</label>
         <div style="display:flex;gap:8px"><input class="settings-input" id="rl-url" type="url" placeholder="https://github.com/DieselTech/CBL-ReadingLists/…" autocomplete="off" spellcheck="false"
           onkeydown="if(event.key==='Enter')_rlImportUrl()" style="flex:1;min-width:0">
@@ -1123,6 +1346,37 @@ function _rlImportModal() {
         <div style="margin-top:6px;color:var(--tq);font-size:12px"><a class="btn-link" href="https://github.com/DieselTech/CBL-ReadingLists" target="_blank" rel="noopener">The community repo</a> has about 1,700.</div></div>
     </div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Close</button></div>`);
+}
+
+let _rlSearchT = null, _rlSearchQ = '';
+function _rlSearch(q) {
+  clearTimeout(_rlSearchT);
+  _rlSearchQ = q.trim();
+  _rlSearchT = setTimeout(async () => {
+    const box = document.getElementById('rl-results');
+    if (!box) return;
+    if (!_rlSearchQ) { box.innerHTML = ''; return; }
+    const asked = _rlSearchQ;
+    try {
+      const r = await api.get(`/api/listcatalog?q=${encodeURIComponent(asked)}`);
+      if (asked !== _rlSearchQ || !document.getElementById('rl-results')) return;
+      box.innerHTML = r.results.length ? r.results.map(x => `
+        <button class="rl-result" onclick="_rlAddCatalog(this, ${jsArg(x.path)})">
+          <span class="rl-result-name">${esc(x.name)}</span><span class="rl-result-folder">${esc(x.folder)}</span></button>`).join('')
+        : '<div class="rl-result-none">No community list by that name</div>';
+    } catch { box.innerHTML = '<div class="rl-result-none">Couldn’t search the community lists</div>'; }
+  }, 250);
+}
+
+async function _rlAddCatalog(btn, path) {
+  btn.disabled = true; btn.classList.add('rl-adding');
+  await _rlImport(fetch('/api/listcatalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) }));
+  btn.disabled = false; btn.classList.remove('rl-adding');
+}
+
+async function _rlShare(id, on) {
+  try { await api.patch(`/api/readlists/${id}`, { shared: on }); showToast(on ? 'Shared with everyone' : 'Not shared any more'); renderReadList(id); }
+  catch (e) { showToast('Couldn’t change that', 'error'); }
 }
 
 async function _rlImportFile(input) {
@@ -1206,11 +1460,15 @@ async function renderReadList(id) {
   ].filter(Boolean).join('');
   document.getElementById('topbar-sub').innerHTML = `<span class="u-label" style="color:var(--tq)">
     ${l.source === 'cbl' ? 'CBL' : 'IMPORTED'} · ${l.total} ENTR${l.total === 1 ? 'Y' : 'IES'} · ${books.length} BOOK${books.length === 1 ? '' : 'S'} ON THE SHELF</span>`;
+  // Get and Remove are for your own lists; Want to read is a view of the pile, not a list to remove
+  const own = l.mine !== false && !l.pinned;
   document.getElementById('topbar-actions').innerHTML = `
-    ${gaps ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
+    ${gaps && own ? `<button class="btn btn-ghost btn-sm" id="rl-getmissing" onclick="_rlGetMissing(${id}, ${gaps})">Get missing (${gaps})</button>` : ''}
+    ${l.can_share ? `<button class="btn btn-ghost btn-sm${l.shared ? ' rl-shared' : ''}" onclick="_rlShare(${id}, ${!l.shared})"
+      title="${l.shared ? 'Everyone with an account sees this list (read-only, their own progress)' : 'Let everyone with an account see this list'}">${l.shared ? 'Shared ✓' : 'Share'}</button>` : ''}
     ${l.continue ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${l.continue}, list: ${id}})">${_rlStarted(l) ? 'Continue' : 'Start'}</button>`
       : (done && books.length ? `<button class="btn btn-primary btn-sm" onclick="navigate('read', {book: ${books[0].id}, list: ${id}})">Read again</button>` : '')}
-    <button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${jsArg(l.name)})">Remove</button>`;
+    ${own ? `<button class="btn btn-ghost btn-sm" onclick="_rlDelete(${id}, ${jsArg(l.name)})">Remove</button>` : ''}`;
   api.get(`/api/readlists/${id}/get-missing`).then(st => { if (st && st.running) _rlPollGetMissing(id); }).catch(() => {});
   const tabs = ['all', 'on shelf', 'not here'].map(t => `<div class="issue-tab ${_rlTab === t ? 'active' : ''}" tabindex="0" role="tab"
       aria-selected="${_rlTab === t}" onclick="setRlTab('${t}', ${id})" onkeydown="if(event.key==='Enter'||event.key===' ')setRlTab('${t}', ${id})">${t}</div>`).join('');
