@@ -241,7 +241,10 @@ def get_lists(path=None) -> list[dict]:
             # nothing of it on the shelf yet (a list built to Get): the first
             # entry's catalogue cover, else ask the catalogue once, behind
             r["cover"] = _first_catalogue_cover(r["id"], path)
-    return rows
+    # Want to read, pinned first (wantread.as_list) — while it holds anything
+    from kometa import wantread
+    want = wantread.list_card(path, reader)
+    return ([want] if want else []) + rows
 
 
 _cover_asked: set = set()
@@ -848,8 +851,16 @@ def api_lists():
     return get_lists()
 
 
+def _want(list_id: int) -> bool:
+    from kometa.wantread import WANT_LIST_ID
+    return list_id == WANT_LIST_ID
+
+
 @router.get("/api/readlists/{list_id}")
 def api_list(list_id: int):
+    if _want(list_id):                                         # Want to read, as a list (wantread.as_list)
+        from kometa import wantread
+        return wantread.as_list()
     require_visible(list_id)
     try:
         res = resolve(list_id)
@@ -878,6 +889,8 @@ def api_share(list_id: int, req: ShareRequest):
 def api_fill_covers(list_id: int):
     """Covers for the gaps: ComicVine in one batch now, a slice of Metron now,
     the rest on the next call. The page calls this until 'left' is 0."""
+    if _want(list_id):
+        return {"filled": 0, "missed": 0, "left": 0}           # its gaps are tracked issues: their own covers
     require_visible(list_id)
     try:
         return fill_covers(list_id)
@@ -904,6 +917,13 @@ def api_item_cover(list_id: int, item_id: int):
 
 @router.get("/api/readlists/{list_id}/next")
 def api_next(list_id: int, after: int):
+    if _want(list_id):
+        from kometa import wantread
+        seq = [b["id"] for e in wantread.as_list()["entries"] for b in e["books"]]
+        if after not in seq:                                   # finished, so it has left the list: next is its head
+            return {"book_id": seq[0] if seq else None}
+        i = seq.index(after)
+        return {"book_id": seq[i + 1] if i + 1 < len(seq) else None}
     require_visible(list_id)
     nb = next_book(list_id, after)
     return {"book_id": nb}
@@ -911,12 +931,20 @@ def api_next(list_id: int, after: int):
 
 @router.delete("/api/readlists/{list_id}", status_code=204)
 def api_delete(list_id: int):
+    if _want(list_id):
+        raise HTTPException(403, "Want to read stays; take things off it one by one")
     require_owner(list_id)
     delete_list(list_id)
 
 
 @router.delete("/api/readlists/{list_id}/items/{item_id}", status_code=204)
 def api_delete_item(list_id: int, item_id: int):
+    if _want(list_id):                                         # an entry off Want to read (its id is the want's)
+        from kometa import wantread
+        if not any(w["id"] == item_id for w in wantread.items()):
+            raise HTTPException(404, "No such entry in this list")
+        wantread.remove(item_id)
+        return
     require_owner(list_id)
     if not delete_item(list_id, item_id):
         raise HTTPException(404, "No such entry in this list")

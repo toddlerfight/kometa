@@ -283,6 +283,55 @@ def row(path=None, reader_id=None) -> list[dict]:
     return cards
 
 
+# --- Want to read as a reading list (2026-10-26) --------------------------------------
+# The same pile, pinned first on Lists and in the OPDS feed (Panels never saw it): one
+# list per reader, built from row() — the same entries, the same order, the same rule
+# that a finished one leaves. Reserved id: no table row, so nothing to sync by hand.
+WANT_LIST_ID = -1
+WANT_LIST_NAME = "Want to read"
+
+
+def _num_text(n) -> str | None:
+    return None if n is None else (f"{int(n)}" if float(n) == int(n) else f"{n:g}")
+
+
+def as_list(path=None, reader_id=None) -> dict:
+    """The reader's Want to read in a resolved list's shape (readlists.resolve)."""
+    entries = []
+    for i, c in enumerate(row(path, reader_id), 1):
+        e = {"item_id": c["want_id"], "position": i, "series": c["series"], "series_id": c.get("series_id"),
+             "number": _num_text(c.get("number")), "status": "missing", "cover": None, "books": []}
+        if c.get("book_id"):
+            p = c.get("progress")
+            e["status"] = "owned"
+            e["books"] = [{"id": c["book_id"], "number": c.get("number"), "label": c["label"], "page_count": c.get("page_count"),
+                           "progress": {"page": p["page"], "completed": False, "updated_at": p.get("updated_at")} if p else None}]
+        elif c["kind"] == "gap":                                           # an issue not here yet
+            e["cover"] = c["cover"]
+        else:                                                              # a whole run, nothing of it to read yet
+            e["cover"] = f"/api/series/{c['series_id']}/thumbnail"
+        entries.append(e)
+    books = [b for e in entries for b in e["books"]]
+    first = next((b["id"] for b in books), None)
+    return {"id": WANT_LIST_ID, "name": WANT_LIST_NAME, "source": "want", "source_ref": None,
+            "mine": True, "shared": False, "can_share": False, "pinned": True,
+            "entries": entries, "total": len(entries), "owned": sum(1 for e in entries if e["status"] == "owned"),
+            "read": 0, "books": len(books), "books_read": 0,
+            "books_reading": sum(1 for b in books if b["progress"]), "continue": first}
+
+
+def list_card(path=None, reader_id=None) -> dict | None:
+    """Want to read's card on the Lists page — none while it's empty."""
+    res = as_list(path, reader_id)
+    if not res["entries"]:
+        return None
+    first = next((b for e in res["entries"] for b in e["books"]), None)
+    gap = next((e["cover"] for e in res["entries"] if e["cover"]), None)
+    return {k: res[k] for k in ("id", "name", "source", "source_ref", "mine", "shared", "can_share", "pinned",
+                                "total", "owned", "read", "books", "books_read", "books_reading")} | {
+        "entries": res["total"], "cover_book_id": first["id"] if first else None, "cover": None if first else gap}
+
+
 class WantRequest(BaseModel):
     book_id: int | None = None
     series_id: int | None = None
