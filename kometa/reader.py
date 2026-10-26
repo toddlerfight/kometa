@@ -653,10 +653,13 @@ async def _on_share(fn, *a, lane: str = "page", **k):
 
 
 def _known_book(series_id: int, number: float) -> dict | None:
-    """The indexed book for an issue, if it's already been opened (page list known)."""
+    """The indexed book for an issue, if it's already been opened (page list known). A page COUNT
+    alone isn't that: covers and OPDS fill the count in without listing the pages (1,329 rows on
+    2026-10-26), and such a row skipped the open's listing — every page of it failed, 'list index
+    out of range', and the reader sat black (the owner's issue strip, Absolute Martian Manhunter #9)."""
     with db._connect(DB_PATH) as conn:
         r = conn.execute("SELECT id FROM books WHERE tracked_series_id = ? AND number = ? AND page_count > 0 "
-                         "ORDER BY mtime DESC LIMIT 1", (series_id, number)).fetchone()
+                         "AND pages_json IS NOT NULL ORDER BY mtime DESC LIMIT 1", (series_id, number)).fetchone()
     return db.get_book(r["id"], DB_PATH) if r else None
 
 
@@ -724,6 +727,10 @@ async def book_page(book_id: int, page: int, w: int | None = None):
     from kometa.activity import note_reading
     note_reading(book_id)
     book = await run_in_threadpool(_book_or_404, book_id)
+    if not book.get("pages"):
+        # never listed (a count from covers or OPDS isn't a list): list it now, as OPDS's page route does
+        book = await _on_share(ensure_book, book["path"], book.get("tracked_series_id"), book.get("number"),
+                               quick=True, lane="open")
     if not 1 <= page <= (book["page_count"] or 0):
         raise HTTPException(404, "No such page")
     width = _bucket(w)

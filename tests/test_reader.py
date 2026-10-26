@@ -69,6 +69,21 @@ class TestBooks:
         monkeypatch.setattr(rd, "_scan_pages", lambda *a, **k: pytest.fail("rescanned an unchanged file"))
         assert asyncio.run(rd.issue_book(shelf[1], 1.0))["id"] == a["id"]
 
+    def test_a_counted_but_never_listed_book_is_listed_on_open_and_its_pages_render(self, shelf):
+        # covers / OPDS fill page_count without the page list: 1,329 such rows (2026-10-26). Opened by
+        # issue it skipped the listing, and every page failed 'list index out of range' — a black reader
+        b = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        rd._dims_pool.submit(lambda: None).result()
+        with db._connect(shelf[0]) as conn:
+            conn.execute("UPDATE books SET pages_json = NULL WHERE id = ?", (b["id"],))
+        assert not db.get_book(b["id"], shelf[0])["pages"] and db.get_book(b["id"], shelf[0])["page_count"] == 10
+        again = asyncio.run(rd.issue_book(shelf[1], 1.0))
+        assert len(again["pages"]) == 10
+        with db._connect(shelf[0]) as conn:
+            conn.execute("UPDATE books SET pages_json = NULL WHERE id = ?", (b["id"],))
+        r = asyncio.run(rd.book_page(b["id"], 1, 480))                     # straight to a page: listed there too
+        assert r.status_code == 200 and r.body[:2] == b"\xff\xd8"
+
     def test_issue_without_a_file_404s(self, shelf):
         with pytest.raises(HTTPException) as e:
             asyncio.run(rd.issue_book(shelf[1], 2.0))
