@@ -744,6 +744,7 @@ class ProgressRequest(BaseModel):
     page: int
     updated_at: str            # client clock, UTC ISO-8601 'YYYY-MM-DDTHH:MM:SS(.fff)Z'
     completed: bool | None = None
+    list_id: int | None = None   # read from a reading list: Continue reading reopens it with the list (readlists.remember_context)
 
 
 _ISO_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$")
@@ -763,4 +764,8 @@ def put_progress(book_id: int, req: ProgressRequest):
     ok, stored = db.set_progress(current_reader(), book_id, req.page, completed, req.updated_at, DB_PATH)
     if not ok:
         raise HTTPException(409, detail={"error": "stale", "progress": stored})
+    if req.list_id is not None:
+        from kometa import readlists
+        readlists.ensure_tables(DB_PATH)
+        readlists.remember_context(book_id, req.list_id, path=DB_PATH)
     return {"progress": stored}

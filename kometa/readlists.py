@@ -80,6 +80,11 @@ def ensure_tables(path=None):
             conn.execute("ALTER TABLE reading_lists ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
         from kometa.auth import OWNER
         conn.execute("UPDATE reading_lists SET owner = ? WHERE owner IS NULL", (OWNER,))
+        # the list a reader was reading a book from (2026-10-26): Continue reading opens it with the list
+        # around it — the reader's Series/List strip, Up next — not as a loose book
+        conn.execute("""CREATE TABLE IF NOT EXISTS reading_context (
+                            reader_id TEXT NOT NULL, book_id INTEGER NOT NULL, list_id INTEGER NOT NULL,
+                            updated_at TEXT DEFAULT (datetime('now')), PRIMARY KEY (reader_id, book_id))""")
         conn.execute("UPDATE reading_lists SET source = 'imported' WHERE source = 'komga'")     # Komga's gone, its label too
 
 
@@ -186,6 +191,34 @@ def require_owner(list_id: int, path=None):
     require_visible(list_id, path)
     if not owns(list_id, path=path):
         raise HTTPException(403, "That list is shared with you; only its owner can change it")
+
+
+def remember_context(book_id: int, list_id: int, reader: str | None = None, path=None):
+    """This reader is reading this book from this list (their own, a shared one, or Want to read)."""
+    from kometa.wantread import WANT_LIST_ID
+    reader = reader or current_reader()
+    if list_id != WANT_LIST_ID and not visible(list_id, reader, path):
+        return
+    with db._connect(path or DB_PATH) as conn:
+        conn.execute("""INSERT INTO reading_context (reader_id, book_id, list_id, updated_at) VALUES (?, ?, ?, datetime('now'))
+                        ON CONFLICT(reader_id, book_id) DO UPDATE SET list_id = excluded.list_id, updated_at = excluded.updated_at""",
+                     (reader, book_id, list_id))
+
+
+def context_for(book_ids: list[int], reader: str | None = None, path=None) -> dict[int, int]:
+    """book id → the list it's being read from, for the lists the reader can still see."""
+    from kometa.wantread import WANT_LIST_ID
+    reader = reader or current_reader()
+    path = path or DB_PATH
+    if not book_ids:
+        return {}
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        rows = conn.execute(f"""SELECT c.book_id, c.list_id FROM reading_context c LEFT JOIN reading_lists l ON l.id = c.list_id
+                                WHERE c.reader_id = ? AND c.book_id IN ({",".join("?" * len(book_ids))})
+                                  AND (c.list_id = ? OR l.owner = ? OR l.shared = 1)""",
+                            (reader, *book_ids, WANT_LIST_ID, reader)).fetchall()
+    return {r[0]: r[1] for r in rows}
 
 
 def set_shared(list_id: int, shared: bool, path=None):

@@ -85,7 +85,14 @@ def continue_reading(reader_id=None, now=None, path=None) -> list[dict]:
             LEFT JOIN tracked_series t ON t.id = b.tracked_series_id LEFT JOIN shelf_series s ON s.id = b.shelf_series_id
             WHERE p.reader_id = ? AND p.completed = 0 AND p.page > 1 AND p.dismissed = 0 AND p.updated_at >= ? AND b.missing_at IS NULL
             ORDER BY p.updated_at DESC LIMIT ?""", (reader_id, since, ROW_LIMIT)).fetchall()
-        return [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
+        cards = [_card(conn, r, {"page": r["page"], "updated_at": r["updated_at"]}) for r in rows]
+    # the list a book is being read from goes with it: it opens with the list around it
+    from kometa import readlists
+    ctx = readlists.context_for([c["book_id"] for c in cards], reader_id, path)
+    for c in cards:
+        if c["book_id"] in ctx:
+            c["list_id"] = ctx[c["book_id"]]
+    return cards
 
 
 # Every column of books EXCEPT pages_json: the page lists (a few KB per opened

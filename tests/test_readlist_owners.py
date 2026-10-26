@@ -197,3 +197,20 @@ def test_search_and_on_deck_only_see_the_readers_lists(lists, monkeypatch):
         monkeypatch.setattr(related, "_resolved_lists", lambda path: pytest.fail("a reader's rows used the owner's copy"))
         ondeck.list_rows(reader_id=TESTER["id"], path=lists)
         assert len(seen) == 1
+
+
+def test_continue_reading_remembers_the_list_a_book_was_read_from(lists):
+    from kometa import ondeck, reader
+    import kometa.db as db
+    with as_(TESTER):
+        lid = rl.import_cbl(CBL("Mine"), path=lists)
+    with as_(ADMIN):
+        private = rl.import_cbl(CBL("His"), path=lists)
+    rl.ensure_tables(lists)
+    rl.remember_context(7, lid, reader="u-tester", path=lists)
+    rl.remember_context(8, private, reader="u-tester", path=lists)          # not theirs: not remembered
+    rl.remember_context(9, -1, reader="u-tester", path=lists)               # Want to read
+    assert rl.context_for([7, 8, 9], reader="u-tester", path=lists) == {7: lid, 9: -1}
+    with as_(TESTER):
+        rl.api_delete(lid)
+    assert rl.context_for([7], reader="u-tester", path=lists) == {}           # a list gone: no context
