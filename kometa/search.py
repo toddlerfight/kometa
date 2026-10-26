@@ -121,9 +121,13 @@ def issue_jump(q: str, path=None, rows: list[dict] | None = None) -> list[dict]:
 
 def _lists(q: str, path, limit: int) -> list[dict]:
     from kometa import readlists, related
+    from kometa.auth import OWNER, current_reader
     readlists.ensure_tables(path)
+    reader = current_reader()
     with db._connect(path) as conn:
-        rows = [dict(r) for r in conn.execute("SELECT id, name FROM reading_lists")]
+        # the reader's own lists and the owner's shared ones — never another reader's (2026-10-26)
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, name FROM reading_lists WHERE owner = ? OR shared = 1", (reader,))]
     hits = []
     for r in rows:
         rank = _title_rank(norm_key(people.fold(r["name"])), q)
@@ -131,7 +135,8 @@ def _lists(q: str, path, limit: int) -> list[dict]:
             hits.append((rank, r))
     hits.sort(key=lambda t: (t[0], t[1]["name"]))
     warm = {}
-    cached = related._lists_cache.get("value") if related._lists_cache.get("path") == path else None
+    # the warm copy is resolved as the owner: anyone else's hits resolve live
+    cached = related._lists_cache.get("value") if related._lists_cache.get("path") == path and reader == OWNER else None
     for res in cached or []:
         warm[res["id"]] = res
     out = []

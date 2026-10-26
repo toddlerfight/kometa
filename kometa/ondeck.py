@@ -245,12 +245,29 @@ def list_rows(reader_id=None, now=None, path=None, seen: set | None = None) -> l
     gaps are gap cards (the list page is where you deal with them)."""
     reader_id = reader_id or current_reader()
     from kometa.related import _resolved_lists
+    from kometa.auth import OWNER
+    from kometa import readlists
     path = path or DB_PATH
     now = now or datetime.now(timezone.utc)
     since = (now - timedelta(days=LIST_RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     seen = seen if seen is not None else set()
     scored = []
-    for lst in _resolved_lists(path):
+    # the warm copy is every list resolved as the owner — his lists, his progress. Anyone
+    # else: their own lists and the shared ones, resolved with THEIR progress (before
+    # 2026-10-26 a reader's row followed the owner's reading)
+    if reader_id == OWNER:
+        lists = _resolved_lists(path)
+    else:
+        with db._connect(path) as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM reading_lists WHERE owner = ? OR shared = 1", (reader_id,))]
+        lists = []
+        for lid in ids:
+            try:
+                lists.append(readlists.resolve(lid, path))
+            except KeyError:
+                pass
+    for lst in lists:
         last = max((b["progress"]["updated_at"] for e in lst["entries"] for b in e["books"]
                     if b["progress"] and b["progress"].get("updated_at")), default=None)
         if last and last >= since:

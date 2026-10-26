@@ -149,3 +149,49 @@ def test_a_readers_lists_dont_shape_everyones_related_series():
     assert not related._compute_list_neighbours(None, resolved)
     resolved[0]["owner"] = auth.OWNER
     assert related._compute_list_neighbours(None, resolved)[1][2] > 0
+
+
+def test_a_readers_link_must_be_on_github_and_errors_say_nothing_inside(lists, monkeypatch):
+    fetched = []
+    def fake(url, limit, hosts=None):
+        fetched.append((url, hosts))
+        raise ConnectionError("internal-host refused")
+    monkeypatch.setattr(rl, "fetch_public", fake)
+    with as_(TESTER):
+        with pytest.raises(HTTPException) as e:
+            rl.api_import_url(rl.ImportUrlRequest(url="https://evil.example/list.cbl"))
+        assert e.value.status_code == 400 and not fetched
+        with pytest.raises(HTTPException) as e:
+            rl.api_import_url(rl.ImportUrlRequest(url="https://github.com/a/b/blob/main/x.cbl"))
+        assert e.value.detail == "Couldn't fetch that link"                  # not the address it reached
+        assert fetched[-1] == ("https://raw.githubusercontent.com/a/b/main/x.cbl", rl.READER_LINK_HOSTS)
+    with as_(ADMIN):
+        with pytest.raises(HTTPException) as e:
+            rl.api_import_url(rl.ImportUrlRequest(url="https://evil.example/list.cbl"))
+        assert "refused" in e.value.detail and fetched[-1][1] is None       # the owner: any public link, the detail
+
+
+def test_a_redirect_off_github_is_refused():
+    class R:
+        status_code, headers = 302, {"location": "https://evil.example/x.cbl"}
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    class S:
+        def get(self, *a, **k): return R()
+    with pytest.raises(ValueError):
+        rl.fetch_public("https://raw.githubusercontent.com/a/b/main/x.cbl", 1000, session=S(),
+                        resolve=lambda *a, **k: [(0, 0, 0, "", ("140.82.112.3", 443))], hosts=rl.READER_LINK_HOSTS)
+
+
+def test_search_and_on_deck_only_see_the_readers_lists(lists, monkeypatch):
+    from kometa import ondeck, search
+    with as_(ADMIN):
+        rl.import_cbl(CBL("Hellboy private"), path=lists)
+    with as_(TESTER):
+        rl.import_cbl(CBL("Hellboy mine"), path=lists)
+        assert [h["name"] for h in search._lists("hellboy", lists, 10)] == ["Hellboy mine"]
+        seen = []
+        monkeypatch.setattr(rl, "resolve", lambda lid, path=None: seen.append(lid) or {"id": lid, "entries": []})
+        monkeypatch.setattr(related, "_resolved_lists", lambda path: pytest.fail("a reader's rows used the owner's copy"))
+        ondeck.list_rows(reader_id=TESTER["id"], path=lists)
+        assert len(seen) == 1

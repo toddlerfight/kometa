@@ -212,6 +212,8 @@ def events_for(series_id: int, number: float, title: str, year=None, path=None) 
     then the story arcs on its issue record. Nothing fetched. At most EVENT_QUERIES."""
     path = path or DB_PATH
     from kometa import readlists
+    from kometa.auth import OWNER
+    readlists.ensure_tables(path)                      # the owner column, on a DB that predates it
     base = _base(title)
     run_keys = readlists._keys(base)
     run = norm_key(base)
@@ -220,7 +222,8 @@ def events_for(series_id: int, number: float, title: str, year=None, path=None) 
         try:
             items = conn.execute(
                 "SELECT l.name, i.series, i.number, i.volume, i.year FROM reading_list_items i "
-                "JOIN reading_lists l ON l.id = i.list_id ORDER BY l.id").fetchall()
+                "JOIN reading_lists l ON l.id = i.list_id WHERE l.owner = ? OR l.shared = 1 ORDER BY l.id",
+                (OWNER,)).fetchall()         # the owner's lists name events, not a reader's imports
         except Exception:                              # no reading lists table yet: no lists, no events
             items = []
         for it in items:

@@ -951,10 +951,11 @@ def _public_host(host: str, port: int, resolve=None) -> bool:
     return bool(addrs) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addrs)
 
 
-def fetch_public(url: str, max_bytes: int, session=None, resolve=None, hops: int = 3) -> bytes:
+def fetch_public(url: str, max_bytes: int, session=None, resolve=None, hops: int = 3, hosts: set | None = None) -> bytes:
     """GET an https URL on the public internet, at most max_bytes, following at most `hops`
-    redirects — each one checked the same way. The importer used to fetch anything: an
-    internal address answered, and its status and error text came back (a port scanner)."""
+    redirects — each one checked the same way (and against `hosts`, when given). The importer
+    used to fetch anything: an internal address answered, and its status and error text came
+    back (a port scanner)."""
     import requests
     from urllib.parse import urljoin, urlsplit
     session = session or requests
@@ -962,6 +963,8 @@ def fetch_public(url: str, max_bytes: int, session=None, resolve=None, hops: int
         u = urlsplit(url)
         if u.scheme != "https" or not u.hostname:
             raise ValueError("Only https:// links can be imported")
+        if hosts is not None and u.hostname.lower() not in hosts:
+            raise ValueError("Paste a link to a .cbl file on GitHub")
         if not _public_host(u.hostname, u.port or 443, resolve):
             raise ValueError("That address isn't on the public internet")
         with session.get(url, timeout=20, stream=True, allow_redirects=False) as r:
@@ -978,16 +981,29 @@ def fetch_public(url: str, max_bytes: int, session=None, resolve=None, hops: int
     raise ValueError("Too many redirects")
 
 
+# Where a reader's link may point (2026-10-26). fetch_public checks an address and then
+# connects by name again: a DNS server that answers public, then private, gets through
+# in between. That was the owner alone; readers can import now, so their links go to
+# GitHub — where .cbl lists live — whose DNS nobody here controls.
+READER_LINK_HOSTS = {"github.com", "raw.githubusercontent.com", "gist.githubusercontent.com"}
+
+
 @router.post("/api/readlists/import-url")
 def api_import_url(req: ImportUrlRequest):
     """A raw .cbl link — GitHub 'blob' links are rewritten to raw."""
+    from urllib.parse import urlsplit
+    from kometa.auth import is_admin
+    admin = is_admin()
     url = re.sub(r"^https://github\.com/([^/]+/[^/]+)/blob/", r"https://raw.githubusercontent.com/\1/", req.url.strip())
+    if not admin and (urlsplit(url).hostname or "").lower() not in READER_LINK_HOSTS:
+        raise HTTPException(400, "Paste a link to a .cbl file on GitHub")
     try:
-        body = fetch_public(url, MAX_CBL_BYTES)
+        body = fetch_public(url, MAX_CBL_BYTES, hosts=None if admin else READER_LINK_HOSTS)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(400, f"Couldn't fetch that: {e}")
+        # the owner gets the detail; a reader gets no window onto what the server reached
+        raise HTTPException(400, f"Couldn't fetch that: {e}" if admin else "Couldn't fetch that link")
     try:
         lid = import_cbl(body, source_ref=req.url.strip())
     except CblError as e:
