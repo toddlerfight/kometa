@@ -50,10 +50,12 @@ def test_a_reader_sees_their_own_lists_and_the_owners_shared_ones(lists):
         rl.import_cbl(CBL("Tester's own"), path=lists)
         assert names(lists) == ["Owner's shared", "Tester's own"]
         assert {l["name"]: l["mine"] for l in rl.get_lists(lists)} == {"Owner's shared": False, "Tester's own": True}
+        assert not any(l["can_share"] for l in rl.get_lists(lists)) and all("owner" not in l for l in rl.get_lists(lists))
     with as_(OTHER):
         assert names(lists) == ["Owner's shared"]
     with as_(ADMIN):
         assert names(lists) == ["Owner's private", "Owner's shared"]          # a reader's list is theirs, not his
+        assert all(l["can_share"] for l in rl.get_lists(lists))
         assert rl.visible(mine, path=lists)
 
 

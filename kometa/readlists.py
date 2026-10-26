@@ -210,8 +210,12 @@ def get_lists(path=None) -> list[dict]:
         rows = [dict(r) for r in conn.execute(
             "SELECT l.*, (SELECT COUNT(*) FROM reading_list_items i WHERE i.list_id = l.id) AS entries "
             "FROM reading_lists l WHERE l.owner = ? OR l.shared = 1 ORDER BY name", (reader,))]
+    from kometa.auth import is_admin
+    admin = is_admin()
     for r in rows:
-        r["mine"] = r["owner"] == reader
+        r["mine"] = r.pop("owner") == reader                  # whose it is stays on the server
+        r["can_share"] = r["mine"] and admin                  # Share is the owner's, on his own lists
+        r["shared"] = bool(r["shared"])
     # The Because rows keep every list resolved and warm for two minutes
     # (related._resolved_lists, rebuilt by a scheduler job): reuse it instead of
     # resolving nineteen lists live on every open (five seconds a page). A list
@@ -851,7 +855,9 @@ def api_list(list_id: int):
         res = resolve(list_id)
     except KeyError:
         raise HTTPException(404, "No such reading list")
+    from kometa.auth import is_admin
     res["mine"] = res.pop("owner") == current_reader()        # whose it is stays on the server; the app needs only this
+    res["can_share"] = res["mine"] and is_admin()
     return res
 
 
