@@ -356,6 +356,7 @@ def start_get_missing(list_id: int) -> dict:
 # --- API --------------------------------------------------------------------------
 @router.post("/api/readlists/{list_id}/items/{item_id}/get")
 def api_get_entry(list_id: int, item_id: int):
+    readlists.require_owner(list_id)              # Get fills the owner's own lists only (the owner, 2026-10-26)
     try:
         r = get_entry(list_id, item_id)
     except ListGetError as e:
@@ -376,6 +377,7 @@ def api_jobs():
 
 @router.post("/api/readlists/{list_id}/get-missing")
 def api_get_missing(list_id: int):
+    readlists.require_owner(list_id)
     return start_get_missing(list_id)
 
 

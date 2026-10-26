@@ -71,6 +71,15 @@ def ensure_tables(path=None):
             # a rotten URL is cleared by the proxy so the next open asks again
             conn.execute("ALTER TABLE reading_list_items ADD COLUMN cover_checked_at TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_rli_list ON reading_list_items(list_id, position)")
+        # whose list it is (2026-10-26, the owner: lists are per user — testers were seeing his).
+        # Lists from before then are the owner's. `shared`: the owner's list, shown to everyone
+        lcols = [r[1] for r in conn.execute("PRAGMA table_info(reading_lists)")]
+        if "owner" not in lcols:
+            conn.execute("ALTER TABLE reading_lists ADD COLUMN owner TEXT")
+        if "shared" not in lcols:
+            conn.execute("ALTER TABLE reading_lists ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
+        from kometa.auth import OWNER
+        conn.execute("UPDATE reading_lists SET owner = ? WHERE owner IS NULL", (OWNER,))
         conn.execute("UPDATE reading_lists SET source = 'imported' WHERE source = 'komga'")     # Komga's gone, its label too
 
 
@@ -115,22 +124,24 @@ def _forget_resolved():
         pass
 
 
-def save_list(name: str, items: list[dict], source: str, source_ref: str | None, path=None) -> int:
+def save_list(name: str, items: list[dict], source: str, source_ref: str | None, path=None, owner: str | None = None) -> int:
+    """Write a list, the reader's own (`owner`, else whoever is asking). The same name
+    again from the same reader is a re-import: replaced in place, id kept so links to
+    it survive. Another reader's list of that name is theirs, untouched."""
     _forget_resolved()
-    """Write a list. The same name again is a re-import: replaced in place, id
-    kept so links to it survive."""
     path = path or DB_PATH
+    owner = owner or current_reader()
     ensure_tables(path)
     with db._connect(path) as conn:
-        row = conn.execute("SELECT id FROM reading_lists WHERE name = ?", (name,)).fetchone()
+        row = conn.execute("SELECT id FROM reading_lists WHERE name = ? AND owner = ?", (name, owner)).fetchone()
         if row:
             lid = row[0]
             conn.execute("DELETE FROM reading_list_items WHERE list_id = ?", (lid,))
             conn.execute("UPDATE reading_lists SET source = ?, source_ref = ?, created_at = datetime('now') WHERE id = ?",
                          (source, source_ref, lid))
         else:
-            lid = conn.execute("INSERT INTO reading_lists (name, source, source_ref) VALUES (?, ?, ?)",
-                               (name, source, source_ref)).lastrowid
+            lid = conn.execute("INSERT INTO reading_lists (name, source, source_ref, owner) VALUES (?, ?, ?, ?)",
+                               (name, source, source_ref, owner)).lastrowid
         conn.executemany(
             "INSERT INTO reading_list_items (list_id, position, series, number, volume, year, cv_series, cv_issue, file) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -145,27 +156,72 @@ def import_cbl(data: bytes, source_ref: str | None = None, path=None) -> int:
     return save_list(parsed["name"], parsed["items"], "cbl", source_ref, path)
 
 
+# --- whose lists ---------------------------------------------------------------------
+def _list_row(list_id: int, path=None) -> dict | None:
+    path = path or DB_PATH
+    ensure_tables(path)
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT id, owner, shared FROM reading_lists WHERE id = ?", (list_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def visible(list_id: int, reader: str | None = None, path=None) -> bool:
+    """The reader's own list, or one the owner shares with everyone."""
+    r = _list_row(list_id, path)
+    return bool(r) and (r["owner"] == (reader or current_reader()) or bool(r["shared"]))
+
+
+def owns(list_id: int, reader: str | None = None, path=None) -> bool:
+    r = _list_row(list_id, path)
+    return bool(r) and r["owner"] == (reader or current_reader())
+
+
+def require_visible(list_id: int, path=None):
+    """Someone else's list is no list at all: 404, as if it weren't there."""
+    if not visible(list_id, path=path):
+        raise HTTPException(404, "No such reading list")
+
+
+def require_owner(list_id: int, path=None):
+    require_visible(list_id, path)
+    if not owns(list_id, path=path):
+        raise HTTPException(403, "That list is shared with you; only its owner can change it")
+
+
+def set_shared(list_id: int, shared: bool, path=None):
+    _forget_resolved()
+    with db._connect(path or DB_PATH) as conn:
+        conn.execute("UPDATE reading_lists SET shared = ? WHERE id = ?", (1 if shared else 0, list_id))
+
+
 # Lists brought in from elsewhere once (before .cbl import existed) carry source
 # 'imported'; .cbl files carry 'cbl'.
 
 
 def get_lists(path=None) -> list[dict]:
-    """Every list with the card facts: owned/total/read and a cover (the first
-    book on the shelf, in order). Resolved live, same as the list page."""
+    """The reader's lists (their own, and the owner's shared ones) with the card
+    facts: owned/total/read and a cover (the first book on the shelf, in order).
+    Resolved live, same as the list page."""
+    from kometa.auth import OWNER
     path = path or DB_PATH
     ensure_tables(path)
+    reader = current_reader()
     with db._connect(path) as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT l.*, (SELECT COUNT(*) FROM reading_list_items i WHERE i.list_id = l.id) AS entries "
-            "FROM reading_lists l ORDER BY name")]
+            "FROM reading_lists l WHERE l.owner = ? OR l.shared = 1 ORDER BY name", (reader,))]
+    for r in rows:
+        r["mine"] = r["owner"] == reader
     # The Because rows keep every list resolved and warm for two minutes
     # (related._resolved_lists, rebuilt by a scheduler job): reuse it instead of
     # resolving nineteen lists live on every open (five seconds a page). A list
     # read in the last two minutes can show a stale read count that long; an
     # import or delete forgets the cache at once.
+    # The warm copy is resolved as the owner — his read counts. Anyone else's cards
+    # resolve live (a reader has a handful of lists), or they'd show his progress
     try:
         from kometa import related
-        warm = {x["id"]: x for x in related._resolved_lists(path)}
+        warm = {x["id"]: x for x in related._resolved_lists(path)} if reader == OWNER else {}
     except Exception:
         warm = {}
     for r in rows:
@@ -531,7 +587,8 @@ def _trade_index(path) -> dict[str, list[dict]]:
 
 
 def resolve(list_id: int, path=None) -> dict:
-    """The list with every entry resolved to books on the shelf (or not)."""
+    """The list with every entry resolved to books on the shelf (or not). Anyone's:
+    callers answering a reader check `visible` first (the API, OPDS)."""
     path = path or DB_PATH
     ensure_tables(path)
     with db._connect(path) as conn:
@@ -634,6 +691,7 @@ def resolve(list_id: int, path=None) -> dict:
         out.append(entry)
     books = [b for e in out for b in e["books"]]
     return {"id": row["id"], "name": row["name"], "source": row["source"], "source_ref": row["source_ref"],
+            "owner": row["owner"], "shared": bool(row["shared"]),
             "entries": out, "total": len(out), "owned": owned, "read": read,
             # the chips: HAVE/MISSING count entries, READ/READING count books you have
             "books": len(books),
@@ -788,16 +846,33 @@ def api_lists():
 
 @router.get("/api/readlists/{list_id}")
 def api_list(list_id: int):
+    require_visible(list_id)
     try:
-        return resolve(list_id)
+        res = resolve(list_id)
     except KeyError:
         raise HTTPException(404, "No such reading list")
+    res["mine"] = res.pop("owner") == current_reader()        # whose it is stays on the server; the app needs only this
+    return res
+
+
+class ShareRequest(BaseModel):
+    shared: bool
+
+
+@router.patch("/api/readlists/{list_id}")
+def api_share(list_id: int, req: ShareRequest):
+    """The owner shows one of his lists to everyone (read-only for them, their own
+    progress), or takes it back. Admin only (auth): a reader's lists stay theirs."""
+    require_owner(list_id)
+    set_shared(list_id, req.shared)
+    return {"id": list_id, "shared": req.shared}
 
 
 @router.post("/api/readlists/{list_id}/covers")
 def api_fill_covers(list_id: int):
     """Covers for the gaps: ComicVine in one batch now, a slice of Metron now,
     the rest on the next call. The page calls this until 'left' is 0."""
+    require_visible(list_id)
     try:
         return fill_covers(list_id)
     except KeyError:
@@ -807,6 +882,7 @@ def api_fill_covers(list_id: int):
 @router.get("/api/readlists/{list_id}/items/{item_id}/cover")
 def api_item_cover(list_id: int, item_id: int):
     from kometa.thumbnails import _cached_image_response
+    require_visible(list_id)
     with db._connect(DB_PATH) as conn:
         r = conn.execute("SELECT cover_url FROM reading_list_items WHERE id = ? AND list_id = ?", (item_id, list_id)).fetchone()
     if not r or not r[0]:
@@ -822,17 +898,20 @@ def api_item_cover(list_id: int, item_id: int):
 
 @router.get("/api/readlists/{list_id}/next")
 def api_next(list_id: int, after: int):
+    require_visible(list_id)
     nb = next_book(list_id, after)
     return {"book_id": nb}
 
 
 @router.delete("/api/readlists/{list_id}", status_code=204)
 def api_delete(list_id: int):
+    require_owner(list_id)
     delete_list(list_id)
 
 
 @router.delete("/api/readlists/{list_id}/items/{item_id}", status_code=204)
 def api_delete_item(list_id: int, item_id: int):
+    require_owner(list_id)
     if not delete_item(list_id, item_id):
         raise HTTPException(404, "No such entry in this list")
 

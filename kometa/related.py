@@ -331,7 +331,12 @@ def _compute_list_neighbours(path, resolved: list[dict] | None = None) -> dict[i
             resolved = _resolved_lists(path)
         except Exception:
             return out
+    from kometa.auth import OWNER
     for res in resolved:
+        # the owner's lists (and what he shares) say what goes with what — not a reader's
+        # imports: everyone's rows are built off this one map (2026-10-26)
+        if res.get("owner", OWNER) != OWNER and not res.get("shared"):
+            continue
         seq = [(e["position"], e["series_id"]) for e in res["entries"] if e.get("series_id")]
         # A short list is an order: everything on it is related. A long one (the
         # 59-series 'Batman' collection) is a shelf: only true neighbours count,
@@ -535,8 +540,13 @@ def warm_lists(path=None) -> int:
 
 
 def _list_gaps_near(seeds: list[int], path, titles: dict, per_list: int = 4) -> list[dict]:
+    from kometa.auth import OWNER, current_reader
+    reader = current_reader()
     out, seen = [], set()
     for res in _resolved_lists(path):
+        # 'next on {list}': only a list this reader can open — never another reader's name
+        if res.get("owner", OWNER) != reader and not res.get("shared"):
+            continue
         l = {"id": res["id"], "name": res["name"]}
         on_list = {e["series_id"] for e in res["entries"] if e.get("series_id")}
         touching = [sid for sid in seeds if sid in on_list]

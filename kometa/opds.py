@@ -265,6 +265,8 @@ def one_list_feed(list_id: int, path=None) -> str:
     from kometa import readlists
     path = path or DB_PATH
     try:
+        if not readlists.visible(list_id, path=path):        # another reader's list: no such list
+            raise KeyError(list_id)
         res = readlists.resolve(list_id, path)
     except KeyError:
         raise HTTPException(404, "No such list")

@@ -375,13 +375,17 @@ READER_GET = [re.compile(p) for p in (
     r"/api/cover-store/.*", r"/api/cover-upgrade/.*", r"/api/img",
     rf"/api/creators/{_R}", r"/api/discover/.*", r"/api/ondeck(/.*)?", r"/api/trending",
     r"/api/pull-list", r"/api/readlists", rf"/api/readlists/{_R}", rf"/api/readlists/{_R}/next",
-    rf"/api/readlists/{_R}/items/{_R}/cover", r"/api/search", r"/api/search/people",
+    rf"/api/readlists/{_R}/items/{_R}/cover", r"/api/listcatalog", r"/api/search", r"/api/search/people",
     r"/api/wantread(/check)?", r"/api/push/status", rf"/api/trade/{_R}/details", r"/opds(/.*)?",
 )]
 READER_WRITE = [re.compile(p) for p in (
     rf"PUT /api/books/{_R}/(progress|mark)", rf"POST /api/books/{_R}/dismiss", rf"PUT /api/series/{_R}/mark",
     r"POST /api/wantread", rf"DELETE /api/wantread/{_R}", r"POST /api/push/(devices(/forget)?|test)",
     r"(PUT|PATCH|POST|DELETE) /api/me/.*", r"POST /api/auth/logout",
+    # reading lists are per reader (2026-10-26): their own to add and remove — the routes check whose.
+    # Share (PATCH) and Get stay the owner's
+    r"POST /api/readlists/import(-url)?", r"POST /api/listcatalog/import", rf"POST /api/readlists/{_R}/covers",
+    rf"DELETE /api/readlists/{_R}", rf"DELETE /api/readlists/{_R}/items/{_R}",
 )]
 OPEN = [re.compile(p) for p in (r"GET /api/version", r"POST /api/auth/login", r"GET /login")]
 

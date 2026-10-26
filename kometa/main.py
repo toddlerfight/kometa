@@ -382,6 +382,8 @@ from kometa.readlists import router as _readlists_router    # reading lists: CBL
 app.include_router(_readlists_router)
 from kometa.listget import router as _listget_router        # 'Get' on a reading list: track without pulling, request what the list needs
 app.include_router(_listget_router)
+from kometa.listcatalog import router as _listcatalog_router  # the community's .cbl lists (DieselTech), searchable, added as the reader's own
+app.include_router(_listcatalog_router)
 from kometa.proposals import router as _proposals_router    # downloads you confirm before they're placed
 app.include_router(_proposals_router)
 from kometa.related import router as _related_router        # related to this series / suggestions on On Deck
