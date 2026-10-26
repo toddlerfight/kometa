@@ -569,6 +569,23 @@ Spec: docs/accounts-spec.md. Code: kometa/auth.py (gatekeeper, routes, CLI).
   Panels → `enable on` → sign in on the iPad home-screen web app (it shows the sign-in page) → only then expose
   it (Cloudflare tunnel hostname + Access on the web app, never /api or /opds).
 
+## Reading lists are per reader (2026-10-26)
+
+- `reading_lists.owner` (reader id; lists from before are `me`'s) and `shared` (the owner shows one to
+  everyone, read-only for them). A reader sees their own + shared — everywhere a list is read: the API,
+  the OPDS feed, Search's list hits, On Deck's 'Next on {list}' rows and Because-row gaps. Any new code
+  that reads `reading_lists` filters by `owner = current_reader() OR shared = 1`, or checks
+  `readlists.visible()` / `require_visible()` / `require_owner()`. Someone else's list is a 404.
+- The warm resolved copy (`related._resolved_lists`) is every list resolved AS THE OWNER: his progress.
+  Use it for the owner only; a reader's lists resolve live. Related-series neighbours and trade-event
+  names come from the owner's lists (and shared) only.
+- Readers may import (.cbl body, a link, the community catalogue) and delete their own. Share (PATCH)
+  and Get stay admin, and Get only on the owner's own lists (the owner, 2026-10-26: "just mine").
+- A reader's import link must be on GitHub (`READER_LINK_HOSTS`, every redirect hop): `fetch_public`
+  checks the address and then connects by name again, so a rebinding DNS could reach the LAN.
+- Community lists: `kometa/listcatalog.py` — DieselTech/CBL-ReadingLists' ~1,700 .cbl as ONE GitHub
+  tree call a day (`GET /api/listcatalog?q=`), added by a path the index holds (`POST /api/listcatalog/import`).
+
 ## Request guard, path fence, cover fetches (2026-10-17)
 
 The 2026-10-11 security review, closed out. Code: kometa/main.py `_RequestGuard`, kometa/sources.py
