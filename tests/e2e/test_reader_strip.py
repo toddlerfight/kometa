@@ -3,6 +3,20 @@ fixed box and the pages follow it; SERIES / LIST swaps it for the issues around 
 the back is the house chevron; and leaving saves your place BEFORE the view behind reloads."""
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _fresh_progress(app_server):
+    """The server is shared across the suite: a place saved here (the save-order test leaves
+    pages 2–3) opened the next file's reader mid-book."""
+    yield
+    import kometa.db as db
+    with db._connect(app_server["db_path"]) as conn:
+        conn.execute("DELETE FROM read_progress")
+        conn.execute("DELETE FROM reading_context")
+
+
 def _open(app):
     app.set_viewport_size({"width": 1180, "height": 820})          # landscape: two-up, spreads [1] [2,3] [4] [5,6]
     app.locator(".series-card", has_text="Test Comic Alpha").click()
