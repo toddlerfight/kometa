@@ -4227,7 +4227,11 @@ async function _refreshActivity() {
   // we don't freeze on the stale `queued` card and miss the real outcome.
   const pumping = Date.now() < _activityPumpUntil && queue.some(q => q.state === 'queued');
   _paintActClear();
+  // rows only queued still get looked at, slower: a list's Get ended with 23 rows all 'queued',
+  // the poll parked, and the page sat frozen while every one of them downloaded (2026-10-25)
+  const waiting = queue.some(q => q.state === 'queued');
   if (hasActive || pumping || jobs.length) _activityPollTimer = setTimeout(_refreshActivity, 2000);
+  else if (waiting) _activityPollTimer = setTimeout(_refreshActivity, 8000);
 }
 
 // A reading list's Get missing, still going: it says so here, under the title —
