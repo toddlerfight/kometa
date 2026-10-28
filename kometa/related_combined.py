@@ -523,6 +523,7 @@ def _community(path=None) -> dict[int, dict[int, float]]:
 
 _cache = {"at": 0.0, "path": None, "fp": None, "ix": None, "opts": None}
 _lock = threading.Lock()
+_building = threading.Lock()        # one background rebuild at a time (stale-while-revalidate)
 
 
 def _fingerprint(path) -> tuple:
@@ -550,23 +551,48 @@ def _knows(ix: Index, series_id: int) -> bool:
 
 def index(path=None, want: int | None = None) -> Index:
     """The warm index: rebuilt when what it reads has changed, at most every INDEX_TTL_S —
-    or every FRESH_RECHECK_S when asked for a series (`want`) it has nothing on."""
+    or every FRESH_RECHECK_S when asked for a series (`want`) it has nothing on.
+
+    Stale-while-revalidate (2026-10-29): a warm index whose inputs have moved is still SERVED
+    and one background thread rebuilds it (~2.3 s). Before, the request that found the
+    fingerprint moved rebuilt it inline, under the lock, with every other Related / On Deck
+    call queued behind it — and the signals trickle, the record ticks and the overnight CBR
+    pages moved it every few minutes. Only a cold start, or a series the index has nothing on
+    yet (an empty row otherwise), still waits."""
     path = path or DB_PATH
     now = time.time()
     opts = options(path)
     with _lock:
         c = _cache
         same = c["ix"] is not None and c["path"] == path and c.get("opts") == opts
-        ttl = INDEX_TTL_S if want is None or not same or _knows(c["ix"], want) else FRESH_RECHECK_S
+        known = same and (want is None or _knows(c["ix"], want))
+        ttl = INDEX_TTL_S if not same or known else FRESH_RECHECK_S
         if same and now - c["at"] < ttl:
             return c["ix"]
         fp = _fingerprint(path)
         if same and c["fp"] == fp:
             c["at"] = now
             return c["ix"]
+        if known:                                     # moved, but warm: serve this one, rebuild behind
+            c["at"] = now                             # ...and don't re-fingerprint on every call meanwhile
+            if _building.acquire(blocking=False):
+                threading.Thread(target=_rebuild, args=(path, opts, fp), name="related-rebuild", daemon=True).start()
+            return c["ix"]
         ix = build_index(path, opts)
         c.update(at=now, path=path, fp=fp, ix=ix, opts=opts)
         return ix
+
+
+def _rebuild(path, opts, fp) -> None:
+    """The background half of index(): build outside the lock, swap under it. Holds _building."""
+    try:
+        ix = build_index(path, opts)
+        with _lock:
+            _cache.update(at=time.time(), path=path, fp=fp, ix=ix, opts=opts)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Related index rebuild failed: {e}")
+    finally:
+        _building.release()
 
 
 def prewarm(path=None) -> threading.Thread | None:

@@ -114,83 +114,8 @@ def init_db(path=DB_PATH):
 
         """)
     _migrate(path)
-    _drop_komga(path)
     _seed_defaults(path)
 
-
-# Komga, retired 2026-10-12, removed from the schema 2026-10-16: its columns
-# (tracked_series.komga_series_id, issue_status / arc_issues.komga_book_id), its
-# version table and its config keys (a stored password among them).
-_KOMGA_CONFIG = ("komga_url", "komga_user", "komga_pass", "komga_library_id", "komga_enabled")
-
-
-def _rebuild_table(conn, table: str, edit) -> None:
-    """SQLite's documented rebuild: new table from the edited CREATE, copy, drop,
-    rename, indexes back. Keeps the AUTOINCREMENT counter — it runs ahead of the
-    highest id (deleted rows), and resetting it would let new rows reuse ids that
-    other tables may still point at."""
-    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()[0]
-    new = edit(ddl)
-    new = re.sub(r'^\s*CREATE TABLE\s+(?:IF NOT EXISTS\s+)?"?' + table + r'"?', f'CREATE TABLE "{table}__new"', new, count=1)
-    indexes = [r[0] for r in conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", (table,))]
-    seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
-    conn.execute(new)
-    cols = ", ".join(f'"{r[1]}"' for r in conn.execute(f'PRAGMA table_info("{table}__new")'))
-    conn.execute(f'INSERT INTO "{table}__new" ({cols}) SELECT {cols} FROM "{table}"')
-    conn.execute(f'DROP TABLE "{table}"')
-    conn.execute(f'ALTER TABLE "{table}__new" RENAME TO "{table}"')
-    for sql in indexes:
-        conn.execute(sql)
-    if seq:
-        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (seq[0], table))
-
-
-def _drop_komga(path=DB_PATH) -> bool:
-    """Take Komga out of the schema, once, atomically. Its own connection with an
-    explicit transaction (the pooled one opens transactions implicitly), and foreign
-    keys off for the rebuild. Also fixes issue_status's REFERENCES "_ts_old": the
-    scar of the old rebuild that made komga_series_id nullable."""
-    conn = sqlite3.connect(path, timeout=30, isolation_level=None)
-    try:
-        ddl = {r[0]: r[1] or "" for r in conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")}
-        cols = lambda t: [r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')]
-        todo_ts = "komga_series_id" in cols("tracked_series")
-        todo_is = "komga_book_id" in cols("issue_status") or "_ts_old" in ddl.get("issue_status", "")
-        todo_ai = "arc_issues" in ddl and "komga_book_id" in cols("arc_issues")
-        todo_tbl = "komga_book_version" in ddl
-        todo_cfg = "config" in ddl and conn.execute(
-            f"SELECT 1 FROM config WHERE key IN ({','.join('?' * len(_KOMGA_CONFIG))})", _KOMGA_CONFIG).fetchone()
-        if not (todo_ts or todo_is or todo_ai or todo_tbl or todo_cfg):
-            return False
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            drop_book_id = lambda d: re.sub(r"\bkomga_book_id\s+TEXT\s*,\s*", "", d)
-            if todo_is:
-                _rebuild_table(conn, "issue_status", lambda d: re.sub(
-                    r'REFERENCES\s+"?_ts_old2?"?\s*\(id\)', "REFERENCES tracked_series(id)", drop_book_id(d)))
-            if todo_ai:
-                _rebuild_table(conn, "arc_issues", drop_book_id)
-            if todo_ts:
-                _rebuild_table(conn, "tracked_series", lambda d: re.sub(
-                    r"(\bmetron_series_id\s+INTEGER)\s+NOT NULL", r"\1",
-                    re.sub(r"\bkomga_series_id\s+TEXT[^,]*,\s*", "", d)))
-            if todo_tbl:
-                conn.execute("DROP TABLE komga_book_version")
-            if todo_cfg:
-                conn.execute(f"DELETE FROM config WHERE key IN ({','.join('?' * len(_KOMGA_CONFIG))})", _KOMGA_CONFIG)
-            left = [n for n, s in conn.execute("SELECT name, sql FROM sqlite_master WHERE sql LIKE '%komga%'")]
-            if left:
-                raise sqlite3.DatabaseError(f"Komga still in the schema after the rebuild: {left}")
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        logger.info("Komga removed from the schema (columns, version table, config keys)")
-        return True
-    finally:
-        conn.close()
 
 
 def once_per_db(fn):

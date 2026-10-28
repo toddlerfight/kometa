@@ -85,7 +85,6 @@ def ensure_tables(path=None):
         conn.execute("""CREATE TABLE IF NOT EXISTS reading_context (
                             reader_id TEXT NOT NULL, book_id INTEGER NOT NULL, list_id INTEGER NOT NULL,
                             updated_at TEXT DEFAULT (datetime('now')), PRIMARY KEY (reader_id, book_id))""")
-        conn.execute("UPDATE reading_lists SET source = 'imported' WHERE source = 'komga'")     # Komga's gone, its label too
 
 
 class CblError(ValueError):

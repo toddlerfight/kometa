@@ -2217,6 +2217,7 @@ function _personPick(p) {
 // --- Series Detail ---
 
 let _detailSeries = null;
+let _detailBg = { id: null, url: null };     // the series page's backdrop, one per series visit
 let _pendingIssueOpen = null;   // {seriesId, number} — open this issue once its run renders
 
 // FALLBACK ONLY — arc tiles call the real showIssueModal directly now (same
@@ -2678,10 +2679,12 @@ async function renderSeriesDetail(id) {
   const _covers = (s.issues || []).map(i =>
     i.owned ? bookThumb(i)
       : _metronArt(i) || `/api/series/${s.id}/issues/${i.number}/thumbnail`);
-  const _bg = _covers.length
-    ? _covers[Math.floor(Math.random() * _covers.length)]
-    : `/api/series/${s.id}/thumbnail`;
-  seriesBgImg.style.backgroundImage = `url("${_bg}")`;
+  // one backdrop per visit: rolled when the series changes, kept across tab clicks and live
+  // repaints (each of those downloaded and swapped in a fresh cover, 2026-10-29)
+  if (_detailBg.id !== s.id || !_covers.includes(_detailBg.url) && _covers.length) {
+    _detailBg = { id: s.id, url: _covers.length ? _covers[Math.floor(Math.random() * _covers.length)] : `/api/series/${s.id}/thumbnail` };
+  }
+  seriesBgImg.style.backgroundImage = `url("${_detailBg.url}")`;
   seriesBg.classList.remove('hidden');
 
   document.getElementById('topbar-title').textContent = s.title;
@@ -6117,11 +6120,15 @@ function _parseHash() {
 // quietly (the reader's back-to-the-page path: same scroll, no 'Loading'), never under a
 // window or while you're typing.
 const LIVE_MS = 10000;
+// Each view watches only the stamps for what it shows (2026-10-29): a page turn on another
+// device moves `progress`, which only On Deck's Continue reading row shows — before, one
+// stamp covered everything and a series page repainted itself (three fetches, the grid, a
+// fresh backdrop) every 10 s for the whole of someone's reading session.
 const _LIVE = {
-  'series-detail': () => renderSeriesDetail(currentParams.id),
-  ondeck: () => renderOnDeck(),
-  library: () => _loadBrowsePage(),
-  'pull-list': () => _renderPullListContent(),
+  'series-detail': { watch: ['queue', 'books', 'owned', 'done'], paint: () => renderSeriesDetail(currentParams.id) },
+  ondeck: { watch: ['queue', 'books', 'owned', 'progress'], paint: () => renderOnDeck() },
+  library: { watch: ['books', 'owned', 'done'], paint: () => _loadBrowsePage() },
+  'pull-list': { watch: ['queue', 'owned'], paint: () => _renderPullListContent() },
 };
 let _live = { key: null, stamp: null };
 async function _liveTick() {
@@ -6130,13 +6137,16 @@ async function _liveTick() {
   if (!document.getElementById('modal')?.classList.contains('hidden')) return;
   if (document.activeElement?.matches('input, textarea, select')) return;
   let stamp;
-  try { stamp = (await api.get('/api/changes')).stamp; } catch { return; }
+  try {
+    const c = await api.get('/api/changes');
+    stamp = _LIVE[currentView].watch.map(k => c[k]).join('#');
+  } catch { return; }
   const moved = _live.key === key && _live.stamp !== null && stamp !== _live.stamp;
   _live = { key, stamp };
   if (!moved) return;
   const gen = _vt.gen;
   _vt.quiet = { gen, y: _appScrollTop() };
-  try { await _LIVE[currentView](); } catch {} finally { if (_vt.quiet?.gen === gen) _vt.quiet = null; }
+  try { await _LIVE[currentView].paint(); } catch {} finally { if (_vt.quiet?.gen === gen) _vt.quiet = null; }
 }
 setInterval(_liveTick, LIVE_MS);
 

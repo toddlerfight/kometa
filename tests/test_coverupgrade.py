@@ -1,10 +1,24 @@
 """A bigger stored copy of the same cover stands in for the small one on screen
 (kometa/coverupgrade.py). Offline: hand-drawn JPEGs, a throwaway store."""
+import io
+
 import pytest
+from PIL import Image, ImageDraw
 
 import kometa.db as db
 from kometa import coverupgrade, images, thumbnails
-from tests.test_marveldc import _jpeg
+
+
+def _jpeg(seed: int, size=(300, 450)) -> bytes:
+    im = Image.new("RGB", size, (20, 20, 20))
+    d = ImageDraw.Draw(im)
+    w, h = size
+    for i in range(6):
+        k = (seed * 7 + i * 13) % 10
+        d.rectangle([w * k // 12, h * i // 6, w * (k + 2) // 12, h * (i + 1) // 6], fill=(240, 240, 240))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -76,18 +90,6 @@ def test_a_textless_or_redressed_printing_is_not_the_same_image(store):
     _put(store, "issue/10/1/marveldc", logo_big, "marveldc")
     assert coverupgrade.link(10, 1.0, "issue/10/1/marveldc", logo_big, store) == ["issue/10/1/main"]
 
-
-def test_marvel_rejudges_old_not_bigger_skips_once(db_path):
-    import kometa.record as rec
-    from kometa import marveldc
-    sid = db.add_series(title="X", publisher="Marvel", folder_path=None, path=db_path)
-    db.upsert_issue_status(sid, 1.0, None, 1, metron_issue_id=1, path=db_path)
-    rec.write_issue(sid, 1.0, {"desc": "d", "extra": {"marveldc": {"images": [
-        {"url": "u1", "status": "smaller"}, {"url": "u2", "status": "kept"}]}}}, "metron", "full", {"metron_issue_id": 1}, db_path)
-    assert marveldc.rejudge_once(db_path) == 1
-    imgs = rec.get_issue(sid, 1.0, db_path)["extra"]["marveldc"]["images"]
-    assert [i["status"] for i in imgs] == ["pending", "kept"]
-    assert marveldc.rejudge_once(db_path) == 0
 
 
 def test_a_footer_strip_is_not_the_same_image(store):

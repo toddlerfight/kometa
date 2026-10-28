@@ -396,8 +396,6 @@ from kometa.harvest import router as _harvest_router        # the library harves
 app.include_router(_harvest_router)
 from kometa.coververify import router as _coververify_router  # which issue is this file, really? ask the cover
 app.include_router(_coververify_router)
-from kometa.marveldc import router as _marveldc_router      # what the night's Marvel.com run brought back
-app.include_router(_marveldc_router)
 from kometa.cbr_people import router as _cbr_people_router  # readers like you: CBR's critics + readers, and what they rate
 app.include_router(_cbr_people_router)
 from kometa.opds import router as _opds_router              # OPDS 1.2 + PSE for Panels & co
@@ -1030,10 +1028,8 @@ class ConfigRequest(BaseModel):
     fandom_download:    str | None = None   # "1"/"0" — and their images downloaded (default off)
     hardcover_token:    str | None = None   # Hardcover API token (read:catalog)
     hardcover_enabled:  str | None = None   # "1"/"0" — Hardcover book ratings
-    marveldc_enabled:   str | None = None   # "1"/"0" — Marvel.com print covers, overnight
-    marveldc_hours:     str | None = None   # "23-7": the local hours it may run in (wraps midnight)
     cbr_people_enabled: str | None = None   # "1"/"0" — ComicBookRoundup's critics + readers, overnight
-    cbr_people_hours:   str | None = None   # "23-7", same rules as marveldc_hours
+    cbr_people_hours:   str | None = None   # "23-7": the local hours it may run in (wraps midnight)
     push_enabled:       str | None = None   # "1"/"0" — notify YondeB when a download lands
     push_scope:         str | None = None   # "pull" (pull-list series only) | "all"
     apns_key_id:        str | None = None   # the .p8's key id; the key itself sits in data/apns/
@@ -1065,11 +1061,6 @@ def update_config(req: ConfigRequest):
             check_comics_root(updates["comics_root"])
         except OutsideLibrary as e:
             raise HTTPException(422, str(e))
-    if "marveldc_hours" in updates:
-        from kometa.marveldc import valid_hours
-        if not valid_hours(updates["marveldc_hours"]):
-            raise HTTPException(400, "hours are two numbers 0-23, e.g. 23-7")
-        updates["marveldc_hours"] = updates["marveldc_hours"].replace(" ", "")
     if "cbr_people_hours" in updates:
         from kometa.marveldc import valid_hours
         if not valid_hours(updates["cbr_people_hours"]):
@@ -2329,12 +2320,18 @@ def changes():
     download landing (the queue), a file arriving (books), an issue becoming owned, a
     place kept on another device. The pages poll it and repaint only when it moves —
     Buffy's page sat still after its pull list went on (the owner, 2026-10-18)."""
+    # One stamp per thing a page can show, so a page only repaints for what it shows (2026-10-29):
+    # a page turn on the iPad moves `progress` (On Deck's Continue reading) but not `done` (the
+    # series page's and the Library's read marks) — before, one stamp moved with every turn and
+    # every open web view repainted itself, backdrop and all, every 10 s while anyone read.
     with db._connect(DB_PATH) as conn:
         q = conn.execute("SELECT COUNT(*), MAX(updated_at) FROM download_queue").fetchone()
         b = conn.execute("SELECT COUNT(*), MAX(id) FROM books").fetchone()
         o = conn.execute("SELECT SUM(owned) FROM issue_status").fetchone()
         p = conn.execute("SELECT COUNT(*), MAX(updated_at) FROM read_progress").fetchone()
-    return {"stamp": "|".join(str(x) for x in (*q, *b, *o, *p))}
+        d = conn.execute("SELECT COUNT(*), MAX(updated_at) FROM read_progress WHERE completed = 1").fetchone()
+    j = lambda *xs: "|".join(str(x) for x in xs)
+    return {"stamp": j(*q, *b, *o, *p), "queue": j(*q), "books": j(*b), "owned": j(*o), "progress": j(*p), "done": j(*d)}
 
 
 @app.get("/api/queue/summary")

@@ -18,7 +18,7 @@ def a(db_path, monkeypatch):
     monkeypatch.setattr(marks, "DB_PATH", db_path)
     auth._ready.clear()
     auth._seen.clear()
-    auth._basic_seen.clear()
+    auth._basic_seen.clear(); auth._basic_bad.clear()
     monkeypatch.setattr(auth, "FAIL_PAUSE", 0)                    # the failed-login pause
     monkeypatch.setattr(auth, "_ENABLED_TTL", 0)                  # the switch bites at once in tests
     auth._fails.clear()
@@ -465,3 +465,39 @@ def test_users_list_carries_each_readers_reading(a, series):
     auth.create_user("jotham", "secret99", "reader", a)
     rows = {r["username"]: r for r in c.get("/api/users").json()}
     assert rows["jotham"]["reading"] == {"last": None, "in_progress": 0, "finished": 0, "push": []}
+
+
+def test_basic_guessing_is_throttled_like_the_login_route(a, monkeypatch):
+    """OPDS is on the public address too: wrong Basic pairs count against the name and the
+    address, a locked one gets 429 without scrypt, and the same wrong pair sent again by a
+    retrying app is answered from memory (one miss counted, one scrypt run)."""
+    auth.create_user("tess", "secret99", "reader", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    runs = []
+    real = auth.user_for_password
+    monkeypatch.setattr(auth, "user_for_password", lambda u, p, path=None: runs.append(u) or real(u, p, path))
+    b = lambda pw: {"Authorization": "Basic " + base64.b64encode(f"tess:{pw}".encode()).decode(), **_ip("1.2.3.4")}
+    assert c.get("/opds", headers=b("wrong")).status_code == 401
+    assert c.get("/opds", headers=b("wrong")).status_code == 401       # the same pair: remembered, not re-run
+    assert len(runs) == 1
+    for i in range(auth.FAIL_FREE - 1):
+        assert c.get("/opds", headers=b(f"wrong{i}")).status_code == 401
+    r = c.get("/opds", headers=b("secret99"))
+    assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1    # locked: even the right password waits
+    n = len(runs)
+    assert c.get("/opds", headers=b("secret99")).status_code == 429 and len(runs) == n   # and scrypt never ran
+    # the name is locked for the login route too, and from anywhere
+    right = "secret99"
+    assert c.post("/api/auth/login", json={"username": "tess", "password": right}, headers=_ip("9.9.9.9")).status_code == 429
+
+
+def test_a_right_basic_pair_clears_the_count(a):
+    auth.create_user("tess", "secret99", "reader", a)
+    db.set_config({"auth_enabled": "1"}, a)
+    c = TestClient(_app())
+    b = lambda pw: {"Authorization": "Basic " + base64.b64encode(f"tess:{pw}".encode()).decode(), **_ip("1.2.3.4")}
+    for i in range(auth.FAIL_FREE - 1):
+        assert c.get("/opds", headers=b(f"wrong{i}")).status_code == 401
+    assert c.get("/opds", headers=b("secret99")).status_code == 200
+    assert auth.locked_for("tess", "1.2.3.4") == 0

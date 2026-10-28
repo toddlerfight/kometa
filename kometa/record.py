@@ -103,10 +103,6 @@ def ensure_tables(path=None):
             label TEXT, kind TEXT, at TEXT,
             PRIMARY KEY (tracked_series_id, source, key))""")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_series_tags_key ON series_tags(key)")
-        # Rows Komga harvested were its read of the files' ComicInfo — the same provenance
-        # as 'comicinfo', and treated the same everywhere. Komga is gone; so is its label.
-        conn.execute("UPDATE series_record SET source = 'comicinfo' WHERE source = 'komga'")
-        conn.execute("UPDATE issue_record SET source = 'comicinfo' WHERE source = 'komga'")
         # Re-derived from genres_json on every start, so a change to the vocabulary
         # re-keys them; genres_json stays the files' own record.
         conn.execute("DELETE FROM series_tags WHERE source = 'comicinfo'")

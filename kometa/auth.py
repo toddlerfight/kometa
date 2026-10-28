@@ -244,7 +244,7 @@ def revoke_all(user_id: str, path=None) -> None:
     with db._connect(path or DB_PATH) as conn:
         conn.execute("DELETE FROM auth_tokens WHERE user_id = ?", (user_id,))
     _seen.clear()
-    _basic_seen.clear()              # an OPDS app on the old password stops at once, not in a minute
+    _basic_seen.clear(); _basic_bad.clear()              # an OPDS app on the old password stops at once, not in a minute
 
 
 # A token is checked against the DB on EVERY request — an indexed read on a kept-open
@@ -318,22 +318,46 @@ def user_for_password(username: str, password: str, path=None) -> dict | None:
 
 
 # Basic auth: OPDS apps send it on every request, and scrypt is ~50 ms by design.
-# Remember a good (user, password) pair for a minute, keyed by its hash.
+# Remember a good (user, password) pair for a minute, keyed by its hash — and a BAD one too,
+# so an OPDS app retrying a stale password doesn't run scrypt (or count a miss) per request.
+# Basic is on the public address like the login route, and until 2026-10-29 it was outside the
+# throttle: unbounded guessing against every account, each guess a scrypt on a worker.
 _basic_seen: dict[str, tuple[float, dict]] = {}
+_basic_bad: dict[str, float] = {}
 
 
-def _user_for_basic(header: str, path=None) -> dict | None:
+class Throttled(Exception):
+    """A locked name or address: the gate answers 429 and never reaches scrypt."""
+    def __init__(self, wait: int):
+        super().__init__(wait)
+        self.wait = wait
+
+
+def _user_for_basic(header: str, ip: str = "?", path=None) -> dict | None:
     try:
         username, _, password = base64.b64decode(header).decode().partition(":")
     except (ValueError, UnicodeDecodeError):
         return None
     k = hashlib.sha256(header.encode()).hexdigest()
+    now = time.monotonic()
     hit = _basic_seen.get(k)
-    if hit and time.monotonic() - hit[0] < _TOKEN_TTL:
+    if hit and now - hit[0] < _TOKEN_TTL:
         return hit[1]
+    if now - _basic_bad.get(k, -_TOKEN_TTL) < _TOKEN_TTL:
+        return None                                   # the same wrong pair again: already counted
+    wait = locked_for(username, ip)
+    if wait:
+        raise Throttled(wait)
     u = user_for_password(username, password, path)
     if u:
-        _basic_seen[k] = (time.monotonic(), u)
+        _basic_seen[k] = (now, u)
+        clear_failures(username, ip)
+    else:
+        _basic_bad[k] = now
+        note_failure(username, ip)
+        if len(_basic_bad) > 10000:
+            for key in list(_basic_bad)[:5000]:
+                _basic_bad.pop(key, None)
     return u
 
 
@@ -437,7 +461,10 @@ class AuthGate:
             finally:
                 _CURRENT.reset(tok)
         method, path = scope["method"], scope.get("path", "")
-        user = await run_in_threadpool(self.identify, scope)    # a DB read: never on the event loop
+        try:
+            user = await run_in_threadpool(self.identify, scope)    # a DB read: never on the event loop
+        except Throttled as t:
+            return await self.refuse(scope, send, 429, wait=t.wait)
         tok = _CURRENT.set(user or ANONYMOUS)                  # never the admin by default once this is on
         try:
             if user is None and not _is_open(method, path):
@@ -461,7 +488,9 @@ class AuthGate:
         if a[:7].lower() == "bearer ":
             return user_for_token(a[7:].strip())
         if a[:6].lower() == "basic ":
-            return _user_for_basic(a[6:].strip())
+            client = scope.get("client")
+            ip = headers.get("cf-connecting-ip") or (client[0] if client else "?")
+            return _user_for_basic(a[6:].strip(), ip)
         c = SimpleCookie()
         try:
             c.load(headers.get("cookie", ""))
@@ -478,9 +507,12 @@ class AuthGate:
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
-    async def refuse(scope, send, code: int):
+    async def refuse(scope, send, code: int, wait: int | None = None):
         path = scope.get("path", "")
-        if path.startswith("/opds"):
+        if code == 429:                                        # a locked name or address (Basic)
+            body = json.dumps({"detail": "Too many tries — wait a bit"}).encode()
+            ctype, extra = b"application/json", [(b"retry-after", str(wait or 1).encode())]
+        elif path.startswith("/opds"):
             body, ctype = b"Sign in to this Kometa", b"text/plain; charset=utf-8"
             extra = [(b"www-authenticate", b'Basic realm="Kometa", charset="UTF-8"')] if code == 401 else []
         elif path.startswith("/api/"):
@@ -695,7 +727,7 @@ def users_change(user_id: str, req: UserChange):
     if req.disabled:
         revoke_all(user_id)
     _seen.clear()
-    _basic_seen.clear()
+    _basic_seen.clear(); _basic_bad.clear()
     return _public(get_user(user_id))
 
 
@@ -709,7 +741,7 @@ def users_delete(user_id: str):
     revoke_all(user_id)
     with db._connect(DB_PATH) as conn:
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    _basic_seen.clear()
+    _basic_seen.clear(); _basic_bad.clear()
     return {"ok": True}
 
 
