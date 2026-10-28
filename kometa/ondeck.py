@@ -205,7 +205,10 @@ def _one_per_series(conn, rows, **field) -> list[dict]:
         if key[1] is None or key in seen:
             continue
         seen.add(key)
-        out.append(_card(conn, r, None, **{k: r[v] for k, v in field.items()}))
+        # the card carries your place in it (a read one comes out dimmed and ticked), when the row has one
+        prog = ({"page": r["page"], "completed": bool(r["completed"]), "updated_at": r["updated_at"]}
+                if r["page"] is not None else None)
+        out.append(_card(conn, r, prog, **{k: r[v] for k, v in field.items()}))
         if len(out) >= ROW_LIMIT:
             break
     return out
@@ -214,29 +217,31 @@ def _one_per_series(conn, rows, **field) -> list[dict]:
 def recent_added(reader_id=None, path=None) -> list[dict]:
     """What landed on the shelf lately, by the FILE's own timestamp (the index
     date lies: the whole shelf was indexed this week). One card per series,
-    its newest file, unread only — seven Deadly Duo issues in a night is one card."""
+    its newest file — seven Deadly Duo issues in a night is one card. Read ones
+    stay, wearing their progress: it's what's new, not what's left (the owner,
+    2026-10-28 — finishing one made it vanish from under you)."""
     reader_id = reader_id or current_reader()
     path = path or DB_PATH
     with db._connect(path) as conn:
         rows = conn.execute("""
-            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.completed FROM books b
+            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, p.page, p.completed, p.updated_at FROM books b
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-            WHERE COALESCE(p.completed, 0) = 0 AND b.missing_at IS NULL
+            WHERE b.missing_at IS NULL
             ORDER BY b.mtime DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
         return _one_per_series(conn, rows, mtime="mtime")
 
 
 def recent_released(reader_id=None, path=None) -> list[dict]:
     """Owned issues by RELEASE date (the catalogue's store date), newest first,
-    unread only, one card per series. What came out lately that you have."""
+    one card per series, read or not (see recent_added). What came out lately that you have."""
     reader_id = reader_id or current_reader()
     path = path or DB_PATH
     with db._connect(path) as conn:
         rows = conn.execute("""
-            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, i.store_date, p.completed FROM issue_status i
+            SELECT b.id, b.path, b.size, b.mtime, b.page_count, b.tracked_series_id, b.number, b.added_at, b.shelf_series_id, b.missing_at, i.store_date, p.page, p.completed, p.updated_at FROM issue_status i
             JOIN books b ON b.tracked_series_id = i.tracked_series_id AND b.number = i.number
             LEFT JOIN read_progress p ON p.book_id = b.id AND p.reader_id = ?
-            WHERE i.owned = 1 AND i.store_date IS NOT NULL AND COALESCE(p.completed, 0) = 0 AND b.missing_at IS NULL
+            WHERE i.owned = 1 AND i.store_date IS NOT NULL AND b.missing_at IS NULL
             ORDER BY i.store_date DESC, b.number DESC LIMIT 400""", (reader_id,)).fetchall()
         return _one_per_series(conn, rows, store_date="store_date")
 
