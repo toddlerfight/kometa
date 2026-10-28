@@ -193,21 +193,31 @@ class _Book:
             self._rar.close()
 
 
-def _scan_pages(path: str, version: str, dims: bool = True) -> list[list]:
+def _scan_pages(path: str, version: str, dims: bool = True, keep=None) -> list[list]:
     """[[entry_name, width, height], ...] in reading order. Dimensions come from
     the image header only (Pillow opens lazily) — the reader uses them to show a
     wide spread on its own. dims=False lists the entries alone (0, 0): one read
-    of the archive's directory instead of one per page, and a CBR isn't unpacked."""
+    of the archive's directory instead of one per page, and a CBR isn't unpacked.
+    keep(index, raw): read each page whole and hand it over (the background size pass
+    keeps them as the pages' local copies)."""
     bk = _Book(path, version, whole=dims)
     try:
         if not dims:
             return [[name, 0, 0] for name in bk.names()]
+        keep = keep if keep and not bk._dir else None          # an unpacked CBR is local already
         pages = []
-        for name in bk.names():
+        for i, name in enumerate(bk.names()):
             w = h = 0
             try:
-                with bk.open(name) as fh, Image.open(fh) as im:
-                    w, h = im.size
+                if keep:
+                    with bk.open(name) as fh:
+                        raw = fh.read()
+                    keep(i, raw)
+                    with Image.open(io.BytesIO(raw)) as im:
+                        w, h = im.size
+                else:
+                    with bk.open(name) as fh, Image.open(fh) as im:
+                        w, h = im.size
             except Exception:
                 pass                # unreadable header: still a page slot, size unknown
             pages.append([name, w, h])
@@ -239,7 +249,12 @@ def _fill_dims_later(path: str, size, mtime):
 
     def run():
         try:
-            pages = _scan_pages(path, _version(size, mtime))
+            ver = _version(size, mtime)
+            row = db.get_book_by_path(path, DB_PATH)
+            # this pass reads every page off the share anyway (4 MB reads, end to end): keep them,
+            # so it's the book's ONE trip over NFS instead of the first of two (2026-10-29)
+            keep = (lambda i, raw: _keep_master(row["id"], ver, i, raw)) if row else None
+            pages = _scan_pages(path, ver, keep=keep)
             cur = db.get_book_by_path(path, DB_PATH)
             if pages and cur and cur["size"] == size and cur["mtime"] == mtime:
                 db.upsert_book(path, size, mtime, pages, path=DB_PATH)
@@ -314,15 +329,59 @@ def _encode(im, width: int) -> bytes:
     return buf.getvalue()
 
 
-def _render_from(bk: "_Book", book: dict, index: int, width: int) -> bytes:
-    name = book["pages"][index][0]
-    with bk.open(name) as fh, Image.open(fh) as im:
+def _render_bytes(raw: bytes, width: int) -> bytes:
+    with Image.open(io.BytesIO(raw)) as im:
         _draft(im, width)
         im.load()
         return _encode(im, width)
 
 
+def _master_path(book_id: int, version: str, index: int) -> str:
+    """The page as it sits in the archive, kept beside its rendered sizes (2026-10-29). Every
+    width bucket was its own pull from the share: turn the iPad, flip 1-up/2-up, scrub the strip,
+    and the same page came off NFS again for each. Now the share is read once per page; every
+    other size renders from here. In the book's own folder, so the cache cap evicts it with them."""
+    return os.path.join(PAGE_CACHE_DIR, str(book_id), version, f"{index + 1}.src")
+
+
+def _master(book: dict, index: int) -> bytes | None:
+    try:
+        with open(_master_path(book["id"], _version(book["size"], book["mtime"]), index), "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _keep_master(book_id: int, version: str, index: int, raw: bytes) -> None:
+    mp = _master_path(book_id, version, index)
+    if not os.path.exists(mp):
+        try:
+            _write_cached(mp, raw)
+        except OSError as e:
+            logger.info(f"Reader: page {index + 1} of book {book_id} not kept: {e}")
+
+
+def _raw_from(bk: "_Book", book: dict, index: int) -> bytes:
+    """The page's bytes: the kept copy if there is one, else out of the archive (and kept —
+    unless the archive is an unpacked CBR, already on local disk)."""
+    raw = _master(book, index)
+    if raw is not None:
+        return raw
+    with bk.open(book["pages"][index][0]) as fh:
+        raw = fh.read()
+    if not bk._dir:
+        _keep_master(book["id"], _version(book["size"], book["mtime"]), index, raw)
+    return raw
+
+
+def _render_from(bk: "_Book", book: dict, index: int, width: int) -> bytes:
+    return _render_bytes(_raw_from(bk, book, index), width)
+
+
 def _render(book: dict, index: int, width: int) -> bytes:
+    raw = _master(book, index)
+    if raw is not None:
+        return _render_bytes(raw, width)
     with _Book(book["path"], _version(book["size"], book["mtime"])) as bk:
         return _render_from(bk, book, index, width)
 
@@ -433,18 +492,26 @@ def _finish(key: tuple, ev: threading.Event) -> None:
     ev.set()
 
 
-def _render_ahead(bk: "_Book", book: dict, width: int, claims: list[tuple[int, tuple, threading.Event]]) -> None:
+def _render_ahead(bk: "_Book | None", book: dict, width: int, claims: list[tuple[int, tuple, threading.Event]]) -> None:
+    """The next pages, from their kept copies where there are some; the archive is opened
+    (once) only for a page that hasn't been pulled out of it yet."""
     try:
         for index, key, ev in claims:
             try:
-                _write_cached(_page_cache_path(book, index, width), _render_from(bk, book, index, width))
+                raw = _master(book, index)
+                if raw is None:
+                    if bk is None:
+                        bk = _Book(book["path"], _version(book["size"], book["mtime"]))
+                    raw = _raw_from(bk, book, index)
+                _write_cached(_page_cache_path(book, index, width), _render_bytes(raw, width))
                 _count_render()
             except Exception as e:
                 logger.info(f"Reader: render-ahead of page {index + 1} of book {book['id']} failed: {e}")
             finally:
                 _finish(key, ev)
     finally:
-        bk.close()
+        if bk is not None:
+            bk.close()
 
 
 def get_page_bytes(book: dict, index: int, width: int) -> bytes:
@@ -465,8 +532,11 @@ def get_page_bytes(book: dict, index: int, width: int) -> bytes:
         _inflight[key] = ev
     bk = None
     try:
-        bk = _Book(book["path"], _version(book["size"], book["mtime"]))
-        data = _render_from(bk, book, index, width)
+        raw = _master(book, index)                 # another size of this page was made: no share at all
+        if raw is None:
+            bk = _Book(book["path"], _version(book["size"], book["mtime"]))
+            raw = _raw_from(bk, book, index)
+        data = _render_bytes(raw, width)
         _write_cached(cp, data)
         _count_render()
     except BaseException:
@@ -486,7 +556,7 @@ def get_page_bytes(book: dict, index: int, width: int) -> bytes:
             claims.append((i, k, e))
     if claims:
         threading.Thread(target=_render_ahead, args=(bk, book, width, claims), daemon=True, name="page-ahead").start()
-    else:
+    elif bk is not None:
         bk.close()
     return data
 

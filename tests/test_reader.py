@@ -217,7 +217,7 @@ class TestRenderAhead:
             assert im.size[0] == 1080
         cached = [i for i in range(10) if __import__("os").path.exists(rd._page_cache_path(book, i, 1080))]
         assert cached == [0, 1, 2, 3, 4]
-        assert sum(opens) == 1
+        assert sum(opens) <= 1          # one open at most; none when the size pass already kept the pages
         assert not rd._inflight
 
     def test_a_page_in_flight_is_waited_for_not_reopened(self, shelf, monkeypatch):
@@ -236,6 +236,36 @@ class TestRenderAhead:
         rd._finish(key, ev)
         t.join(5)
         assert got == [b"rendered-elsewhere"] and sum(opens) == 0
+
+    def test_another_width_renders_from_the_kept_page_not_the_archive(self, shelf, monkeypatch):
+        """Rotate the iPad, flip 1-up/2-up, scrub the strip: each width used to be its own pull
+        off the share. The first pull keeps the page; every other size is made from that."""
+        book = self._book(shelf)
+        rd._inflight.clear()
+        rd.get_page_bytes(book, 0, 1080)
+        self._join_ahead()
+        assert all(rd._master(book, i) is not None for i in range(5))      # the page and the four ahead
+        opens = self._count_opens(monkeypatch)
+        for w in (1440, 480, 240):
+            data = rd.get_page_bytes(book, 2, w)
+            self._join_ahead()
+            with Image.open(io.BytesIO(data)) as im:
+                assert im.size[0] == w
+        assert sum(opens) == 0
+
+    def test_the_background_size_pass_keeps_the_pages_it_reads(self, shelf, monkeypatch):
+        """The size pass streams the whole book anyway: what it reads is kept, so it's the
+        book's one trip over the share, and the pages after it render without the archive."""
+        book = self._book(shelf)
+        ver = rd._version(book["size"], book["mtime"])
+        kept = []
+        pages = rd._scan_pages(book["path"], ver, keep=lambda i, raw: (kept.append(i), rd._keep_master(book["id"], ver, i, raw)))
+        assert kept == list(range(len(pages))) and all(w for _, w, _h in pages)
+        opens = self._count_opens(monkeypatch)
+        rd._inflight.clear()
+        rd.get_page_bytes(book, len(pages) - 1, 1080)
+        self._join_ahead()
+        assert sum(opens) == 0
 
     def test_pages_are_baseline_jpegs_decoded_at_draft_scale(self, shelf, monkeypatch):
         book = self._book(shelf)

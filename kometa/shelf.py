@@ -290,27 +290,45 @@ def shelf_detail(shelf_id: int):
     return {**s, "books": books}
 
 
+def _shelf_files(shelf_id: int) -> list[dict]:
+    """The series' files in issue order, as the shelf scan last saw them (path, size, mtime):
+    a cover asks the DB, not the share — a missing_at row is already known gone."""
+    with db._connect(DB_PATH) as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT path, size, mtime, number FROM books WHERE shelf_series_id = ? AND missing_at IS NULL", (shelf_id,))]
+    return _sorted_books(rows, "")
+
+
 def _first_book(shelf_id: int) -> dict | None:
-    s = db.get_shelf_series(shelf_id, DB_PATH)
-    if not s:
-        return None
     # the first one still on disk — asked lazily, so it's one check, not one per book
-    return next((b for b in _sorted_books(db.shelf_books(shelf_id, current_reader(), DB_PATH), s["title"])
-                 if os.path.exists(b["path"])), None)
+    return next((b for b in _shelf_files(shelf_id) if os.path.exists(b["path"])), None)
 
 
 @router.get("/api/shelf/{shelf_id}/cover")
 def shelf_cover(shelf_id: int):
-    """Page 1 of the first book. Kometa's own cover — no Komga needed."""
-    first = _first_book(shelf_id)
-    if not first:
-        raise HTTPException(404, "No books")
-    return _cover_response(first["path"])
+    """Page 1 of the first book. Kometa's own cover — no Komga needed.
+
+    A cover already made is served off the local cache by the DB's size/mtime — no stat, no
+    exists() on the share (2026-10-29: three NFS round trips per tile before, ~2,100 for a
+    Library grid answered with nothing but 304s). Only a cover not made yet touches a file."""
+    files = _shelf_files(shelf_id)
+    for b in files:
+        if (hit := _cached_cover(b)) is not None:
+            return hit
+    for b in files:                                    # none made yet: the first file still there
+        try:
+            return _cover_response(b["path"])
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+    raise HTTPException(404, "No books")
 
 
 @router.get("/api/books/{book_id}/cover")
 def book_cover(book_id: int):
-    b = db.get_book(book_id, DB_PATH)
+    with db._connect(DB_PATH) as conn:                 # not get_book: that parses pages_json for nothing
+        r = conn.execute("SELECT id, path, size, mtime, tracked_series_id, number FROM books WHERE id = ?", (book_id,)).fetchone()
+    b = dict(r) if r else None
     if not b:
         raise HTTPException(404, "No such book")
     # Your chosen variant wins, the same precedence the series page's tile has.
@@ -321,6 +339,8 @@ def book_cover(book_id: int):
             resp = _image_or_none(url)
             if resp:
                 return resp
+    if (hit := _cached_cover(b)) is not None:
+        return hit
     try:
         return _cover_response(b["path"])
     except rd.TruncatedCover:
@@ -329,6 +349,23 @@ def book_cover(book_id: int):
             from kometa.thumbnails import issue_thumbnail
             return issue_thumbnail(b["tracked_series_id"], b["number"])
         raise HTTPException(422, "Cover can't be rendered")
+
+
+def _cached_cover(b: dict) -> Response | None:
+    """The cover get_cover_bytes already made for this file at the version the DB holds, off
+    the local cache, or None. The scan and the retag job keep books.size/mtime in step with
+    the file, so the key matches what a stat would give."""
+    if b.get("size") is None or b.get("mtime") is None:
+        return None
+    cp = rd._cover_cache_path(b["path"], rd._version(b["size"], b["mtime"]))
+    try:
+        with open(cp, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    from kometa.images import file_etag
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400", "ETag": file_etag(cp)})
 
 
 def _cover_response(path: str):

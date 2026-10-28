@@ -108,6 +108,28 @@ def test_cover_is_page_one_of_the_first_book(shelf):
     assert first["page_count"] is None          # a cover doesn't open (register) the book
 
 
+def test_a_made_cover_is_served_without_touching_the_share(shelf, monkeypatch):
+    """Once page 1 is made, the cover comes off the local cache by the DB's size/mtime:
+    no stat, no exists() on the files (the NFS round trips a Library grid paid per tile)."""
+    root, _ = shelf
+    sh.scan_shelf(str(root))
+    kid = _untracked(root)["Batman - Knightfall"]["id"]
+    first = sh.shelf_cover(kid)
+    bid = sh.shelf_detail(kid)["books"][0]["id"]
+    comics = str(root)
+    real_stat, real_exists = os.stat, os.path.exists
+    def no_share(fn):
+        def guard(p, *a, **k):
+            assert not str(p).startswith(comics), f"touched the share: {p}"
+            return fn(p, *a, **k)
+        return guard
+    monkeypatch.setattr(os, "stat", no_share(real_stat))
+    monkeypatch.setattr(os.path, "exists", no_share(real_exists))
+    again = sh.shelf_cover(kid)
+    assert again.body == first.body and again.headers["etag"] == first.headers["etag"]
+    assert sh.book_cover(bid).body == first.body
+
+
 def test_empty_root_refuses_and_prunes_nothing(shelf, tmp_path):
     root, _ = shelf
     sh.scan_shelf(str(root))
