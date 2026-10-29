@@ -1579,10 +1579,13 @@ async function showBookModal(c, opts = {}) {
       <button class="btn btn-ghost" onclick="closeModal(); ${_readStateCall(c.book_id, completed, opts.inReader)}">${completed ? 'Mark as unread' : 'Mark as read'}</button>
       ${opts.inReader ? '' : `<button class="btn btn-primary" onclick="closeModal(); navigate('read', {book: ${c.book_id}})">Read</button>`}
     </div>`);
-  // a trade the catalogue lists: the book sites' ratings under the stars
+  // a trade the catalogue lists: the book sites' ratings under the stars. An edition
+  // of a one-book run (Joker's 10th Anniversary and Deluxe under Joker (2008)) also
+  // wears that book's description and credits — it's the same story, rebound
   try {
     const r = await api.get(`/api/books/${c.book_id}/community`);
-    if (r.community) _renderIssueDetails('', [], r.community);
+    const d = r.details;
+    if (r.community || d) _renderIssueDetails(d?.desc || '', d?.credits || [], r.community);
   } catch {}
 }
 

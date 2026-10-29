@@ -1393,9 +1393,16 @@ def get_trade_details(locg_id: str):
 @app.get("/api/books/{book_id}/community")
 def get_book_community(book_id: int):
     """The shelf's book sheet: a trade's community ratings, found through its run's
-    trades list. {"community": null} for anything that isn't a rated trade."""
+    trades list ({"community": null} for anything that isn't a rated trade), and
+    an edition of a one-book run's own details — description, credits, release
+    date — borrowed from that book (kometa/edition_details.py; null otherwise)."""
     from kometa.trade_community import for_book
-    return {"community": for_book(book_id)}
+    from kometa import edition_details
+    from kometa.related import with_creator_ids_asking
+    details = edition_details.for_book(book_id, DB_PATH)
+    if details:
+        details["credits"], _ = with_creator_ids_asking(details["credits"], DB_PATH, ask=False)
+    return {"community": for_book(book_id), "details": details}
 
 
 class TradeDownloadRequest(BaseModel):
