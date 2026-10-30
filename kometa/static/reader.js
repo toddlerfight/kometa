@@ -1216,9 +1216,15 @@ async function _loadShelfFiles(s, all) {
   const app = document.getElementById('app');
   app.querySelector('.shelf-files')?.remove();
   if (all) app.querySelector('.issue-grid')?.remove();
-  app.insertAdjacentHTML('beforeend', `<div class="shelf-files">
+  // Straight under the issue grid, whatever landed first. Tacked on at the end it went
+  // under thirty Related cards whenever Related won the race — Joker (2008)'s 10th
+  // Anniversary and Deluxe Editions sat on the page, unseen, a screen and a half down.
+  const html = `<div class="shelf-files">
     <div class="u-label shelf-files-head">${all ? 'On the shelf' : 'Also on the shelf'}</div>
-    <div class="issue-grid">${tiles}</div></div>`);
+    <div class="issue-grid">${tiles}</div></div>`;
+  const below = app.querySelector('.specials-row, .rel-row');
+  if (below) below.insertAdjacentHTML('beforebegin', html);
+  else app.insertAdjacentHTML('beforeend', html);
 }
 
 async function _matchNow(seriesId, btn) {
