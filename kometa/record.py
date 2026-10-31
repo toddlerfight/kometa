@@ -313,7 +313,10 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
             kept_fs = json.loads((kept["field_sources_json"] if kept else None) or "{}") or {}
         except (TypeError, ValueError):
             kept_fs = {}
-        desc = data.get("desc") or (kept["desc"] if kept and "desc" in kept_fs else "") or ""
+        if (kept_fs.get("desc") or {}).get("source") == "owner":
+            desc = kept["desc"] or ""     # the owner fixed it by hand (set_issue_desc): no catalogue undoes that
+        else:
+            desc = data.get("desc") or (kept["desc"] if kept and "desc" in kept_fs else "") or ""
         store_date = data.get("store_date") or issue.get("store_date") or (
             kept["store_date"] if kept and "store_date" in kept_fs else None)
         credits, sources = _credits_to_keep(kept, data.get("credits") or [], source)
@@ -352,6 +355,33 @@ def write_issue(series_id: int, number: float, data: dict, source: str | None, s
             # a details refresh used to REPLACE them away and the sweep re-asked
             conn.execute("UPDATE issue_record SET community_json = ?, community_at = ? WHERE tracked_series_id = ? AND number = ?",
                          (kept["community_json"], kept["community_at"], series_id, number))
+    return get_issue(series_id, number, path)
+
+
+def set_issue_desc(series_id: int, number: float, desc: str, path=None) -> dict | None:
+    """The owner's own wording for one issue's description, stamped 'owner' so no refresh
+    or gap fill puts the catalogue's back. Comic Vine's synopsis of Joker (2008) splices
+    two sentences into "go get him fromsically a big meat freezer" — that's their text,
+    not our cleaner's, and no other catalogue has one (2026-10-31). Empty clears the stamp
+    and the text, handing the field back to the catalogues. → the record, None if none."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    desc = (desc or "").strip()
+    with db._connect(path) as conn:
+        r = conn.execute("SELECT field_sources_json FROM issue_record WHERE tracked_series_id = ? AND number = ?",
+                         (series_id, number)).fetchone()
+        if not r:
+            return None
+        try:
+            fs = json.loads(r["field_sources_json"] or "{}") or {}
+        except (TypeError, ValueError):
+            fs = {}
+        if desc:
+            fs["desc"] = {"source": "owner", "at": _now()}
+        else:
+            fs.pop("desc", None)
+        conn.execute("UPDATE issue_record SET desc = ?, field_sources_json = ? WHERE tracked_series_id = ? AND number = ?",
+                     (desc or None, json.dumps(fs), series_id, number))
     return get_issue(series_id, number, path)
 
 

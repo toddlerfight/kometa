@@ -349,3 +349,19 @@ def test_an_locg_record_gives_way_to_metron_once_the_issue_has_a_metron_id(db_pa
     assert asked == [2.0] and row["source"] == "metron" and row["credits"][0]["metron_creator_id"] == 7
     assert rec.get_issue(sid, 2.0, db_path)["community"] == {"rating": 4.5}   # readers' scores survive the re-read
     assert (sid, 2.0) not in picked()                                       # and it's done: no re-pick every tick
+
+
+def test_the_owners_description_outlives_every_refresh_and_empty_hands_it_back(db_path):
+    """Comic Vine's Joker (2008) synopsis splices two sentences into "go get him fromsically
+    a big meat freezer" (2026-10-31). The owner's fix is stamped 'owner': a Metron refresh
+    that brings its own description doesn't undo it; clearing it lets the catalogue back in."""
+    sid = _series(db_path)
+    rec.write_issue(sid, 1.0, {**METRON, "desc": "go get him fromsically a big meat freezer"}, "metron", "full", {}, db_path)
+    assert rec.set_issue_desc(sid, 9.0, "nope", db_path) is None             # no record, nothing made up
+    row = rec.set_issue_desc(sid, 1.0, "  Jonny drives him to Croc's hideout.  ", db_path)
+    assert row["desc"] == "Jonny drives him to Croc's hideout."
+    rec.write_issue(sid, 1.0, METRON, "metron", "full", {}, db_path)
+    assert rec.get_issue(sid, 1.0, db_path)["desc"] == "Jonny drives him to Croc's hideout."
+    rec.set_issue_desc(sid, 1.0, "", db_path)
+    rec.write_issue(sid, 1.0, METRON, "metron", "full", {}, db_path)
+    assert rec.get_issue(sid, 1.0, db_path)["desc"] == "A space opera."

@@ -2502,6 +2502,22 @@ def set_issue_ignored(series_id: int, number: float, req: IgnoreRequest):
     return {"ok": True, "ignored": req.ignored}
 
 
+class DescRequest(BaseModel):
+    desc: str
+
+
+@app.patch("/api/series/{series_id}/issues/{number}/desc")
+def set_issue_desc(series_id: int, number: float, req: DescRequest):
+    """Put right a catalogue's mangled description (kometa/record.py set_issue_desc); it
+    reaches the file's ComicInfo with the next retag. Empty hands it back to the catalogues."""
+    from kometa import record, retag
+    r = record.set_issue_desc(series_id, number, req.desc, DB_PATH)
+    if not r:
+        raise HTTPException(404, "No record for that issue")
+    retag.requeue_issue_now(series_id, number, DB_PATH)
+    return {"ok": True, "desc": r.get("desc") or ""}
+
+
 @app.post("/api/series/{series_id}/issues/{number}/search")
 def search_issue(series_id: int, number: float):
     s = db.get_series_by_id(series_id, DB_PATH)
