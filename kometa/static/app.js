@@ -7,12 +7,18 @@ let _issueModalPollTimer = null;
 // feel consistent everywhere. Pairs with the CSS motion tokens in style.css :root.
 const STAGGER_MS = 40;
 
-// Out in the last 7 days, today included (local dates, 'YYYY-MM-DD…').
-function _thisWeek(d) {
+// A local calendar day, 'YYYY-MM-DD', for a timestamp in ms.
+function _isoDay(t) { const x = new Date(t); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; }
+
+// Just out: released today or in the two days before (local dates, 'YYYY-MM-DD…').
+// How long a fresh pull hangs around once it's in your hands — Wednesday's books
+// were still squatting on the pull list the next Sunday, shoulder to shoulder with
+// the new week's (the owner, 2026-11-02: "a day or 2 past their release"). It was 7.
+const JUST_OUT_DAYS = 2;
+function _justOut(d) {
   if (!d) return false;
-  const iso = t => { const x = new Date(t); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
   const day = String(d).slice(0, 10), now = Date.now();
-  return day <= iso(now) && day >= iso(now - 6 * 86400000);
+  return day <= _isoDay(now) && day >= _isoDay(now - JUST_OUT_DAYS * 86400000);
 }
 
 // Signed out (accounts on, the session gone): back to / — which is the sign-in page now.
@@ -822,7 +828,7 @@ function _renderBrowseResults(quiet = false) {
     if (q && !s.title.toLowerCase().includes(q) && !(s.kind !== 'shelf' && why[s.id])) return false;
     // Pull list = what you're pulling that has something still to come, like the
     // Pull list section — not every pulled run whether or not anything's out
-    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && (s.next_upcoming || _thisWeek(s.calendar_date)))) return false;
+    if (toggles.pulling && !(s.kind === 'series' && s.on_pull_list && (s.next_upcoming || _justOut(s.calendar_date)))) return false;
     if (toggles.favourites && !s.favourite) return false;
     if (toggles.rated && !s.rating) return false;
     // folded under its run — unless you searched, or asked for what you're pulling:
@@ -860,9 +866,10 @@ function _renderBrowseResults(quiet = false) {
   // the date a card shows and sorts by: the calendar (this week's release, else the
   // next) — except on the Pull list, where it's the NEXT issue still to come: a
   // series that came out last Wednesday and has #25 next month is next month's
-  // ...unless it came out THIS week: the issue that just landed is the one you go
-  // looking for, so it stays this week's until next Wednesday (2026-10-14)
-  const dateOf = s => toggles.pulling ? (_thisWeek(s.calendar_date) ? s.calendar_date : s.next_upcoming) : s.calendar_date;
+  // ...unless it JUST came out: the issue that just landed is the one you go looking
+  // for, so it keeps its release date for a couple of days (2026-10-14; cut from a
+  // week to _justOut's two, 2026-11-02)
+  const dateOf = s => toggles.pulling ? (_justOut(s.calendar_date) ? s.calendar_date : s.next_upcoming) : s.calendar_date;
   browseState._dateOf = dateOf;
   const latest = (list, f) => list.reduce((m, x) => { const v = f(x); return v && (!m || v > m) ? v : m; }, null);
   const val = {
@@ -3804,7 +3811,12 @@ async function _togglePullPast(btn) {
 
 async function _renderPullListContent() {
   const url = _pullShowPast ? '/api/pull-list?days=180&past=28' : '/api/pull-list?days=180';
-  const items = await api.get(url);
+  // what's already on the shelf goes once it's a couple of days old — the row is for
+  // what's coming and what's still to get, not last week's haul. A missing one stays
+  // put until you have it; + Past 4 Weeks shows the lot.
+  const today = _isoDay(Date.now());
+  const items = (await api.get(url)).filter(i =>
+    _pullShowPast || !(i.owned || i.ignored) || i.store_date > today || _justOut(i.store_date));
   _pullItems = items;
 
   if (!items.length) {
