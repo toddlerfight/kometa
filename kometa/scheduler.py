@@ -455,6 +455,15 @@ def start_scheduler(sync_all_fn, queue_fn, release_retry_fn, poll_usenet_fn=None
                           next_run_time=datetime.now(TZ) + timedelta(minutes=8))
     except Exception as e:
         logger.warning(f"LOCG sweep not scheduled: {e}")
+    # New issues' store/con variants off LOCG's series lists, which answer while its issue
+    # pages are walled — a few runs a tick, added to what's stored (kometa/locg_sweep.py).
+    try:
+        from kometa.locg_sweep import scheduled_list_tick
+        scheduler.add_job(scheduled_list_tick, IntervalTrigger(minutes=10), id="locg_series_lists", executor="yielding",
+                          replace_existing=True, coalesce=True, max_instances=1,
+                          next_run_time=datetime.now(TZ) + timedelta(minutes=3))
+    except Exception as e:
+        logger.warning(f"LOCG series-list top-up not scheduled: {e}")
     # The record and the cover store copied to the NAS every night (kometa/backup.py).
     try:
         from kometa.backup import nightly as nightly_backup

@@ -345,6 +345,16 @@ cover path that stops at "LOCG's page failed" is a bug.
 
 Tests: `tests/test_covers_additive.py`.
 
+**4. Variant ids while the issue pages are walled: the series variants list.** S3 serves an id but can't find one.
+LOCG's `/comic/get_comics?list=series&series_id=…&format[]=2` still answers through FlareSolverr (~15 s) and lists
+variants by issue — `data-parent` = the issue's `locg_issue_id`, `data-comic` = the variant id (the same id an issue
+page's `?variant=` carries). `per_page` is 50 000, and `page`/`offset`/`start` change nothing: one response is all
+LOCG will give, and it is **partial** (Absolute Green Arrow: every id its issue pages had; Walking Dead Deluxe: 66
+of 380; Absolute Batman: #25 and #26 only). So it only ever adds (rule 3). `locg_client.fetch_series_variants`
+(cached 6 h per run); `record.fill_variants` falls back to it when the page fails or pages rest after the wall;
+`locg_sweep.list_tick` (every 10 min, 4 runs) tops up runs with an issue from the last 60 days whose list has no
+LOCG cover. Tests: `tests/test_series_variants.py`.
+
 ## Conventions
 
 - Extract a cohesive cluster, alias-import it back into `main` (`from kometa.x import

@@ -944,6 +944,55 @@ def fetch_variants(locg_issue_id: str) -> dict:
     return _fetch_variants_with_get(locg_issue_id, _anon_get_fn())
 
 
+# The series' variants list (/comic/get_comics, format 2) still gets through FlareSolverr while
+# the issue pages choke on the wall (2026-11-04: Absolute Batman's came back in 17 s with 148
+# covers for #25 — Metron had 10). Every row names its issue (data-parent) and itself
+# (data-comic: the same id an issue page's ?variant= link carries, so nothing doubles up).
+# It is a PARTIAL list, though: Absolute Green Arrow's matched its issue pages id for id,
+# Walking Dead Deluxe's held 66 of 380, Absolute Batman's stopped at #25. Treat it as a
+# top-up, never as the truth — an issue page that answers is still the whole list.
+_series_variant_cache: "_collections.OrderedDict[str, tuple[float, dict]]" = _collections.OrderedDict()
+_SERIES_VARIANT_CACHE_MAX = 64
+_ISSUE_PREFIX_RE = re.compile(r"^.*?#\S+\s*")
+
+
+def _series_variants_with_get(locg_series_id, get_fn) -> dict:
+    """{locg_issue_id: [cover, ...]} off the series' variants list, newest first."""
+    key = str(locg_series_id)
+    with _cache_lock:
+        cached = _series_variant_cache.get(key)
+        if cached and time.time() - cached[0] < _VARIANT_CACHE_TTL:
+            return cached[1]
+    r = get_fn(f"{BASE}/comic/get_comics",
+               params={"list": "series", "series_id": locg_series_id, "view": "thumbs", "format[]": 2, "order": "desc"})
+    soup = BeautifulSoup(r.json()["list"], "lxml")
+    out: dict[str, list[dict]] = {}
+    seen = set()
+    for li in soup.find_all("li", class_="issue"):
+        parent, vid = li.get("data-parent"), li.get("data-comic")
+        if not parent or not vid or vid in seen:
+            continue
+        seen.add(vid)
+        title_el = li.find(class_="title")
+        full = (title_el.get("data-sorting") or title_el.get_text(" ", strip=True)) if title_el else ""
+        # "Absolute Batman #25 616 Comics Carla Cohen Variant" → "616 Comics Carla Cohen Variant",
+        # the same cut the issue page makes, so names line up with what's already stored
+        name = (_ISSUE_PREFIX_RE.sub("", full, count=1) if "#" in full else full).strip() or f"Variant {vid}"
+        out.setdefault(str(parent), []).append({"id": str(vid), "name": name,
+                                                "thumb": S3_THUMB.format(vid), "large": S3_LARGE.format(vid)})
+    with _cache_lock:
+        _series_variant_cache[key] = (time.time(), out)
+        _series_variant_cache.move_to_end(key)
+        while len(_series_variant_cache) > _SERIES_VARIANT_CACHE_MAX:
+            _series_variant_cache.popitem(last=False)
+    return out
+
+
+def fetch_series_variants(locg_series_id) -> dict:
+    """A series' variants by issue, keyless — the top-up while issue pages are walled."""
+    return _series_variants_with_get(locg_series_id, _anon_get_fn())
+
+
 # LOCG's own chrome that has no business being an issue description. The login
 # modal blurb is 113 chars, which beat the "longest paragraph" fallback every
 # time a real solicit ran short -- so half the library was advertising a signup

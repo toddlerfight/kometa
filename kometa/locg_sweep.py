@@ -271,3 +271,92 @@ def scheduled_tick(clock=time.time, tick=None) -> dict:
         _rest["until"] = now + rest
         logger.info(f"LOCG sweep: met the wall {_rest['strikes']} time(s) running — resting {rest // 3600} h")
     return out
+
+
+# --- the series-list top-up -----------------------------------------------------------
+# While the issue pages are walled, a new issue's cover list is Metron's alone — Absolute
+# Batman #25 sat at DC's 10 lettered covers a week after release while LOCG's series variants
+# list, which still answers, held 148 (2026-11-04). This asks that list for the runs with an
+# issue out in the last VARIANTS_RECENT_DAYS (or coming) whose stored list has no LOCG cover,
+# and ADDS what it brings (record.add_list_variants). One request serves a whole run. It
+# doesn't need the issue pages, so it runs through their rest; LOCG's own pause still stops it.
+LIST_BUDGET = 4                       # series lists a tick (each ~15 s through FlareSolverr)
+LIST_RECHECK_S = 24 * 3600            # a run asked and still short is asked again tomorrow
+_list_checked: dict[int, float] = {}
+
+
+def list_candidates(path=None, clock=time.time) -> list[int]:
+    """Runs owed a series-list top-up, pull list first, newest issue first."""
+    import json
+    from datetime import timedelta
+    from kometa.record import VARIANTS_RECENT_DAYS, ensure_tables
+    path = path or DB_PATH
+    ensure_tables(path)
+    since = (date.today() - timedelta(days=VARIANTS_RECENT_DAYS)).isoformat()
+    with db._connect(path) as conn:
+        rows = conn.execute("""
+            SELECT i.tracked_series_id sid, i.store_date sd, s.on_pull_list pl, r.covers_json cj
+            FROM issue_status i
+            JOIN tracked_series s ON s.id = i.tracked_series_id
+            JOIN issue_record r ON r.tracked_series_id = i.tracked_series_id AND r.number = i.number
+            WHERE s.locg_series_id IS NOT NULL AND s.locg_series_id != ''
+              AND (s.kind IS NULL OR s.kind != 'arc')
+              AND i.locg_issue_id IS NOT NULL AND i.locg_issue_id != ''
+              AND r.variants_at IS NOT NULL AND i.store_date >= ?""", (since,)).fetchall()
+    best: dict[int, tuple] = {}
+    now = clock()
+    for r in rows:
+        if any(c.get("source") == "locg" and c.get("name") != "Cover A (Main)" for c in json.loads(r["cj"] or "[]")):
+            continue
+        if now - _list_checked.get(r["sid"], 0) < LIST_RECHECK_S:
+            continue
+        key = (bool(r["pl"]), r["sd"] or "")
+        if r["sid"] not in best or key > best[r["sid"]]:
+            best[r["sid"]] = key
+    return sorted(best, key=lambda sid: best[sid], reverse=True)
+
+
+def list_tick(budget: int = LIST_BUDGET, path=None, is_open=None, syncing=None, add=None,
+              sleep=time.sleep, clock=time.time) -> dict:
+    """One tick of the series-list top-up. Returns {series, added, stopped}."""
+    path = path or DB_PATH
+    from kometa import locg_client, record
+    is_open = is_open or (lambda: locg_client.locg_paused() is None)
+    syncing = syncing or _sync_in_progress
+    add = add or (lambda sid: record.add_list_variants(sid, path))
+    out = {"series": 0, "added": 0, "stopped": None}
+    if not is_open():
+        out["stopped"] = "paused"; return out
+    if syncing():
+        out["stopped"] = "sync in progress"; return out
+    fails = 0
+    for sid in list_candidates(path, clock)[:budget]:
+        if out["series"] or fails:
+            sleep(REQUEST_GAP_S + random.uniform(0, 0.5))
+        try:
+            out["added"] += add(sid)
+        except locg_client.LocgPaused as e:
+            out["stopped"] = f"refused: {e}"; break
+        except Exception as e:
+            logger.info(f"LOCG series list for series {sid} skipped: {e}")
+            _list_checked[sid] = clock()           # don't head the queue every tick
+            fails += 1
+            if fails >= 2 and not out["series"]:
+                out["stopped"] = f"refused: {e}"; break
+            continue
+        _list_checked[sid] = clock()
+        out["series"] += 1
+        if not is_open():
+            out["stopped"] = "refused"; break
+    if out["series"] or out["stopped"]:
+        logger.info(f"LOCG series lists: {out['series']} run(s), {out['added']} cover(s) added"
+                    + (f", stopped: {out['stopped']}" if out["stopped"] else ""))
+    return out
+
+
+def scheduled_list_tick() -> dict:
+    try:
+        return list_tick()
+    except Exception as e:
+        logger.info(f"LOCG series-list top-up skipped: {e}")
+        return {"series": 0, "added": 0, "stopped": str(e)}

@@ -1040,11 +1040,15 @@ def _variants_fresh(row: dict | None) -> bool:
 
 
 def fill_variants(series_id: int, number: float, path=None, force: bool = False, issue: dict | None = None,
-                  metron=None, locg=None, locg_open=None) -> list[dict] | None:
+                  metron=None, locg=None, locg_open=None, locg_list=None) -> list[dict] | None:
     """The issue's cover list into the record: Metron's variants first (its
     issue detail carries them), LOCG's list merged in by name while LOCG is open
-    — queued for the top-up when it isn't. Returns the typed list, or None when
-    nothing could be asked. Raises MetronUnavailable for a trickle to stop."""
+    — queued for the top-up when it isn't. When the issue page is walled (or
+    resting after the wall), the series' variants list tops it up instead.
+    Returns the typed list, or None when nothing could be asked. Raises
+    MetronUnavailable for a trickle to stop.
+    locg_list(locg_issue_id) -> covers | None is the series-list ask; left out
+    with `locg` given (a test), there is none."""
     path = path or DB_PATH
     ensure_tables(path)
     row = get_issue(series_id, number, path)
@@ -1070,18 +1074,45 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
             from kometa import topup
             topup.enqueue("variants", f"{series_id}:{number:g}", path)
         else:
-            try:
-                extra = (locg or (lambda lid: locg_client.fetch_variants(lid)["covers"]))(issue["locg_issue_id"])
-                main_id = str(issue["locg_issue_id"])
+            from kometa import locg_sweep
+            main_id = str(issue["locg_issue_id"])
+
+            def merge(extra):
                 for c in _typed(extra, "locg"):
                     if c["id"] == main_id and covers:
                         continue                                 # LOCG's 'Cover A (Main)' is Metron's main
                     if _already_listed(c, covers):
                         continue
                     covers.append(c)
+            page = None
+            # while the issue pages rest after the wall, don't spend 25 s finding the wall again
+            if locg is not None or not locg_sweep.pages_resting():
+                try:
+                    page = (locg or (lambda lid: locg_client.fetch_variants(lid)["covers"]))(main_id)
+                    if locg is None:
+                        locg_sweep.page_answered()
+                except Exception as e:
+                    logger.info(f"Variants: LOCG skipped for {series_id}#{number:g}: {e}")
+                    if locg is None:
+                        locg_sweep.page_failed()                 # three in a row: issue pages rest
+            if page is not None:
+                merge(page)
                 asked = locg_answered = True
-            except Exception as e:
-                logger.info(f"Variants: LOCG skipped for {series_id}#{number:g}: {e}")
+            else:
+                # The page is walled: the series' variants list still answers. It's partial,
+                # so what it brings is ADDED — the stored LOCG covers ride along below.
+                lister = locg_list if locg_list is not None else (None if locg is not None else _series_lister(series_id, path))
+                if lister:
+                    try:
+                        listed = lister(main_id)
+                    except Exception as e:
+                        listed = None
+                        logger.info(f"Variants: LOCG series list skipped for {series_id}#{number:g}: {e}")
+                    if listed:
+                        if not covers:
+                            covers.extend(_s3_main(issue))       # the list is variants only: the main is on S3
+                        merge(listed)
+                        asked = True
     if not asked:
         return None
     if row and not locg_answered:
@@ -1105,6 +1136,53 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
                          (series_id, number, json.dumps(covers), issue.get("store_date"), issue.get("metron_issue_id"),
                           issue.get("locg_issue_id"), "metron" if issue.get("metron_issue_id") else "locg", _now(), _now()))
     return covers
+
+
+def _series_lister(series_id: int, path):
+    """fill_variants' series-list ask for this run: locg_issue_id -> its covers, or None
+    when the run has no LOCG series id. One fetch (cached) serves every issue of the run."""
+    s = db.get_series_by_id(series_id, path) or {}
+    ls = s.get("locg_series_id")
+    if not ls:
+        return None
+    from kometa import locg_client
+    return lambda lid: locg_client.fetch_series_variants(ls).get(str(lid))
+
+
+def add_list_variants(series_id: int, path=None, fetch=None) -> int:
+    """Top up a run's stored cover lists from LOCG's series variants list — ADD only.
+    Touches only issues whose list has been made (variants_at set): a row this made
+    up would look fresh and keep Metron's own fill away. Leaves variants_at alone, so
+    the next real refresh still happens on time. Returns the covers added."""
+    path = path or DB_PATH
+    ensure_tables(path)
+    s = db.get_series_by_id(series_id, path) or {}
+    ls = s.get("locg_series_id")
+    if not ls:
+        return 0
+    from kometa import locg_client
+    by_issue = (fetch or locg_client.fetch_series_variants)(ls) or {}
+    if not by_issue:
+        return 0
+    added = 0
+    for issue in db.get_issues_for_series(series_id, path):
+        lid = str(issue.get("locg_issue_id") or "")
+        listed = by_issue.get(lid)
+        if not lid or not listed:
+            continue
+        row = get_issue(series_id, issue["number"], path)
+        if not row or not row.get("variants_at"):
+            continue
+        covers = list(row.get("covers") or [])
+        new = [c for c in _typed(listed, "locg") if not (c["id"] == lid and covers) and not _already_listed(c, covers)]
+        new = [c for i, c in enumerate(new) if not _already_listed(c, new[:i])]
+        if not new:
+            continue
+        with db._connect(path) as conn:
+            conn.execute("UPDATE issue_record SET covers_json = ? WHERE tracked_series_id = ? AND number = ?",
+                         (json.dumps(covers + new), series_id, issue["number"]))
+        added += len(new)
+    return added
 
 
 def variants(issue: dict, path=None, stored_only: bool = False) -> dict:
