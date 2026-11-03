@@ -47,6 +47,26 @@ def test_metron_first_then_locg_merged_by_name_only_when_open(db_path):
     assert rec.fill_variants(sid, 1.0, db_path, metron=m, locg=l, locg_open=lambda: True) == covers and asked == ["metron", "metron", "locg"]
 
 
+def test_a_refresh_that_cant_reach_locg_keeps_the_locg_covers_it_has(db_path):
+    # Absolute Batman #24, 2026-11-04: 103 Metron + 57 LOCG covers; a Variants-tab refresh met
+    # LOCG's wall and saved Metron's 103 over the lot. Walled or shut, the stored LOCG ones stay.
+    sid = _issue(db_path)
+    m = lambda issue, path: METRON
+    rec.fill_variants(sid, 1.0, db_path, metron=m, locg=lambda lid: LOCG, locg_open=lambda: True)
+
+    def wall(lid):
+        raise RuntimeError("HTTP 500 for https://leagueofcomicgeeks.com/comic/77/comic")
+    for kw in ({"locg": wall, "locg_open": lambda: True}, {"locg": wall, "locg_open": lambda: False}):
+        covers = rec.fill_variants(sid, 1.0, db_path, force=True, metron=m, **kw)
+        assert [c["name"] for c in covers] == ["Cover A (Main)", "1:25 Variant", "Forbidden Planet Exclusive"]
+        assert [c["name"] for c in rec.get_issue(sid, 1.0, db_path)["covers"]] == [c["name"] for c in covers]
+    # LOCG answering again is the truth: a cover it dropped goes
+    covers = rec.fill_variants(sid, 1.0, db_path, force=True, metron=m, locg=lambda lid: LOCG[:2], locg_open=lambda: True)
+    assert [c["name"] for c in covers] == ["Cover A (Main)", "1:25 Variant", "Forbidden Planet Exclusive"]
+    covers = rec.fill_variants(sid, 1.0, db_path, force=True, metron=m, locg=lambda lid: LOCG[:1], locg_open=lambda: True)
+    assert [c["name"] for c in covers] == ["Cover A (Main)", "1:25 Variant"]
+
+
 def test_the_tab_reads_the_record_and_fills_it_when_empty(db_path, monkeypatch):
     sid = _issue(db_path, locg=False)
     monkeypatch.setattr("kometa.issue_meta._metron", lambda issue, path: METRON)

@@ -1034,6 +1034,7 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
     from kometa import issue_meta, locg_client, metron_client
     covers: list[dict] = []
     asked = False
+    locg_answered = False
     if issue.get("metron_issue_id"):
         found = (metron or issue_meta._metron)(issue, path)
         if found is None:
@@ -1056,11 +1057,19 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
                     if (c.get("name") or "").lower() in seen:
                         continue
                     covers.append(c)
-                asked = True
+                asked = locg_answered = True
             except Exception as e:
                 logger.info(f"Variants: LOCG skipped for {series_id}#{number:g}: {e}")
     if not asked:
         return None
+    if row and not locg_answered:
+        # LOCG walled or shut this time. Its covers from the last time it DID answer ride along —
+        # saving Metron's list alone wiped 57 store exclusives off Absolute Batman #24 the
+        # moment somebody opened the tab (2026-11-04). Silence is not a deletion order.
+        seen = {c["id"] for c in covers} | {(c.get("name") or "").lower() for c in covers}
+        for c in row.get("covers") or []:
+            if c.get("source") == "locg" and c.get("id") not in seen and (c.get("name") or "").lower() not in seen:
+                covers.append(c)
     with db._connect(path) as conn:
         if row:
             conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",
