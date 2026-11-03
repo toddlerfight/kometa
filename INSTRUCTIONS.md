@@ -495,7 +495,10 @@ Diagnose a stall: `sample <rsync pid> 1` (stuck in `openat` under `send_director
 `ps -o lstart -p $(pgrep UserNotificationCenter)` (started a second after rsync = the dialog).
 
 2. **Voot II** (02:00, `ops/ginbako-backup.sh`, run by launchd from `~/Library/LaunchAgents/dev.kometa.backup.plist` on ginbako): onto the external drive Voot II at `/Volumes/Voot II/Kometa-Backup/`:
-   - `db/` — a copy of the live DB made inside the container (`docker exec kometa python … backup()`), integrity-checked on the host, 14 kept
+   - `db/` — a copy of the live DB made inside the container (`docker exec kometa python … backup()`), integrity-checked on the host, 14 kept.
+     To read one on the host (e.g. to see what a row held before a bad write), open it as
+     `sqlite3.connect(pathlib.Path(f).resolve().as_uri() + "?immutable=1", uri=True)` — the copies are
+     WAL-mode, so `?mode=ro` fails with "unable to open database file", and a plain open would write `-wal`/`-shm` beside the backup.
    - `covers/`, `docker/` (all of `~/docker` except the page cache — which now lives on Catbus anyway), `comics/` (mirror of `/Volumes/🧳/Comics`)
    - `deleted/YYYY-mm-dd/` — whatever the mirrors removed or replaced, kept 30 days (a bad delete in the library can't wipe the backup)
    - `status.json` (last run) and `backup.log` (every run)
