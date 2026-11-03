@@ -307,11 +307,43 @@ Split across two boxes since the Aug 2026 move. Kometa runs on ginbako
   issue page for a cover. Issue pages (`/comic/{id}/…`) have failed FlareSolverr's challenge since 2026-10-17 — no unattended
   route is known (`docs/credits-sourcing-alternatives-2026-10-17.md`). The credits ladder and Comic Vine covers fill
   what issue pages gave. Its token fields still exist; don't bring passes up — the owner had that narrative removed.
+  **For anything cover-shaped, read "Covers: try S3 first, and only ever add" below before you conclude LOCG is blocked.**
 - **Image downloads** run one lane per host (`kometa/images.py LANES`): own gap, daily cap, an hour's rest on
   403/429/503. LOCG's S3 bucket says 403 for a missing key, so its lane only rests on 429/503.
 - **Source health** (`kometa/health.py`): every outside request reports ok/refused/error; 5+ failures in a row for
   30+ min, or nothing working for a day, lights that source's Settings card. Watching logs from the Mac: give
   `docker logs --since` a UTC time with a trailing `Z` — without it the host reads it as local time.
+
+## Covers: try S3 first, and only ever add (2026-11-04)
+
+The owner's standing rule for anything that touches a cover, for you and for the app.
+
+**1. Explore the S3 path before you call a LOCG cover unreachable.** LOCG's images are on
+`s3.amazonaws.com/comicgeeks/comics/covers/{large,medium}-{locg_issue_id}.jpg`, outside Cloudflare — `200` = we
+have it, `403` = LOCG has none. Before you write "LOCG is walled", "needs a browser" or "no cover", `curl -I` that URL
+for the issue's `locg_issue_id` (the constants are `locg_client.S3_LARGE` / `S3_THUMB`). The *page* is walled, the
+*image* is not. A headless browser, FlareSolverr and a pasted `cf_clearance` are **not** the route for covers: a real
+headless Chrome got LOCG's 403 "Restricted" on 20 of 20 pages (895588b), and the cover never needed a page. Never
+fetch an issue page just to get a cover. What S3 can't do is *discover* a variant's id — those come from the page;
+S3 serves any id we already know.
+
+**2. Kometa must attempt that path itself.** Wherever an issue has a `locg_issue_id` and no cover from any other
+source, the app tries S3 — whether LOCG's page answered, was walled, errored, or was shut. Today that is
+`thumbnails._issue_thumbnail` (the tile) and `record.fill_variants` / `record.variants` (the Variants list). A new
+cover path that stops at "LOCG's page failed" is a bug.
+
+**3. Covers are additive.** Covers from different sources are *unioned*, never swapped for one another:
+- A source that is silent, walled, errored or empty never removes or overwrites a cover another source gave. Carry
+  the stored ones forward (`fill_variants` keeps LOCG's earlier answer when LOCG won't answer; 9fad7c9).
+- Write a cover column as `COALESCE(new, old)` — a pass that brings no image leaves the stored one alone, a pass that
+  brings a new one still lands. (`_UPSERT_ISSUE_SQL`, `complete_download`, `upsert_owned_bulk` all do.)
+- Leave a cover out only when it **is** one already listed: same id, same image URL, same name
+  (`record._already_listed`), or — for stored files — the same picture by dHash (`coververify.dhash`). Never "the
+  latest source wins".
+- The one deletion: a source that *did* answer, authoritatively, and no longer lists a cover of its own may lose that
+  cover. Nobody else's cover goes with it.
+
+Tests: `tests/test_covers_additive.py`.
 
 ## Conventions
 

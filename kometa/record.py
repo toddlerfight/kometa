@@ -1007,6 +1007,29 @@ def _typed(covers: list[dict], source: str) -> list[dict]:
     return out
 
 
+def _cover_urls(c: dict) -> set:
+    return {u for u in (c.get("thumb"), c.get("large")) if u}
+
+
+def _already_listed(c: dict, others: list[dict]) -> bool:
+    """True when `c` IS one of `others`: same id, same image URL, or same name. Covers from
+    different sources are ADDED to one another — this is the only reason one is left out."""
+    cid, name, urls = str(c.get("id") or ""), (c.get("name") or "").lower(), _cover_urls(c)
+    return any((cid and cid == str(o.get("id") or "")) or (name and name == (o.get("name") or "").lower())
+               or (urls and urls & _cover_urls(o)) for o in others)
+
+
+def _s3_main(issue: dict) -> list[dict]:
+    """LOCG's main cover for the issue, straight from its S3 bucket by LOCG id. The image was never
+    behind LOCG's wall, only its web page is (docs/locg-covers-s3-solution-2026-10-18.md)."""
+    lid = issue.get("locg_issue_id")
+    if not lid:
+        return []
+    from kometa.locg_client import S3_LARGE, S3_THUMB
+    return _typed([{"id": str(lid), "name": "Cover A (Main)", "thumb": S3_THUMB.format(lid),
+                    "large": S3_LARGE.format(lid)}], "locg")
+
+
 def _variants_fresh(row: dict | None) -> bool:
     if not row or not row.get("variants_at"):
         return False
@@ -1049,12 +1072,11 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
         else:
             try:
                 extra = (locg or (lambda lid: locg_client.fetch_variants(lid)["covers"]))(issue["locg_issue_id"])
-                seen = {(c.get("name") or "").lower() for c in covers}
                 main_id = str(issue["locg_issue_id"])
                 for c in _typed(extra, "locg"):
                     if c["id"] == main_id and covers:
                         continue                                 # LOCG's 'Cover A (Main)' is Metron's main
-                    if (c.get("name") or "").lower() in seen:
+                    if _already_listed(c, covers):
                         continue
                     covers.append(c)
                 asked = locg_answered = True
@@ -1066,10 +1088,12 @@ def fill_variants(series_id: int, number: float, path=None, force: bool = False,
         # LOCG walled or shut this time. Its covers from the last time it DID answer ride along —
         # saving Metron's list alone wiped 57 store exclusives off Absolute Batman #24 the
         # moment somebody opened the tab (2026-11-04). Silence is not a deletion order.
-        seen = {c["id"] for c in covers} | {(c.get("name") or "").lower() for c in covers}
         for c in row.get("covers") or []:
-            if c.get("source") == "locg" and c.get("id") not in seen and (c.get("name") or "").lower() not in seen:
+            if c.get("source") == "locg" and not _already_listed(c, covers):
                 covers.append(c)
+    if not locg_answered and not covers:
+        # Nothing from any source, and LOCG's page is walled: its main cover is still on S3.
+        covers = _s3_main(issue)
     with db._connect(path) as conn:
         if row:
             conn.execute("UPDATE issue_record SET covers_json = ?, variants_at = ? WHERE tracked_series_id = ? AND number = ?",

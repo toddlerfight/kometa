@@ -844,7 +844,7 @@ _UPSERT_ISSUE_SQL = """
     ON CONFLICT(tracked_series_id, number) DO UPDATE SET
         store_date      = COALESCE(excluded.store_date, store_date),
         owned        = excluded.owned,
-        metron_image    = excluded.metron_image,
+        metron_image    = COALESCE(excluded.metron_image, metron_image),
         locg_issue_id   = COALESCE(excluded.locg_issue_id, locg_issue_id),
         metron_issue_id = COALESCE(excluded.metron_issue_id, metron_issue_id)
 """
