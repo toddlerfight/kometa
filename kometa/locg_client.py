@@ -638,9 +638,11 @@ def find_series_id_anon(title: str, year: int | None = None) -> int | None:
     return best["id"] if score(best) >= 4 else None
 
 
-def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
+def _get_issues_with_get(series_id: int, get_fn, strict: bool = False) -> list[dict]:
     """Shared issue-list fetch. get_fn(url, **kwargs) must return a requests-like
-    Response. Works with both the authed and the anonymous session."""
+    Response. Works with both the authed and the anonymous session. strict = a
+    failure raises instead of passing for 'no issues' (kometa/lonebook.py renames
+    a file on the strength of an empty answer)."""
     try:
         r = get_fn(
             f"{BASE}/comic/get_comics",
@@ -652,6 +654,8 @@ def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
                 "order": "asc",
             },
         )
+        if strict:
+            r.raise_for_status()
         data = r.json()
         soup = BeautifulSoup(data["list"], "lxml")
         issues = []
@@ -697,6 +701,8 @@ def _get_issues_with_get(series_id: int, get_fn) -> list[dict]:
         time.sleep(0.3)
         return issues
     except Exception as e:
+        if strict:
+            raise
         logger.warning(f"LoCG get_issues({series_id}) failed: {e}")
         return []
 
@@ -706,6 +712,11 @@ def get_issues_anon(series_id: int) -> list[dict]:
     issue list — and therefore detect missing issues — for a keyless install.
     Mirrors search_series_anon / fetch_variants."""
     return _get_issues_with_get(series_id, _anon_get_fn())
+
+
+def get_issues_strict(series_id: int) -> list[dict]:
+    """get_issues_anon, but LOCG not answering RAISES — [] means LOCG said none."""
+    return _get_issues_with_get(series_id, _anon_get_fn(), strict=True)
 
 
 # LOCG format codes on the series-issue endpoint. 1=singles, 2=variants are used

@@ -1187,6 +1187,11 @@ def _cached_trades(series: dict) -> list[dict] | None:
     if trades and ("owned" not in trades[0] or "file" not in trades[0]):
         _enrich_trades(series, trades)
         db.set_trades(series["id"], trades, DB_PATH)
+    # A run that is one book has taken that book as its #1 — it's the issue now,
+    # not a trade beside it (kometa/lonebook.py). The series lands on Issues.
+    from kometa import lonebook
+    if lonebook.adopted(series, DB_PATH):
+        return []
     return _with_book_ids(series, trades)
 
 

@@ -213,7 +213,15 @@ def _trade_landed(series_id: int, placed: list[str]) -> None:
     shelf row, its spot on the retag list. Both trade paths skipped this and left
     the file invisible to everything that reads `books` until the next full walk
     of the shelf — Bedford Street (2026-11-06) landed at 06:38 and Recently added
-    never heard about it."""
+    never heard about it.
+    A run that IS this one book takes it as its #1 first (kometa/lonebook.py)."""
+    try:
+        from kometa import lonebook
+        as_issue = lonebook.adopt(series_id, placed, DB_PATH)
+        if as_issue:
+            placed = [as_issue]
+    except Exception as e:
+        logger.info(f"Lone-book check after a trade landed skipped: {e}")
     for p in placed or []:
         if os.path.isfile(p):
             _resync_after_placement(series_id, p)
