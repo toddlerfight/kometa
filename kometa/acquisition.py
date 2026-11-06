@@ -208,6 +208,17 @@ def _trade_fallback_name(meta: dict, default_title: str) -> str:
 # issue sat owned-but-blank until Komga got round to it (2026-09-23: three
 # Absolutes, linkless for two hours). Komga is retired (2026-10-12); nothing
 # here waits on anything but the disk.
+def _trade_landed(series_id: int, placed: list[str]) -> None:
+    """A trade on disk gets what an issue gets the moment it lands: its cover, its
+    shelf row, its spot on the retag list. Both trade paths skipped this and left
+    the file invisible to everything that reads `books` until the next full walk
+    of the shelf — Bedford Street (2026-11-06) landed at 06:38 and Recently added
+    never heard about it."""
+    for p in placed or []:
+        if os.path.isfile(p):
+            _resync_after_placement(series_id, p)
+
+
 def _resync_after_placement(series_id: int, placed_path: str | None = None) -> None:
     """The finalize thread has done its job the moment the file is on the shelf;
     this makes the tile and the reader see it. Seam name kept for its callers."""
@@ -893,6 +904,7 @@ def _acquire_trade(item, qid, gc, downloaded_urls):
         db.update_queue_state(qid, "failed", error=f"GetComics: pack didn't contain {label}", path=DB_PATH)
         return
     db.complete_trade(qid, path=DB_PATH, placed=placed)
+    _trade_landed(item["tracked_series_id"], placed)
     # Re-stamp owned on the cached trades now (folder scan), so the tile flips to
     # owned right away instead of waiting for the next sync.
     try:
@@ -1485,6 +1497,7 @@ def _finalize_download(item: dict, qid: int, content_path: str, *, label: str, k
         if not item.get("folder_path") and placed:
             db.set_folder_path(item["tracked_series_id"], dest_dir, DB_PATH)
         force_readable_tree(dest_dir)
+        _trade_landed(item["tracked_series_id"], on_disk)
         # Re-stamp owned on the cached trades now, so the tile flips right away.
         try:
             from kometa.sync import refresh_trades_owned
