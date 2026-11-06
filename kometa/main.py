@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from kometa.locg_client import search_series_anon as _locg_search_anon, get_issue_details_anon as _locg_issue_details, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
+from kometa.locg_client import get_issue_details_anon as _locg_issue_details, resolve_comic_series_anon as _locg_resolve_comic_anon, full_series_title_anon as _locg_full_title, is_truncated as _locg_truncated
 from kometa.models import AddSeriesRequest
 from kometa.arcs import (
     router as _arcs_router, _owned_collection, _add_arc,
@@ -2050,7 +2050,24 @@ def search_metron(q: str):
 
 @app.get("/api/search/locg")
 def search_locg(q: str):
-    raw = _locg_search_anon(q)
+    # 'LOCG has nothing' and 'LOCG didn't answer' used to come back as the same
+    # empty list. The owner typed 'bedford street' (2026-11-06) while LOCG was still
+    # chewing on 'bed' behind a 14 s Cloudflare clear; the search lost its turn,
+    # came back [] like a verdict, and the wizard served Comic Vine's Greek Street
+    # and Baker Street in its place — Bedford Street was on LOCG the whole time.
+    # Busy or broken is a 503 now, so the page can retry or say so instead of lying.
+    # Switched off or paused by LOCG stays [] — knocking again changes nothing.
+    from kometa import locg_client
+    try:
+        raw = locg_client.search_series_strict(q)
+    except locg_client.LocgBusy as e:          # subclass of LocgPaused — catch it first
+        logger.warning(f"LoCG search({q!r}) lost its turn: {e}")
+        raise HTTPException(503, "LOCG is busy")
+    except locg_client.LocgPaused:
+        return []
+    except Exception as e:
+        logger.warning(f"LoCG search({q!r}) failed: {e}")
+        raise HTTPException(503, "LOCG didn't answer")
     # Series before issues, THEN slice. LOCG hands back its own order, and a run whose
     # every issue is catalogued individually will bury its own series entry under five
     # '#7'-shaped near-misses — or shove it past the 15 entirely, which is how

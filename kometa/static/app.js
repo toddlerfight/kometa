@@ -3185,7 +3185,7 @@ function _isCollectedResult(r) {
   return /\b(omnibus|deluxe edition|compendium|the complete|collected edition|library edition)\b/i.test(r.series || r.name || '');
 }
 
-function _renderWizardResults(results, q) {
+function _renderWizardResults(results, q, note = '') {
   const container = document.getElementById('wizard-results');
   if (!container) return;
   const ql = q.toLowerCase();
@@ -3230,6 +3230,7 @@ function _renderWizardResults(results, q) {
             </div>
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
+    if (note) el.insertAdjacentHTML('beforeend', `<div class="state-msg" style="padding:10px 0;font-size:11px;color:var(--amb)">${esc(note)}</div>`);
   };
 
   const status = container.querySelector('._wiz-status');
@@ -3260,6 +3261,32 @@ function _wizardInput(val) {
   _wizardSearchTimer = setTimeout(() => wizardSearch(), 400);
 }
 
+// LOCG takes ONE request at a time, and a cold one sits ~14 s behind a Cloudflare
+// clear. Type-ahead used to fire 'bed', 'bedford', 'bedford street' straight at it:
+// the first hogged the line, the other two timed out in the queue, and the query you
+// actually meant came back empty (Bedford Street, 2026-11-06). So: wait for the call
+// already out, send only the words still in the box, and knock twice more on a
+// busy signal. Returns the rows, _STALE (newer typing took over), or null (no answer).
+const _STALE = Symbol('stale');
+let _wizardLocgCall = null;
+async function _wizardLocg(q, seq) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    while (_wizardLocgCall) await _wizardLocgCall.catch(() => {});
+    if (seq !== _wizardSeq) return _STALE;
+    const call = api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
+    _wizardLocgCall = call;
+    try {
+      return await call;
+    } catch (e) {
+      // busy / no answer — fall through and try again
+    } finally {
+      if (_wizardLocgCall === call) _wizardLocgCall = null;
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+  }
+  return seq === _wizardSeq ? null : _STALE;
+}
+
 async function wizardSearch() {
   const q = document.getElementById('wizard-search')?.value?.trim() || '';
   if (!document.getElementById('wizard-results') || !q) return;
@@ -3281,22 +3308,29 @@ async function wizardSearch() {
     // Metron is the primary catalogue (since 2026-10-08) and this search never
     // asked it — 'shadow of the bat' found nothing because LOCG doesn't index the
     // phrase. Metron leads; LOCG fills in what Metron lacks; a shut LOCG costs nothing.
-    const metP = api.get(`/api/search/metron?q=${encodeURIComponent(q)}`).catch(() => []);
-    const locgResults = await api.get(`/api/search/locg?q=${encodeURIComponent(q)}`).catch(() => []);
+    let metronDown = false;
+    const metP = api.get(`/api/search/metron?q=${encodeURIComponent(q)}`).catch(() => { metronDown = true; return []; });
+    const locgResults = await _wizardLocg(q, seq);
+    if (locgResults === _STALE) return;
     const metron = await metP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
+    // A source that never answered isn't a source that found nothing — say so, and
+    // let the same words through again (the dedupe would swallow a retry otherwise).
+    const silent = [metronDown && 'Metron', locgResults === null && 'LOCG'].filter(Boolean);
+    const note = silent.length ? `${silent.join(' and ')} didn’t answer — Search to try again` : '';
+    if (note) _wizardLastQuery = '';
     const runKey = r => `${(r.series || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, '')}|${r.year_began || ''}`;
     const seen = new Set(metron.map(runKey));
-    const runs = [...metron, ...locgResults.filter(r => !seen.has(runKey(r)))];
+    const runs = [...metron, ...(locgResults || []).filter(r => !seen.has(runKey(r)))];
     if (runs.length) {
       const arcs = (await cvP).filter(r => r.kind === 'arc');
-      _renderWizardResults([...(await slP), ...arcs, ...runs], q); return;
+      _renderWizardResults([...(await slP), ...arcs, ...runs], q, note); return;
     }
 
     // Nobody has a run — show the full ComicVine result (arcs + collected-edition volumes).
     const cvResults = await cvP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
-    _renderWizardResults([...(await slP), ...cvResults], q);
+    _renderWizardResults([...(await slP), ...cvResults], q, note);
   } catch (err) {
     console.error('wizardSearch error:', err);
     _wizardLastQuery = '';   // let a retry through — this query never landed
