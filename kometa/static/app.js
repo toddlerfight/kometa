@@ -617,10 +617,11 @@ async function renderLibraryBrowse() {
   // No Sync All button — the scheduler syncs everything at 5/12/17, stale series
   // self-sync on view, and series detail has its own Sync. The machine does the
   // work; a global button here was a comfort blanket with no feedback.
-  document.getElementById('topbar-actions').innerHTML = `
-    <button class="btn btn-primary btn-sm" onclick="showAddWizard()">+ Add Series</button>
-  `;
+  // No + Add Series button either (2026-11-12): the search box IS the door. Type a
+  // name — on the shelf it filters, not on the shelf it goes and finds it (_catRun).
+  document.getElementById('topbar-actions').innerHTML = '';
   browseState.search  = '';
+  _catReset();
   browseState._animate = true;          // a fresh visit: the first cards cascade in
   browseState.toggles = { upcoming: false, missing: false, pulling: false, stacks: true };
   browseState._cache  = null;
@@ -766,13 +767,14 @@ async function _loadBrowsePage() {
   if (firstRender) {
     setApp(`
       <div class="browse-header">
-        <input class="browse-search" id="browse-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search your collection…"
+        <input class="browse-search" id="browse-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search or add a series…"
           value="${esc(browseState.search)}"
-          oninput="browseSearch(this.value)">
+          oninput="browseSearch(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();_catRun('enter')}">
         ${_browseFilterTabs()}
         ${_browseSortControls()}
       </div>
       <div id="browse-results"><div class="state-msg">Loading...</div></div>
+      <div id="browse-catalogue"></div>
     `);
     document.getElementById('browse-search')?.focus();
   }
@@ -789,23 +791,7 @@ async function _loadBrowsePage() {
     _paintLibrary(true);
     if (box) box.scrollTop = top;
   }).catch(() => {});
-  // Nothing tracked yet on a configured install? Open the one door they'd open
-  // anyway — but give them ~5s to read the empty state and reach for it themselves
-  // first. Re-check everything when the timer fires: they may have navigated off,
-  // added a series, or opened another modal in the meantime.
-  clearTimeout(_autoWizardTimer);
-  if (browseState._trackedCount === 0 && _appConfig.comics_root_ok) {
-    _autoWizardTimer = setTimeout(() => {
-      if (currentView === 'library'
-          && (browseState._trackedCount ?? 0) === 0
-          && _appConfig.comics_root_ok
-          && document.getElementById('modal-backdrop')?.classList.contains('hidden')) {
-        showAddWizard();
-      }
-    }, 5000);
-  }
 }
-let _autoWizardTimer = null;
 
 // The cascade plays on a fresh Library's first cards only. It was on every card
 // (~900: everything past #15 started at once) and replayed on every filter tap
@@ -819,7 +805,7 @@ function _renderBrowseResults(quiet = false) {
   if (!all) return;
   if (quiet) browseState._animate = false;
 
-  const q = search.toLowerCase();
+  const q = search.trim().toLowerCase();   // 'saga ' is still Saga
   const anyToggleOn = toggles.upcoming || toggles.missing;
   const ppl = browseState.people && browseState.people.q === search ? browseState.people : null;
   const why = ppl ? ppl.why : {};
@@ -903,12 +889,14 @@ function _renderBrowseResults(quiet = false) {
            <div style="margin-top:8px;color:var(--tq);font-size:13px">
              ${needsFolder
                ? 'Kometa needs a place to file comics. <button class="btn btn-primary btn-sm" style="margin-left:6px" onclick="_showComicsRootSetup()">Set folder</button>'
-               : 'Use <strong>+ Add Series</strong> to start tracking a series.'}
+               : 'Search for a series above to start tracking it.'}
            </div>
          </div>`
+      : search && !_shelfHas(search) ? `<div class="cat-label">Not on your shelf</div>`
       : `<div class="state-msg">No series match.</div>`;
     document.getElementById('browse-results').innerHTML = peopleRow + empty;
     _paintLetterRail([]);
+    _catPaint();
     return;
   }
 
@@ -963,6 +951,7 @@ function _renderBrowseResults(quiet = false) {
   document.getElementById('browse-results').innerHTML = peopleRow + `<div class="series-grid${letters ? ' with-letters' : ''}">${cards}</div>`;
   browseState._animate = false;              // filters, sorts and refreshes after this don't replay it
   _paintLetterRail(letters ? seen : []);
+  _catPaint();
 }
 
 // A single issue filed as a series: a one-shot, an annual, an OGN, or a run the
@@ -2202,6 +2191,7 @@ document.addEventListener('keydown', e => {
 
 function browseSearch(val) {
   clearTimeout(browseState.searchTimer);
+  _catReset();                                    // whatever the catalogue was fetching is for older words
   browseState.searchTimer = setTimeout(async () => {
     browseState.search = val;
     _renderBrowseResults();                       // titles answer at once
@@ -2212,6 +2202,12 @@ function browseSearch(val) {
     if (browseState.search !== val) return;       // typed on: a newer search owns the page
     browseState.people = d ? { q: val, people: d.people || [], why: d.series || {} } : null;
     _renderBrowseResults();
+    // Titles AND people have both had their say. Still nothing on the shelf, and the
+    // typing has stopped (300 here + CAT_PAUSE_MS): go and look in the catalogue.
+    // Anything on the shelf → the catalogue waits to be asked (the Find row, or Enter).
+    _catTimer = setTimeout(() => {
+      if (browseState.search === val && currentView === 'library' && !_shelfHas(val)) _catRun('auto');
+    }, CAT_PAUSE_MS);
   }, 300);
 }
 
@@ -2222,6 +2218,138 @@ function _personPick(p) {
   const box = document.querySelector('.browse-search input, #browse-search');
   if (box) box.value = p.name;
   browseSearch(p.name);
+}
+
+// --- The catalogue, from the Library's own box (2026-11-12) ---
+// ONE BOX. There used to be two: this one for what you own, and a wizard behind a
+// "+ Add Series" button for what you don't — the same question asked in two rooms.
+// Now: the shelf answers first, because the shelf is right here and costs nothing.
+// The catalogue is four strangers on the far side of the internet, one of them
+// asleep behind a Cloudflare wall, and NOBODY rings them until the shelf has come up
+// empty and the typing has actually stopped — or until a tap or Enter says go.
+// Rows land as each source answers: Metron inside a second shouldn't sit in the car
+// while LOCG looks for its keys. Add hands the row to the wizard's own pick step.
+const CAT_PAUSE_MS = 400;          // on top of the box's 300 ms debounce and the people lookup
+let _catTimer = null, _catSeq = 0, _catShown = [], _catSig = null;
+let _cat = { state: 'idle', q: '', seq: 0, landed: {}, down: [] };
+
+function _catReset() {
+  clearTimeout(_catTimer);
+  _cat = { state: 'idle', q: '', seq: ++_catSeq, landed: {}, down: [] };   // late answers die at the door
+  _catSig = null;
+  const el = document.getElementById('browse-catalogue');
+  if (el) el.innerHTML = '';
+}
+
+// Is it on the shelf AT ALL — whatever the filter tabs are hiding right now? The
+// Library's own rule: the title holds the words, or a person on the book does.
+function _shelfHas(q) {
+  const ql = (q || '').trim().toLowerCase();
+  const why = browseState.people && browseState.people.q === q ? browseState.people.why : {};
+  return !!ql && (browseState._cache || []).some(s => s.title.toLowerCase().includes(ql) || (s.kind !== 'shelf' && why[s.id]));
+}
+
+function _catRun(by) {
+  const q = (document.getElementById('browse-search')?.value || '').trim();
+  if (q.length < 2 || !browseState._cache || currentView !== 'library') return;
+  // already asked these words — unless someone never answered, then knock again
+  if (_cat.q === q && _cat.state !== 'idle' && !(_cat.state === 'done' && _cat.down.length)) return;
+  clearTimeout(_catTimer);
+  const seq = ++_catSeq;
+  _cat = { state: 'searching', q, seq, by, landed: {}, down: [] };
+  _catPaint();
+  const land = (name, rows, silent) => {
+    if (seq !== _cat.seq) return;
+    _cat.landed[name] = rows || [];
+    if (silent) _cat.down.push(silent);
+    if (Object.keys(_cat.landed).length === 4) _cat.state = 'done';
+    _catPaint();
+  };
+  const e = encodeURIComponent(q);
+  api.get(`/api/search/metron?q=${e}`).then(r => land('metron', r), () => land('metron', [], 'Metron'));
+  api.get(`/api/search/comicvine?q=${e}`).then(r => land('comicvine', r), () => land('comicvine', []));
+  api.get(`/api/search/storyline?q=${e}`).then(r => land('storyline', r), () => land('storyline', []));
+  // null = LOCG never answered. That is NOT "LOCG has nothing" (Bedford Street, 2026-11-06).
+  _wizardLocg(q, () => seq === _cat.seq).then(r => { if (r !== _STALE) land('locg', r, r === null ? 'LOCG' : null); });
+}
+
+// The wizard's merge, as it stands: Metron leads, LOCG fills in what Metron lacks,
+// arcs and storylines ride along, Comic Vine's volumes only when nobody has a run.
+function _catRows() {
+  const L = _cat.landed;
+  const runKey = r => `${(r.series || '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, '')}|${r.year_began || ''}`;
+  const metron = L.metron || [], seen = new Set(metron.map(runKey));
+  const runs = [...metron, ...(L.locg || []).filter(r => !seen.has(runKey(r)))];
+  const cv = L.comicvine || [];
+  const nobodyHasARun = !runs.length && 'metron' in L && 'locg' in L;
+  return _wizardSort([...(L.storyline || []), ...(nobodyHasARun ? cv : cv.filter(r => r.kind === 'arc')), ...runs], _cat.q).slice(0, 15);
+}
+
+// Is this catalogue row already on the shelf? SURE = same catalogue id, or same name
+// AND same year. Same name alone is a maybe: say so and STILL offer Add — Batman
+// (2016) on the shelf must never talk anyone out of Batman (2025).
+function _catOwned(r) {
+  if (r.kind === 'arc' || r.kind === 'storyline') return null;
+  const lib = browseState._cache || [];
+  const key = t => (t || '').toLowerCase().replace(/\s*\((?:19|20)\d{2}[^)]*\)\s*$/, '').replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, '');
+  const year = s => s.year_began || +((s.title || '').match(/\(((?:19|20)\d{2})/) || [])[1] || null;
+  if (lib.some(s => s.kind === 'series' && ((r.source === 'metron' && s.metron_series_id === r.id)
+      || (r.source === 'locg' && !r.needs_resolve && s.locg_series_id === r.id)))) return 'sure';
+  const same = lib.filter(s => key(s.title) === key(r.series || r.name));
+  return same.some(s => r.year_began && year(s) === +r.year_began) ? 'sure' : same.length ? 'maybe' : null;
+}
+
+function _catPaint() {
+  const el = document.getElementById('browse-catalogue');
+  if (!el) return;
+  const idle = _cat.state === 'idle';
+  const q = idle ? (browseState.search || '').trim() : _cat.q;
+  if (!q || currentView !== 'library' || browseState.stack) { el.innerHTML = ''; _catSig = null; return; }
+  if (idle) {
+    // On the shelf (or too short to go looking unasked): the catalogue waits to be
+    // asked. One row, one tap — or Enter. Not on the shelf: the pause is counting.
+    _catSig = null;
+    el.innerHTML = q.length >= 2 && (_shelfHas(q) || q.length < 3)
+      ? `<button class="cat-find" onclick="_catRun('tap')"><span class="u-truncate">Find <b>“${esc(q)}”</b> in the catalogue</span><kbd>↵</kbd></button>` : '';
+    return;
+  }
+  _catShown = _catRows();
+  const looking = _cat.state === 'searching', onShelf = _shelfHas(q);
+  const head = _catShown.length ? `In the catalogue · ${_catShown.length}${looking ? ' · still looking' : ''}`
+    : looking ? 'Looking in the catalogue' : onShelf ? 'Nothing more in the catalogue' : 'Not in the catalogue either';
+  const label = `${head}${looking ? '<span class="animated-dots"></span>' : ''}`;
+  // a source that never answered isn't a source that found nothing — name it, offer the knock
+  const down = !looking && _cat.down.length
+    ? `${esc(_cat.down.join(' and '))} didn’t answer <button class="btn btn-ghost btn-sm" onclick="_catRun('again')">Try again</button>` : '';
+  // The rows only rebuild when the LIST changes — a late source that adds nothing
+  // must not make every cover in the block blink.
+  const sig = _cat.seq + '|' + _catShown.map(r => `${r.source}${r.kind || ''}${r.id ?? r.cv_arc_id}${_catOwned(r) || ''}`).join(',');
+  if (sig !== _catSig || !el.querySelector('.cat-rows')) {
+    _catSig = sig;
+    el.innerHTML = `<div class="cat-label" id="cat-head"></div><div class="cat-rows">${_catShown.map((r, i) => {
+      const cover = r.kind === 'storyline' ? '' : (r.cover || r.image || '');
+      const own = _catOwned(r);
+      // BUTTONS FIRST: Add is in the row from the first paint; the cover turns up when it likes
+      const action = own === 'sure' ? `<span class="cat-owned">On your shelf</span>`
+        : `${own ? `<span class="cat-same">same name on shelf</span>` : ''}<button class="btn btn-primary btn-sm" onclick="_catAdd(${i})">Add</button>`;
+      return `<div class="wizard-result cat-row">
+        ${cover ? `<img class="wizard-result-thumb" src="${esc(cover)}" alt="" loading="lazy" onerror="this.style.opacity=0">` : '<div class="wizard-result-thumb"></div>'}
+        ${_wizardResultText(r)}${action}</div>`;
+    }).join('')}</div><div class="cat-label cat-warn" id="cat-down"></div>`;
+  }
+  el.querySelector('#cat-head').innerHTML = label;
+  el.querySelector('#cat-down').innerHTML = down;
+}
+
+// Add = the wizard's pick step, entered from the side door: same folder field, same
+// pull-list tick, same Track Series. Back from there just closes (_wizardBack).
+function _catAdd(i) {
+  if (!_catShown[i]) return;
+  if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
+  _wizardResults = _catShown.slice();
+  _wizardFromBox = true;
+  showModal('');
+  wizardPickSeries(i);
 }
 
 // --- Series Detail ---
@@ -3101,7 +3229,14 @@ function _wizardPaintHi() {
 }
 let _wizardState = { idx: -1, source: 'locg', locgId: null };
 
+// Back out of a pick. Came from the wizard's own list → back to the list. Came from
+// the Library's box (_catAdd) → there IS no list behind this; the results are still
+// sitting on the page, so just get out of the way.
+let _wizardFromBox = false;
+function _wizardBack() { _wizardFromBox ? closeModal() : showAddWizard(); }
+
 function showAddWizard(query = '') {
+  _wizardFromBox = false;
   // Can't track or file a series with nowhere to put it. If the comics folder
   // isn't usable, channel the user to set it first — just-in-time, not a gate.
   if (!_appConfig.comics_root_ok) { _showComicsRootSetup(); return; }
@@ -3160,7 +3295,12 @@ async function saveComicsRoot(btn) {
   if (!path) { err.textContent = 'Enter a path.'; return; }
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    if (await _commitComicsRoot(path)) { showAddWizard(); return; }
+    if (await _commitComicsRoot(path)) {
+      // the folder's set: back to the box that adds things (the wizard used to open here)
+      closeModal();
+      if (currentView === 'library') { _renderBrowseResults(true); document.getElementById('browse-search')?.focus(); }
+      return;
+    }
     err.textContent = "That path doesn't exist or isn't writable — check the mount/permissions.";
     btn.disabled = false; btn.textContent = 'Save & Continue';
   } catch (e) {
@@ -3185,9 +3325,16 @@ function _isCollectedResult(r) {
   return /\b(omnibus|deluxe edition|compendium|the complete|collected edition|library edition)\b/i.test(r.series || r.name || '');
 }
 
-function _renderWizardResults(results, q, note = '') {
-  const container = document.getElementById('wizard-results');
-  if (!container) return;
+// A catalogue hit's two lines — name with its badge, then who/when/how many. One
+// definition: the wizard's list and the Library's catalogue block both wear it.
+function _wizardResultText(r) {
+  return `<div class="wizard-result-text">
+      <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ` <span class="locg-badge">${ico('diamond')} STORYLINE</span>` : r.kind === 'arc' ? ` <span class="locg-badge">${ico('diamond')} ARC</span>` : _isCollectedResult(r) ? ` <span class="locg-badge collected-badge">${ico('diamond')} COLLECTED</span>` : r.needs_resolve ? ` <span class="locg-badge">${ico('diamond')} ONE-SHOT</span>` : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
+      <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ` · one-shot ${ico('right')} its series` : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
+    </div>`;
+}
+
+function _wizardSort(results, q) {
   const ql = q.toLowerCase();
   results.sort((a, b) => {
     // WHAT YOU TYPED WINS. Title match is the first gate, BEFORE kind — otherwise a
@@ -3213,6 +3360,13 @@ function _renderWizardResults(results, q, note = '') {
     const rank = r => r.kind === 'storyline' ? 0 : _isCollectedResult(r) ? 3 : r.kind === 'arc' ? 2 : 1;
     return rank(a) - rank(b);
   });
+  return results;
+}
+
+function _renderWizardResults(results, q, note = '') {
+  const container = document.getElementById('wizard-results');
+  if (!container) return;
+  _wizardSort(results, q);
   _wizardResults = results.slice(0, 15);
   _wizardHi = -1;   // fresh results, fresh keyboard cursor
 
@@ -3224,10 +3378,7 @@ function _renderWizardResults(results, q, note = '') {
           <div class="wizard-result wizard-result-enter" style="animation-delay:${i * STAGGER_MS}ms" onclick="wizardPickSeries(${i})">
             <img class="wizard-result-thumb" src="${r.kind === 'storyline' ? '' : esc(r.cover || r.image || '')}" alt=""
               onerror="this.style.opacity=0" loading="lazy">
-            <div class="wizard-result-text">
-              <div class="wizard-result-title u-truncate">${esc(r.series || r.name || '')}${r.kind === 'storyline' ? ` <span class="locg-badge">${ico('diamond')} STORYLINE</span>` : r.kind === 'arc' ? ` <span class="locg-badge">${ico('diamond')} ARC</span>` : _isCollectedResult(r) ? ` <span class="locg-badge collected-badge">${ico('diamond')} COLLECTED</span>` : r.needs_resolve ? ` <span class="locg-badge">${ico('diamond')} ONE-SHOT</span>` : r.source === 'locg' ? ' <span class="locg-badge">LOCG</span>' : ''}</div>
-              <div class="wizard-result-meta">${r.kind === 'storyline' ? `story arc · originates in ${esc(r.origin_title || '?')}${r.origin_year ? ' (' + r.origin_year + ')' : ''}` : `${esc(r.publisher?.name || '')}${r.kind === 'arc' ? ' · story arc' : r.needs_resolve ? ` · one-shot ${ico('right')} its series` : _isCollectedResult(r) ? ' · collected edition — lives in a series’ Trades' : ''}${r.year_began ? ' · ' + r.year_began : ''}${r.issue_count ? ' · ' + r.issue_count + ' issues' : ''}`}</div>
-            </div>
+            ${_wizardResultText(r)}
           </div>`).join('')
       : '<div class="state-msg" style="padding:16px 0;font-size:11px">No results.</div>';
     if (note) el.insertAdjacentHTML('beforeend', `<div class="state-msg" style="padding:10px 0;font-size:11px;color:var(--amb)">${esc(note)}</div>`);
@@ -3269,10 +3420,10 @@ function _wizardInput(val) {
 // busy signal. Returns the rows, _STALE (newer typing took over), or null (no answer).
 const _STALE = Symbol('stale');
 let _wizardLocgCall = null;
-async function _wizardLocg(q, seq) {
+async function _wizardLocg(q, live) {
   for (let attempt = 0; attempt < 3; attempt++) {
     while (_wizardLocgCall) await _wizardLocgCall.catch(() => {});
-    if (seq !== _wizardSeq) return _STALE;
+    if (!live()) return _STALE;
     const call = api.get(`/api/search/locg?q=${encodeURIComponent(q)}`);
     _wizardLocgCall = call;
     try {
@@ -3284,7 +3435,7 @@ async function _wizardLocg(q, seq) {
     }
     if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
   }
-  return seq === _wizardSeq ? null : _STALE;
+  return live() ? null : _STALE;
 }
 
 async function wizardSearch() {
@@ -3310,7 +3461,7 @@ async function wizardSearch() {
     // phrase. Metron leads; LOCG fills in what Metron lacks; a shut LOCG costs nothing.
     let metronDown = false;
     const metP = api.get(`/api/search/metron?q=${encodeURIComponent(q)}`).catch(() => { metronDown = true; return []; });
-    const locgResults = await _wizardLocg(q, seq);
+    const locgResults = await _wizardLocg(q, () => seq === _wizardSeq);
     if (locgResults === _STALE) return;
     const metron = await metP;
     if (seq !== _wizardSeq || !document.getElementById('wizard-results')) return;
@@ -3358,7 +3509,7 @@ async function _wizardResolveComic(idx) {
   } catch (e) {
     if (m) m.innerHTML = `<div class="modal-title">Couldn’t resolve</div>
       <div class="state-msg" style="padding:16px 0;font-size:11px;color:var(--amb)">“${esc(r.series || '')}” isn’t linked to a series on LOCG, so it can’t be tracked as one.</div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button></div>`;
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="_wizardBack()">${ico('left')} Back</button></div>`;
   }
 }
 
@@ -3402,7 +3553,7 @@ function wizardPickSeries(idx) {
       <span style="font-size:10px;color:var(--tq)">— ${isArc ? "find &amp; grab this storyline's collected edition" : 'queue download of all missing issues now'}</span>
     </label>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button>
+      <button class="btn btn-ghost" onclick="_wizardBack()">${ico('left')} Back</button>
       <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">${isArc ? 'Track Arc' : 'Track Series'}</button>
     </div>
   `;
@@ -3454,7 +3605,7 @@ function wizardPickStoryline(idx) {
     </div>
     <div class="wizard-arc-note">Following adds <b>${run}</b> as a tracked series — its Issues, Trades and Arcs tabs. <b>Nothing downloads;</b> this is tracking only. The storyline then lives under that series' Arcs tab.</div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="showAddWizard()">${ico('left')} Back</button>
+      <button class="btn btn-ghost" onclick="_wizardBack()">${ico('left')} Back</button>
       <button class="btn btn-primary" id="wizard-add-btn" onclick="wizardConfirm()">Follow ${ico('right')} add ${esc(r.origin_title || 'series')}</button>
     </div>
   `;

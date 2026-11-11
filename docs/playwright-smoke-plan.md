@@ -51,9 +51,12 @@ no external network, no real Komga/LOCG.
   Week/Later; pull row renders its ↓ button
 - `test_activity.py` — seeded queue rows in mixed states → chips + labels
   from QUEUE_STATE; clear-history button exists and doesn't throw
-- `test_wizard.py` — Add Series opens; typing fires the (debounced) search;
-  backend keyless → intercept `**/api/search/**` with canned fixtures so
-  results render; Esc closes. (Full add-flow is v2 — it mutates and syncs.)
+- `test_wizard.py` — adding from the Library's one search box (2026-11-12; the
+  Add Series button is gone): not on the shelf → the catalogue is asked after the
+  typing pause and rows offer Add; on the shelf → nothing is asked until the Find
+  row or Enter; busy/silent LOCG; the wizard modal still opens for FIND buttons.
+  Backend keyless → intercept `**/api/search/**` with canned fixtures.
+  (Full add-flow is v2 — it mutates and syncs.)
 - `test_settings.py` — renders all cards; a field edit fires the autosave
   PATCH (assert via request interception)
 

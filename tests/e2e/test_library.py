@@ -30,7 +30,8 @@ def test_search_filters_grid(app):
     expect(app.locator(".series-card")).to_have_count(1)
     expect(app.locator(".series-card-title")).to_have_text("Beta Saga")
     app.locator("#browse-search").fill("zzz-no-match")
-    expect(app.get_by_text("No series match.")).to_be_visible()
+    expect(app.get_by_text("Not on your shelf")).to_be_visible()
+    expect(app.get_by_text("Not in the catalogue either")).to_be_visible()   # the box went and looked
 
 
 def test_api_failure_paints_retry_and_recovers(app_server, page):

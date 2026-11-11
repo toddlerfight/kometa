@@ -470,9 +470,65 @@ select.settings-input {
   outline: none;
 }
 .search-input  { margin-bottom: var(--sp-sm); }
-.browse-search { width: 240px; }
+/* 240 as it always was, growing to 360 only where the header has room to spare — it
+   finds AND adds now (2026-11-12). A flat 360 squeezed the filter chips into two
+   lines at 1280. */
+.browse-search { width: 240px; flex: 1 1 240px; max-width: 360px; }
 
 .browse-search:focus { border-color: var(--pri); }
+
+/* ---- The catalogue block under the Library grid (app.js › _catPaint) ----
+   What the one box found beyond the shelf: a label, rows with Add, and — when the
+   shelf already answered — a single row that offers to go and look. */
+#browse-catalogue { margin-top: 28px; max-width: 720px; }
+#browse-catalogue:empty { display: none; }
+.cat-label {
+  color: var(--tq);
+  font-size: var(--fs-label);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  margin-bottom: var(--sp-md);
+}
+.cat-label:empty { display: none; }
+.cat-warn { color: var(--amb); display: flex; align-items: center; gap: var(--sp-md); margin-top: var(--sp-md); }
+.cat-find {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: var(--su1);
+  color: var(--tm);
+  border: 1px solid var(--bd);
+  border-radius: var(--r-md);
+  padding: var(--sp-md);
+  font-size: var(--fs-body);
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.cat-find:hover { background: var(--su2); border-color: var(--bd-l); }
+.cat-find b { color: var(--tp); font-weight: 600; }
+.cat-find kbd {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--tq);
+  font-family: inherit;
+  font-size: var(--fs-label);
+  border: 1px solid var(--bd-l);
+  border-radius: var(--r-sm);
+  padding: 0 5px;
+}
+.cat-row { cursor: default; }
+.cat-row .btn { flex-shrink: 0; }
+.cat-owned, .cat-same {
+  flex-shrink: 0;
+  font-size: var(--fs-label);
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+.cat-owned { color: var(--pri); }
+.cat-same  { color: var(--tq); }
+@media (max-width: 760px) { .cat-same { display: none; } }
 
 .browse-filters {
   display: flex;
@@ -1118,7 +1174,7 @@ select.settings-input {
   :root { --app-pad: 14px; }
 
   .browse-header { flex-wrap: wrap; }
-  .browse-search { width: 100%; order: -1; }
+  .browse-search { width: 100%; max-width: none; flex: 0 0 100%; order: -1; }
 
   .series-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 20px 14px; }
   .issue-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--sp-lg) var(--sp-md); }
